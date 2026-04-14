@@ -337,6 +337,10 @@ export interface RuntimeEnvironmentAssessment {
   status: string;
   confidence: number;
   summary: string;
+  observedEntities: RuntimeObservedEntity[];
+  affordances: RuntimeActionAffordance[];
+  sceneProfile: RuntimeSceneProfile;
+  plannerGuidance: RuntimePlannerGuidance;
   capabilityKeys: string[];
   observedLabels: string[];
   affordanceLabels: string[];
@@ -347,6 +351,57 @@ export interface RuntimeEnvironmentAssessment {
   notes?: string[];
   auditMetadata?: Record<string, unknown>;
   updatedAt: string;
+}
+
+export interface RuntimeObservedEntity {
+  kind: string;
+  label: string;
+  entityId?: string | null;
+  role?: string | null;
+  confidence?: number | null;
+  state?: string | null;
+  interactive: boolean;
+  signals: string[];
+  locator: Record<string, unknown>;
+  attributes: Record<string, unknown>;
+}
+
+export interface RuntimeActionAffordance {
+  kind: string;
+  label: string;
+  action: string;
+  target?: string | null;
+  confidence?: number | null;
+  enabled: boolean;
+  requiresConfirmation: boolean;
+  signals: string[];
+  locator: Record<string, unknown>;
+  metadata: Record<string, unknown>;
+}
+
+export interface RuntimeSceneProfile {
+  source: string;
+  sceneType: string;
+  interactionMode: string;
+  volatility: string;
+  authState: string;
+  entityCount: number;
+  affordanceCount: number;
+  primaryTargets: string[];
+  signals: string[];
+  blockers: string[];
+  evidence: Record<string, unknown>;
+}
+
+export interface RuntimePlannerGuidance {
+  posture: string;
+  requiredCapabilities: string[];
+  insertedCapabilities: string[];
+  preferredNextActions: string[];
+  requiresSceneAssessment: boolean;
+  requiresHumanReview: boolean;
+  shouldCheckpoint: boolean;
+  rationale: string[];
 }
 
 export interface RuntimeTemplate {

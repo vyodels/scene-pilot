@@ -1,4 +1,5 @@
 from .domain import (
+    ActionAffordanceRead,
     ApprovalCreate,
     ApprovalDecisionRequest,
     ApprovalDashboardRead,
@@ -40,7 +41,9 @@ from .domain import (
     LearningDraftUpdate,
     MetricCardRead,
     MetricsSummary,
+    ObservedEntityRead,
     PipelineStageRead,
+    PlannerGuidanceRead,
     PlatformSettingsRead,
     PlatformSettingsUpdate,
     ProviderConfigRead,
@@ -49,6 +52,7 @@ from .domain import (
     RuntimeReplayDiagnosticsRead,
     RuntimeReplayEventRead,
     RuntimeLearningOutcomeRead,
+    SceneProfileRead,
     SettingsSnapshotRead,
     SettingsSnapshotUpdate,
     SkillCreate,

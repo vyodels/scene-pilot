@@ -592,6 +592,10 @@ export function RuntimeControlView({
             <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
               <StatusBadge tone="neutral">{assessment.environmentKey}</StatusBadge>
               <StatusBadge tone="neutral">{assessment.sceneType}</StatusBadge>
+              <StatusBadge tone="neutral">{assessment.sceneProfile.interactionMode}</StatusBadge>
+              <StatusBadge tone={assessment.plannerGuidance.requiresHumanReview ? "warning" : "neutral"}>
+                planner {assessment.plannerGuidance.posture}
+              </StatusBadge>
             </div>
             {assessment.driftSignals.length ? (
               <div style={{ color: theme.colors.muted, fontSize: "13px", lineHeight: 1.6 }}>
@@ -602,13 +606,31 @@ export function RuntimeControlView({
                 Scene is aligned with the current execution model.
               </div>
             )}
+            <div style={{ color: theme.colors.muted, fontSize: "13px", lineHeight: 1.6 }}>
+              Auth {assessment.sceneProfile.authState} · {assessment.sceneProfile.entityCount} entities · {assessment.sceneProfile.affordanceCount} affordances
+            </div>
+            {assessment.sceneProfile.primaryTargets.length ? (
+              <div style={{ color: theme.colors.muted, fontSize: "13px", lineHeight: 1.6 }}>
+                Targets: {assessment.sceneProfile.primaryTargets.join(" · ")}
+              </div>
+            ) : null}
             <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
               {assessment.capabilityKeys.map((capability) => (
                 <StatusBadge key={`${assessment.id}-${capability}`} tone="neutral">
                   {capability}
                 </StatusBadge>
               ))}
+              {assessment.plannerGuidance.insertedCapabilities.map((capability) => (
+                <StatusBadge key={`${assessment.id}-inserted-${capability}`} tone="warning">
+                  next {capability}
+                </StatusBadge>
+              ))}
             </div>
+            {assessment.plannerGuidance.preferredNextActions.length ? (
+              <div style={{ color: theme.colors.muted, fontSize: "13px", lineHeight: 1.6 }}>
+                Next: {assessment.plannerGuidance.preferredNextActions.join(" · ")}
+              </div>
+            ) : null}
           </article>
         );
       })}

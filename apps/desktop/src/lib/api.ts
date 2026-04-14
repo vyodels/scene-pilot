@@ -399,14 +399,40 @@ function normalizeRuntimeEnvironmentAssessment(raw: unknown): RuntimeEnvironment
   const environmentRequirements = asRecord(record.environmentRequirements ?? record.environment_requirements);
   const sceneType = String(record.sceneType ?? record.scene_type ?? snapshot.pageType ?? snapshot.page_type ?? "unknown");
   const sceneKey = String(record.sceneKey ?? record.scene_key ?? snapshot.environmentKey ?? snapshot.environment_key ?? "runtime");
-  const observedLabels = asArray(snapshot.observed_entities).map(labelFromSignal).filter((item): item is string => Boolean(item));
-  const affordanceLabels = asArray(snapshot.affordances).map(labelFromSignal).filter((item): item is string => Boolean(item));
+  const normalizedObservedEntities = asArray<Record<string, unknown>>(record.observedEntities ?? record.observed_entities).map((entity) => ({
+    kind: String(entity.kind ?? entity.type ?? "entity"),
+    label: String(entity.label ?? entity.name ?? entity.text ?? "Observed entity"),
+    entityId: entity.entityId ? String(entity.entityId) : entity.entity_id ? String(entity.entity_id) : entity.id ? String(entity.id) : null,
+    role: entity.role ? String(entity.role) : null,
+    confidence: typeof entity.confidence === "number" ? entity.confidence : null,
+    state: entity.state ? String(entity.state) : null,
+    interactive: Boolean(entity.interactive ?? entity.clickable ?? false),
+    signals: asArray<string>(entity.signals),
+    locator: asRecord(entity.locator),
+    attributes: asRecord(entity.attributes),
+  }));
+  const normalizedAffordances = asArray<Record<string, unknown>>(record.affordances).map((affordance) => ({
+    kind: String(affordance.kind ?? affordance.type ?? "action"),
+    label: String(affordance.label ?? affordance.name ?? affordance.text ?? "Affordance"),
+    action: String(affordance.action ?? affordance.intent ?? affordance.kind ?? "inspect"),
+    target: affordance.target ? String(affordance.target) : affordance.href ? String(affordance.href) : null,
+    confidence: typeof affordance.confidence === "number" ? affordance.confidence : null,
+    enabled: Boolean(affordance.enabled ?? true),
+    requiresConfirmation: Boolean(affordance.requiresConfirmation ?? affordance.requires_confirmation ?? false),
+    signals: asArray<string>(affordance.signals),
+    locator: asRecord(affordance.locator),
+    metadata: asRecord(affordance.metadata),
+  }));
+  const observedLabels = normalizedObservedEntities.map((entity) => entity.label).filter((item): item is string => Boolean(item));
+  const affordanceLabels = normalizedAffordances.map((affordance) => affordance.label).filter((item): item is string => Boolean(item));
   const recommendedActions = [
     ...checkpoints
       .map((item) => labelFromSignal(item))
       .filter((item): item is string => Boolean(item)),
     ...assessmentNotes,
   ];
+  const sceneProfileRecord = asRecord(record.sceneProfile ?? record.scene_profile);
+  const plannerGuidanceRecord = asRecord(record.plannerGuidance ?? record.planner_guidance);
   return {
     id: String(record.id ?? snapshot.id ?? `${sceneKey}:${sceneType}`),
     taskSpecId: taskSpec.id ? String(taskSpec.id) : record.taskSpecId ? String(record.taskSpecId) : record.task_spec_id ? String(record.task_spec_id) : null,
@@ -438,6 +464,31 @@ function normalizeRuntimeEnvironmentAssessment(raw: unknown): RuntimeEnvironment
         assessmentNotes[0] ??
         (blockers.length ? `Detected ${blockers.join(", ")}.` : `Assessed scene ${sceneType}.`),
     ),
+    observedEntities: normalizedObservedEntities,
+    affordances: normalizedAffordances,
+    sceneProfile: {
+      source: String(sceneProfileRecord.source ?? snapshot.source ?? "runtime"),
+      sceneType: String(sceneProfileRecord.sceneType ?? sceneProfileRecord.scene_type ?? sceneType),
+      interactionMode: String(sceneProfileRecord.interactionMode ?? sceneProfileRecord.interaction_mode ?? "inspect"),
+      volatility: String(sceneProfileRecord.volatility ?? "medium"),
+      authState: String(sceneProfileRecord.authState ?? sceneProfileRecord.auth_state ?? "unknown"),
+      entityCount: Number(sceneProfileRecord.entityCount ?? sceneProfileRecord.entity_count ?? normalizedObservedEntities.length),
+      affordanceCount: Number(sceneProfileRecord.affordanceCount ?? sceneProfileRecord.affordance_count ?? normalizedAffordances.length),
+      primaryTargets: asArray<string>(sceneProfileRecord.primaryTargets ?? sceneProfileRecord.primary_targets),
+      signals: asArray<string>(sceneProfileRecord.signals),
+      blockers: asArray<string>(sceneProfileRecord.blockers ?? blockers),
+      evidence: asRecord(sceneProfileRecord.evidence),
+    },
+    plannerGuidance: {
+      posture: String(plannerGuidanceRecord.posture ?? "advance"),
+      requiredCapabilities: asArray<string>(plannerGuidanceRecord.requiredCapabilities ?? plannerGuidanceRecord.required_capabilities),
+      insertedCapabilities: asArray<string>(plannerGuidanceRecord.insertedCapabilities ?? plannerGuidanceRecord.inserted_capabilities),
+      preferredNextActions: asArray<string>(plannerGuidanceRecord.preferredNextActions ?? plannerGuidanceRecord.preferred_next_actions),
+      requiresSceneAssessment: Boolean(plannerGuidanceRecord.requiresSceneAssessment ?? plannerGuidanceRecord.requires_scene_assessment ?? false),
+      requiresHumanReview: Boolean(plannerGuidanceRecord.requiresHumanReview ?? plannerGuidanceRecord.requires_human_review ?? false),
+      shouldCheckpoint: Boolean(plannerGuidanceRecord.shouldCheckpoint ?? plannerGuidanceRecord.should_checkpoint ?? true),
+      rationale: asArray<string>(plannerGuidanceRecord.rationale),
+    },
     capabilityKeys: asArray<string>(
       record.capabilityKeys ?? record.capability_keys ?? record.recommendedCapabilities ?? record.recommended_capabilities,
     ),

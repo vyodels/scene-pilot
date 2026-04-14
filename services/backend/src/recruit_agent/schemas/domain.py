@@ -205,6 +205,7 @@ class CapabilityDriverRead(BaseModel):
     risk: str
     supported_domains: list[str] = Field(default_factory=list)
     recommended_scene_types: list[str] = Field(default_factory=list)
+    signal_labels: list[str] = Field(default_factory=list)
     writes_state: bool = False
     requires_supervision: bool = False
     audit_tags: list[str] = Field(default_factory=list)
@@ -498,6 +499,57 @@ class EnvironmentSnapshotContextRead(BaseModel):
     runtime_metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class ObservedEntityRead(BaseModel):
+    kind: str
+    label: str
+    entity_id: str | None = None
+    role: str | None = None
+    confidence: float | None = None
+    state: str | None = None
+    interactive: bool = False
+    signals: list[str] = Field(default_factory=list)
+    locator: dict[str, Any] = Field(default_factory=dict)
+    attributes: dict[str, Any] = Field(default_factory=dict)
+
+
+class ActionAffordanceRead(BaseModel):
+    kind: str
+    label: str
+    action: str
+    target: str | None = None
+    confidence: float | None = None
+    enabled: bool = True
+    requires_confirmation: bool = False
+    signals: list[str] = Field(default_factory=list)
+    locator: dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class SceneProfileRead(BaseModel):
+    source: str
+    scene_type: str
+    interaction_mode: str = "inspect"
+    volatility: str = "medium"
+    auth_state: str = "unknown"
+    entity_count: int = 0
+    affordance_count: int = 0
+    primary_targets: list[str] = Field(default_factory=list)
+    signals: list[str] = Field(default_factory=list)
+    blockers: list[str] = Field(default_factory=list)
+    evidence: dict[str, Any] = Field(default_factory=dict)
+
+
+class PlannerGuidanceRead(BaseModel):
+    posture: str
+    required_capabilities: list[str] = Field(default_factory=list)
+    inserted_capabilities: list[str] = Field(default_factory=list)
+    preferred_next_actions: list[str] = Field(default_factory=list)
+    requires_scene_assessment: bool = False
+    requires_human_review: bool = False
+    should_checkpoint: bool = True
+    rationale: list[str] = Field(default_factory=list)
+
+
 class EnvironmentAssessmentRequest(BaseModel):
     task_spec_id: str | None = None
     execution_plan_id: str | None = None
@@ -517,6 +569,10 @@ class EnvironmentAssessmentRead(BaseModel):
     scene_key: str
     confidence: float
     plan_fit: str
+    observed_entities: list[ObservedEntityRead] = Field(default_factory=list)
+    affordances: list[ActionAffordanceRead] = Field(default_factory=list)
+    scene_profile: SceneProfileRead
+    planner_guidance: PlannerGuidanceRead
     recommended_capabilities: list[str] = Field(default_factory=list)
     blockers: list[str] = Field(default_factory=list)
     environment_requirements: dict[str, Any] = Field(default_factory=dict)

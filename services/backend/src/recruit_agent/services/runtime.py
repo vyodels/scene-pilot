@@ -24,6 +24,7 @@ from recruit_agent.repositories import (
     WorkflowTemplateRepository,
 )
 from recruit_agent.schemas import (
+    ActionAffordanceRead,
     ApprovalRead,
     CapabilityDriverRead,
     DomainPackRead,
@@ -40,10 +41,13 @@ from recruit_agent.schemas import (
     ExecutionPlanReplanRequest,
     ExecutionPlanRead,
     LearningDraftRead,
+    ObservedEntityRead,
+    PlannerGuidanceRead,
     RuntimeEpisodeReplayRead,
     RuntimeReplayDiagnosticsRead,
     RuntimeReplayEventRead,
     RuntimeLearningOutcomeRead,
+    SceneProfileRead,
     TaskCompileRequest,
     TaskCompilerContractRead,
     TaskCompileResponse,
@@ -147,42 +151,59 @@ CAPABILITY_DRIVERS: dict[str, dict[str, Any]] = {
     "analyze": {
         "description": "Reason about a task, compare evidence, or decide the next step without changing the environment.",
         "risk": "low",
+        "signal_labels": ["task_contract", "plan_fit", "divergence_signal"],
     },
     "browser": {
         "description": "Observe or interact with websites and web apps as runtime scenes.",
         "risk": "medium",
+        "signal_labels": [
+            "observed_entities",
+            "action_affordances",
+            "scene_profile",
+            "auth_gate",
+            "verification_gate",
+            "navigation_target",
+        ],
     },
     "search": {
         "description": "Discover relevant targets, sources, candidates, or options across search surfaces.",
         "risk": "low",
+        "signal_labels": ["query_intent", "result_listing", "ranking_signal"],
     },
     "http": {
         "description": "Call structured HTTP or API endpoints to read or write machine-facing data.",
         "risk": "medium",
+        "signal_labels": ["endpoint_schema", "response_contract", "transport_state"],
     },
     "document": {
         "description": "Draft, summarize, or format durable output artifacts.",
         "risk": "low",
+        "signal_labels": ["artifact_outline", "summary_contract", "handoff_bundle"],
     },
     "filesystem": {
         "description": "Read, write, stage, or organize local files and folders under runtime policy controls.",
         "risk": "medium",
+        "signal_labels": ["path_target", "artifact_store", "file_state"],
     },
     "api": {
         "description": "Write structured data into a downstream system or service.",
         "risk": "high",
+        "signal_labels": ["write_contract", "destination_system", "sync_result"],
     },
     "command": {
         "description": "Run local system commands under approval and policy controls.",
         "risk": "high",
+        "signal_labels": ["command_intent", "stdout_signal", "system_mutation"],
     },
     "llm": {
         "description": "Delegate reasoning, synthesis, or classification to the language model runtime.",
         "risk": "low",
+        "signal_labels": ["prompt_contract", "synthesis_result", "classification_signal"],
     },
     "approval": {
         "description": "Pause for a human review or approval checkpoint.",
         "risk": "low",
+        "signal_labels": ["review_gate", "human_decision", "approval_reason"],
     },
 }
 
@@ -394,6 +415,7 @@ class PersistedRuntimeService:
                     risk=str(config["risk"]),
                     supported_domains=supported_domains,
                     recommended_scene_types=self._recommended_scene_types_for_capability(key),
+                    signal_labels=list(config.get("signal_labels") or []),
                     writes_state=key in {"api", "command"},
                     requires_supervision=key in {"browser", "api", "command"} or str(config["risk"]) == "high",
                     audit_tags=[f"risk:{config['risk']}", "generic_runtime"],
@@ -408,13 +430,22 @@ class PersistedRuntimeService:
             or (plan.plan_body or {}).get("domain") if plan is not None else None
         ) or "general"
         compiler_payload = dict(payload.compiler_payload or {})
+        observed_entities = self._normalize_observed_entities(snapshot_context)
+        affordances = self._normalize_affordances(snapshot_context)
+        scene_type = self._derive_scene_type(snapshot_context, observed_entities=observed_entities, affordances=affordances)
+        scene_profile = self._derive_scene_profile(
+            snapshot=snapshot_context,
+            scene_type=scene_type,
+            observed_entities=observed_entities,
+            affordances=affordances,
+        )
         recommended_capabilities = self._derive_assessment_capabilities(
             task_spec=task_spec,
             plan=plan,
             snapshot=snapshot_context,
             compiler_payload=compiler_payload,
+            scene_profile=scene_profile,
         )
-        scene_type = self._derive_scene_type(snapshot_context)
         scene_key = (
             snapshot_context.environment_key
             if snapshot_context is not None and snapshot_context.environment_key
@@ -425,6 +456,14 @@ class PersistedRuntimeService:
             episode=episode,
             snapshot=snapshot_context,
             recommended_capabilities=recommended_capabilities,
+            scene_profile=scene_profile,
+        )
+        scene_profile = scene_profile.model_copy(update={"blockers": blockers})
+        planner_guidance = self._derive_planner_guidance(
+            scene_profile=scene_profile,
+            recommended_capabilities=recommended_capabilities,
+            blockers=blockers,
+            compiler_payload=compiler_payload,
         )
         plan_fit = "blocked" if blockers else "aligned"
         if blockers and not any(item.startswith("missing_") for item in blockers):
@@ -439,16 +478,32 @@ class PersistedRuntimeService:
         )
         environment_requirements = self._merge_dicts(
             environment_requirements,
-            self._environment_requirements_from_snapshot(snapshot_context),
+            self._environment_requirements_from_snapshot(
+                snapshot_context,
+                observed_entities=observed_entities,
+                affordances=affordances,
+                scene_profile=scene_profile,
+            ),
         )
         checkpoints = self._dedupe_dict_list(
             [
                 *(list(plan.checkpoints or []) if plan is not None else []),
-                *self._assessment_checkpoints(blockers=blockers, snapshot=snapshot_context),
+                *self._assessment_checkpoints(
+                    blockers=blockers,
+                    snapshot=snapshot_context,
+                    scene_profile=scene_profile,
+                    planner_guidance=planner_guidance,
+                ),
                 *list(payload.plan_context.get("checkpoints") or []),
             ]
         )
-        confidence = 0.92 if snapshot_context is not None else 0.64 if plan is not None else 0.5
+        confidence = self._derive_assessment_confidence(
+            snapshot=snapshot_context,
+            observed_entities=observed_entities,
+            affordances=affordances,
+            blockers=blockers,
+            plan=plan,
+        )
         if blockers:
             confidence = max(0.35, confidence - 0.18)
         assessment_notes = self._build_assessment_notes(
@@ -457,6 +512,8 @@ class PersistedRuntimeService:
             blockers=blockers,
             recommended_capabilities=recommended_capabilities,
             compiler_payload=compiler_payload,
+            scene_profile=scene_profile,
+            planner_guidance=planner_guidance,
         )
         audit_metadata = {
             "site_assumption_policy": "generic_only",
@@ -466,6 +523,7 @@ class PersistedRuntimeService:
             "environment_snapshot_id": persisted_snapshot.id if persisted_snapshot is not None else payload.environment_snapshot_id,
             "compiler_payload_keys": sorted(str(key) for key in compiler_payload.keys()),
             "plan_context_keys": sorted(str(key) for key in payload.plan_context.keys()),
+            "scene_profile_signals": list(scene_profile.signals),
         }
         return EnvironmentAssessmentRead(
             task_spec=TaskSpecRead.model_validate(task_spec) if task_spec is not None else None,
@@ -476,6 +534,10 @@ class PersistedRuntimeService:
             scene_key=scene_key,
             confidence=round(confidence, 2),
             plan_fit=plan_fit,
+            observed_entities=observed_entities,
+            affordances=affordances,
+            scene_profile=scene_profile,
+            planner_guidance=planner_guidance,
             recommended_capabilities=recommended_capabilities,
             blockers=blockers,
             environment_requirements=environment_requirements,
@@ -541,6 +603,7 @@ class PersistedRuntimeService:
             "scene_type": assessment.scene_type,
             "plan_fit": assessment.plan_fit,
             "blockers": list(assessment.blockers),
+            "planner_posture": assessment.planner_guidance.posture,
             "site_assumption_policy": "generic_only",
         }
         runtime_metadata = {
@@ -555,7 +618,11 @@ class PersistedRuntimeService:
                 "plan_fit": assessment.plan_fit,
                 "recommended_capabilities": list(assessment.recommended_capabilities),
                 "blockers": list(assessment.blockers),
+                "planner_posture": assessment.planner_guidance.posture,
+                "scene_signals": list(assessment.scene_profile.signals),
             },
+            "planner_guidance": assessment.planner_guidance.model_dump(),
+            "scene_profile": assessment.scene_profile.model_dump(),
             "replan_history": [
                 *list((current_plan.runtime_metadata or {}).get("replan_history") or []),
                 audit_entry,
@@ -1079,6 +1146,14 @@ class PersistedRuntimeService:
                     "workflow_template_id": template.id if template is not None else None,
                     "workflow_template_key": template.template_key if template is not None else None,
                     "domain_pack": task_spec.domain,
+                    "planner_contract_version": "runtime-scene-v2",
+                    "step_outline_source": "compiled_payload"
+                    if (task_spec.compiled_payload or {}).get("step_outline")
+                    else "default_seed",
+                    "scene_assessment_required": bool(
+                        ((task_spec.compiled_payload or {}).get("environment_requirements") or {}).get("requires_browser")
+                        or "browser" in list(task_spec.preferred_capabilities or [])
+                    ),
                 },
             }
         )
@@ -1892,6 +1967,181 @@ class PersistedRuntimeService:
         }
         return list(mapping.get(capability, ["generic_scene"]))
 
+    def _normalize_observed_entities(
+        self,
+        snapshot: EnvironmentSnapshotContextRead | None,
+    ) -> list[ObservedEntityRead]:
+        normalized: list[ObservedEntityRead] = []
+        for raw in list(snapshot.observed_entities or []) if snapshot is not None else []:
+            if not isinstance(raw, dict):
+                continue
+            kind = self._slugify(str(raw.get("kind") or raw.get("type") or raw.get("role") or "entity"))
+            label = str(raw.get("label") or raw.get("name") or raw.get("text") or kind.replace("_", " ")).strip()
+            if not label:
+                label = kind.replace("_", " ")
+            signal_values = [
+                str(item).strip()
+                for item in list(raw.get("signals") or raw.get("tags") or [])
+                if str(item).strip()
+            ]
+            normalized.append(
+                ObservedEntityRead(
+                    kind=kind,
+                    label=label,
+                    entity_id=str(raw.get("id") or raw.get("entity_id") or "") or None,
+                    role=str(raw.get("role") or "").strip() or None,
+                    confidence=self._coerce_confidence(raw.get("confidence")),
+                    state=str(raw.get("state") or "").strip() or None,
+                    interactive=bool(raw.get("interactive") or raw.get("clickable")),
+                    signals=list(dict.fromkeys(signal_values)),
+                    locator=self._normalize_locator(raw),
+                    attributes=self._normalize_attributes(raw, excluded={"signals", "tags", "kind", "type", "role", "id", "entity_id", "confidence", "state", "interactive", "clickable", "label", "name", "text"}),
+                )
+            )
+        return normalized
+
+    def _normalize_affordances(
+        self,
+        snapshot: EnvironmentSnapshotContextRead | None,
+    ) -> list[ActionAffordanceRead]:
+        normalized: list[ActionAffordanceRead] = []
+        for raw in list(snapshot.affordances or []) if snapshot is not None else []:
+            if not isinstance(raw, dict):
+                continue
+            kind = self._slugify(str(raw.get("kind") or raw.get("type") or raw.get("action") or "action"))
+            raw_action = str(raw.get("action") or raw.get("intent") or "").strip()
+            action = self._slugify(raw_action or self._default_affordance_action(kind))
+            label = str(raw.get("label") or raw.get("name") or raw.get("text") or action.replace("_", " ")).strip()
+            if not label:
+                label = action.replace("_", " ")
+            signal_values = [
+                str(item).strip()
+                for item in list(raw.get("signals") or raw.get("tags") or [])
+                if str(item).strip()
+            ]
+            normalized.append(
+                ActionAffordanceRead(
+                    kind=kind,
+                    label=label,
+                    action=action,
+                    target=str(raw.get("target") or raw.get("href") or raw.get("destination") or "").strip() or None,
+                    confidence=self._coerce_confidence(raw.get("confidence")),
+                    enabled=bool(raw.get("enabled", True)),
+                    requires_confirmation=bool(raw.get("requires_confirmation") or raw.get("requiresApproval")),
+                    signals=list(dict.fromkeys(signal_values)),
+                    locator=self._normalize_locator(raw),
+                    metadata=self._normalize_attributes(raw, excluded={"signals", "tags", "kind", "type", "action", "intent", "confidence", "enabled", "requires_confirmation", "requiresApproval", "label", "name", "text", "target", "href", "destination"}),
+                )
+            )
+        return normalized
+
+    def _default_affordance_action(self, kind: str) -> str:
+        mapping = {
+            "link": "navigate",
+            "button": "click",
+            "input": "fill",
+            "textarea": "fill",
+            "form": "submit",
+        }
+        return mapping.get(kind, kind or "inspect")
+
+    def _normalize_locator(self, raw: dict[str, Any]) -> dict[str, Any]:
+        locator = raw.get("locator")
+        if isinstance(locator, dict):
+            return dict(locator)
+        selector = str(raw.get("selector") or raw.get("css") or raw.get("xpath") or "").strip()
+        if selector:
+            return {"selector": selector}
+        return {}
+
+    def _normalize_attributes(self, raw: dict[str, Any], *, excluded: set[str]) -> dict[str, Any]:
+        return {str(key): value for key, value in raw.items() if str(key) not in excluded and value is not None}
+
+    def _coerce_confidence(self, value: Any) -> float | None:
+        try:
+            if value is None:
+                return None
+            number = float(value)
+        except (TypeError, ValueError):
+            return None
+        if number < 0:
+            return 0.0
+        if number > 1:
+            return 1.0
+        return number
+
+    def _derive_scene_profile(
+        self,
+        *,
+        snapshot: EnvironmentSnapshotContextRead | None,
+        scene_type: str,
+        observed_entities: list[ObservedEntityRead],
+        affordances: list[ActionAffordanceRead],
+    ) -> SceneProfileRead:
+        source = snapshot.source if snapshot is not None else "runtime"
+        auth_state = "unknown"
+        interaction_mode = "inspect"
+        volatility = "medium"
+        signals: list[str] = []
+
+        combined_labels = " ".join(
+            [
+                *[entity.label for entity in observed_entities],
+                *[affordance.label for affordance in affordances],
+                str(snapshot.title or "") if snapshot is not None else "",
+                str(snapshot.page_type or "") if snapshot is not None else "",
+            ]
+        ).lower()
+        if any(token in combined_labels for token in ("login", "sign in", "sign-in", "authenticate", "verification")):
+            auth_state = "required"
+            signals.append("auth_gate")
+        if any(token in combined_labels for token in ("captcha", "verification code", "2fa", "verify")):
+            auth_state = "challenged"
+            signals.append("verification_gate")
+        if any(action.action in {"click", "open", "navigate"} for action in affordances):
+            interaction_mode = "navigate"
+        if any(action.action in {"submit", "upload", "send"} for action in affordances):
+            interaction_mode = "submit"
+            signals.append("write_surface")
+        if any(entity.kind in {"candidate_card", "repository_card", "result_card", "tool_card"} for entity in observed_entities):
+            signals.append("listing_surface")
+        if any(entity.kind in {"detail_panel", "candidate_detail", "repository_detail"} for entity in observed_entities):
+            signals.append("detail_surface")
+        if any(entity.kind in {"form", "editor", "composer"} for entity in observed_entities):
+            signals.append("input_surface")
+        if any(action.requires_confirmation for action in affordances):
+            signals.append("approval_sensitive")
+        if len(observed_entities) < 2 and len(affordances) < 2:
+            volatility = "high"
+            signals.append("low_signal_scene")
+        elif len(observed_entities) >= 6 and len(affordances) >= 4:
+            volatility = "low"
+            signals.append("well_observed_scene")
+
+        primary_targets = [
+            entity.label
+            for entity in observed_entities
+            if entity.kind in {"candidate_card", "candidate_detail", "repository_card", "repository_detail", "tool_card", "document", "detail_panel"}
+        ][:5]
+        evidence = {
+            "persisted_snapshot": bool(snapshot.persisted) if snapshot is not None else False,
+            "observed_entity_kinds": sorted({entity.kind for entity in observed_entities}),
+            "affordance_actions": sorted({affordance.action for affordance in affordances}),
+        }
+        return SceneProfileRead(
+            source=source,
+            scene_type=scene_type,
+            interaction_mode=interaction_mode,
+            volatility=volatility,
+            auth_state=auth_state,
+            entity_count=len(observed_entities),
+            affordance_count=len(affordances),
+            primary_targets=primary_targets,
+            signals=list(dict.fromkeys(signals)),
+            blockers=[],
+            evidence=evidence,
+        )
+
     def _derive_assessment_capabilities(
         self,
         *,
@@ -1899,6 +2149,7 @@ class PersistedRuntimeService:
         plan: Any | None,
         snapshot: EnvironmentSnapshotContextRead | None,
         compiler_payload: dict[str, Any],
+        scene_profile: SceneProfileRead | None = None,
     ) -> list[str]:
         capabilities: list[str] = []
         if task_spec is not None:
@@ -1912,6 +2163,15 @@ class PersistedRuntimeService:
         if snapshot is not None:
             capabilities.extend(list(snapshot.capability_hints or []))
         capabilities.extend(list(compiler_payload.get("preferred_capabilities") or []))
+        if scene_profile is not None:
+            if scene_profile.source == "browser":
+                capabilities.append("browser")
+            if scene_profile.interaction_mode == "submit":
+                capabilities.append("approval")
+            if "listing_surface" in scene_profile.signals:
+                capabilities.append("search")
+            if "write_surface" in scene_profile.signals:
+                capabilities.append("document")
         capabilities = [item for item in capabilities if item in CAPABILITY_DRIVERS]
         if not capabilities and task_spec is not None:
             capabilities = self._infer_capabilities(task_spec.goal, task_spec.domain, [])
@@ -1919,11 +2179,27 @@ class PersistedRuntimeService:
             capabilities = list(DOMAIN_PACKS["general"]["default_capabilities"])
         return list(dict.fromkeys(capabilities))
 
-    def _derive_scene_type(self, snapshot: EnvironmentSnapshotContextRead | None) -> str:
+    def _derive_scene_type(
+        self,
+        snapshot: EnvironmentSnapshotContextRead | None,
+        *,
+        observed_entities: list[ObservedEntityRead] | None = None,
+        affordances: list[ActionAffordanceRead] | None = None,
+    ) -> str:
         if snapshot is None:
             return "generic_runtime"
         if snapshot.page_type:
             return self._slugify(snapshot.page_type)
+        entity_kinds = {entity.kind for entity in observed_entities or []}
+        affordance_actions = {affordance.action for affordance in affordances or []}
+        if {"candidate_card", "repository_card", "tool_card"} & entity_kinds:
+            return "listing_scene"
+        if {"candidate_detail", "repository_detail", "detail_panel"} & entity_kinds:
+            return "detail_scene"
+        if "upload" in affordance_actions:
+            return "upload_scene"
+        if {"submit", "send"} & affordance_actions:
+            return "submission_scene"
         if snapshot.source == "browser":
             return "web_scene" if snapshot.url else "browser_scene"
         if snapshot.source in {"http", "api"}:
@@ -1939,6 +2215,7 @@ class PersistedRuntimeService:
         episode: Any | None,
         snapshot: EnvironmentSnapshotContextRead | None,
         recommended_capabilities: list[str],
+        scene_profile: SceneProfileRead | None = None,
     ) -> list[str]:
         blockers: list[str] = []
         requires_browser = "browser" in recommended_capabilities or bool((plan.environment_requirements or {}).get("requires_browser")) if plan is not None else "browser" in recommended_capabilities
@@ -1946,6 +2223,15 @@ class PersistedRuntimeService:
             blockers.append("missing_browser_snapshot")
         if snapshot is not None and snapshot.source == "browser" and not snapshot.affordances and not snapshot.observed_entities:
             blockers.append("limited_interaction_signals")
+        if scene_profile is not None:
+            if scene_profile.auth_state == "required":
+                blockers.append("authentication_required")
+            if scene_profile.auth_state == "challenged":
+                blockers.append("verification_required")
+            if scene_profile.source == "browser" and scene_profile.affordance_count == 0:
+                blockers.append("missing_actionable_affordances")
+            if "low_signal_scene" in scene_profile.signals:
+                blockers.append("scene_needs_reassessment")
         if episode is not None and bool(episode.divergence_detected):
             blockers.append("prior_divergence_detected")
         return list(dict.fromkeys(blockers))
@@ -1953,22 +2239,25 @@ class PersistedRuntimeService:
     def _environment_requirements_from_snapshot(
         self,
         snapshot: EnvironmentSnapshotContextRead | None,
+        *,
+        observed_entities: list[ObservedEntityRead],
+        affordances: list[ActionAffordanceRead],
+        scene_profile: SceneProfileRead,
     ) -> dict[str, Any]:
         if snapshot is None:
             return {}
         requirements: dict[str, Any] = {
             "requires_browser": snapshot.source == "browser",
-            "observed_affordance_count": len(snapshot.affordances or []),
+            "observed_affordance_count": len(affordances),
+            "observed_entity_count": len(observed_entities),
+            "scene_interaction_mode": scene_profile.interaction_mode,
         }
-        page_type = str(snapshot.page_type or "").lower()
-        if any(token in page_type for token in ("login", "auth", "signin", "sign_in")):
+        if scene_profile.auth_state in {"required", "challenged"}:
             requirements["requires_authentication"] = True
-        if any(
-            any(token in str(item.get("label") or "").lower() for token in ("send", "submit", "upload"))
-            for item in list(snapshot.affordances or [])
-            if isinstance(item, dict)
-        ):
+        if any(action.action in {"send", "submit", "upload"} for action in affordances):
             requirements["requires_approval_gate"] = True
+        if any(entity.kind in {"form", "editor", "composer"} for entity in observed_entities):
+            requirements["requires_input_validation"] = True
         return requirements
 
     def _assessment_checkpoints(
@@ -1976,10 +2265,16 @@ class PersistedRuntimeService:
         *,
         blockers: list[str],
         snapshot: EnvironmentSnapshotContextRead | None,
+        scene_profile: SceneProfileRead,
+        planner_guidance: PlannerGuidanceRead,
     ) -> list[dict[str, Any]]:
         checkpoints: list[dict[str, Any]] = [{"kind": "scene_assessment", "label": "Review environment assessment"}]
         if snapshot is not None and snapshot.source == "browser":
             checkpoints.append({"kind": "snapshot", "label": "Confirm captured environment state"})
+        if planner_guidance.requires_scene_assessment:
+            checkpoints.append({"kind": "planner", "label": "Confirm replanner posture before execution"})
+        if scene_profile.auth_state in {"required", "challenged"}:
+            checkpoints.append({"kind": "approval", "label": "Handle authentication or verification before resuming"})
         if blockers:
             checkpoints.append({"kind": "approval", "label": "Review blockers before execution"})
         return checkpoints
@@ -1992,10 +2287,14 @@ class PersistedRuntimeService:
         blockers: list[str],
         recommended_capabilities: list[str],
         compiler_payload: dict[str, Any],
+        scene_profile: SceneProfileRead,
+        planner_guidance: PlannerGuidanceRead,
     ) -> list[str]:
         notes = [
             f"Assessed scene type: {scene_type}.",
             f"Recommended capabilities: {', '.join(recommended_capabilities)}.",
+            f"Planner posture: {planner_guidance.posture}.",
+            f"Scene interaction mode: {scene_profile.interaction_mode}.",
             f"Applied generic domain heuristics for {domain}.",
             "No fixed-site assumptions were introduced during assessment.",
         ]
@@ -2007,6 +2306,134 @@ class PersistedRuntimeService:
             )
         return notes
 
+    def _derive_planner_guidance(
+        self,
+        *,
+        scene_profile: SceneProfileRead,
+        recommended_capabilities: list[str],
+        blockers: list[str],
+        compiler_payload: dict[str, Any],
+    ) -> PlannerGuidanceRead:
+        posture = "advance"
+        inserted: list[str] = []
+        preferred_next_actions: list[str] = []
+        rationale: list[str] = []
+        requires_review = bool(blockers)
+        requires_scene_assessment = scene_profile.source == "browser"
+
+        if blockers:
+            posture = "recover"
+            rationale.append("The current scene has unresolved blockers and needs supervised recovery.")
+        elif scene_profile.interaction_mode in {"navigate", "inspect"}:
+            posture = "verify"
+            rationale.append("The planner should verify the scene before deeper extraction.")
+        if scene_profile.auth_state in {"required", "challenged"}:
+            inserted.extend(["approval", "browser"])
+            preferred_next_actions.append("Resolve authentication or verification before continuing.")
+            requires_review = True
+        if "listing_surface" in scene_profile.signals:
+            inserted.append("search")
+            preferred_next_actions.append("Confirm the listing layout and identify the primary target set.")
+        if "detail_surface" in scene_profile.signals:
+            preferred_next_actions.append("Capture detail evidence before summarizing or writing downstream.")
+        if scene_profile.interaction_mode == "submit":
+            inserted.append("approval")
+            preferred_next_actions.append("Pause before any write-oriented browser action.")
+            requires_review = True
+        if compiler_payload.get("step_outline"):
+            rationale.append("The compiler provided an initial step outline that should be preserved where valid.")
+        return PlannerGuidanceRead(
+            posture=posture,
+            required_capabilities=list(dict.fromkeys(recommended_capabilities)),
+            inserted_capabilities=list(dict.fromkeys(cap for cap in inserted if cap in CAPABILITY_DRIVERS)),
+            preferred_next_actions=list(dict.fromkeys(preferred_next_actions)),
+            requires_scene_assessment=requires_scene_assessment,
+            requires_human_review=requires_review,
+            should_checkpoint=True,
+            rationale=rationale or ["The current plan can proceed after a lightweight scene verification pass."],
+        )
+
+    def _derive_assessment_confidence(
+        self,
+        *,
+        snapshot: EnvironmentSnapshotContextRead | None,
+        observed_entities: list[ObservedEntityRead],
+        affordances: list[ActionAffordanceRead],
+        blockers: list[str],
+        plan: Any | None,
+    ) -> float:
+        confidence = 0.92 if snapshot is not None else 0.64 if plan is not None else 0.5
+        if observed_entities:
+            confidence += min(0.04, len(observed_entities) * 0.01)
+        if affordances:
+            confidence += min(0.04, len(affordances) * 0.01)
+        if blockers:
+            confidence -= min(0.18, len(blockers) * 0.04)
+        return max(0.2, min(0.98, confidence))
+
+    def _scene_driven_replan_steps(self, assessment: EnvironmentAssessmentRead) -> list[dict[str, Any]]:
+        scene_profile = assessment.scene_profile
+        steps: list[dict[str, Any]] = []
+        if assessment.planner_guidance.requires_scene_assessment:
+            steps.append(
+                {
+                    "id": "assess_runtime_scene",
+                    "capability": "browser" if "browser" in assessment.recommended_capabilities else "analyze",
+                    "summary": "Refresh the runtime scene model and validate the current target before proceeding.",
+                }
+            )
+
+        if scene_profile.auth_state in {"required", "challenged"}:
+            steps.append(
+                {
+                    "id": "resolve_access_gate",
+                    "capability": "approval",
+                    "summary": "Pause for operator help to clear the authentication or verification gate.",
+                }
+            )
+            return steps
+
+        if "listing_surface" in scene_profile.signals:
+            steps.extend(
+                [
+                    {
+                        "id": "triage_visible_targets",
+                        "capability": "browser",
+                        "summary": "Inspect the visible target list and capture the strongest candidate set for the current task.",
+                    },
+                    {
+                        "id": "select_priority_target",
+                        "capability": "analyze",
+                        "summary": "Choose the next target to open based on the task contract, evidence, and current scene state.",
+                    },
+                ]
+            )
+        elif "detail_surface" in scene_profile.signals:
+            steps.extend(
+                [
+                    {
+                        "id": "inspect_detail_surface",
+                        "capability": "browser",
+                        "summary": "Inspect the focused detail surface and capture the durable evidence needed downstream.",
+                    },
+                    {
+                        "id": "record_detail_evidence",
+                        "capability": "document",
+                        "summary": "Summarize the captured detail evidence before deciding whether to continue, branch, or write.",
+                    },
+                ]
+            )
+
+        if scene_profile.interaction_mode == "submit":
+            steps.append(
+                {
+                    "id": "review_write_risk",
+                    "capability": "approval",
+                    "summary": "Review the pending write-oriented action before allowing the runtime to continue.",
+                }
+            )
+        return steps
+
     def _derive_replanned_steps(
         self,
         *,
@@ -2016,21 +2443,30 @@ class PersistedRuntimeService:
     ) -> list[dict[str, Any]]:
         compiler_steps = self._normalize_steps(list(compiler_payload.get("step_outline") or []))
         if compiler_steps:
-            steps = compiler_steps
+            steps = [
+                *self._scene_driven_replan_steps(assessment),
+                *compiler_steps,
+            ]
         else:
-            steps = self._normalize_steps(current_steps)
-            if assessment.blockers:
-                steps = [
+            steps = [
+                *self._scene_driven_replan_steps(assessment),
+                *self._normalize_steps(current_steps),
+            ]
+            if assessment.blockers and not any(str(step.get("id") or "") == "reassess_environment" for step in steps):
+                steps.insert(
+                    0,
                     {
                         "id": "reassess_environment",
                         "capability": "analyze",
                         "summary": "Review the current scene and update the plan before retrying.",
                     },
-                    *steps,
-                ]
+                )
             missing_capabilities = [
                 capability
-                for capability in assessment.recommended_capabilities
+                for capability in [
+                    *assessment.planner_guidance.inserted_capabilities,
+                    *assessment.recommended_capabilities,
+                ]
                 if capability not in {str(step.get("capability") or "") for step in steps}
             ]
             for index, capability in enumerate(missing_capabilities, start=1):
@@ -2105,7 +2541,17 @@ class PersistedRuntimeService:
         if not capabilities:
             capabilities = list((DOMAIN_PACKS.get(task_spec.domain) or DOMAIN_PACKS["general"])["default_capabilities"])
         steps = [{"id": "understand_task", "capability": "analyze", "goal": task_spec.goal}]
+        if "browser" in capabilities:
+            steps.append(
+                {
+                    "id": "assess_runtime_scene",
+                    "capability": "browser",
+                    "summary": "Inspect the active browser scene and confirm that the runtime is observing the right surface.",
+                }
+            )
         for index, capability in enumerate(capabilities, start=1):
+            if capability == "browser" and any(str(step.get("capability")) == "browser" for step in steps):
+                continue
             steps.append(
                 {
                     "id": f"{capability}_{index}",
@@ -2125,6 +2571,7 @@ class PersistedRuntimeService:
             checkpoints.append({"kind": "policy", "label": "Respect task approval policy"})
         if "browser" in (task_spec.preferred_capabilities or []):
             checkpoints.append({"kind": "snapshot", "label": "Capture environment snapshot"})
+            checkpoints.append({"kind": "planner", "label": "Validate runtime scene before proceeding"})
         deduped: list[dict[str, Any]] = []
         seen: set[str] = set()
         for checkpoint in checkpoints:
@@ -2136,7 +2583,11 @@ class PersistedRuntimeService:
         return deduped
 
     def _default_environment_requirements(self, domain: str, capabilities: list[str]) -> dict[str, Any]:
-        hints = {"requires_browser": "browser" in capabilities, "requires_network": any(cap in capabilities for cap in ("http", "search", "browser"))}
+        hints = {
+            "requires_browser": "browser" in capabilities,
+            "requires_network": any(cap in capabilities for cap in ("http", "search", "browser")),
+            "scene_assessment_required": "browser" in capabilities,
+        }
         if domain == "recruiting":
             hints["requires_approval_gate"] = True
         return hints

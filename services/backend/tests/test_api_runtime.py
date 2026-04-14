@@ -75,6 +75,13 @@ class ApiRuntimeTests(unittest.TestCase):
         self.assertEqual(compile_payload["domain_pack"]["key"], "web_research")
         task_spec_id = compile_payload["task_spec"]["id"]
         plan_id = compile_payload["execution_plan"]["id"]
+        self.assertEqual(compile_payload["execution_plan"]["plan_body"]["steps"][1]["id"], "assess_runtime_scene")
+        self.assertTrue(
+            any(
+                checkpoint["label"] == "Validate runtime scene before proceeding"
+                for checkpoint in compile_payload["execution_plan"]["checkpoints"]
+            )
+        )
 
         listed_tasks = self.client.get("/api/runtime/task-specs")
         self.assertEqual(listed_tasks.status_code, 200)
@@ -158,6 +165,7 @@ class ApiRuntimeTests(unittest.TestCase):
         browser_driver = next(item for item in capability_payload if item["key"] == "browser")
         self.assertIn("web_research", browser_driver["supported_domains"])
         self.assertTrue(browser_driver["requires_supervision"])
+        self.assertIn("scene_profile", browser_driver["signal_labels"])
         all_capabilities = self.client.get("/api/runtime/capability-drivers")
         self.assertEqual(all_capabilities.status_code, 200)
         self.assertTrue(any(item["key"] == "filesystem" for item in all_capabilities.json()))
@@ -185,6 +193,10 @@ class ApiRuntimeTests(unittest.TestCase):
                 "title": "PDF Converter Tools",
                 "page_type": "tool_listing",
                 "capability_hints": ["browser", "search"],
+                "observed_entities": [
+                    {"kind": "tool_card", "label": "Converter A", "confidence": 0.94, "interactive": True},
+                    {"kind": "tool_card", "label": "Converter B", "confidence": 0.91, "interactive": True},
+                ],
                 "affordances": [{"kind": "link", "label": "View details"}],
             },
         )
@@ -205,6 +217,12 @@ class ApiRuntimeTests(unittest.TestCase):
         self.assertEqual(assessment_payload["plan_fit"], "aligned")
         self.assertIn("browser", assessment_payload["recommended_capabilities"])
         self.assertIn("search", assessment_payload["recommended_capabilities"])
+        self.assertEqual(assessment_payload["scene_profile"]["interaction_mode"], "navigate")
+        self.assertIn("listing_surface", assessment_payload["scene_profile"]["signals"])
+        self.assertEqual(assessment_payload["planner_guidance"]["posture"], "verify")
+        self.assertTrue(assessment_payload["planner_guidance"]["requires_scene_assessment"])
+        self.assertEqual(assessment_payload["observed_entities"][0]["kind"], "tool_card")
+        self.assertEqual(assessment_payload["affordances"][0]["action"], "navigate")
         self.assertEqual(assessment_payload["audit_metadata"]["site_assumption_policy"], "generic_only")
         self.assertEqual(assessment_payload["snapshot"]["id"], snapshot_id)
 
@@ -240,6 +258,11 @@ class ApiRuntimeTests(unittest.TestCase):
                 "url": "https://github.com/trending",
                 "title": "GitHub Trending",
                 "page_type": "repository_listing",
+                "observed_entities": [
+                    {"kind": "repository_card", "label": "runtime/project-alpha"},
+                    {"kind": "repository_card", "label": "runtime/project-beta"},
+                ],
+                "affordances": [{"kind": "click", "label": "Open repository"}],
                 "simulate_divergence": True,
             },
         )
@@ -283,7 +306,11 @@ class ApiRuntimeTests(unittest.TestCase):
             "generic_only",
         )
         self.assertEqual(replanned_payload["audit_metadata"]["site_assumption_policy"], "generic_only")
-        self.assertEqual(replanned_payload["execution_plan"]["plan_body"]["steps"][0]["id"], "reassess")
+        self.assertEqual(replanned_payload["execution_plan"]["plan_body"]["steps"][0]["id"], "assess_runtime_scene")
+        self.assertEqual(
+            replanned_payload["execution_plan"]["runtime_metadata"]["planner_guidance"]["posture"],
+            "recover",
+        )
         self.assertTrue(
             any(item["label"] == "Review replan" for item in replanned_payload["execution_plan"]["checkpoints"])
         )
@@ -293,6 +320,57 @@ class ApiRuntimeTests(unittest.TestCase):
         self.assertEqual(listed_tasks.status_code, 200)
         refreshed_task = next(item for item in listed_tasks.json() if item["id"] == task_spec_id)
         self.assertEqual(refreshed_task["active_plan_id"], replanned_payload["execution_plan"]["id"])
+
+    def test_replan_adds_auth_recovery_steps_for_browser_gate(self) -> None:
+        compiled_task = self.client.post(
+            "/api/runtime/task-specs/compile",
+            json={
+                "instruction": "Open the web app, inspect the current page, and continue only when the scene is ready.",
+                "title": "Auth gate recovery",
+                "preferred_capabilities": ["browser", "document"],
+            },
+        )
+        self.assertEqual(compiled_task.status_code, 201)
+        plan_id = compiled_task.json()["execution_plan"]["id"]
+        task_spec_id = compiled_task.json()["task_spec"]["id"]
+
+        snapshot = self.client.post(
+            "/api/runtime/environment-snapshots",
+            json={
+                "task_spec_id": task_spec_id,
+                "execution_plan_id": plan_id,
+                "source": "browser",
+                "environment_key": "general:auth_gate",
+                "status": "captured",
+                "url": "https://example.com/login",
+                "title": "Sign in to continue",
+                "page_type": "auth_gate",
+                "observed_entities": [{"kind": "form", "label": "Login form"}],
+                "affordances": [{"kind": "submit", "label": "Sign in", "requires_confirmation": True}],
+            },
+        )
+        self.assertEqual(snapshot.status_code, 201)
+        snapshot_id = snapshot.json()["id"]
+
+        replanned = self.client.post(
+            f"/api/runtime/plans/{plan_id}/replan",
+            json={
+                "requested_by": "desktop-user",
+                "reason": "The current scene is an auth gate and needs recovery handling.",
+                "environment_snapshot_id": snapshot_id,
+            },
+        )
+        self.assertEqual(replanned.status_code, 201)
+        payload = replanned.json()
+        self.assertIn("authentication_required", payload["assessment"]["blockers"])
+        self.assertTrue(payload["assessment"]["planner_guidance"]["requires_human_review"])
+        self.assertTrue(
+            any(step["id"] == "resolve_access_gate" for step in payload["execution_plan"]["plan_body"]["steps"])
+        )
+        self.assertEqual(
+            payload["execution_plan"]["runtime_metadata"]["planner_guidance"]["posture"],
+            "recover",
+        )
 
     def test_task_compile_prefers_llm_semantic_compiler_when_provider_returns_valid_json(self) -> None:
         from recruit_agent.runtime.models import LLMResponse
