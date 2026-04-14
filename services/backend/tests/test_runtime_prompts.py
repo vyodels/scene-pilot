@@ -10,7 +10,7 @@ SRC = Path(__file__).resolve().parents[1] / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from recruit_agent.runtime.prompts import PromptBuilder, PromptLoader
+from scene_pilot.runtime.prompts import PromptBuilder, PromptLoader
 
 
 class PromptTests(unittest.TestCase):

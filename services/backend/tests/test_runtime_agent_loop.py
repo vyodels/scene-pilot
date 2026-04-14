@@ -10,10 +10,10 @@ SRC = Path(__file__).resolve().parents[1] / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from recruit_agent.runtime.agent_loop import AgentLoop, AgentLoopConfig
-from recruit_agent.runtime.models import LLMResponse, ToolCall
-from recruit_agent.runtime.providers import ScriptedProvider
-from recruit_agent.runtime.tools import ToolDefinition, ToolRegistry
+from scene_pilot.runtime.agent_loop import AgentLoop, AgentLoopConfig
+from scene_pilot.runtime.models import LLMResponse, ToolCall
+from scene_pilot.runtime.providers import ScriptedProvider
+from scene_pilot.runtime.tools import ToolDefinition, ToolRegistry
 
 
 class AgentLoopTests(unittest.TestCase):

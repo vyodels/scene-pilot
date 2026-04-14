@@ -10,14 +10,14 @@ SRC = Path(__file__).resolve().parents[1] / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from recruit_agent.core.settings import AppSettings
-from recruit_agent.db.session import create_engine_from_settings, create_session_factory, initialize_database
-from recruit_agent.models import Workflow
-from recruit_agent.runtime.models import AgentResult
-from recruit_agent.scheduler.queue import TaskEnvelope
-from recruit_agent.workflows.dag import reachable_nodes, topological_sort, validate_acyclic
-from recruit_agent.workflows.definitions import WorkflowDefinition, WorkflowNode, WorkflowTransition, build_default_recruiting_workflow
-from recruit_agent.workflows.engine import WorkflowEngine
+from scene_pilot.core.settings import AppSettings
+from scene_pilot.db.session import create_engine_from_settings, create_session_factory, initialize_database
+from scene_pilot.models import Workflow
+from scene_pilot.runtime.models import AgentResult
+from scene_pilot.scheduler.queue import TaskEnvelope
+from scene_pilot.workflows.dag import reachable_nodes, topological_sort, validate_acyclic
+from scene_pilot.workflows.definitions import WorkflowDefinition, WorkflowNode, WorkflowTransition, build_default_recruiting_workflow
+from scene_pilot.workflows.engine import WorkflowEngine
 
 
 class WorkflowTests(unittest.TestCase):
@@ -54,7 +54,7 @@ class WorkflowTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tempdir:
             settings = AppSettings(
                 data_dir=tempdir,
-                database_url=f"sqlite:///{Path(tempdir) / 'recruit-agent.db'}",
+                database_url=f"sqlite:///{Path(tempdir) / 'scene-pilot.db'}",
             )
             engine = create_engine_from_settings(settings)
             initialize_database(engine)

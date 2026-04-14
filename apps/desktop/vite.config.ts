@@ -6,7 +6,7 @@ export default defineConfig({
   plugins: [react()],
   resolve: {
     alias: {
-      "@recruit-agent/shared": path.resolve(__dirname, "../../packages/shared/src/index.ts"),
+      "@scene-pilot/shared": path.resolve(__dirname, "../../packages/shared/src/index.ts"),
       "@": path.resolve(__dirname, "./src"),
     },
   },

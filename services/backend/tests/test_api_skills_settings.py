@@ -1,14 +1,14 @@
 from fastapi.testclient import TestClient
 
-from recruit_agent.core.app import create_app
-from recruit_agent.core.settings import AppSettings
+from scene_pilot.core.app import create_app
+from scene_pilot.core.settings import AppSettings
 
 
 def make_client(tmp_path):
     app = create_app(
         AppSettings(
             data_dir=str(tmp_path / "data"),
-            database_url=f"sqlite:///{tmp_path / 'recruit-agent.db'}",
+            database_url=f"sqlite:///{tmp_path / 'scene-pilot.db'}",
         )
     )
     return TestClient(app)

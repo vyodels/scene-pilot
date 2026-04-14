@@ -1,5 +1,5 @@
-appId: com.recruitagent.desktop
-productName: Recruit Agent
+appId: com.scenepilot.desktop
+productName: ScenePilot
 electronDist: ../../.release/electron-dist
 directories:
   output: dist/packages

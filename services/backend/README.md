@@ -1,6 +1,6 @@
-# Recruit Agent Backend
+# ScenePilot Backend
 
-FastAPI backend foundation for the recruiting agent system.
+FastAPI backend foundation for the ScenePilot automation runtime.
 
 ## What is here
 
@@ -15,7 +15,7 @@ Install dependencies and start the app:
 
 ```bash
 python -m pip install -e .[dev]
-recruit-agent-backend --port 8741
+scene-pilot-backend --port 8741
 ```
 
 By default the backend stores SQLite data under the configured data directory and exposes the API on `127.0.0.1`.
@@ -29,4 +29,3 @@ By default the backend stores SQLite data under the configured data directory an
 - `GET|PUT /api/settings`
 - `GET|POST|PATCH /api/approvals`
 - `GET /api/metrics`
-

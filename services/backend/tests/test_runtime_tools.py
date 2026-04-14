@@ -9,7 +9,7 @@ SRC = Path(__file__).resolve().parents[1] / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from recruit_agent.runtime.tools import ToolDefinition, ToolExecutionError, ToolRegistry
+from scene_pilot.runtime.tools import ToolDefinition, ToolExecutionError, ToolRegistry
 
 
 class ToolRegistryTests(unittest.TestCase):

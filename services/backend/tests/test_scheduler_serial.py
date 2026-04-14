@@ -9,9 +9,9 @@ SRC = Path(__file__).resolve().parents[1] / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from recruit_agent.runtime.models import AgentResult
-from recruit_agent.scheduler.queue import InMemoryQueue, TaskEnvelope
-from recruit_agent.scheduler.scheduler import SerialScheduler
+from scene_pilot.runtime.models import AgentResult
+from scene_pilot.scheduler.queue import InMemoryQueue, TaskEnvelope
+from scene_pilot.scheduler.scheduler import SerialScheduler
 
 
 class SerialSchedulerTests(unittest.TestCase):

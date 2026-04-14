@@ -2,7 +2,7 @@
 
 declare global {
   interface Window {
-    recruitAgent?: {
+    scenePilot?: {
       environment: string;
     };
   }

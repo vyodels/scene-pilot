@@ -2,7 +2,7 @@
   "name": "apps-desktop",
   "private": true,
   "version": "0.1.0",
-  "description": "Local-first desktop control plane for Recruit Agent",
+  "description": "Local-first desktop control plane for ScenePilot",
   "author": "Codex",
   "type": "module",
   "main": "dist-electron/main.js",
@@ -20,7 +20,7 @@
     "package:distribution": "npm run release:prepare && npm run dist && npm run release:preflight:distribution && electron-builder --config ../../electron-builder.yml --publish never"
   },
   "dependencies": {
-    "@recruit-agent/shared": "0.1.0",
+    "@scene-pilot/shared": "0.1.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },

@@ -1,4 +1,4 @@
-# General Automation Runtime
+# ScenePilot
 
 Local-first desktop control plane and backend runtime for natural-language automation workflows. Recruiting is one domain pack on top of the runtime, not the product core.
 
@@ -95,7 +95,7 @@ cd services/backend
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e .[dev]
-uvicorn recruit_agent.server:create_app --reload --factory
+uvicorn scene_pilot.server:create_app --reload --factory
 ```
 
 ## Desktop Packaging

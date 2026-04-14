@@ -44,11 +44,11 @@ class _SequentialProvider:
 @unittest.skipIf(TestClient is None, "FastAPI test dependencies are not installed")
 class ApiRuntimeTests(unittest.TestCase):
     def setUp(self) -> None:
-        from recruit_agent.core.settings import load_settings
-        from recruit_agent.server import create_app
+        from scene_pilot.core.settings import load_settings
+        from scene_pilot.server import create_app
 
         self.tempdir = tempfile.TemporaryDirectory()
-        os.environ["RECRUIT_AGENT_DATA_DIR"] = self.tempdir.name
+        os.environ["SCENE_PILOT_DATA_DIR"] = self.tempdir.name
         load_settings.cache_clear()
         self.client = TestClient(create_app())
         self.client.__enter__()
@@ -58,7 +58,7 @@ class ApiRuntimeTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.client.__exit__(None, None, None)
         self.tempdir.cleanup()
-        os.environ.pop("RECRUIT_AGENT_DATA_DIR", None)
+        os.environ.pop("SCENE_PILOT_DATA_DIR", None)
         self._load_settings.cache_clear()
 
     def test_natural_language_compile_trial_execution_and_snapshot_flow(self) -> None:
@@ -396,7 +396,7 @@ class ApiRuntimeTests(unittest.TestCase):
         )
 
     def test_task_compile_prefers_llm_semantic_compiler_when_provider_returns_valid_json(self) -> None:
-        from recruit_agent.runtime.models import LLMResponse
+        from scene_pilot.runtime.models import LLMResponse
 
         self.container.providers.providers["openai_compatible"] = _StaticProvider(
             "openai_compatible",
@@ -436,7 +436,7 @@ class ApiRuntimeTests(unittest.TestCase):
         self.assertIn("openai_compatible", "\n".join(payload["compiler_notes"]))
 
     def test_task_compile_falls_back_to_heuristic_when_llm_output_is_invalid(self) -> None:
-        from recruit_agent.runtime.models import LLMResponse
+        from scene_pilot.runtime.models import LLMResponse
 
         self.container.providers.providers["openai_compatible"] = _StaticProvider(
             "openai_compatible",
@@ -459,7 +459,7 @@ class ApiRuntimeTests(unittest.TestCase):
         self.assertIn("fell back", "\n".join(payload["compiler_notes"]).lower())
 
     def test_task_compile_repairs_schema_valid_but_quality_incomplete_llm_output(self) -> None:
-        from recruit_agent.runtime.models import LLMResponse
+        from scene_pilot.runtime.models import LLMResponse
 
         self.container.providers.providers["openai_compatible"] = _SequentialProvider(
             "openai_compatible",
@@ -753,7 +753,7 @@ class ApiRuntimeTests(unittest.TestCase):
         self.assertEqual(payload["snapshots"][0]["page_type"], "tool_listing")
 
     def test_launch_managed_runtime_execution_through_queue_and_finalize_learning(self) -> None:
-        from recruit_agent.runtime.models import LLMResponse, ToolCall
+        from scene_pilot.runtime.models import LLMResponse, ToolCall
 
         self.container.providers.providers["openai_compatible"] = _SequentialProvider(
             "openai_compatible",
@@ -868,7 +868,7 @@ class ApiRuntimeTests(unittest.TestCase):
         self.assertIsNotNone(replay_payload["learning_draft"])
 
     def test_managed_runtime_execution_replans_and_enqueues_follow_up_task(self) -> None:
-        from recruit_agent.runtime.models import LLMResponse, ToolCall
+        from scene_pilot.runtime.models import LLMResponse, ToolCall
 
         self.container.providers.providers["openai_compatible"] = _SequentialProvider(
             "openai_compatible",

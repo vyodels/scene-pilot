@@ -3,9 +3,9 @@ requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "recruit-agent-backend"
+name = "scene-pilot-backend"
 version = "0.1.0"
-description = "FastAPI backend foundation for the recruiting agent"
+description = "FastAPI backend foundation for the ScenePilot automation runtime"
 requires-python = ">=3.14"
 dependencies = [
   "fastapi>=0.115.0",
@@ -22,15 +22,15 @@ dev = [
 ]
 
 [project.scripts]
-recruit-agent-backend = "recruit_agent.core.app:main"
-recruit-agent-migrate = "recruit_agent.db.migrations:main"
+scene-pilot-backend = "scene_pilot.core.app:main"
+scene-pilot-migrate = "scene_pilot.db.migrations:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["recruit_agent*"]
+include = ["scene_pilot*"]
 namespaces = true
 
 [tool.pytest.ini_options]

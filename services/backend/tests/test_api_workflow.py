@@ -20,11 +20,11 @@ except ModuleNotFoundError:
 @unittest.skipIf(TestClient is None, "FastAPI test dependencies are not installed")
 class ApiWorkflowTests(unittest.TestCase):
     def setUp(self) -> None:
-        from recruit_agent.core.settings import load_settings
-        from recruit_agent.server import create_app
+        from scene_pilot.core.settings import load_settings
+        from scene_pilot.server import create_app
 
         self.tempdir = tempfile.TemporaryDirectory()
-        os.environ["RECRUIT_AGENT_DATA_DIR"] = self.tempdir.name
+        os.environ["SCENE_PILOT_DATA_DIR"] = self.tempdir.name
         load_settings.cache_clear()
         self.client = TestClient(create_app())
         self.client.__enter__()
@@ -33,7 +33,7 @@ class ApiWorkflowTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.client.__exit__(None, None, None)
         self.tempdir.cleanup()
-        os.environ.pop("RECRUIT_AGENT_DATA_DIR", None)
+        os.environ.pop("SCENE_PILOT_DATA_DIR", None)
         self._load_settings.cache_clear()
 
     def test_candidate_crud_and_approval(self) -> None:
@@ -118,8 +118,8 @@ class ApiWorkflowTests(unittest.TestCase):
         self.assertIsInstance(recover.json()["by_status"], dict)
 
     def test_runtime_skill_draft_persists_learning_and_approval(self) -> None:
-        from recruit_agent.runtime.models import LLMResponse
-        from recruit_agent.runtime.providers import ScriptedProvider
+        from scene_pilot.runtime.models import LLMResponse
+        from scene_pilot.runtime.providers import ScriptedProvider
 
         container = self.client.app.state.container
         container.agent_control.agent_loop.provider = ScriptedProvider(
@@ -211,9 +211,9 @@ class ApiWorkflowTests(unittest.TestCase):
         self.assertEqual(promoted_skill["status"], "approved")
 
     def test_runtime_persists_session_skill_and_workflow_run(self) -> None:
-        from recruit_agent.models import CandidateSession, DecisionLog, WorkflowRun
-        from recruit_agent.runtime.models import LLMResponse
-        from recruit_agent.runtime.providers import ScriptedProvider
+        from scene_pilot.models import CandidateSession, DecisionLog, WorkflowRun
+        from scene_pilot.runtime.models import LLMResponse
+        from scene_pilot.runtime.providers import ScriptedProvider
 
         container = self.client.app.state.container
         container.agent_control.agent_loop.provider = ScriptedProvider(
@@ -322,9 +322,9 @@ class ApiWorkflowTests(unittest.TestCase):
             self.assertEqual(decision_log.decision, "pass")
 
     def test_runtime_normalizes_provider_business_status_across_persistence(self) -> None:
-        from recruit_agent.models import CandidateSession, DecisionLog, WorkflowRun
-        from recruit_agent.runtime.models import LLMResponse
-        from recruit_agent.runtime.providers import ScriptedProvider
+        from scene_pilot.models import CandidateSession, DecisionLog, WorkflowRun
+        from scene_pilot.runtime.models import LLMResponse
+        from scene_pilot.runtime.providers import ScriptedProvider
 
         container = self.client.app.state.container
         container.agent_control.agent_loop.provider = ScriptedProvider(
@@ -408,9 +408,9 @@ class ApiWorkflowTests(unittest.TestCase):
             self.assertEqual(decision_log.decision, "pass")
 
     def test_runtime_updates_active_skill_health_after_execution(self) -> None:
-        from recruit_agent.models import Skill
-        from recruit_agent.runtime.models import LLMResponse
-        from recruit_agent.runtime.providers import ScriptedProvider
+        from scene_pilot.models import Skill
+        from scene_pilot.runtime.models import LLMResponse
+        from scene_pilot.runtime.providers import ScriptedProvider
 
         container = self.client.app.state.container
         container.agent_control.agent_loop.provider = ScriptedProvider(
@@ -465,8 +465,8 @@ class ApiWorkflowTests(unittest.TestCase):
             self.assertIsNotNone(skill.last_health_check)
 
     def test_blocked_task_approval_resumes_execution(self) -> None:
-        from recruit_agent.runtime.models import LLMResponse
-        from recruit_agent.runtime.providers import ScriptedProvider
+        from scene_pilot.runtime.models import LLMResponse
+        from scene_pilot.runtime.providers import ScriptedProvider
 
         container = self.client.app.state.container
         container.agent_control.agent_loop.provider = ScriptedProvider(
@@ -524,8 +524,8 @@ class ApiWorkflowTests(unittest.TestCase):
         self.assertEqual(second_run.json()["status"], "completed")
 
     def test_blocked_task_reject_marks_closure_metadata(self) -> None:
-        from recruit_agent.runtime.models import LLMResponse
-        from recruit_agent.runtime.providers import ScriptedProvider
+        from scene_pilot.runtime.models import LLMResponse
+        from scene_pilot.runtime.providers import ScriptedProvider
 
         container = self.client.app.state.container
         container.agent_control.agent_loop.provider = ScriptedProvider(

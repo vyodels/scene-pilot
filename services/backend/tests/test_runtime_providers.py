@@ -13,9 +13,9 @@ SRC = Path(__file__).resolve().parents[1] / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from recruit_agent.core.settings import AppSettings, load_settings
-from recruit_agent.runtime.models import LLMResponse, Message
-from recruit_agent.runtime.providers import (
+from scene_pilot.core.settings import AppSettings, load_settings
+from scene_pilot.runtime.models import LLMResponse, Message
+from scene_pilot.runtime.providers import (
     AnthropicProvider,
     OpenAICompatibleProvider,
     ProviderConfig,
@@ -42,16 +42,16 @@ class FakeHTTPResponse:
 class ProviderTests(unittest.TestCase):
     def tearDown(self) -> None:
         for key in [
-            "RECRUIT_AGENT_PROVIDER_CONFIG__OPENAI_MODEL",
-            "RECRUIT_AGENT_PROVIDER_CONFIG__OPENAI_BASE_URL",
-            "RECRUIT_AGENT_PROVIDER_CONFIG__OPENAI_API_KEY",
-            "RECRUIT_AGENT_PROVIDER_CONFIG__OPENAI_TIMEOUT_SECONDS",
-            "RECRUIT_AGENT_PROVIDER_CONFIG__ANTHROPIC_MODEL",
-            "RECRUIT_AGENT_PROVIDER_CONFIG__ANTHROPIC_BASE_URL",
-            "RECRUIT_AGENT_PROVIDER_CONFIG__ANTHROPIC_API_KEY",
-            "RECRUIT_AGENT_PROVIDER_CONFIG__ANTHROPIC_TIMEOUT_SECONDS",
-            "RECRUIT_AGENT_PROVIDER_CONFIG__BOSS_ACCOUNT",
-            "RECRUIT_AGENT_PROVIDER_CONFIG__COOLDOWN_DAYS",
+            "SCENE_PILOT_PROVIDER_CONFIG__OPENAI_MODEL",
+            "SCENE_PILOT_PROVIDER_CONFIG__OPENAI_BASE_URL",
+            "SCENE_PILOT_PROVIDER_CONFIG__OPENAI_API_KEY",
+            "SCENE_PILOT_PROVIDER_CONFIG__OPENAI_TIMEOUT_SECONDS",
+            "SCENE_PILOT_PROVIDER_CONFIG__ANTHROPIC_MODEL",
+            "SCENE_PILOT_PROVIDER_CONFIG__ANTHROPIC_BASE_URL",
+            "SCENE_PILOT_PROVIDER_CONFIG__ANTHROPIC_API_KEY",
+            "SCENE_PILOT_PROVIDER_CONFIG__ANTHROPIC_TIMEOUT_SECONDS",
+            "SCENE_PILOT_PROVIDER_CONFIG__BOSS_ACCOUNT",
+            "SCENE_PILOT_PROVIDER_CONFIG__COOLDOWN_DAYS",
         ]:
             os.environ.pop(key, None)
         load_settings.cache_clear()
@@ -97,16 +97,16 @@ class ProviderTests(unittest.TestCase):
         self.assertEqual(response.tool_calls[0].arguments["value"], "world")
 
     def test_settings_parse_provider_config_from_env(self) -> None:
-        os.environ["RECRUIT_AGENT_PROVIDER_CONFIG__OPENAI_MODEL"] = "gpt-4.1-mini"
-        os.environ["RECRUIT_AGENT_PROVIDER_CONFIG__OPENAI_BASE_URL"] = "https://example.com/openai"
-        os.environ["RECRUIT_AGENT_PROVIDER_CONFIG__OPENAI_API_KEY"] = "test-openai-key"
-        os.environ["RECRUIT_AGENT_PROVIDER_CONFIG__OPENAI_TIMEOUT_SECONDS"] = "11"
-        os.environ["RECRUIT_AGENT_PROVIDER_CONFIG__ANTHROPIC_MODEL"] = "claude-3.7"
-        os.environ["RECRUIT_AGENT_PROVIDER_CONFIG__ANTHROPIC_BASE_URL"] = "https://example.com/anthropic"
-        os.environ["RECRUIT_AGENT_PROVIDER_CONFIG__ANTHROPIC_API_KEY"] = "test-anthropic-key"
-        os.environ["RECRUIT_AGENT_PROVIDER_CONFIG__ANTHROPIC_TIMEOUT_SECONDS"] = "17"
-        os.environ["RECRUIT_AGENT_PROVIDER_CONFIG__BOSS_ACCOUNT"] = "boss-02"
-        os.environ["RECRUIT_AGENT_PROVIDER_CONFIG__COOLDOWN_DAYS"] = "21"
+        os.environ["SCENE_PILOT_PROVIDER_CONFIG__OPENAI_MODEL"] = "gpt-4.1-mini"
+        os.environ["SCENE_PILOT_PROVIDER_CONFIG__OPENAI_BASE_URL"] = "https://example.com/openai"
+        os.environ["SCENE_PILOT_PROVIDER_CONFIG__OPENAI_API_KEY"] = "test-openai-key"
+        os.environ["SCENE_PILOT_PROVIDER_CONFIG__OPENAI_TIMEOUT_SECONDS"] = "11"
+        os.environ["SCENE_PILOT_PROVIDER_CONFIG__ANTHROPIC_MODEL"] = "claude-3.7"
+        os.environ["SCENE_PILOT_PROVIDER_CONFIG__ANTHROPIC_BASE_URL"] = "https://example.com/anthropic"
+        os.environ["SCENE_PILOT_PROVIDER_CONFIG__ANTHROPIC_API_KEY"] = "test-anthropic-key"
+        os.environ["SCENE_PILOT_PROVIDER_CONFIG__ANTHROPIC_TIMEOUT_SECONDS"] = "17"
+        os.environ["SCENE_PILOT_PROVIDER_CONFIG__BOSS_ACCOUNT"] = "boss-02"
+        os.environ["SCENE_PILOT_PROVIDER_CONFIG__COOLDOWN_DAYS"] = "21"
 
         settings = AppSettings()
         runtime_settings = settings.provider_runtime_settings()
@@ -144,7 +144,7 @@ class ProviderTests(unittest.TestCase):
                 }
             )
 
-        with mock.patch("recruit_agent.runtime.providers.urlopen", side_effect=fake_urlopen):
+        with mock.patch("scene_pilot.runtime.providers.urlopen", side_effect=fake_urlopen):
             response = provider.generate(
                 [Message(role="system", content="follow policy"), Message(role="user", content="hello")],
                 max_tokens=256,
@@ -186,7 +186,7 @@ class ProviderTests(unittest.TestCase):
                 }
             )
 
-        with mock.patch("recruit_agent.runtime.providers.urlopen", side_effect=fake_urlopen):
+        with mock.patch("scene_pilot.runtime.providers.urlopen", side_effect=fake_urlopen):
             response = provider.generate(
                 [
                     Message(role="system", content="follow policy"),
@@ -234,7 +234,7 @@ class ProviderTests(unittest.TestCase):
             )
         )
 
-        with mock.patch("recruit_agent.runtime.providers.urlopen", side_effect=URLError("down")):
+        with mock.patch("scene_pilot.runtime.providers.urlopen", side_effect=URLError("down")):
             with self.assertRaisesRegex(ProviderError, "Transport error calling"):
                 provider.generate([Message(role="user", content="hi")])
 

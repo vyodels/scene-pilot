@@ -2,16 +2,16 @@ import time
 
 from fastapi.testclient import TestClient
 
-from recruit_agent.core.app import create_app
-from recruit_agent.core.settings import AppSettings, FeatureFlags
-from recruit_agent.models import Candidate, Skill, Workflow
+from scene_pilot.core.app import create_app
+from scene_pilot.core.settings import AppSettings, FeatureFlags
+from scene_pilot.models import Candidate, Skill, Workflow
 
 
 def test_autonomy_loop_disabled_by_default(tmp_path):
     app = create_app(
         AppSettings(
             data_dir=str(tmp_path / "data"),
-            database_url=f"sqlite:///{tmp_path / 'recruit-agent.db'}",
+            database_url=f"sqlite:///{tmp_path / 'scene-pilot.db'}",
         )
     )
 
@@ -25,7 +25,7 @@ def test_autonomy_loop_processes_enqueued_task_when_enabled(tmp_path):
     app = create_app(
         AppSettings(
             data_dir=str(tmp_path / "data"),
-            database_url=f"sqlite:///{tmp_path / 'recruit-agent.db'}",
+            database_url=f"sqlite:///{tmp_path / 'scene-pilot.db'}",
             feature_flags=FeatureFlags(enable_autonomy=True),
         )
     )
@@ -87,7 +87,7 @@ def test_autonomy_loop_runs_periodic_skill_health_sweep(tmp_path):
     app = create_app(
         AppSettings(
             data_dir=str(tmp_path / "data"),
-            database_url=f"sqlite:///{tmp_path / 'recruit-agent.db'}",
+            database_url=f"sqlite:///{tmp_path / 'scene-pilot.db'}",
             feature_flags=FeatureFlags(enable_autonomy=True, enable_skill_health_autonomy=True),
             skill_health_autonomy_interval_seconds=1,
         )

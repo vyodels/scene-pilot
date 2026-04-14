@@ -9,8 +9,8 @@ SRC = Path(__file__).resolve().parents[1] / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from recruit_agent.services.feature_flags import FeatureFlagService
-from recruit_agent.services.skills import SkillLifecycleService, SkillRecord, SkillSafetyService, SkillStatus
+from scene_pilot.services.feature_flags import FeatureFlagService
+from scene_pilot.services.skills import SkillLifecycleService, SkillRecord, SkillSafetyService, SkillStatus
 
 
 class ServiceTests(unittest.TestCase):
