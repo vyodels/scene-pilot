@@ -25,13 +25,19 @@ from recruit_agent.repositories import (
 )
 from recruit_agent.schemas import (
     ApprovalRead,
+    CapabilityDriverRead,
     DomainPackRead,
+    EnvironmentAssessmentRead,
+    EnvironmentAssessmentRequest,
     EpisodeConfirmRequest,
     EnvironmentSnapshotCreate,
+    EnvironmentSnapshotContextRead,
     EnvironmentSnapshotRead,
     ExecutionEpisodeCreate,
     ExecutionEpisodeRead,
     ExecutionEpisodeUpdate,
+    ExecutionPlanReplanRead,
+    ExecutionPlanReplanRequest,
     ExecutionPlanRead,
     LearningDraftRead,
     RuntimeEpisodeReplayRead,
@@ -317,6 +323,234 @@ class PersistedRuntimeService:
 
     def list_domain_packs(self) -> list[DomainPackRead]:
         return [self._domain_pack_read(key, config) for key, config in DOMAIN_PACKS.items()]
+
+    def list_capability_drivers(self, *, domain: str | None = None) -> list[CapabilityDriverRead]:
+        normalized_domain = self._normalize_domain(domain)
+        items: list[CapabilityDriverRead] = []
+        for key, config in CAPABILITY_DRIVERS.items():
+            supported_domains = [
+                domain_key
+                for domain_key, domain_config in DOMAIN_PACKS.items()
+                if key in list(domain_config.get("default_capabilities") or [])
+            ]
+            if normalized_domain and normalized_domain not in supported_domains:
+                continue
+            items.append(
+                CapabilityDriverRead(
+                    key=key,
+                    description=str(config["description"]),
+                    risk=str(config["risk"]),
+                    supported_domains=supported_domains,
+                    recommended_scene_types=self._recommended_scene_types_for_capability(key),
+                    writes_state=key in {"api", "command"},
+                    requires_supervision=key in {"browser", "api", "command"} or str(config["risk"]) == "high",
+                    audit_tags=[f"risk:{config['risk']}", "generic_runtime"],
+                )
+            )
+        return items
+
+    def assess_environment(self, payload: EnvironmentAssessmentRequest) -> EnvironmentAssessmentRead:
+        task_spec, plan, episode, snapshot_context, persisted_snapshot = self._resolve_assessment_context(payload)
+        domain = (
+            (task_spec.domain if task_spec is not None else None)
+            or (plan.plan_body or {}).get("domain") if plan is not None else None
+        ) or "general"
+        compiler_payload = dict(payload.compiler_payload or {})
+        recommended_capabilities = self._derive_assessment_capabilities(
+            task_spec=task_spec,
+            plan=plan,
+            snapshot=snapshot_context,
+            compiler_payload=compiler_payload,
+        )
+        scene_type = self._derive_scene_type(snapshot_context)
+        scene_key = (
+            snapshot_context.environment_key
+            if snapshot_context is not None and snapshot_context.environment_key
+            else f"{self._normalize_domain(domain)}:{scene_type}"
+        )
+        blockers = self._derive_assessment_blockers(
+            plan=plan,
+            episode=episode,
+            snapshot=snapshot_context,
+            recommended_capabilities=recommended_capabilities,
+        )
+        plan_fit = "blocked" if blockers else "aligned"
+        if blockers and not any(item.startswith("missing_") for item in blockers):
+            plan_fit = "partial"
+        environment_requirements = self._merge_dicts(
+            self._default_environment_requirements(str(domain), recommended_capabilities),
+            dict(plan.environment_requirements or {}) if plan is not None else {},
+        )
+        environment_requirements = self._merge_dicts(
+            environment_requirements,
+            dict(compiler_payload.get("environment_requirements") or {}),
+        )
+        environment_requirements = self._merge_dicts(
+            environment_requirements,
+            self._environment_requirements_from_snapshot(snapshot_context),
+        )
+        checkpoints = self._dedupe_dict_list(
+            [
+                *(list(plan.checkpoints or []) if plan is not None else []),
+                *self._assessment_checkpoints(blockers=blockers, snapshot=snapshot_context),
+                *list(payload.plan_context.get("checkpoints") or []),
+            ]
+        )
+        confidence = 0.92 if snapshot_context is not None else 0.64 if plan is not None else 0.5
+        if blockers:
+            confidence = max(0.35, confidence - 0.18)
+        assessment_notes = self._build_assessment_notes(
+            domain=str(domain),
+            scene_type=scene_type,
+            blockers=blockers,
+            recommended_capabilities=recommended_capabilities,
+            compiler_payload=compiler_payload,
+        )
+        audit_metadata = {
+            "site_assumption_policy": "generic_only",
+            "task_spec_id": task_spec.id if task_spec is not None else payload.task_spec_id,
+            "execution_plan_id": plan.id if plan is not None else payload.execution_plan_id,
+            "execution_episode_id": episode.id if episode is not None else payload.execution_episode_id,
+            "environment_snapshot_id": persisted_snapshot.id if persisted_snapshot is not None else payload.environment_snapshot_id,
+            "compiler_payload_keys": sorted(str(key) for key in compiler_payload.keys()),
+            "plan_context_keys": sorted(str(key) for key in payload.plan_context.keys()),
+        }
+        return EnvironmentAssessmentRead(
+            task_spec=TaskSpecRead.model_validate(task_spec) if task_spec is not None else None,
+            execution_plan=ExecutionPlanRead.model_validate(plan) if plan is not None else None,
+            execution_episode=ExecutionEpisodeRead.model_validate(episode) if episode is not None else None,
+            snapshot=snapshot_context,
+            scene_type=scene_type,
+            scene_key=scene_key,
+            confidence=round(confidence, 2),
+            plan_fit=plan_fit,
+            recommended_capabilities=recommended_capabilities,
+            blockers=blockers,
+            environment_requirements=environment_requirements,
+            checkpoints=checkpoints,
+            assessment_notes=assessment_notes,
+            audit_metadata=audit_metadata,
+        )
+
+    def replan_execution(self, plan_id: str, payload: ExecutionPlanReplanRequest) -> ExecutionPlanReplanRead:
+        plan_repo = ExecutionPlanRepository(self.session)
+        task_repo = TaskSpecRepository(self.session)
+        current_plan = plan_repo.get(plan_id)
+        if current_plan is None:
+            raise ValueError("Execution plan not found")
+        task_spec = task_repo.get(current_plan.task_spec_id)
+        if task_spec is None:
+            raise ValueError("Task spec not found")
+
+        assessment = self.assess_environment(
+            EnvironmentAssessmentRequest(
+                task_spec_id=task_spec.id,
+                execution_plan_id=current_plan.id,
+                execution_episode_id=payload.execution_episode_id,
+                environment_snapshot_id=payload.environment_snapshot_id,
+                snapshot=payload.snapshot,
+                compiler_payload=payload.compiler_payload,
+                plan_context=payload.plan_context,
+            )
+        )
+        compiler_payload = dict(payload.compiler_payload or {})
+        compiler_notes = [str(item) for item in compiler_payload.get("compiler_notes", []) if str(item).strip()]
+        compiler_notes.extend(assessment.assessment_notes)
+
+        new_steps = self._derive_replanned_steps(
+            current_steps=list((current_plan.plan_body or {}).get("steps") or []),
+            assessment=assessment,
+            compiler_payload=compiler_payload,
+        )
+        new_checkpoints = self._dedupe_dict_list(
+            [
+                *list(current_plan.checkpoints or []),
+                *assessment.checkpoints,
+                *list(compiler_payload.get("checkpoints") or []),
+                *list(payload.checkpoints or []),
+            ]
+        )
+        new_environment_requirements = self._merge_dicts(
+            dict(current_plan.environment_requirements or {}),
+            assessment.environment_requirements,
+        )
+        new_environment_requirements = self._merge_dicts(
+            new_environment_requirements,
+            dict(payload.plan_context.get("environment_requirements") or {}),
+        )
+
+        audit_entry = {
+            "at": utcnow().isoformat(),
+            "requested_by": payload.requested_by,
+            "reason": payload.reason,
+            "source_plan_id": current_plan.id,
+            "source_episode_id": payload.execution_episode_id,
+            "source_snapshot_id": payload.environment_snapshot_id,
+            "scene_type": assessment.scene_type,
+            "plan_fit": assessment.plan_fit,
+            "blockers": list(assessment.blockers),
+            "site_assumption_policy": "generic_only",
+        }
+        runtime_metadata = {
+            **dict(current_plan.runtime_metadata or {}),
+            **dict(payload.runtime_metadata or {}),
+            "replanned_from_plan_id": current_plan.id,
+            "replan_reason": payload.reason,
+            "replan_requested_by": payload.requested_by,
+            "replan_assessment": {
+                "scene_type": assessment.scene_type,
+                "scene_key": assessment.scene_key,
+                "plan_fit": assessment.plan_fit,
+                "recommended_capabilities": list(assessment.recommended_capabilities),
+                "blockers": list(assessment.blockers),
+            },
+            "replan_history": [
+                *list((current_plan.runtime_metadata or {}).get("replan_history") or []),
+                audit_entry,
+            ],
+            "site_assumption_policy": "generic_only",
+        }
+        if compiler_payload:
+            runtime_metadata["replan_compiler_payload"] = compiler_payload
+
+        status = "planned" if assessment.plan_fit != "aligned" else "validated"
+        approval_state = "pending_review" if assessment.blockers else "unreviewed"
+        replanned = plan_repo.create(
+            {
+                "task_spec_id": current_plan.task_spec_id,
+                "name": payload.name or f"{current_plan.name} Replan v{int(current_plan.version) + 1}",
+                "mode": current_plan.mode,
+                "status": status,
+                "version": int(current_plan.version) + 1,
+                "approval_state": approval_state,
+                "plan_body": {
+                    **dict(current_plan.plan_body or {}),
+                    "steps": new_steps,
+                    "instruction": (current_plan.plan_body or {}).get("instruction") or task_spec.source_text or task_spec.goal,
+                    "domain": (current_plan.plan_body or {}).get("domain") or task_spec.domain,
+                },
+                "environment_requirements": new_environment_requirements,
+                "checkpoints": new_checkpoints,
+                "runtime_metadata": runtime_metadata,
+                "compiled_from_patch_id": current_plan.compiled_from_patch_id,
+            }
+        )
+        if payload.preserve_active_plan:
+            task_repo.update(task_spec, {"active_plan_id": replanned.id})
+
+        audit_metadata = {
+            **assessment.audit_metadata,
+            "replanned_from_plan_id": current_plan.id,
+            "replanned_to_plan_id": replanned.id,
+            "site_assumption_policy": "generic_only",
+        }
+        return ExecutionPlanReplanRead(
+            previous_plan=ExecutionPlanRead.model_validate(current_plan),
+            execution_plan=ExecutionPlanRead.model_validate(replanned),
+            assessment=assessment,
+            compiler_notes=compiler_notes,
+            audit_metadata=audit_metadata,
+        )
 
     def compile_task(self, payload: TaskCompileRequest) -> TaskCompileResponse:
         compiled = self._compile_task_spec(payload)
@@ -1253,6 +1487,300 @@ class PersistedRuntimeService:
         if existing is not None:
             return existing
         return repo.create(payload)
+
+    def _resolve_assessment_context(
+        self,
+        payload: EnvironmentAssessmentRequest,
+    ) -> tuple[Any | None, Any | None, Any | None, EnvironmentSnapshotContextRead | None, Any | None]:
+        task_repo = TaskSpecRepository(self.session)
+        plan_repo = ExecutionPlanRepository(self.session)
+        episode_repo = ExecutionEpisodeRepository(self.session)
+        snapshot_repo = EnvironmentSnapshotRepository(self.session)
+
+        task_spec = task_repo.get(payload.task_spec_id) if payload.task_spec_id else None
+        plan = plan_repo.get(payload.execution_plan_id) if payload.execution_plan_id else None
+        episode = episode_repo.get(payload.execution_episode_id) if payload.execution_episode_id else None
+        persisted_snapshot = snapshot_repo.get(payload.environment_snapshot_id) if payload.environment_snapshot_id else None
+
+        if episode is not None:
+            if task_spec is None:
+                task_spec = task_repo.get(episode.task_spec_id)
+            if plan is None:
+                plan = plan_repo.get(episode.execution_plan_id)
+            if persisted_snapshot is None:
+                persisted_snapshot = snapshot_repo.latest_for_episode(episode.id)
+
+        if persisted_snapshot is not None:
+            if task_spec is None and persisted_snapshot.task_spec_id:
+                task_spec = task_repo.get(persisted_snapshot.task_spec_id)
+            if plan is None and persisted_snapshot.execution_plan_id:
+                plan = plan_repo.get(persisted_snapshot.execution_plan_id)
+            if episode is None and persisted_snapshot.execution_episode_id:
+                episode = episode_repo.get(persisted_snapshot.execution_episode_id)
+
+        if plan is not None and task_spec is None:
+            task_spec = task_repo.get(plan.task_spec_id)
+
+        if payload.task_spec_id and task_spec is None:
+            raise ValueError("Task spec not found")
+        if payload.execution_plan_id and plan is None:
+            raise ValueError("Execution plan not found")
+        if payload.execution_episode_id and episode is None:
+            raise ValueError("Execution episode not found")
+        if payload.environment_snapshot_id and persisted_snapshot is None:
+            raise ValueError("Environment snapshot not found")
+
+        snapshot_context: EnvironmentSnapshotContextRead | None = None
+        if persisted_snapshot is not None:
+            snapshot_context = self._snapshot_context_from_record(persisted_snapshot)
+        elif payload.snapshot is not None:
+            snapshot_context = self._snapshot_context_from_payload(payload.snapshot)
+
+        return task_spec, plan, episode, snapshot_context, persisted_snapshot
+
+    def _snapshot_context_from_record(self, snapshot: Any) -> EnvironmentSnapshotContextRead:
+        return EnvironmentSnapshotContextRead(
+            persisted=True,
+            id=snapshot.id,
+            source=snapshot.source,
+            environment_key=snapshot.environment_key,
+            status=snapshot.status,
+            url=snapshot.url,
+            title=snapshot.title,
+            page_type=snapshot.page_type,
+            capability_hints=list(snapshot.capability_hints or []),
+            observed_entities=list(snapshot.observed_entities or []),
+            affordances=list(snapshot.affordances or []),
+            runtime_metadata=dict(snapshot.runtime_metadata or {}),
+        )
+
+    def _snapshot_context_from_payload(self, snapshot: EnvironmentSnapshotCreate) -> EnvironmentSnapshotContextRead:
+        return EnvironmentSnapshotContextRead(
+            persisted=False,
+            source=snapshot.source,
+            environment_key=snapshot.environment_key,
+            status=snapshot.status,
+            url=snapshot.url,
+            title=snapshot.title,
+            page_type=snapshot.page_type,
+            capability_hints=list(snapshot.capability_hints or []),
+            observed_entities=list(snapshot.observed_entities or []),
+            affordances=list(snapshot.affordances or []),
+            runtime_metadata=dict(snapshot.runtime_metadata or {}),
+        )
+
+    def _recommended_scene_types_for_capability(self, capability: str) -> list[str]:
+        mapping = {
+            "browser": ["web_scene", "interactive_surface"],
+            "search": ["listing", "search_surface"],
+            "http": ["api_surface", "remote_service"],
+            "api": ["remote_service", "write_surface"],
+            "command": ["local_runtime", "execution_surface"],
+            "document": ["document_task", "result_pack"],
+            "approval": ["review_gate"],
+        }
+        return list(mapping.get(capability, ["generic_scene"]))
+
+    def _derive_assessment_capabilities(
+        self,
+        *,
+        task_spec: Any | None,
+        plan: Any | None,
+        snapshot: EnvironmentSnapshotContextRead | None,
+        compiler_payload: dict[str, Any],
+    ) -> list[str]:
+        capabilities: list[str] = []
+        if task_spec is not None:
+            capabilities.extend(list(task_spec.preferred_capabilities or []))
+        if plan is not None:
+            capabilities.extend(
+                str(step.get("capability") or "").strip()
+                for step in list((plan.plan_body or {}).get("steps") or [])
+                if str(step.get("capability") or "").strip()
+            )
+        if snapshot is not None:
+            capabilities.extend(list(snapshot.capability_hints or []))
+        capabilities.extend(list(compiler_payload.get("preferred_capabilities") or []))
+        capabilities = [item for item in capabilities if item in CAPABILITY_DRIVERS]
+        if not capabilities and task_spec is not None:
+            capabilities = self._infer_capabilities(task_spec.goal, task_spec.domain, [])
+        if not capabilities:
+            capabilities = list(DOMAIN_PACKS["general"]["default_capabilities"])
+        return list(dict.fromkeys(capabilities))
+
+    def _derive_scene_type(self, snapshot: EnvironmentSnapshotContextRead | None) -> str:
+        if snapshot is None:
+            return "generic_runtime"
+        if snapshot.page_type:
+            return self._slugify(snapshot.page_type)
+        if snapshot.source == "browser":
+            return "web_scene" if snapshot.url else "browser_scene"
+        if snapshot.source in {"http", "api"}:
+            return "api_surface"
+        if snapshot.source == "command":
+            return "local_runtime"
+        return "runtime_state"
+
+    def _derive_assessment_blockers(
+        self,
+        *,
+        plan: Any | None,
+        episode: Any | None,
+        snapshot: EnvironmentSnapshotContextRead | None,
+        recommended_capabilities: list[str],
+    ) -> list[str]:
+        blockers: list[str] = []
+        requires_browser = "browser" in recommended_capabilities or bool((plan.environment_requirements or {}).get("requires_browser")) if plan is not None else "browser" in recommended_capabilities
+        if requires_browser and (snapshot is None or snapshot.source != "browser"):
+            blockers.append("missing_browser_snapshot")
+        if snapshot is not None and snapshot.source == "browser" and not snapshot.affordances and not snapshot.observed_entities:
+            blockers.append("limited_interaction_signals")
+        if episode is not None and bool(episode.divergence_detected):
+            blockers.append("prior_divergence_detected")
+        return list(dict.fromkeys(blockers))
+
+    def _environment_requirements_from_snapshot(
+        self,
+        snapshot: EnvironmentSnapshotContextRead | None,
+    ) -> dict[str, Any]:
+        if snapshot is None:
+            return {}
+        requirements: dict[str, Any] = {
+            "requires_browser": snapshot.source == "browser",
+            "observed_affordance_count": len(snapshot.affordances or []),
+        }
+        page_type = str(snapshot.page_type or "").lower()
+        if any(token in page_type for token in ("login", "auth", "signin", "sign_in")):
+            requirements["requires_authentication"] = True
+        if any(
+            any(token in str(item.get("label") or "").lower() for token in ("send", "submit", "upload"))
+            for item in list(snapshot.affordances or [])
+            if isinstance(item, dict)
+        ):
+            requirements["requires_approval_gate"] = True
+        return requirements
+
+    def _assessment_checkpoints(
+        self,
+        *,
+        blockers: list[str],
+        snapshot: EnvironmentSnapshotContextRead | None,
+    ) -> list[dict[str, Any]]:
+        checkpoints: list[dict[str, Any]] = [{"kind": "scene_assessment", "label": "Review environment assessment"}]
+        if snapshot is not None and snapshot.source == "browser":
+            checkpoints.append({"kind": "snapshot", "label": "Confirm captured environment state"})
+        if blockers:
+            checkpoints.append({"kind": "approval", "label": "Review blockers before execution"})
+        return checkpoints
+
+    def _build_assessment_notes(
+        self,
+        *,
+        domain: str,
+        scene_type: str,
+        blockers: list[str],
+        recommended_capabilities: list[str],
+        compiler_payload: dict[str, Any],
+    ) -> list[str]:
+        notes = [
+            f"Assessed scene type: {scene_type}.",
+            f"Recommended capabilities: {', '.join(recommended_capabilities)}.",
+            f"Applied generic domain heuristics for {domain}.",
+            "No fixed-site assumptions were introduced during assessment.",
+        ]
+        if blockers:
+            notes.append(f"Detected blockers: {', '.join(blockers)}.")
+        if compiler_payload:
+            notes.append(
+                f"Assessment merged compiler payload keys: {', '.join(sorted(str(key) for key in compiler_payload.keys()))}."
+            )
+        return notes
+
+    def _derive_replanned_steps(
+        self,
+        *,
+        current_steps: list[dict[str, Any]],
+        assessment: EnvironmentAssessmentRead,
+        compiler_payload: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        compiler_steps = self._normalize_steps(list(compiler_payload.get("step_outline") or []))
+        if compiler_steps:
+            steps = compiler_steps
+        else:
+            steps = self._normalize_steps(current_steps)
+            if assessment.blockers:
+                steps = [
+                    {
+                        "id": "reassess_environment",
+                        "capability": "analyze",
+                        "summary": "Review the current scene and update the plan before retrying.",
+                    },
+                    *steps,
+                ]
+            missing_capabilities = [
+                capability
+                for capability in assessment.recommended_capabilities
+                if capability not in {str(step.get("capability") or "") for step in steps}
+            ]
+            for index, capability in enumerate(missing_capabilities, start=1):
+                steps.append(
+                    {
+                        "id": f"adapt_{capability}_{index}",
+                        "capability": capability,
+                        "summary": self._step_summary(
+                            (assessment.execution_plan.plan_body or {}).get("domain", "general")
+                            if assessment.execution_plan is not None
+                            else "general",
+                            capability,
+                        ),
+                    }
+                )
+        if assessment.blockers and not any(str(step.get("capability")) == "approval" for step in steps):
+            steps.append(
+                {
+                    "id": "review_replanned_execution",
+                    "capability": "approval",
+                    "summary": "Pause for review before executing the updated plan.",
+                }
+            )
+        return self._normalize_steps(steps)
+
+    def _normalize_steps(self, steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        normalized: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for index, raw_step in enumerate(steps, start=1):
+            if not isinstance(raw_step, dict):
+                continue
+            capability = str(raw_step.get("capability") or "analyze").strip().lower()
+            if capability not in CAPABILITY_DRIVERS:
+                capability = "analyze"
+            step_id = str(raw_step.get("id") or f"{capability}_{index}").strip() or f"{capability}_{index}"
+            marker = f"{step_id}:{capability}"
+            if marker in seen:
+                continue
+            seen.add(marker)
+            normalized.append(
+                {
+                    **dict(raw_step),
+                    "id": step_id,
+                    "capability": capability,
+                    "summary": raw_step.get("summary") or self._step_summary("general", capability),
+                }
+            )
+        return normalized
+
+    def _dedupe_dict_list(self, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        deduped: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            marker = json.dumps(item, ensure_ascii=False, sort_keys=True, default=str)
+            if marker in seen:
+                continue
+            seen.add(marker)
+            deduped.append(item)
+        return deduped
 
     def _default_steps(self, task_spec, template) -> list[dict[str, Any]]:
         if template is not None:

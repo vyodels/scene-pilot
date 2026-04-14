@@ -1,14 +1,17 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Panel, StatusBadge, Timeline } from "../../components";
 import { formatCompactDate } from "../../lib/format";
 import { theme } from "../../lib/theme";
 import type {
   CompileTaskRequest,
   DomainPackRecord,
+  RuntimeCapabilityDriver,
   RuntimeEpisode,
   RuntimeEpisodeReplay,
+  RuntimeEnvironmentAssessment,
   RuntimeLearningOutcome,
   RuntimePatch,
+  RuntimePlanReplanResult,
   RuntimeTaskSpec,
   RuntimeTemplate,
   RuntimeWorkspaceData,
@@ -21,14 +24,24 @@ interface RuntimeControlViewProps {
   busyEpisodeId?: string;
   selectedEpisodeId?: string;
   actionPatchId?: string;
+  busyPlanId?: string;
   replay?: RuntimeEpisodeReplay | null;
   lastOutcome?: RuntimeLearningOutcome | null;
+  lastAssessment?: RuntimeEnvironmentAssessment | null;
+  lastReplan?: RuntimePlanReplanResult | null;
   onCompileTask(payload: CompileTaskRequest): Promise<void>;
   onCreateTrialRun(taskSpecId: string, executionPlanId: string): Promise<void>;
   onExecuteTrialRun(episodeId: string): Promise<void>;
   onRefreshLearning(episodeId: string): Promise<void>;
   onConfirmTrial(episodeId: string): Promise<void>;
   onInspectEpisode(episodeId: string): void;
+  onAssessEnvironment(executionPlanId: string, executionEpisodeId?: string): Promise<void>;
+  onReplanPlan(
+    executionPlanId: string,
+    trigger: string,
+    notes?: string,
+    preferredCapabilityKeys?: string[],
+  ): Promise<void>;
   onApprovePatch(id: string): Promise<void>;
   onRejectPatch(id: string): Promise<void>;
 }
@@ -71,6 +84,36 @@ function metricStepCount(episode: RuntimeEpisode): number {
   return typeof value === "number" ? value : episode.actions.length;
 }
 
+function toneFromRuntimeStatus(value: string): "positive" | "neutral" | "warning" | "critical" {
+  if (/(error|failed|diverg|drift|critical|rejected)/i.test(value)) {
+    return "critical";
+  }
+  if (/(pending|review|await|warning|degraded)/i.test(value)) {
+    return "warning";
+  }
+  if (/(active|ready|success|completed|confirmed|applied|aligned)/i.test(value)) {
+    return "positive";
+  }
+  return "neutral";
+}
+
+function extractPlanCapabilities(planBody: { steps: Array<Record<string, unknown>> }): string[] {
+  const seen = new Set<string>();
+  const values: string[] = [];
+  for (const step of planBody.steps) {
+    const capability = typeof step.capability === "string" ? step.capability : null;
+    if (capability && !seen.has(capability)) {
+      seen.add(capability);
+      values.push(capability);
+    }
+  }
+  return values;
+}
+
+function formatConfidence(value: number): string {
+  return `${Math.round(Math.max(0, Math.min(1, value)) * 100)}%`;
+}
+
 export function RuntimeControlView({
   mode,
   data,
@@ -78,22 +121,71 @@ export function RuntimeControlView({
   busyEpisodeId,
   selectedEpisodeId,
   actionPatchId,
+  busyPlanId,
   replay,
   lastOutcome,
+  lastAssessment,
+  lastReplan,
   onCompileTask,
   onCreateTrialRun,
   onExecuteTrialRun,
   onRefreshLearning,
   onConfirmTrial,
   onInspectEpisode,
+  onAssessEnvironment,
+  onReplanPlan,
   onApprovePatch,
   onRejectPatch,
 }: RuntimeControlViewProps): JSX.Element {
   const [instruction, setInstruction] = useState("打开网站，给我按照要求找到候选人，拿到简历，上传内网，评分。");
   const [domainHint, setDomainHint] = useState("");
+  const [replanPlanId, setReplanPlanId] = useState(data.plans[0]?.id ?? "");
+  const [replanTrigger, setReplanTrigger] = useState("scene_drift");
+  const [replanNotes, setReplanNotes] = useState("");
+  const [selectedCapabilityKeys, setSelectedCapabilityKeys] = useState<string[]>([]);
 
   const taskById = useMemo(() => new Map(data.taskSpecs.map((item) => [item.id, item])), [data.taskSpecs]);
   const planById = useMemo(() => new Map(data.plans.map((item) => [item.id, item])), [data.plans]);
+  const combinedReplans = useMemo(
+    () => (lastReplan ? [lastReplan, ...data.replans.filter((item) => item.id !== lastReplan.id)] : data.replans),
+    [data.replans, lastReplan],
+  );
+  const selectedPlan = useMemo(() => planById.get(replanPlanId) ?? data.plans[0] ?? null, [data.plans, planById, replanPlanId]);
+  const selectedAssessment = useMemo(
+    () =>
+      (lastAssessment && (!selectedPlan || lastAssessment.executionPlanId === selectedPlan.id || lastAssessment.taskSpecId === selectedPlan.taskSpecId)
+        ? lastAssessment
+        : selectedPlan
+        ? data.environmentAssessments.find(
+            (assessment) =>
+              assessment.executionPlanId === selectedPlan.id ||
+              assessment.taskSpecId === selectedPlan.taskSpecId ||
+              assessment.environmentKey === String(selectedPlan.environmentRequirements.environmentKey ?? ""),
+          )
+        : null) ?? data.environmentAssessments[0] ?? null,
+    [data.environmentAssessments, lastAssessment, selectedPlan],
+  );
+  const highlightedDriverKeys = useMemo(
+    () => new Set(selectedAssessment?.capabilityKeys ?? extractPlanCapabilities(selectedPlan?.planBody ?? { steps: [] })),
+    [selectedAssessment, selectedPlan],
+  );
+
+  useEffect(() => {
+    if (!selectedPlan && !replanPlanId) {
+      return;
+    }
+    if (!selectedPlan || !data.plans.some((plan) => plan.id === replanPlanId)) {
+      setReplanPlanId(data.plans[0]?.id ?? "");
+    }
+  }, [data.plans, replanPlanId, selectedPlan]);
+
+  useEffect(() => {
+    if (!selectedAssessment) {
+      setSelectedCapabilityKeys([]);
+      return;
+    }
+    setSelectedCapabilityKeys(selectedAssessment.capabilityKeys);
+  }, [selectedAssessment?.id]);
 
   const renderTaskCards = (): JSX.Element => (
     <div style={{ display: "grid", gap: "14px" }}>
@@ -143,6 +235,68 @@ export function RuntimeControlView({
                 </button>
               </div>
             ) : null}
+          </article>
+        );
+      })}
+    </div>
+  );
+
+  const renderPlanCards = (): JSX.Element => (
+    <div style={{ display: "grid", gap: "14px" }}>
+      {data.plans.map((plan) => {
+        const isSelected = selectedPlan?.id === plan.id;
+        const capabilities = extractPlanCapabilities(plan.planBody);
+        const linkedAssessment = data.environmentAssessments.find(
+          (assessment) => assessment.executionPlanId === plan.id || assessment.taskSpecId === plan.taskSpecId,
+        );
+        return (
+          <article
+            key={plan.id}
+            style={{
+              padding: "16px",
+              borderRadius: "18px",
+              border: isSelected ? "1px solid rgba(122,167,255,0.42)" : "1px solid rgba(255,255,255,0.08)",
+              background: isSelected ? "rgba(122,167,255,0.08)" : "rgba(255,255,255,0.03)",
+              display: "grid",
+              gap: "10px",
+            }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", gap: "12px", alignItems: "start", flexWrap: "wrap" }}>
+              <div>
+                <strong>{plan.name}</strong>
+                <div style={{ color: theme.colors.muted, fontSize: "13px", marginTop: "6px", lineHeight: 1.6 }}>
+                  Mode {plan.mode} · Approval {plan.approvalState} · v{plan.version}
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                <StatusBadge tone={toneFromRuntimeStatus(plan.status)}>{plan.status}</StatusBadge>
+                {linkedAssessment ? (
+                  <StatusBadge tone={toneFromRuntimeStatus(linkedAssessment.status)}>{linkedAssessment.sceneType}</StatusBadge>
+                ) : null}
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+              <StatusBadge tone="neutral">{plan.planBody.steps.length} steps</StatusBadge>
+              {capabilities.map((capability) => (
+                <StatusBadge key={`${plan.id}-${capability}`} tone="neutral">
+                  {capability}
+                </StatusBadge>
+              ))}
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: "10px", alignItems: "center", flexWrap: "wrap" }}>
+              <div style={{ color: theme.colors.muted, fontSize: "13px" }}>
+                {linkedAssessment
+                  ? `${linkedAssessment.sceneLabel} · confidence ${formatConfidence(linkedAssessment.confidence)}`
+                  : "No scene assessment recorded yet."}
+              </div>
+              <button
+                type="button"
+                onClick={() => setReplanPlanId(plan.id)}
+                style={{ ...actionButtonStyle, background: isSelected ? "rgba(122,167,255,0.24)" : actionButtonStyle.background }}
+              >
+                {isSelected ? "Selected for replan" : "Use for replan"}
+              </button>
+            </div>
           </article>
         );
       })}
@@ -362,6 +516,155 @@ export function RuntimeControlView({
     </div>
   );
 
+  const renderCapabilityDrivers = (drivers: RuntimeCapabilityDriver[]): JSX.Element => (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "14px" }}>
+      {drivers.map((driver) => {
+        const highlighted = highlightedDriverKeys.has(driver.key);
+        return (
+          <article
+            key={driver.id}
+            style={{
+              padding: "16px",
+              borderRadius: "18px",
+              border: highlighted ? "1px solid rgba(122,167,255,0.34)" : "1px solid rgba(255,255,255,0.08)",
+              background: highlighted ? "rgba(122,167,255,0.08)" : "rgba(255,255,255,0.03)",
+              display: "grid",
+              gap: "10px",
+            }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", gap: "10px", flexWrap: "wrap" }}>
+              <div>
+                <strong>{driver.name}</strong>
+                <div style={{ color: theme.colors.muted, fontSize: "13px", marginTop: "6px" }}>{driver.scope}</div>
+              </div>
+              <StatusBadge tone={toneFromRuntimeStatus(driver.status)}>{driver.status}</StatusBadge>
+            </div>
+            <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+              <StatusBadge tone="neutral">{driver.category}</StatusBadge>
+              <StatusBadge tone="neutral">{driver.safetyMode}</StatusBadge>
+              <StatusBadge tone={driver.supportsWrite ? "warning" : "neutral"}>
+                {driver.supportsWrite ? "write-enabled" : "read-only"}
+              </StatusBadge>
+            </div>
+            <div style={{ color: theme.colors.muted, fontSize: "13px", lineHeight: 1.6 }}>{driver.description}</div>
+            <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+              {driver.sceneTypes.slice(0, 3).map((scene) => (
+                <StatusBadge key={`${driver.id}-${scene}`} tone="neutral">
+                  {scene}
+                </StatusBadge>
+              ))}
+            </div>
+          </article>
+        );
+      })}
+    </div>
+  );
+
+  const renderEnvironmentAssessments = (assessments: RuntimeEnvironmentAssessment[]): JSX.Element => (
+    !assessments.length ? (
+      <div style={{ color: theme.colors.muted }}>No live assessments yet. Refresh the selected scene to evaluate the current environment.</div>
+    ) : (
+    <div style={{ display: "grid", gap: "14px" }}>
+      {assessments.map((assessment) => {
+        const isSelected = selectedAssessment?.id === assessment.id;
+        return (
+          <article
+            key={assessment.id}
+            style={{
+              padding: "16px",
+              borderRadius: "18px",
+              border: isSelected ? "1px solid rgba(122,167,255,0.42)" : "1px solid rgba(255,255,255,0.08)",
+              background: isSelected ? "rgba(122,167,255,0.08)" : "rgba(255,255,255,0.03)",
+              display: "grid",
+              gap: "10px",
+            }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", gap: "10px", flexWrap: "wrap", alignItems: "start" }}>
+              <div>
+                <strong>{assessment.sceneLabel}</strong>
+                <div style={{ color: theme.colors.muted, fontSize: "13px", marginTop: "6px" }}>{assessment.summary}</div>
+              </div>
+              <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                <StatusBadge tone={toneFromRuntimeStatus(assessment.status)}>{assessment.status}</StatusBadge>
+                <StatusBadge tone="neutral">{formatConfidence(assessment.confidence)}</StatusBadge>
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+              <StatusBadge tone="neutral">{assessment.environmentKey}</StatusBadge>
+              <StatusBadge tone="neutral">{assessment.sceneType}</StatusBadge>
+            </div>
+            {assessment.driftSignals.length ? (
+              <div style={{ color: theme.colors.muted, fontSize: "13px", lineHeight: 1.6 }}>
+                Drift: {assessment.driftSignals.join(" · ")}
+              </div>
+            ) : (
+              <div style={{ color: theme.colors.muted, fontSize: "13px", lineHeight: 1.6 }}>
+                Scene is aligned with the current execution model.
+              </div>
+            )}
+            <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+              {assessment.capabilityKeys.map((capability) => (
+                <StatusBadge key={`${assessment.id}-${capability}`} tone="neutral">
+                  {capability}
+                </StatusBadge>
+              ))}
+            </div>
+          </article>
+        );
+      })}
+    </div>
+    )
+  );
+
+  const renderReplanCards = (replans: RuntimePlanReplanResult[]): JSX.Element => (
+    !replans.length ? (
+      <div style={{ color: theme.colors.muted }}>No replans recorded yet. Generate a revision from the current scene assessment.</div>
+    ) : (
+    <div style={{ display: "grid", gap: "14px" }}>
+      {replans.map((replan) => (
+        <article
+          key={replan.id}
+          style={{
+            padding: "16px",
+            borderRadius: "18px",
+            border: lastReplan?.id === replan.id ? "1px solid rgba(122,167,255,0.42)" : "1px solid rgba(255,255,255,0.08)",
+            background: lastReplan?.id === replan.id ? "rgba(122,167,255,0.08)" : "rgba(255,255,255,0.03)",
+            display: "grid",
+            gap: "10px",
+          }}
+        >
+          <div style={{ display: "flex", justifyContent: "space-between", gap: "10px", alignItems: "start", flexWrap: "wrap" }}>
+            <div>
+              <strong>{replan.executionPlan.name}</strong>
+              <div style={{ color: theme.colors.muted, fontSize: "13px", marginTop: "6px", lineHeight: 1.6 }}>{replan.summary}</div>
+            </div>
+            <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+              <StatusBadge tone={toneFromRuntimeStatus(replan.status)}>{replan.status}</StatusBadge>
+              <StatusBadge tone="neutral">{replan.trigger}</StatusBadge>
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+            <StatusBadge tone="neutral">{replan.executionPlan.planBody.steps.length} steps</StatusBadge>
+            {replan.recommendedCapabilityKeys.map((capability) => (
+              <StatusBadge key={`${replan.id}-${capability}`} tone="neutral">
+                {capability}
+              </StatusBadge>
+            ))}
+          </div>
+          <div style={{ color: theme.colors.muted, fontSize: "13px" }}>
+            Created {formatCompactDate(replan.createdAt)}
+            {replan.environmentAssessment ? ` · Scene ${replan.environmentAssessment.sceneType}` : ""}
+          </div>
+        </article>
+      ))}
+    </div>
+    )
+  );
+
+  const toggleCapabilityKey = (key: string) => {
+    setSelectedCapabilityKeys((current) => (current.includes(key) ? current.filter((value) => value !== key) : [...current, key]));
+  };
+
   if (mode === "trials") {
     return (
       <div style={{ display: "grid", gap: "18px" }}>
@@ -532,10 +835,211 @@ export function RuntimeControlView({
         <Panel title="Compiled Tasks" eyebrow="Task Specs" description="Runtime-generated task definitions with inferred capabilities and approval policy.">
           {renderTaskCards()}
         </Panel>
-        <Panel title="Seed Domain Packs" eyebrow="Compilation Hints" description="The runtime uses these packs to infer structure without hard-coding platform-specific workflows.">
-          {renderDomainCards(data.domainPacks.slice(0, 4))}
+        <Panel
+          title="Plan Inventory"
+          eyebrow="Execution Plans"
+          description="Plans are runtime proposals. Select one to inspect scene fitness and prepare a supervised replan."
+        >
+          {renderPlanCards()}
         </Panel>
       </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(320px, 1fr)", gap: "18px", alignItems: "start" }}>
+        <Panel
+          title="Capability Driver Catalog"
+          eyebrow="Driver Surface"
+          description="Drivers are reusable runtime primitives. Highlighted entries are currently inferred from the selected plan or scene assessment."
+        >
+          {renderCapabilityDrivers(data.capabilityDrivers)}
+        </Panel>
+        <Panel
+          title="Environment and Scene Assessments"
+          eyebrow="Live Context"
+          description="Scene assessments tell the runtime whether the current environment still matches the compiled execution model."
+          actions={
+            selectedPlan ? (
+              <button
+                type="button"
+                onClick={() => void onAssessEnvironment(selectedPlan.id, selectedEpisodeId)}
+                disabled={busy || busyPlanId === selectedPlan.id}
+                style={actionButtonStyle}
+              >
+                {busyPlanId === selectedPlan.id ? "Assessing..." : "Refresh assessment"}
+              </button>
+            ) : undefined
+          }
+        >
+          {renderEnvironmentAssessments(data.environmentAssessments)}
+        </Panel>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 0.95fr) minmax(0, 1.05fr)", gap: "18px", alignItems: "start" }}>
+        <Panel
+          title="Plan Replanning"
+          eyebrow="Control Loop"
+          description="Use the current scene assessment and selected drivers to propose a safer next execution plan before promoting it."
+          actions={
+            <button
+              type="button"
+              onClick={() =>
+                selectedPlan
+                  ? void onReplanPlan(
+                      selectedPlan.id,
+                      replanTrigger,
+                      replanNotes || undefined,
+                      selectedCapabilityKeys.length ? selectedCapabilityKeys : undefined,
+                    )
+                  : undefined
+              }
+              disabled={busy || !selectedPlan || busyPlanId === selectedPlan?.id}
+              style={actionButtonStyle}
+            >
+              {busyPlanId === selectedPlan?.id ? "Replanning..." : "Generate replan"}
+            </button>
+          }
+        >
+          <div style={{ display: "grid", gap: "14px" }}>
+            <label style={{ display: "grid", gap: "8px" }}>
+              <span style={{ color: theme.colors.muted, fontSize: "13px" }}>Execution plan</span>
+              <select value={selectedPlan?.id ?? ""} onChange={(event) => setReplanPlanId(event.target.value)} style={inputShell}>
+                {data.plans.map((plan) => (
+                  <option key={plan.id} value={plan.id}>
+                    {plan.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label style={{ display: "grid", gap: "8px" }}>
+              <span style={{ color: theme.colors.muted, fontSize: "13px" }}>Replan trigger</span>
+              <select value={replanTrigger} onChange={(event) => setReplanTrigger(event.target.value)} style={inputShell}>
+                <option value="scene_drift">Scene drift</option>
+                <option value="driver_degradation">Driver degradation</option>
+                <option value="operator_feedback">Operator feedback</option>
+                <option value="output_gap">Output gap</option>
+              </select>
+            </label>
+            <label style={{ display: "grid", gap: "8px" }}>
+              <span style={{ color: theme.colors.muted, fontSize: "13px" }}>Operator notes</span>
+              <textarea
+                value={replanNotes}
+                onChange={(event) => setReplanNotes(event.target.value)}
+                rows={4}
+                placeholder="Optional notes for the replanner, e.g. preserve the current output contract but add a scene assessment checkpoint."
+                style={{ ...inputShell, resize: "vertical" }}
+              />
+            </label>
+            <div style={{ display: "grid", gap: "8px" }}>
+              <div style={{ color: theme.colors.muted, fontSize: "13px" }}>Preferred capability drivers</div>
+              <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                {data.capabilityDrivers.map((driver) => {
+                  const selected = selectedCapabilityKeys.includes(driver.key);
+                  return (
+                    <button
+                      key={driver.id}
+                      type="button"
+                      onClick={() => toggleCapabilityKey(driver.key)}
+                      style={{
+                        ...actionButtonStyle,
+                        padding: "8px 10px",
+                        background: selected ? "rgba(122,167,255,0.24)" : "rgba(255,255,255,0.04)",
+                      }}
+                    >
+                      {driver.key}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            {selectedAssessment ? (
+              <div
+                style={{
+                  padding: "14px",
+                  borderRadius: "16px",
+                  border: "1px solid rgba(255,255,255,0.08)",
+                  background: "rgba(255,255,255,0.03)",
+                  color: theme.colors.muted,
+                  fontSize: "13px",
+                  lineHeight: 1.6,
+                }}
+              >
+                <strong style={{ color: theme.colors.text }}>{selectedAssessment.sceneLabel}</strong>
+                <div style={{ marginTop: "6px" }}>{selectedAssessment.summary}</div>
+              </div>
+            ) : null}
+          </div>
+        </Panel>
+        <Panel
+          title="Replanning Results"
+          eyebrow="Latest Proposals"
+          description="Review recent replans, linked scene assessments, and any approval-gated patch output before trial execution resumes."
+        >
+          {combinedReplans.length ? (
+            <div style={{ display: "grid", gap: "14px" }}>
+              {lastReplan ? (
+                <article
+                  style={{
+                    padding: "16px",
+                    borderRadius: "18px",
+                    border: "1px solid rgba(122,167,255,0.34)",
+                    background: "rgba(122,167,255,0.08)",
+                    display: "grid",
+                    gap: "10px",
+                  }}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: "10px", flexWrap: "wrap", alignItems: "start" }}>
+                    <div>
+                      <strong>{lastReplan.executionPlan.name}</strong>
+                      <div style={{ color: theme.colors.muted, fontSize: "13px", marginTop: "6px", lineHeight: 1.6 }}>
+                        {lastReplan.summary}
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                      <StatusBadge tone={toneFromRuntimeStatus(lastReplan.status)}>{lastReplan.status}</StatusBadge>
+                      {lastReplan.patch ? <StatusBadge tone="warning">patch output</StatusBadge> : null}
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                    <StatusBadge tone="neutral">{lastReplan.trigger}</StatusBadge>
+                    <StatusBadge tone="neutral">{lastReplan.executionPlan.planBody.steps.length} steps</StatusBadge>
+                    {lastReplan.environmentAssessment ? (
+                      <StatusBadge tone={toneFromRuntimeStatus(lastReplan.environmentAssessment.status)}>
+                        {lastReplan.environmentAssessment.sceneType}
+                      </StatusBadge>
+                    ) : null}
+                  </div>
+                  {lastReplan.compilerNotes.length ? (
+                    <pre
+                      style={{
+                        margin: 0,
+                        padding: "14px",
+                        borderRadius: "16px",
+                        background: "rgba(255,255,255,0.03)",
+                        border: "1px solid rgba(255,255,255,0.08)",
+                        color: theme.colors.muted,
+                        fontSize: "12px",
+                        overflowX: "auto",
+                      }}
+                    >
+                      {summarizeJson({
+                        notes: lastReplan.compilerNotes,
+                        recommended_capabilities: lastReplan.recommendedCapabilityKeys,
+                        patch: lastReplan.patch?.title ?? null,
+                      })}
+                    </pre>
+                  ) : null}
+                </article>
+              ) : null}
+              {renderReplanCards(lastReplan ? combinedReplans.slice(1, 4) : combinedReplans.slice(0, 4))}
+            </div>
+          ) : (
+            <div style={{ color: theme.colors.muted }}>No replans recorded yet. Select a plan and generate the next proposal.</div>
+          )}
+        </Panel>
+      </div>
+
+      <Panel title="Seed Domain Packs" eyebrow="Compilation Hints" description="The runtime uses these packs to infer structure without hard-coding platform-specific workflows.">
+        {renderDomainCards(data.domainPacks.slice(0, 4))}
+      </Panel>
     </div>
   );
 }

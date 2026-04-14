@@ -182,6 +182,17 @@ class DomainPackRead(BaseModel):
     template_keys: list[str] = Field(default_factory=list)
 
 
+class CapabilityDriverRead(BaseModel):
+    key: str
+    description: str
+    risk: str
+    supported_domains: list[str] = Field(default_factory=list)
+    recommended_scene_types: list[str] = Field(default_factory=list)
+    writes_state: bool = False
+    requires_supervision: bool = False
+    audit_tags: list[str] = Field(default_factory=list)
+
+
 class TaskCompileRequest(BaseModel):
     instruction: str = Field(validation_alias=AliasChoices("instruction", "source_text", "prompt"))
     title: str | None = None
@@ -455,6 +466,70 @@ class EnvironmentSnapshotRead(EnvironmentSnapshotBase):
     updated_at: datetime
 
 
+class EnvironmentSnapshotContextRead(BaseModel):
+    persisted: bool = False
+    id: str | None = None
+    source: str = "browser"
+    environment_key: str | None = None
+    status: str = "observed"
+    url: str | None = None
+    title: str | None = None
+    page_type: str | None = None
+    capability_hints: list[str] = Field(default_factory=list)
+    observed_entities: list[dict[str, Any]] = Field(default_factory=list)
+    affordances: list[dict[str, Any]] = Field(default_factory=list)
+    runtime_metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class EnvironmentAssessmentRequest(BaseModel):
+    task_spec_id: str | None = None
+    execution_plan_id: str | None = None
+    execution_episode_id: str | None = None
+    environment_snapshot_id: str | None = None
+    snapshot: EnvironmentSnapshotCreate | None = None
+    compiler_payload: dict[str, Any] = Field(default_factory=dict)
+    plan_context: dict[str, Any] = Field(default_factory=dict)
+
+
+class EnvironmentAssessmentRead(BaseModel):
+    task_spec: TaskSpecRead | None = None
+    execution_plan: ExecutionPlanRead | None = None
+    execution_episode: ExecutionEpisodeRead | None = None
+    snapshot: EnvironmentSnapshotContextRead | None = None
+    scene_type: str
+    scene_key: str
+    confidence: float
+    plan_fit: str
+    recommended_capabilities: list[str] = Field(default_factory=list)
+    blockers: list[str] = Field(default_factory=list)
+    environment_requirements: dict[str, Any] = Field(default_factory=dict)
+    checkpoints: list[dict[str, Any]] = Field(default_factory=list)
+    assessment_notes: list[str] = Field(default_factory=list)
+    audit_metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ExecutionPlanReplanRequest(BaseModel):
+    name: str | None = None
+    reason: str | None = Field(default=None, validation_alias=AliasChoices("reason", "rationale"))
+    requested_by: str = "desktop-user"
+    execution_episode_id: str | None = None
+    environment_snapshot_id: str | None = None
+    snapshot: EnvironmentSnapshotCreate | None = None
+    compiler_payload: dict[str, Any] = Field(default_factory=dict)
+    plan_context: dict[str, Any] = Field(default_factory=dict)
+    runtime_metadata: dict[str, Any] = Field(default_factory=dict)
+    checkpoints: list[dict[str, Any]] = Field(default_factory=list)
+    preserve_active_plan: bool = True
+
+
+class ExecutionPlanReplanRead(BaseModel):
+    previous_plan: ExecutionPlanRead
+    execution_plan: ExecutionPlanRead
+    assessment: EnvironmentAssessmentRead
+    compiler_notes: list[str] = Field(default_factory=list)
+    audit_metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 class SkillBase(BaseModel):
     skill_id: str
     name: str
@@ -509,6 +584,25 @@ class SkillHealthCheckRead(BaseModel):
     health: str
     checked_at: datetime
     issues: list[str] = Field(default_factory=list)
+
+
+class SkillHealthSweepRequest(BaseModel):
+    skill_ids: list[str] = Field(default_factory=list)
+    statuses: list[str] = Field(default_factory=lambda: ["active", "approved"])
+    platform: str | None = None
+    observed_results_by_skill: dict[str, dict[str, Any]] = Field(default_factory=dict)
+
+
+class SkillHealthSweepItemRead(SkillHealthCheckRead):
+    degraded: bool = False
+
+
+class SkillHealthSweepRead(BaseModel):
+    checked_count: int
+    degraded_count: int
+    statuses: list[str] = Field(default_factory=list)
+    platform: str | None = None
+    results: list[SkillHealthSweepItemRead] = Field(default_factory=list)
 
 
 class LearningDraftBase(BaseModel):

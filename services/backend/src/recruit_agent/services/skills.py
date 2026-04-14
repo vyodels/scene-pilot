@@ -101,6 +101,13 @@ class SkillHealthCheckResult:
 
 
 @dataclass(slots=True)
+class SkillHealthSweepResult:
+    checked_count: int
+    degraded_count: int
+    results: list[tuple[SkillRecord, SkillHealthCheckResult]] = field(default_factory=list)
+
+
+@dataclass(slots=True)
 class SkillHealthCheckService:
     def run(
         self,
@@ -154,4 +161,59 @@ class SkillHealthCheckService:
             health=health,
             issues=issues,
             recommended_status=recommended_status,
+        )
+
+
+@dataclass(slots=True)
+class SkillHealthSweepService:
+    checker: SkillHealthCheckService = field(default_factory=SkillHealthCheckService)
+
+    def filter_skills(
+        self,
+        skills: list[SkillRecord],
+        *,
+        skill_ids: list[str] | None = None,
+        statuses: list[str] | None = None,
+        platform: str | None = None,
+    ) -> list[SkillRecord]:
+        normalized_ids = {item for item in (skill_ids or []) if item}
+        normalized_statuses = {item.strip().lower() for item in (statuses or []) if item and item.strip()}
+        normalized_platform = platform.strip().lower() if platform and platform.strip() else None
+
+        filtered: list[SkillRecord] = []
+        for skill in skills:
+            if normalized_ids and skill.skill_id not in normalized_ids and getattr(skill, "id", None) not in normalized_ids:
+                continue
+            if normalized_statuses and str(skill.status).lower() not in normalized_statuses:
+                continue
+            if normalized_platform and skill.platform.strip().lower() != normalized_platform:
+                continue
+            filtered.append(skill)
+        return filtered
+
+    def run(
+        self,
+        skills: list[SkillRecord],
+        *,
+        observed_results_by_skill: dict[str, dict[str, Any]] | None = None,
+    ) -> SkillHealthSweepResult:
+        observed_results_by_skill = observed_results_by_skill or {}
+        results: list[tuple[SkillRecord, SkillHealthCheckResult]] = []
+        degraded_count = 0
+
+        for skill in skills:
+            observed_result = (
+                observed_results_by_skill.get(skill.skill_id)
+                or observed_results_by_skill.get(getattr(skill, "id", ""))
+                or {}
+            )
+            result = self.checker.run(skill, observed_result=observed_result)
+            if skill.status == SkillStatus.DEGRADED:
+                degraded_count += 1
+            results.append((skill, result))
+
+        return SkillHealthSweepResult(
+            checked_count=len(results),
+            degraded_count=degraded_count,
+            results=results,
         )

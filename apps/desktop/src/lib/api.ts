@@ -11,10 +11,15 @@ import type {
   CompileTaskResponse,
   DashboardSummary,
   DomainPackRecord,
+  RuntimeCapabilityDriver,
+  RuntimeEnvironmentAssessment,
+  RuntimeEnvironmentAssessmentRequest,
   RuntimeEpisode,
   RuntimeEpisodeReplay,
   RuntimeLearningOutcome,
   RuntimePatch,
+  RuntimePlanReplanRequest,
+  RuntimePlanReplanResult,
   RuntimeSnapshot,
   RuntimeTaskSpec,
   RuntimeTemplate,
@@ -41,8 +46,13 @@ export interface DesktopApiClient {
   confirmTrialRun(episodeId: string, reason?: string): Promise<RuntimeLearningOutcome>;
   getRuntimeReplay(episodeId: string): Promise<RuntimeEpisodeReplay>;
   listRuntimeSnapshots(): Promise<RuntimeSnapshot[]>;
+  listCapabilityDrivers(): Promise<RuntimeCapabilityDriver[]>;
+  listRuntimeEnvironmentAssessments(): Promise<RuntimeEnvironmentAssessment[]>;
+  assessRuntimeEnvironment(payload: RuntimeEnvironmentAssessmentRequest): Promise<RuntimeEnvironmentAssessment>;
   listRuntimeTemplates(): Promise<RuntimeTemplate[]>;
   listRuntimePatches(): Promise<RuntimePatch[]>;
+  listRuntimeReplans(): Promise<RuntimePlanReplanResult[]>;
+  replanRuntimePlan(payload: RuntimePlanReplanRequest): Promise<RuntimePlanReplanResult>;
   approveRuntimePatch(id: string, reason?: string): Promise<RuntimePatch>;
   rejectRuntimePatch(id: string, reason?: string): Promise<RuntimePatch>;
   getSyncStatus(): Promise<SyncStatusSnapshot>;
@@ -73,6 +83,10 @@ function isOfflineError(error: unknown): boolean {
   return error instanceof Error && /fetch|network|failed|offline/i.test(error.message);
 }
 
+function isMissingEndpointError(error: unknown): boolean {
+  return error instanceof Error && /:\s*(404|405)\b/.test(error.message);
+}
+
 async function requestJson<T>(baseUrl: string, path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${baseUrl}${path}`, {
     headers: {
@@ -89,12 +103,37 @@ async function requestJson<T>(baseUrl: string, path: string, init?: RequestInit)
   return (await response.json()) as T;
 }
 
+async function requestOptionalJson<T>(baseUrl: string, path: string, init?: RequestInit): Promise<T | undefined> {
+  try {
+    return await requestJson<T>(baseUrl, path, init);
+  } catch (error) {
+    if (isMissingEndpointError(error)) {
+      return undefined;
+    }
+    throw error;
+  }
+}
+
 function asRecord(value: unknown): JsonRecord {
   return typeof value === "object" && value !== null ? (value as JsonRecord) : {};
 }
 
 function asArray<T>(value: unknown): T[] {
   return Array.isArray(value) ? (value as T[]) : [];
+}
+
+function humanizeKey(value: string): string {
+  return value
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function labelFromSignal(value: unknown): string | null {
+  const record = asRecord(value);
+  const label = record.label ?? record.kind ?? record.name ?? record.id;
+  return label ? String(label) : null;
 }
 
 function normalizeAgentSnapshot(raw: unknown): AgentSnapshot {
@@ -293,6 +332,98 @@ function normalizeRuntimeSnapshot(raw: unknown): RuntimeSnapshot {
   };
 }
 
+function normalizeRuntimeCapabilityDriver(raw: unknown): RuntimeCapabilityDriver {
+  const record = asRecord(raw);
+  const supportedDomains = asArray<string>(record.supportedDomains ?? record.supported_domains);
+  const requiresSupervision = Boolean(record.requiresSupervision ?? record.requires_supervision ?? false);
+  const supportsWrite = Boolean(record.supportsWrite ?? record.supports_write ?? record.writesState ?? record.writes_state ?? false);
+  const key = String(record.key ?? record.driver_key ?? "");
+  return {
+    id: String(record.id ?? key),
+    key,
+    name: String(record.name ?? humanizeKey(key || "capability driver")),
+    category: String(record.category ?? record.kind ?? record.risk ?? "general"),
+    status: String(record.status ?? "ready"),
+    scope: String(record.scope ?? (supportedDomains.length ? supportedDomains.join(", ") : "general")),
+    description: String(record.description ?? ""),
+    safetyMode: String(record.safetyMode ?? record.safety_mode ?? (requiresSupervision ? "supervised" : "self-serve")),
+    supportsWrite,
+    sceneTypes: asArray<string>(
+      record.sceneTypes ?? record.scene_types ?? record.recommendedSceneTypes ?? record.recommended_scene_types,
+    ),
+    signalLabels: asArray<string>(record.signalLabels ?? record.signal_labels ?? record.auditTags ?? record.audit_tags),
+    supportedDomains,
+    requiresSupervision,
+    updatedAt: String(record.updatedAt ?? record.updated_at ?? new Date().toISOString()),
+  };
+}
+
+function normalizeRuntimeEnvironmentAssessment(raw: unknown): RuntimeEnvironmentAssessment {
+  const record = asRecord(raw);
+  const snapshot = asRecord(record.snapshot);
+  const taskSpec = asRecord(record.taskSpec ?? record.task_spec);
+  const executionPlan = asRecord(record.executionPlan ?? record.execution_plan);
+  const executionEpisode = asRecord(record.executionEpisode ?? record.execution_episode);
+  const blockers = asArray<string>(record.blockers);
+  const assessmentNotes = asArray<string>(record.assessmentNotes ?? record.assessment_notes);
+  const checkpoints = asArray<Record<string, unknown>>(record.checkpoints);
+  const environmentRequirements = asRecord(record.environmentRequirements ?? record.environment_requirements);
+  const sceneType = String(record.sceneType ?? record.scene_type ?? snapshot.pageType ?? snapshot.page_type ?? "unknown");
+  const sceneKey = String(record.sceneKey ?? record.scene_key ?? snapshot.environmentKey ?? snapshot.environment_key ?? "runtime");
+  const observedLabels = asArray(snapshot.observed_entities).map(labelFromSignal).filter((item): item is string => Boolean(item));
+  const affordanceLabels = asArray(snapshot.affordances).map(labelFromSignal).filter((item): item is string => Boolean(item));
+  const recommendedActions = [
+    ...checkpoints
+      .map((item) => labelFromSignal(item))
+      .filter((item): item is string => Boolean(item)),
+    ...assessmentNotes,
+  ];
+  return {
+    id: String(record.id ?? snapshot.id ?? `${sceneKey}:${sceneType}`),
+    taskSpecId: taskSpec.id ? String(taskSpec.id) : record.taskSpecId ? String(record.taskSpecId) : record.task_spec_id ? String(record.task_spec_id) : null,
+    executionPlanId:
+      executionPlan.id
+        ? String(executionPlan.id)
+        : record.executionPlanId
+          ? String(record.executionPlanId)
+          : record.execution_plan_id
+            ? String(record.execution_plan_id)
+            : null,
+    executionEpisodeId:
+      executionEpisode.id
+        ? String(executionEpisode.id)
+        : record.executionEpisodeId
+          ? String(record.executionEpisodeId)
+          : record.execution_episode_id
+            ? String(record.execution_episode_id)
+            : null,
+    snapshotId: snapshot.id ? String(snapshot.id) : record.snapshotId ? String(record.snapshotId) : record.snapshot_id ? String(record.snapshot_id) : null,
+    environmentKey: sceneKey,
+    sceneLabel: String(record.sceneLabel ?? record.scene_label ?? snapshot.title ?? humanizeKey(sceneType)),
+    sceneType,
+    status: String(record.status ?? record.planFit ?? record.plan_fit ?? "observed"),
+    confidence: Number(record.confidence ?? 0),
+    summary: String(
+      record.summary ??
+        record.detail ??
+        assessmentNotes[0] ??
+        (blockers.length ? `Detected ${blockers.join(", ")}.` : `Assessed scene ${sceneType}.`),
+    ),
+    capabilityKeys: asArray<string>(
+      record.capabilityKeys ?? record.capability_keys ?? record.recommendedCapabilities ?? record.recommended_capabilities,
+    ),
+    observedLabels,
+    affordanceLabels,
+    driftSignals: asArray<string>(record.driftSignals ?? record.drift_signals ?? blockers),
+    recommendedActions,
+    checkpoints,
+    environmentRequirements,
+    notes: assessmentNotes,
+    auditMetadata: asRecord(record.auditMetadata ?? record.audit_metadata),
+    updatedAt: String(record.updatedAt ?? record.updated_at ?? new Date().toISOString()),
+  };
+}
+
 function normalizeRuntimeTemplate(raw: unknown): RuntimeTemplate {
   const record = asRecord(raw);
   return {
@@ -333,6 +464,50 @@ function normalizeRuntimePatch(raw: unknown): RuntimePatch {
     runtimeMetadata: asRecord(record.runtimeMetadata ?? record.runtime_metadata),
     createdAt: String(record.createdAt ?? record.created_at ?? new Date().toISOString()),
     updatedAt: String(record.updatedAt ?? record.updated_at ?? new Date().toISOString()),
+  };
+}
+
+function normalizeRuntimeReplanResult(raw: unknown): RuntimePlanReplanResult {
+  const record = asRecord(raw);
+  const executionPlan = normalizeRuntimePlan(record.executionPlan ?? record.execution_plan);
+  const previousPlan = asRecord(record.previousPlan ?? record.previous_plan);
+  const environmentAssessment =
+    record.environmentAssessment ?? record.environment_assessment ?? record.assessment
+      ? normalizeRuntimeEnvironmentAssessment(record.environmentAssessment ?? record.environment_assessment ?? record.assessment)
+      : null;
+  const runtimeMetadata = asRecord(executionPlan.runtimeMetadata);
+  return {
+    id: String(record.id ?? executionPlan.id),
+    taskSpecId:
+      executionPlan.taskSpecId ||
+      (record.taskSpecId ? String(record.taskSpecId) : record.task_spec_id ? String(record.task_spec_id) : null),
+    baseExecutionPlanId: String(
+      record.baseExecutionPlanId ??
+        record.base_execution_plan_id ??
+        previousPlan.id ??
+        runtimeMetadata.replanned_from_plan_id ??
+        "",
+    ),
+    executionPlan,
+    status: String(record.status ?? executionPlan.status ?? "proposed"),
+    trigger: String(record.trigger ?? asRecord(runtimeMetadata.replan_assessment).plan_fit ?? "replanned"),
+    summary: String(
+      record.summary ??
+        record.detail ??
+        runtimeMetadata.replan_reason ??
+        environmentAssessment?.summary ??
+        "Generated a new plan revision from the latest runtime scene.",
+    ),
+    compilerNotes: asArray<string>(record.compilerNotes ?? record.compiler_notes),
+    recommendedCapabilityKeys: asArray<string>(
+      record.recommendedCapabilityKeys ??
+        record.recommended_capability_keys ??
+        environmentAssessment?.capabilityKeys,
+    ),
+    environmentAssessment,
+    patch: record.patch ? normalizeRuntimePatch(record.patch) : null,
+    auditMetadata: asRecord(record.auditMetadata ?? record.audit_metadata),
+    createdAt: String(record.createdAt ?? record.created_at ?? new Date().toISOString()),
   };
 }
 
@@ -590,14 +765,18 @@ function createFetchClient(baseUrl: string): DesktopApiClient {
   return {
     getDashboardSummary: async () => normalizeDashboard(await requestJson<unknown>(baseUrl, "/api/dashboard")),
     getRuntimeWorkspaceData: async () => {
-      const [domainPacks, taskSpecs, plans, episodes, snapshots, templates, patches] = await Promise.all([
+      const [domainPacks, taskSpecs, plans, episodes, snapshots, capabilityDrivers, environmentAssessments, templates, patches, replans] =
+        await Promise.all([
         requestJson<unknown>(baseUrl, "/api/runtime/domain-packs"),
         requestJson<unknown>(baseUrl, "/api/runtime/task-specs"),
         requestJson<unknown>(baseUrl, "/api/runtime/plans"),
         requestJson<unknown>(baseUrl, "/api/runtime/trial-runs"),
         requestJson<unknown>(baseUrl, "/api/runtime/environment-snapshots"),
+        requestOptionalJson<unknown>(baseUrl, "/api/runtime/capability-drivers"),
+        requestOptionalJson<unknown>(baseUrl, "/api/runtime/environment-assessments"),
         requestJson<unknown>(baseUrl, "/api/runtime/templates"),
         requestJson<unknown>(baseUrl, "/api/runtime/workflow-patches"),
+        requestOptionalJson<unknown>(baseUrl, "/api/runtime/replans"),
       ]);
       return {
         domainPacks: asArray(domainPacks).map(normalizeDomainPack),
@@ -605,8 +784,11 @@ function createFetchClient(baseUrl: string): DesktopApiClient {
         plans: asArray(plans).map(normalizeRuntimePlan),
         episodes: asArray(episodes).map(normalizeRuntimeEpisode),
         snapshots: asArray(snapshots).map(normalizeRuntimeSnapshot),
+        capabilityDrivers: capabilityDrivers ? asArray(capabilityDrivers).map(normalizeRuntimeCapabilityDriver) : [],
+        environmentAssessments: environmentAssessments ? asArray(environmentAssessments).map(normalizeRuntimeEnvironmentAssessment) : [],
         templates: asArray(templates).map(normalizeRuntimeTemplate),
         patches: asArray(patches).map(normalizeRuntimePatch),
+        replans: replans ? asArray(replans).map(normalizeRuntimeReplanResult) : [],
       };
     },
     listDomainPacks: async () => asArray(await requestJson<unknown>(baseUrl, "/api/runtime/domain-packs")).map(normalizeDomainPack),
@@ -670,8 +852,83 @@ function createFetchClient(baseUrl: string): DesktopApiClient {
       ),
     getRuntimeReplay: async (episodeId) => requestRuntimeReplay(baseUrl, episodeId),
     listRuntimeSnapshots: async () => asArray(await requestJson<unknown>(baseUrl, "/api/runtime/environment-snapshots")).map(normalizeRuntimeSnapshot),
+    listCapabilityDrivers: async () => {
+      const payload = await requestOptionalJson<unknown>(baseUrl, "/api/runtime/capability-drivers");
+      return payload ? asArray(payload).map(normalizeRuntimeCapabilityDriver) : [];
+    },
+    listRuntimeEnvironmentAssessments: async () => {
+      const payload = await requestOptionalJson<unknown>(baseUrl, "/api/runtime/environment-assessments");
+      return payload ? asArray(payload).map(normalizeRuntimeEnvironmentAssessment) : [];
+    },
+    assessRuntimeEnvironment: async (payload) =>
+      normalizeRuntimeEnvironmentAssessment(
+        await requestJson<unknown>(baseUrl, "/api/runtime/environment-assessments", {
+          method: "POST",
+          body: JSON.stringify({
+            task_spec_id: payload.taskSpecId,
+            execution_plan_id: payload.executionPlanId,
+            execution_episode_id: payload.executionEpisodeId,
+            environment_snapshot_id: payload.snapshotId,
+            snapshot: payload.snapshot
+              ? {
+                  source: payload.snapshot.source ?? "browser",
+                  environment_key: payload.snapshot.environmentKey,
+                  status: payload.snapshot.status ?? "captured",
+                  url: payload.snapshot.url,
+                  title: payload.snapshot.title,
+                  page_type: payload.snapshot.pageType,
+                  capability_hints: payload.snapshot.capabilityHints ?? [],
+                  observed_entities: payload.snapshot.observedEntities ?? [],
+                  affordances: payload.snapshot.affordances ?? [],
+                  runtime_metadata: payload.snapshot.runtimeMetadata ?? {},
+                }
+              : undefined,
+            compiler_payload: payload.compilerPayload ?? {},
+            plan_context: payload.planContext ?? {},
+          }),
+        }),
+      ),
     listRuntimeTemplates: async () => asArray(await requestJson<unknown>(baseUrl, "/api/runtime/templates")).map(normalizeRuntimeTemplate),
     listRuntimePatches: async () => asArray(await requestJson<unknown>(baseUrl, "/api/runtime/workflow-patches")).map(normalizeRuntimePatch),
+    listRuntimeReplans: async () => {
+      const payload = await requestOptionalJson<unknown>(baseUrl, "/api/runtime/replans");
+      return payload ? asArray(payload).map(normalizeRuntimeReplanResult) : [];
+    },
+    replanRuntimePlan: async (payload) =>
+      normalizeRuntimeReplanResult(
+        await requestJson<unknown>(baseUrl, `/api/runtime/plans/${payload.executionPlanId}/replan`, {
+          method: "POST",
+          body: JSON.stringify({
+            task_spec_id: payload.taskSpecId,
+            reason: payload.reason ?? payload.notes ?? payload.trigger,
+            requested_by: payload.requestedBy ?? "desktop-user",
+            execution_episode_id: payload.executionEpisodeId,
+            environment_snapshot_id: payload.snapshotId,
+            snapshot: payload.snapshot
+              ? {
+                  source: payload.snapshot.source ?? "browser",
+                  environment_key: payload.snapshot.environmentKey,
+                  status: payload.snapshot.status ?? "captured",
+                  url: payload.snapshot.url,
+                  title: payload.snapshot.title,
+                  page_type: payload.snapshot.pageType,
+                  capability_hints: payload.snapshot.capabilityHints ?? [],
+                  observed_entities: payload.snapshot.observedEntities ?? [],
+                  affordances: payload.snapshot.affordances ?? [],
+                  runtime_metadata: payload.snapshot.runtimeMetadata ?? {},
+                }
+              : undefined,
+            compiler_payload: {
+              preferred_capabilities: payload.preferredCapabilityKeys ?? [],
+              ...(payload.compilerPayload ?? {}),
+            },
+            plan_context: payload.planContext ?? {},
+            runtime_metadata: payload.runtimeMetadata ?? {},
+            checkpoints: payload.checkpoints ?? [],
+            preserve_active_plan: payload.preserveActivePlan ?? true,
+          }),
+        }),
+      ),
     approveRuntimePatch: async (id, reason) =>
       normalizeRuntimePatch(
         await requestJson<unknown>(baseUrl, `/api/runtime/workflow-patches/${id}/approve`, {
@@ -766,6 +1023,69 @@ function createFetchClient(baseUrl: string): DesktopApiClient {
 
 function createMockClient(): DesktopApiClient {
   const snapshot = desktopMockSnapshot;
+  const buildMockReplan = (payload: RuntimePlanReplanRequest): RuntimePlanReplanResult => {
+    const basePlan = desktopRuntimeMock.plans.find((item) => item.id === payload.executionPlanId) ?? desktopRuntimeMock.plans[0];
+    const trigger = payload.trigger ?? "scene_drift";
+    const assessment =
+      desktopRuntimeMock.environmentAssessments.find((item) => item.executionPlanId === payload.executionPlanId) ??
+      desktopRuntimeMock.environmentAssessments[0] ??
+      null;
+    const patch =
+      desktopRuntimeMock.patches.find((item) => item.executionPlanId === payload.executionPlanId) ?? desktopRuntimeMock.patches[0] ?? null;
+    const capabilitySet = new Set<string>([
+      ...((payload.preferredCapabilityKeys ?? []).filter(Boolean)),
+      ...(assessment?.capabilityKeys ?? []),
+      ...desktopRuntimeMock.capabilityDrivers.slice(0, 3).map((driver) => driver.key),
+    ]);
+    const timestamp = new Date().toISOString();
+    return {
+      id: `replan-${payload.executionPlanId}-${Date.now()}`,
+      taskSpecId: payload.taskSpecId ?? basePlan?.taskSpecId ?? null,
+      baseExecutionPlanId: payload.executionPlanId,
+      executionPlan: {
+        ...(basePlan ?? desktopRuntimeMock.plans[0]),
+        id: `${payload.executionPlanId}-replan`,
+        name: `${basePlan?.name ?? "Runtime plan"} Replanned`,
+        status: "proposed",
+        version: (basePlan?.version ?? 0) + 1,
+        approvalState: "pending_review",
+        checkpoints: [
+          ...(basePlan?.checkpoints ?? []),
+          {
+            kind: "scene_assessment",
+            label: "Validate live environment before applying updated execution steps",
+          },
+        ],
+        runtimeMetadata: {
+          ...(basePlan?.runtimeMetadata ?? {}),
+          replanned_at: timestamp,
+          replanned_trigger: trigger,
+          replanned_notes: payload.notes ?? "",
+        },
+        updatedAt: timestamp,
+      },
+      status: "proposed",
+      trigger,
+      summary: payload.notes
+        ? `Mock replanning inserted a fresh scene assessment checkpoint. Operator notes: ${payload.notes}`
+        : "Mock replanning inserted a fresh scene assessment checkpoint and proposed a safer execution order.",
+      compilerNotes: [
+        "Backend replanning endpoint is unavailable, so the desktop control plane generated a local proposal.",
+        "Capability priority was refreshed from the current assessment and selected driver hints.",
+      ],
+      recommendedCapabilityKeys: Array.from(capabilitySet).slice(0, 4),
+      environmentAssessment: assessment,
+      patch: patch
+        ? {
+            ...patch,
+            id: `${patch.id}-replan`,
+            status: "pending_review",
+            updatedAt: timestamp,
+          }
+        : null,
+      createdAt: timestamp,
+    };
+  };
 
   return {
     getDashboardSummary: async () => snapshot,
@@ -820,11 +1140,22 @@ function createMockClient(): DesktopApiClient {
       learningDraft: null,
       approval: null,
       skillHealth: null,
-    }),
+      }),
     getRuntimeReplay: async (episodeId) => desktopReplayMockByEpisode[episodeId] ?? desktopReplayMockByEpisode["episode-001"],
     listRuntimeSnapshots: async () => desktopRuntimeMock.snapshots,
+    listCapabilityDrivers: async () => desktopRuntimeMock.capabilityDrivers,
+    listRuntimeEnvironmentAssessments: async () => desktopRuntimeMock.environmentAssessments,
+    assessRuntimeEnvironment: async (payload) =>
+      desktopRuntimeMock.environmentAssessments.find(
+        (item) =>
+          item.executionEpisodeId === payload.executionEpisodeId ||
+          item.executionPlanId === payload.executionPlanId ||
+          item.taskSpecId === payload.taskSpecId,
+      ) ?? desktopRuntimeMock.environmentAssessments[0],
     listRuntimeTemplates: async () => desktopRuntimeMock.templates,
     listRuntimePatches: async () => desktopRuntimeMock.patches,
+    listRuntimeReplans: async () => desktopRuntimeMock.replans,
+    replanRuntimePlan: async (payload) => buildMockReplan(payload),
     approveRuntimePatch: async (id, reason) => ({
       ...desktopRuntimeMock.patches[0],
       id,
@@ -981,6 +1312,30 @@ export function createDesktopApiClient(baseUrl?: string): DesktopApiClient {
         throw error;
       });
     },
+    async listCapabilityDrivers() {
+      return fetchClient.listCapabilityDrivers().catch(async (error) => {
+        if (isOfflineError(error) || isMissingEndpointError(error)) {
+          return desktopRuntimeMock.capabilityDrivers;
+        }
+        throw error;
+      });
+    },
+    async listRuntimeEnvironmentAssessments() {
+      return fetchClient.listRuntimeEnvironmentAssessments().catch(async (error) => {
+        if (isOfflineError(error) || isMissingEndpointError(error)) {
+          return desktopRuntimeMock.environmentAssessments;
+        }
+        throw error;
+      });
+    },
+    async assessRuntimeEnvironment(payload) {
+      return fetchClient.assessRuntimeEnvironment(payload).catch(async (error) => {
+        if (isOfflineError(error) || isMissingEndpointError(error)) {
+          return createMockClient().assessRuntimeEnvironment(payload);
+        }
+        throw error;
+      });
+    },
     async listRuntimeTemplates() {
       return fetchClient.listRuntimeTemplates().catch(async (error) => {
         if (isOfflineError(error)) {
@@ -993,6 +1348,22 @@ export function createDesktopApiClient(baseUrl?: string): DesktopApiClient {
       return fetchClient.listRuntimePatches().catch(async (error) => {
         if (isOfflineError(error)) {
           return desktopRuntimeMock.patches;
+        }
+        throw error;
+      });
+    },
+    async listRuntimeReplans() {
+      return fetchClient.listRuntimeReplans().catch(async (error) => {
+        if (isOfflineError(error) || isMissingEndpointError(error)) {
+          return desktopRuntimeMock.replans;
+        }
+        throw error;
+      });
+    },
+    async replanRuntimePlan(payload) {
+      return fetchClient.replanRuntimePlan(payload).catch(async (error) => {
+        if (isOfflineError(error) || isMissingEndpointError(error)) {
+          return createMockClient().replanRuntimePlan(payload);
         }
         throw error;
       });

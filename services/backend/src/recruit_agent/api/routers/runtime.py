@@ -6,12 +6,17 @@ from sqlalchemy.orm import Session
 from recruit_agent.api.deps import get_container, get_session
 from recruit_agent.services.container import AppContainer
 from recruit_agent.schemas import (
+    CapabilityDriverRead,
     DomainPackRead,
+    EnvironmentAssessmentRead,
+    EnvironmentAssessmentRequest,
     EpisodeConfirmRequest,
     EnvironmentSnapshotCreate,
     EnvironmentSnapshotRead,
     ExecutionEpisodeCreate,
     ExecutionEpisodeRead,
+    ExecutionPlanReplanRead,
+    ExecutionPlanReplanRequest,
     ExecutionPlanRead,
     RuntimeEpisodeReplayRead,
     RuntimeLearningOutcomeRead,
@@ -55,6 +60,15 @@ def list_domain_packs(
     service: PersistedRuntimeService = Depends(get_runtime_service),
 ) -> list[DomainPackRead]:
     return service.list_domain_packs()
+
+
+@router.get("/capability-drivers", response_model=list[CapabilityDriverRead])
+@router.get("/capabilities", response_model=list[CapabilityDriverRead])
+def list_capability_drivers(
+    domain: str | None = Query(default=None),
+    service: PersistedRuntimeService = Depends(get_runtime_service),
+) -> list[CapabilityDriverRead]:
+    return service.list_capability_drivers(domain=domain)
 
 
 @router.get("/task-specs", response_model=list[TaskSpecRead])
@@ -114,6 +128,18 @@ def compile_execution_plan(
         _raise_runtime_http_error(exc)
 
 
+@router.post("/plans/{plan_id}/replan", response_model=ExecutionPlanReplanRead, status_code=201)
+def replan_execution_plan(
+    plan_id: str,
+    payload: ExecutionPlanReplanRequest,
+    service: PersistedRuntimeService = Depends(get_runtime_service),
+) -> ExecutionPlanReplanRead:
+    try:
+        return service.replan_execution(plan_id, payload)
+    except ValueError as exc:
+        _raise_runtime_http_error(exc)
+
+
 @router.get("/episodes", response_model=list[ExecutionEpisodeRead])
 @router.get("/trial-runs", response_model=list[ExecutionEpisodeRead])
 def list_execution_episodes(
@@ -138,18 +164,6 @@ def get_execution_episode(
 
 @router.get("/episodes/{episode_id}/replay", response_model=RuntimeEpisodeReplayRead)
 @router.get("/trial-runs/{episode_id}/replay", response_model=RuntimeEpisodeReplayRead)
-def get_execution_episode_replay(
-    episode_id: str,
-    service: PersistedRuntimeService = Depends(get_runtime_service),
-) -> RuntimeEpisodeReplayRead:
-    try:
-        return service.get_episode_replay(episode_id)
-    except ValueError as exc:
-        _raise_runtime_http_error(exc)
-
-
-@router.get("/trial-runs/{episode_id}/replay", response_model=RuntimeEpisodeReplayRead)
-@router.get("/episodes/{episode_id}/replay", response_model=RuntimeEpisodeReplayRead)
 def get_execution_episode_replay(
     episode_id: str,
     service: PersistedRuntimeService = Depends(get_runtime_service),
@@ -243,6 +257,19 @@ def create_environment_snapshot(
 ) -> EnvironmentSnapshotRead:
     try:
         return service.create_environment_snapshot(payload)
+    except ValueError as exc:
+        _raise_runtime_http_error(exc)
+
+
+@router.post("/environment-assessments", response_model=EnvironmentAssessmentRead)
+@router.post("/environment-assessment", response_model=EnvironmentAssessmentRead)
+@router.post("/scene-assessment", response_model=EnvironmentAssessmentRead)
+def assess_environment(
+    payload: EnvironmentAssessmentRequest,
+    service: PersistedRuntimeService = Depends(get_runtime_service),
+) -> EnvironmentAssessmentRead:
+    try:
+        return service.assess_environment(payload)
     except ValueError as exc:
         _raise_runtime_http_error(exc)
 

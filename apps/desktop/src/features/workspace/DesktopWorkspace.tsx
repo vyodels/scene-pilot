@@ -7,8 +7,10 @@ import type {
   AgentEvent,
   CompileTaskRequest,
   DashboardSummary,
+  RuntimeEnvironmentAssessment,
   RuntimeEpisodeReplay,
   RuntimeLearningOutcome,
+  RuntimePlanReplanResult,
   RuntimeWorkspaceData,
   SyncBacklogItem,
   SyncStatusSnapshot,
@@ -22,6 +24,44 @@ import { SettingsView } from "../settings/SettingsView";
 import { SkillsView } from "../skills/SkillsView";
 import { RuntimeControlView } from "../runtime/RuntimeControlView";
 import { WorkflowsView } from "../workflows/WorkflowsView";
+
+function prependUniqueById<T extends { id: string }>(preferred: T[], fallback: T[]): T[] {
+  const seen = new Set<string>();
+  const merged: T[] = [];
+  for (const item of [...preferred, ...fallback]) {
+    if (!item || seen.has(item.id)) {
+      continue;
+    }
+    seen.add(item.id);
+    merged.push(item);
+  }
+  return merged;
+}
+
+function mergeRuntimeWorkspaceData(
+  nextRuntime: RuntimeWorkspaceData,
+  currentRuntime: RuntimeWorkspaceData,
+  lastAssessment: RuntimeEnvironmentAssessment | null,
+  lastReplan: RuntimePlanReplanResult | null,
+): RuntimeWorkspaceData {
+  const assessment = lastAssessment ? [lastAssessment] : [];
+  const replanAssessment = lastReplan?.environmentAssessment ? [lastReplan.environmentAssessment] : [];
+  const replanPatch = lastReplan?.patch ? [lastReplan.patch] : [];
+  const replanPlan = lastReplan ? [lastReplan.executionPlan] : [];
+  const replans = lastReplan ? [lastReplan] : [];
+
+  return {
+    ...nextRuntime,
+    plans: prependUniqueById(replanPlan, prependUniqueById(nextRuntime.plans, currentRuntime.plans)),
+    capabilityDrivers: nextRuntime.capabilityDrivers.length ? nextRuntime.capabilityDrivers : currentRuntime.capabilityDrivers,
+    environmentAssessments: prependUniqueById(
+      assessment,
+      prependUniqueById(replanAssessment, prependUniqueById(nextRuntime.environmentAssessments, currentRuntime.environmentAssessments)),
+    ),
+    patches: prependUniqueById(replanPatch, prependUniqueById(nextRuntime.patches, currentRuntime.patches)),
+    replans: prependUniqueById(replans, prependUniqueById(nextRuntime.replans, currentRuntime.replans)),
+  };
+}
 
 export function DesktopWorkspace(): JSX.Element {
   const [tab, setTab] = useState<WorkspaceTab>("dashboard");
@@ -38,6 +78,7 @@ export function DesktopWorkspace(): JSX.Element {
   const [trialTaskId, setTrialTaskId] = useState<string>();
   const [busyEpisodeId, setBusyEpisodeId] = useState<string>();
   const [busyPatchId, setBusyPatchId] = useState<string>();
+  const [busyPlanId, setBusyPlanId] = useState<string>();
   const [selectedEpisodeId, setSelectedEpisodeId] = useState<string>();
   const [selectedReplay, setSelectedReplay] = useState<RuntimeEpisodeReplay | null>(desktopReplayMockByEpisode["episode-001"]);
   const [syncStatus, setSyncStatus] = useState<SyncStatusSnapshot>(desktopSyncStatusMock);
@@ -46,6 +87,10 @@ export function DesktopWorkspace(): JSX.Element {
   const [transport, setTransport] = useState(apiClient.describe().transport);
   const [errorMessage, setErrorMessage] = useState<string>();
   const [lastOutcome, setLastOutcome] = useState<RuntimeLearningOutcome | null>(null);
+  const [lastAssessment, setLastAssessment] = useState<RuntimeEnvironmentAssessment | null>(
+    desktopRuntimeMock.environmentAssessments[0] ?? null,
+  );
+  const [lastReplan, setLastReplan] = useState<RuntimePlanReplanResult | null>(desktopRuntimeMock.replans[0] ?? null);
 
   const appendEvent = (event: AgentEvent) => {
     setEvents((current) => [...current.slice(-39), event]);
@@ -63,7 +108,7 @@ export function DesktopWorkspace(): JSX.Element {
       ]);
       startTransition(() => {
         setSummary({ ...nextSummary, agent: nextAgent });
-        setRuntimeData(nextRuntime);
+        setRuntimeData((current) => mergeRuntimeWorkspaceData(nextRuntime, current, lastAssessment, lastReplan));
         setSyncStatus(nextSyncStatus);
         setSyncBacklog(nextSyncBacklog);
       });
@@ -82,7 +127,7 @@ export function DesktopWorkspace(): JSX.Element {
     } catch (error) {
       setTransport("mock");
       setSummary(desktopMockSnapshot);
-      setRuntimeData(desktopRuntimeMock);
+      setRuntimeData((current) => mergeRuntimeWorkspaceData(desktopRuntimeMock, current, lastAssessment, lastReplan));
       setSyncStatus(desktopSyncStatusMock);
       setSyncBacklog(desktopSyncBacklogMock);
       setSelectedReplay(desktopReplayMockByEpisode[selectedEpisodeId ?? "episode-001"] ?? desktopReplayMockByEpisode["episode-001"]);
@@ -114,7 +159,7 @@ export function DesktopWorkspace(): JSX.Element {
           return;
         }
         setSummary({ ...nextSummary, agent: nextAgent });
-        setRuntimeData(nextRuntime);
+        setRuntimeData((current) => mergeRuntimeWorkspaceData(nextRuntime, current, lastAssessment, lastReplan));
         setSyncStatus(nextSyncStatus);
         setSyncBacklog(nextSyncBacklog);
         setSelectedEpisodeId((current) => current ?? nextRuntime.episodes[0]?.id);
@@ -352,6 +397,95 @@ export function DesktopWorkspace(): JSX.Element {
     }
   };
 
+  const resolveRuntimeSnapshot = (executionPlanId: string, executionEpisodeId?: string) => {
+    if (selectedReplay && selectedReplay.executionPlan?.id === executionPlanId) {
+      return selectedReplay.snapshots[0] ?? null;
+    }
+    if (executionEpisodeId) {
+      return runtimeData.snapshots.find((snapshot) => snapshot.executionEpisodeId === executionEpisodeId) ?? null;
+    }
+    return runtimeData.snapshots.find((snapshot) => snapshot.executionPlanId === executionPlanId) ?? null;
+  };
+
+  const handleAssessEnvironment = async (executionPlanId: string, executionEpisodeId?: string) => {
+    setBusyPlanId(executionPlanId);
+    try {
+      const plan = runtimeData.plans.find((item) => item.id === executionPlanId);
+      const assessment = await apiClient.assessRuntimeEnvironment({
+        taskSpecId: plan?.taskSpecId,
+        executionPlanId,
+        executionEpisodeId,
+        snapshot: resolveRuntimeSnapshot(executionPlanId, executionEpisodeId) ?? undefined,
+      });
+      setLastAssessment(assessment);
+      startTransition(() => {
+        setRuntimeData((current) => ({
+          ...current,
+          environmentAssessments: prependUniqueById([assessment], current.environmentAssessments),
+        }));
+      });
+      appendEvent({
+        id: `assessment-${Date.now()}`,
+        level: assessment.driftSignals.length ? "warning" : "success",
+        source: "scene-assessment",
+        message: `Assessed ${assessment.sceneLabel} for plan ${executionPlanId}.`,
+        at: new Date().toISOString(),
+      });
+    } finally {
+      setBusyPlanId(undefined);
+    }
+  };
+
+  const handleReplanPlan = async (
+    executionPlanId: string,
+    trigger: string,
+    notes?: string,
+    preferredCapabilityKeys?: string[],
+  ) => {
+    setBusyPlanId(executionPlanId);
+    try {
+      const plan = runtimeData.plans.find((item) => item.id === executionPlanId);
+      const result = await apiClient.replanRuntimePlan({
+        executionPlanId,
+        taskSpecId: plan?.taskSpecId,
+        executionEpisodeId: selectedEpisodeId,
+        snapshot: resolveRuntimeSnapshot(executionPlanId, selectedEpisodeId) ?? undefined,
+        trigger,
+        reason: notes,
+        notes,
+        preferredCapabilityKeys,
+      });
+      setLastReplan(result);
+      startTransition(() => {
+        setRuntimeData((current) =>
+          mergeRuntimeWorkspaceData(
+            {
+              ...current,
+              plans: prependUniqueById([result.executionPlan], current.plans),
+              environmentAssessments: result.environmentAssessment
+                ? prependUniqueById([result.environmentAssessment], current.environmentAssessments)
+                : current.environmentAssessments,
+              patches: result.patch ? prependUniqueById([result.patch], current.patches) : current.patches,
+              replans: prependUniqueById([result], current.replans),
+            },
+            current,
+            result.environmentAssessment ?? lastAssessment,
+            result,
+          ),
+        );
+      });
+      appendEvent({
+        id: `replan-${result.id}`,
+        level: result.patch ? "warning" : "success",
+        source: "replanner",
+        message: `Prepared replan ${result.executionPlan.name} from ${executionPlanId}.`,
+        at: new Date().toISOString(),
+      });
+    } finally {
+      setBusyPlanId(undefined);
+    }
+  };
+
   const handleInspectEpisode = (episodeId: string) => {
     setSelectedEpisodeId(episodeId);
     appendEvent({
@@ -390,14 +524,19 @@ export function DesktopWorkspace(): JSX.Element {
             busyEpisodeId={busyEpisodeId}
             selectedEpisodeId={selectedEpisodeId}
             actionPatchId={busyPatchId}
+            busyPlanId={busyPlanId}
             replay={selectedReplay}
             lastOutcome={lastOutcome}
+            lastAssessment={lastAssessment}
+            lastReplan={lastReplan}
             onCompileTask={handleCompile}
             onCreateTrialRun={handleCreateTrial}
             onExecuteTrialRun={handleExecuteTrial}
             onRefreshLearning={handleLearnTrial}
             onConfirmTrial={handleConfirmTrial}
             onInspectEpisode={handleInspectEpisode}
+            onAssessEnvironment={handleAssessEnvironment}
+            onReplanPlan={handleReplanPlan}
             onApprovePatch={handleApprovePatch}
             onRejectPatch={handleRejectPatch}
           />

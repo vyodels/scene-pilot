@@ -292,6 +292,47 @@ export interface RuntimeSnapshot {
   updatedAt: string;
 }
 
+export interface RuntimeCapabilityDriver {
+  id: string;
+  key: string;
+  name: string;
+  category: string;
+  status: string;
+  scope: string;
+  description: string;
+  safetyMode: string;
+  supportsWrite: boolean;
+  sceneTypes: string[];
+  signalLabels: string[];
+  supportedDomains?: string[];
+  requiresSupervision?: boolean;
+  updatedAt: string;
+}
+
+export interface RuntimeEnvironmentAssessment {
+  id: string;
+  taskSpecId?: string | null;
+  executionPlanId?: string | null;
+  executionEpisodeId?: string | null;
+  snapshotId?: string | null;
+  environmentKey: string;
+  sceneLabel: string;
+  sceneType: string;
+  status: string;
+  confidence: number;
+  summary: string;
+  capabilityKeys: string[];
+  observedLabels: string[];
+  affordanceLabels: string[];
+  driftSignals: string[];
+  recommendedActions: string[];
+  checkpoints?: Array<Record<string, unknown>>;
+  environmentRequirements?: Record<string, unknown>;
+  notes?: string[];
+  auditMetadata?: Record<string, unknown>;
+  updatedAt: string;
+}
+
 export interface RuntimeTemplate {
   id: string;
   templateKey: string;
@@ -374,6 +415,50 @@ export interface RuntimeEpisodeReplay {
   notes: string[];
 }
 
+export interface RuntimeEnvironmentAssessmentRequest {
+  taskSpecId?: string;
+  executionPlanId?: string;
+  executionEpisodeId?: string;
+  snapshotId?: string;
+  snapshot?: Partial<RuntimeSnapshot>;
+  compilerPayload?: Record<string, unknown>;
+  planContext?: Record<string, unknown>;
+}
+
+export interface RuntimePlanReplanRequest {
+  executionPlanId: string;
+  taskSpecId?: string;
+  executionEpisodeId?: string;
+  snapshotId?: string;
+  snapshot?: Partial<RuntimeSnapshot>;
+  trigger?: string;
+  reason?: string;
+  notes?: string;
+  requestedBy?: string;
+  preferredCapabilityKeys?: string[];
+  compilerPayload?: Record<string, unknown>;
+  planContext?: Record<string, unknown>;
+  runtimeMetadata?: Record<string, unknown>;
+  checkpoints?: Array<Record<string, unknown>>;
+  preserveActivePlan?: boolean;
+}
+
+export interface RuntimePlanReplanResult {
+  id: string;
+  taskSpecId?: string | null;
+  baseExecutionPlanId: string;
+  executionPlan: RuntimeExecutionPlan;
+  status: string;
+  trigger: string;
+  summary: string;
+  compilerNotes: string[];
+  recommendedCapabilityKeys: string[];
+  environmentAssessment?: RuntimeEnvironmentAssessment | null;
+  patch?: RuntimePatch | null;
+  auditMetadata?: Record<string, unknown>;
+  createdAt: string;
+}
+
 export interface SyncBacklogItem {
   id: string;
   target: string;
@@ -410,8 +495,11 @@ export interface RuntimeWorkspaceData {
   plans: RuntimeExecutionPlan[];
   episodes: RuntimeEpisode[];
   snapshots: RuntimeSnapshot[];
+  capabilityDrivers: RuntimeCapabilityDriver[];
+  environmentAssessments: RuntimeEnvironmentAssessment[];
   templates: RuntimeTemplate[];
   patches: RuntimePatch[];
+  replans: RuntimePlanReplanResult[];
 }
 
 export interface CompileTaskRequest {

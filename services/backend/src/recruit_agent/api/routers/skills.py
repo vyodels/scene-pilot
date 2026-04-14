@@ -12,10 +12,13 @@ from recruit_agent.schemas import (
     SkillCreate,
     SkillHealthCheckRead,
     SkillHealthCheckRequest,
+    SkillHealthSweepItemRead,
+    SkillHealthSweepRead,
+    SkillHealthSweepRequest,
     SkillRead,
     SkillUpdate,
 )
-from recruit_agent.services.skills import SkillHealthCheckService, SkillLifecycleService
+from recruit_agent.services.skills import SkillHealthCheckService, SkillHealthSweepService, SkillLifecycleService
 
 router = APIRouter(prefix="/api/skills", tags=["skills"])
 
@@ -189,4 +192,56 @@ def run_skill_health_check(
         health=updated.last_health_status or result.health,
         checked_at=updated.last_health_check or result.checked_at,
         issues=result.issues,
+    )
+
+
+@router.post("/health-checks/sweep", response_model=SkillHealthSweepRead)
+def run_skill_health_check_sweep(
+    payload: SkillHealthSweepRequest,
+    session: Session = Depends(get_session),
+) -> SkillHealthSweepRead:
+    repo = SkillRepository(session)
+    sweep = SkillHealthSweepService()
+    statuses = payload.statuses or ["active", "approved"]
+
+    all_skills = repo.list(limit=5000, offset=0)
+    selected_skills = sweep.filter_skills(
+        all_skills,
+        skill_ids=payload.skill_ids,
+        statuses=statuses,
+        platform=payload.platform,
+    )
+    sweep_result = sweep.run(
+        selected_skills,
+        observed_results_by_skill=payload.observed_results_by_skill,
+    )
+
+    items: list[SkillHealthSweepItemRead] = []
+    for skill, result in sweep_result.results:
+        updated = repo.update(
+            skill,
+            {
+                "status": str(skill.status),
+                "last_health_check": skill.last_health_check,
+                "last_health_status": skill.last_health_status,
+                "updated_at": skill.updated_at,
+            },
+        )
+        items.append(
+            SkillHealthSweepItemRead(
+                skill_id=updated.id,
+                status=updated.status,
+                health=updated.last_health_status or result.health,
+                checked_at=updated.last_health_check or result.checked_at,
+                issues=result.issues,
+                degraded=updated.status == "degraded",
+            )
+        )
+
+    return SkillHealthSweepRead(
+        checked_count=sweep_result.checked_count,
+        degraded_count=sweep_result.degraded_count,
+        statuses=statuses,
+        platform=payload.platform,
+        results=items,
     )

@@ -140,6 +140,146 @@ class ApiRuntimeTests(unittest.TestCase):
         )
         self.assertEqual(missing_plan.status_code, 404)
 
+    def test_capability_driver_catalog_and_environment_assessment(self) -> None:
+        capability_response = self.client.get("/api/runtime/capability-drivers?domain=web_research")
+        self.assertEqual(capability_response.status_code, 200)
+        capability_payload = capability_response.json()
+        browser_driver = next(item for item in capability_payload if item["key"] == "browser")
+        self.assertIn("web_research", browser_driver["supported_domains"])
+        self.assertTrue(browser_driver["requires_supervision"])
+
+        compiled_task = self.client.post(
+            "/api/runtime/task-specs/compile",
+            json={
+                "instruction": "Open the web and find useful PDF converters, compare them, and prepare a shortlist.",
+                "title": "PDF converter shortlist",
+            },
+        )
+        self.assertEqual(compiled_task.status_code, 201)
+        task_spec_id = compiled_task.json()["task_spec"]["id"]
+        plan_id = compiled_task.json()["execution_plan"]["id"]
+
+        snapshot = self.client.post(
+            "/api/runtime/environment-snapshots",
+            json={
+                "task_spec_id": task_spec_id,
+                "execution_plan_id": plan_id,
+                "source": "browser",
+                "environment_key": "web:tool_listing",
+                "status": "captured",
+                "url": "https://example.com/tools",
+                "title": "PDF Converter Tools",
+                "page_type": "tool_listing",
+                "capability_hints": ["browser", "search"],
+                "affordances": [{"kind": "link", "label": "View details"}],
+            },
+        )
+        self.assertEqual(snapshot.status_code, 201)
+        snapshot_id = snapshot.json()["id"]
+
+        assessment = self.client.post(
+            "/api/runtime/environment-assessment",
+            json={
+                "task_spec_id": task_spec_id,
+                "execution_plan_id": plan_id,
+                "environment_snapshot_id": snapshot_id,
+            },
+        )
+        self.assertEqual(assessment.status_code, 200)
+        assessment_payload = assessment.json()
+        self.assertEqual(assessment_payload["scene_type"], "tool_listing")
+        self.assertEqual(assessment_payload["plan_fit"], "aligned")
+        self.assertIn("browser", assessment_payload["recommended_capabilities"])
+        self.assertIn("search", assessment_payload["recommended_capabilities"])
+        self.assertEqual(assessment_payload["audit_metadata"]["site_assumption_policy"], "generic_only")
+        self.assertEqual(assessment_payload["snapshot"]["id"], snapshot_id)
+
+    def test_replan_derives_new_execution_plan_from_episode_and_compiler_payload(self) -> None:
+        compiled_task = self.client.post(
+            "/api/runtime/task-specs/compile",
+            json={
+                "instruction": "Open GitHub trends, inspect repositories, and prepare a concise digest.",
+                "title": "GitHub digest trial",
+                "domain_hint": "github_trends",
+            },
+        )
+        self.assertEqual(compiled_task.status_code, 201)
+        task_spec_id = compiled_task.json()["task_spec"]["id"]
+        plan_id = compiled_task.json()["execution_plan"]["id"]
+        previous_plan = compiled_task.json()["execution_plan"]
+
+        created_trial = self.client.post(
+            "/api/runtime/trial-runs",
+            json={
+                "task_spec_id": task_spec_id,
+                "execution_plan_id": plan_id,
+                "requested_by": "desktop-user",
+            },
+        )
+        self.assertEqual(created_trial.status_code, 201)
+        episode_id = created_trial.json()["id"]
+
+        executed = self.client.post(
+            f"/api/runtime/trial-runs/{episode_id}/execute",
+            json={
+                "source": "browser",
+                "url": "https://github.com/trending",
+                "title": "GitHub Trending",
+                "page_type": "repository_listing",
+                "simulate_divergence": True,
+            },
+        )
+        self.assertEqual(executed.status_code, 200)
+
+        snapshots = self.client.get(f"/api/runtime/environment-snapshots?execution_episode_id={episode_id}")
+        self.assertEqual(snapshots.status_code, 200)
+        snapshot_id = snapshots.json()[-1]["id"]
+
+        replanned = self.client.post(
+            f"/api/runtime/plans/{plan_id}/replan",
+            json={
+                "requested_by": "desktop-user",
+                "reason": "The trial diverged and needs a safer generic branch.",
+                "execution_episode_id": episode_id,
+                "environment_snapshot_id": snapshot_id,
+                "compiler_payload": {
+                    "compiler_notes": ["Need a safer branch before retrying."],
+                    "preferred_capabilities": ["browser", "document"],
+                    "environment_requirements": {"requires_network": True},
+                    "checkpoints": [{"kind": "approval", "label": "Review replan"}],
+                    "step_outline": [
+                        {"id": "reassess", "capability": "analyze"},
+                        {"id": "retry_browser", "capability": "browser"},
+                        {"id": "draft_digest", "capability": "document"},
+                    ],
+                },
+            },
+        )
+        self.assertEqual(replanned.status_code, 201)
+        replanned_payload = replanned.json()
+        self.assertEqual(replanned_payload["previous_plan"]["id"], plan_id)
+        self.assertNotEqual(replanned_payload["execution_plan"]["id"], plan_id)
+        self.assertEqual(replanned_payload["execution_plan"]["version"], previous_plan["version"] + 1)
+        self.assertEqual(
+            replanned_payload["execution_plan"]["runtime_metadata"]["replanned_from_plan_id"],
+            plan_id,
+        )
+        self.assertEqual(
+            replanned_payload["execution_plan"]["runtime_metadata"]["site_assumption_policy"],
+            "generic_only",
+        )
+        self.assertEqual(replanned_payload["audit_metadata"]["site_assumption_policy"], "generic_only")
+        self.assertEqual(replanned_payload["execution_plan"]["plan_body"]["steps"][0]["id"], "reassess")
+        self.assertTrue(
+            any(item["label"] == "Review replan" for item in replanned_payload["execution_plan"]["checkpoints"])
+        )
+        self.assertIn("Need a safer branch before retrying.", replanned_payload["compiler_notes"])
+
+        listed_tasks = self.client.get("/api/runtime/task-specs")
+        self.assertEqual(listed_tasks.status_code, 200)
+        refreshed_task = next(item for item in listed_tasks.json() if item["id"] == task_spec_id)
+        self.assertEqual(refreshed_task["active_plan_id"], replanned_payload["execution_plan"]["id"])
+
     def test_task_compile_prefers_llm_semantic_compiler_when_provider_returns_valid_json(self) -> None:
         from recruit_agent.runtime.models import LLMResponse
 
