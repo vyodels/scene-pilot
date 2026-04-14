@@ -66,7 +66,7 @@ def test_skill_health_check_and_learning_drafts(tmp_path):
         dashboard_response = client.get("/api/dashboard")
         assert dashboard_response.status_code == 200
         alert_labels = [item["label"] for item in dashboard_response.json()["alerts"]]
-        assert "Learning draft available" in alert_labels
+        assert "可用学习草案" in alert_labels
 
 
 def test_skill_health_check_sweep_targets_active_and_approved_skills(tmp_path):

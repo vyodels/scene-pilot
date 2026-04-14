@@ -68,7 +68,10 @@ export function CandidatesView({ candidates }: CandidatesViewProps): JSX.Element
               <StatusBadge tone={selected.status === "cooldown" ? "neutral" : selected.status === "screening" ? "positive" : "warning"}>{translateUiToken(selected.status, copy)}</StatusBadge>
               <div style={{ fontSize: "22px", fontWeight: 800 }}>{selected.title}</div>
               <div style={{ color: "rgba(233,239,255,0.72)", fontSize: "13px" }}>
-                {selected.location} · {selected.experienceYears} years · JD: {selected.jdTitle}
+                {copy(
+                  `${selected.location} · ${selected.experienceYears} years · JD: ${selected.jdTitle}`,
+                  `${selected.location} · ${selected.experienceYears} 年经验 · 岗位：${selected.jdTitle}`,
+                )}
               </div>
             </div>
             <div style={{ display: "grid", gap: "8px" }}>

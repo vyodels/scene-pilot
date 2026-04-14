@@ -33,7 +33,7 @@ def _sync_setting(settings: AppSettings, key: str, default: Any = None) -> Any:
 
 def _runtime_scene_account(settings: AppSettings) -> str:
     provider_config = settings.provider_config or {}
-    return str(provider_config.get("site_account") or provider_config.get("boss_account") or "runtime-scene-01")
+    return str(provider_config.get("site_account") or provider_config.get("boss_account") or "本机场景 01")
 
 
 def _workflow_nodes_for_dashboard(config: dict[str, Any]) -> list[dict[str, Any]]:
@@ -49,7 +49,7 @@ def _workflow_nodes_for_dashboard(config: dict[str, Any]) -> list[dict[str, Any]
                     "kind": "screen",
                     "status": "idle",
                     "owner": "Agent",
-                    "description": "Workflow node.",
+                    "description": "工作流节点。",
                 }
             )
             continue
@@ -63,7 +63,7 @@ def _workflow_nodes_for_dashboard(config: dict[str, Any]) -> list[dict[str, Any]
                 "kind": str(raw_node.get("kind") or raw_node.get("task_type") or "screen"),
                 "status": str(raw_node.get("status") or "idle"),
                 "owner": str(raw_node.get("owner") or "Agent"),
-                "description": str(raw_node.get("description") or "Workflow node."),
+                "description": str(raw_node.get("description") or "工作流节点。"),
             }
         )
     return normalized
@@ -84,7 +84,7 @@ class DashboardService:
         health = "warning" if queue_depth > 0 else "healthy"
         return AgentStatusRead(
             status="running" if queue_depth else "idle",
-            active_task="Awaiting queued task" if not queue_depth else "Processing queued recruiting task",
+            active_task="等待队列任务" if not queue_depth else "正在处理已排队的招聘工作流",
             browser_lock="held" if queue_depth else "free",
             uptime="00:00:00",
             queue_depth=queue_depth,
@@ -110,54 +110,54 @@ class DashboardService:
         learnings = learning_repo.list(limit=50)
 
         pipeline_map = {
-            "Discovery": 0,
-            "Screening": 0,
-            "Communication": 0,
-            "Scoring": 0,
-            "Human review": 0,
+            "发现": 0,
+            "初筛": 0,
+            "沟通": 0,
+            "评分": 0,
+            "人工审查": 0,
         }
         for candidate in candidates:
             status = candidate.status
             if status in {"discovered"}:
-                pipeline_map["Discovery"] += 1
+                pipeline_map["发现"] += 1
             elif status in {"screening"}:
-                pipeline_map["Screening"] += 1
+                pipeline_map["初筛"] += 1
             elif status in {"pending_communication", "communicating", "waiting_reply", "pending_resume"}:
-                pipeline_map["Communication"] += 1
+                pipeline_map["沟通"] += 1
             elif status in {"scoring", "passed_to_talent_pool"}:
-                pipeline_map["Scoring"] += 1
+                pipeline_map["评分"] += 1
             elif status in {"hr_review", "team_review"}:
-                pipeline_map["Human review"] += 1
+                pipeline_map["人工审查"] += 1
 
         dashboard_payload: dict[str, Any] = {
             "metrics": [
                 {
-                    "label": "Candidates",
+                    "label": "候选人",
                     "value": str(metrics.candidate_count),
-                    "delta": f"{metrics.by_status.get('screening', 0)} screening",
+                    "delta": f"{metrics.by_status.get('screening', 0)} 个正在初筛",
                     "tone": "positive" if metrics.candidate_count else "neutral",
-                    "caption": "Tracked in local SQLite",
+                    "caption": "已记录到本地 SQLite",
                 },
                 {
-                    "label": "Workflows",
+                    "label": "工作流",
                     "value": str(metrics.workflow_count),
-                    "delta": f"{metrics.by_status.get('passed_to_talent_pool', 0)} passed",
+                    "delta": f"{metrics.by_status.get('passed_to_talent_pool', 0)} 条已通过",
                     "tone": "neutral",
-                    "caption": "Configured workflow graphs",
+                    "caption": "已配置的工作流图",
                 },
                 {
                     "label": "Skills",
                     "value": str(metrics.skill_count),
-                    "delta": f"{metrics.active_skill_count} active · {sum(1 for skill in skills if skill.status == 'pending_review')} pending review",
+                    "delta": f"{metrics.active_skill_count} 个已激活 · {sum(1 for skill in skills if skill.status == 'pending_review')} 个待审查",
                     "tone": "warning" if metrics.pending_approval_count else "positive",
-                    "caption": "Skill lifecycle inventory",
+                    "caption": "Skill 生命周期清单",
                 },
                 {
-                    "label": "Pending approvals",
+                    "label": "待审批",
                     "value": str(metrics.pending_approval_count),
-                    "delta": f"{self.sync_service.pending_count()} waiting for sync",
+                    "delta": f"{self.sync_service.pending_count()} 条等待同步",
                     "tone": "warning" if metrics.pending_approval_count else "neutral",
-                    "caption": "Desktop-only approvals",
+                    "caption": "仅桌面端审批",
                 },
             ],
             "pipeline": [
@@ -177,7 +177,7 @@ class DashboardService:
             "alerts": [
                 {
                     "id": approval.id,
-                    "label": "Approval pending",
+                    "label": "审批待处理",
                     "detail": approval.title,
                     "at": approval.created_at.isoformat(),
                     "tone": "warning",
@@ -188,7 +188,7 @@ class DashboardService:
             + [
                 {
                     "id": skill.id,
-                    "label": "Skill health degraded",
+                    "label": "Skill health 已降级",
                     "detail": skill.name,
                     "at": (skill.last_health_check.isoformat() if skill.last_health_check else _utcnow()),
                     "tone": "critical" if skill.last_health_status == "critical" else "warning",
@@ -199,7 +199,7 @@ class DashboardService:
             + [
                 {
                     "id": learning.id,
-                    "label": "Learning draft available",
+                    "label": "可用学习草案",
                     "detail": learning.content[:120],
                     "at": learning.created_at.isoformat(),
                     "tone": "positive" if learning.is_active else "neutral",
@@ -210,16 +210,16 @@ class DashboardService:
                 {
                     "id": item.id,
                     "name": item.name,
-                    "title": item.contact_info.get("title", "Candidate"),
+                    "title": item.contact_info.get("title", "候选人"),
                     "platform": item.platform,
-                    "location": item.contact_info.get("location", "Unknown"),
+                    "location": item.contact_info.get("location", "未知"),
                     "status": item.status,
                     "workflowNode": item.current_workflow_node or "discover_candidate",
-                    "jdTitle": item.jd_id or "Unassigned JD",
+                    "jdTitle": item.jd_id or "未分配岗位",
                     "matchScore": int(item.ai_scores.get("overall", 0) or 0),
                     "experienceYears": int(item.contact_info.get("experience_years", 0) or 0),
-                    "nextAction": item.contact_info.get("next_action", "Review candidate."),
-                    "summary": item.ai_reasoning or item.online_resume_text or "Candidate profile is awaiting review.",
+                    "nextAction": item.contact_info.get("next_action", "查看候选人并决定下一步动作。"),
+                    "summary": item.ai_reasoning or item.online_resume_text or "候选人档案正在等待审查。",
                     "tags": item.contact_info.get("tags", []),
                     "resumeAvailable": bool(item.resume_path),
                     "cooldownUntil": item.cooldown_until.isoformat() if item.cooldown_until else None,
@@ -231,7 +231,7 @@ class DashboardService:
                 {
                     "id": item.id,
                     "name": item.name,
-                    "jdTitle": item.jd_id or "Unassigned JD",
+                    "jdTitle": item.jd_id or "未分配岗位",
                     "status": item.status,
                     "version": f"v{item.version}",
                     "updatedAt": item.updated_at.isoformat(),
@@ -249,7 +249,7 @@ class DashboardService:
                     "platform": item.platform,
                     "health": item.last_health_status or "warning",
                     "lastCheckedAt": item.last_health_check.isoformat() if item.last_health_check else _utcnow(),
-                    "summary": item.strategy.get("summary", "Skill strategy scaffolded from the local-first runtime."),
+                    "summary": item.strategy.get("summary", "Skill 策略由本地优先运行时生成。"),
                 }
                 for item in skills
             ],
@@ -258,7 +258,7 @@ class DashboardService:
                     "id": item.id,
                     "kind": item.target_type,
                     "title": item.title,
-                    "detail": item.notes or item.payload.get("summary", "Pending human review."),
+                    "detail": item.notes or item.payload.get("summary", "等待人工审查。"),
                     "requester": item.requested_by or "agent",
                     "status": item.status,
                     "createdAt": item.created_at.isoformat(),
@@ -274,7 +274,7 @@ class DashboardService:
                 "providers": [
                     {
                         "kind": "openai-compatible",
-                        "name": "Primary OpenAI API",
+                        "name": "主 OpenAI 接口",
                         "model": settings.provider_config.get("openai_model", "gpt-5.4"),
                         "enabled": True,
                         "temperature": 0.2,
@@ -282,7 +282,7 @@ class DashboardService:
                     },
                     {
                         "kind": "anthropic",
-                        "name": "Fallback Anthropic",
+                        "name": "备用 Anthropic 接口",
                         "model": settings.provider_config.get("anthropic_model", "claude-sonnet-4"),
                         "enabled": False,
                         "temperature": 0.2,
@@ -296,7 +296,7 @@ class DashboardService:
                     "timeoutSeconds": _sync_setting(settings, "timeout_seconds", 10),
                 },
                 "platform": {
-                    "name": "Runtime scene profile",
+                    "name": "运行时场景画像",
                     "account": _runtime_scene_account(settings),
                     "cooldownDays": settings.provider_config.get("cooldown_days", 30),
                     "allowOutboundMessaging": settings.feature_flags.enable_outbound_messaging,

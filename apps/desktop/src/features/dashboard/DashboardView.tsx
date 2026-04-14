@@ -27,17 +27,20 @@ function translateDashboardText(value: string): string {
     "Workflow node advanced": "工作流节点已推进",
     "Moved Mia Chen into the screening step.": "已将 Mia Chen 移入初筛步骤。",
     "Approval pending": "审批待处理",
-    "Resume screening Skill is waiting for review.": "resume screening Skill 正在等待审查。",
+    "Resume screening Skill is waiting for review.": "Resume Screening Skill 正在等待人工审查。",
     "Cooldown applied": "已应用冷却期",
     "Luna Wang was marked to avoid repeat outreach.": "Luna Wang 已被标记为避免重复外联。",
     "Selector drift detected": "检测到选择器漂移",
     "Talent pool packaging requires a refresh before full automation.": "人才库封装在恢复完全自动化前需要先刷新。",
-    "Approve resume screening Skill": "批准 resume screening Skill",
-    "Review the new initial screening strategy before it can become active.": "在其生效前审查新的 initial screening 策略。",
+    "Approve resume screening Skill": "批准 Resume Screening Skill",
+    "Approve Resume Screening Skill": "批准 Resume Screening Skill",
+    "Review the new initial screening strategy before it can become active.": "在其生效前审查新的初筛策略。",
+    "Review the new initial screening strategy before activation.": "在启用前先审查新的初筛策略。",
     "Activate talent pool handoff": "激活人才库交接",
     "Enables the workflow path from scoring to human review.": "启用从评分到人工审查的工作流路径。",
     "Allow local package inspection command": "允许本地包检查命令",
     "Registers a safe command under whitelist control.": "在白名单控制下注册一个安全命令。",
+    bootstrap: "初始化",
   };
   return table[value] ?? value;
 }
@@ -107,7 +110,7 @@ export function DashboardView({ summary }: DashboardViewProps): JSX.Element {
         </div>
       </section>
 
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.1fr) minmax(320px, 0.9fr)", gap: "18px", alignItems: "start" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: "18px", alignItems: "start" }}>
         <Panel title={copy("Workflow throughput", "工作流吞吐")} eyebrow={copy("Operational throughput", "运行吞吐")} description={copy("Current workflow load and headroom against the active target capacity.", "当前工作流负载与目标容量余量。")}>
           <ProgressBars stages={localizedPipeline} />
         </Panel>

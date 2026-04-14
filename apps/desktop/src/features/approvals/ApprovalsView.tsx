@@ -11,6 +11,18 @@ interface ApprovalsViewProps {
   onReject(id: string): void;
 }
 
+function translateApprovalText(value: string): string {
+  const table: Record<string, string> = {
+    "Approve resume screening Skill": "批准 Resume Screening Skill",
+    "Approve Resume Screening Skill": "批准 Resume Screening Skill",
+    "Review the new initial screening strategy before it can become active.": "在启用前先审查新的初筛策略。",
+    "Review the new initial screening strategy before activation.": "在启用前先审查新的初筛策略。",
+    "Activate talent pool handoff": "激活人才库交接",
+    "Enables the workflow path from scoring to human review.": "启用从评分到人工审查的工作流路径。",
+  };
+  return table[value] ?? value;
+}
+
 const buttonStyle = {
   border: "1px solid rgba(255,255,255,0.12)",
   borderRadius: "12px",
@@ -33,13 +45,13 @@ export function ApprovalsView({ approvals, pendingActionId, onApprove, onReject 
           <article key={approval.id} style={{ padding: "14px", borderRadius: "16px", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)" }}>
             <div style={{ display: "flex", justifyContent: "space-between", gap: "10px", alignItems: "start" }}>
               <div>
-                <div style={{ fontWeight: 700 }}>{approval.title}</div>
-                <div style={{ color: "rgba(233,239,255,0.68)", fontSize: "13px", marginTop: "4px", lineHeight: 1.5 }}>{approval.detail}</div>
+                <div style={{ fontWeight: 700 }}>{translateApprovalText(approval.title)}</div>
+                <div style={{ color: "rgba(233,239,255,0.68)", fontSize: "13px", marginTop: "4px", lineHeight: 1.5 }}>{translateApprovalText(approval.detail)}</div>
               </div>
               <StatusBadge tone={approval.status === "pending" ? "warning" : approval.status === "approved" ? "positive" : "critical"}>{translateUiToken(approval.status, copy)}</StatusBadge>
             </div>
             <div style={{ marginTop: "10px", color: "rgba(233,239,255,0.56)", fontSize: "12px" }}>
-              {copy("Requester", "提交方")} {approval.requester} · {approval.kind} · {approval.createdAt}
+              {copy("Requester", "提交方")} {translateUiToken(approval.requester, copy)} · {translateUiToken(approval.kind, copy)} · {translateUiToken(approval.createdAt, copy)}
             </div>
             {approval.status === "pending" ? (
               <div style={{ display: "flex", gap: "10px", marginTop: "12px" }}>

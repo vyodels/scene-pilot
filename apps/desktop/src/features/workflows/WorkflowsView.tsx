@@ -44,7 +44,7 @@ export function WorkflowsView({ workflows }: WorkflowsViewProps): JSX.Element {
                   <div style={{ fontWeight: 700 }}>{node.name}</div>
                   <div style={{ color: "rgba(233,239,255,0.72)", fontSize: "13px", lineHeight: 1.5 }}>{node.description}</div>
                   <div style={{ color: "rgba(233,239,255,0.55)", fontSize: "12px", marginTop: "4px" }}>
-                    {copy(`Node ${node.id} · Owner ${node.owner}`, `节点 ${node.id} · 负责人 ${node.owner}`)}
+                    {copy(`Node ${node.id} · Owner ${node.owner}`, `节点 ${node.id} · 负责人 ${translateUiToken(node.owner, copy)}`)}
                   </div>
                 </div>
                 <StatusBadge tone={node.status === "approved" ? "positive" : node.status === "running" ? "warning" : node.status === "blocked" ? "critical" : "neutral"}>

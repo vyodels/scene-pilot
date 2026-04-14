@@ -18,12 +18,12 @@ interface TopBarProps {
 
 const actionButtonStyle = {
   border: `1px solid ${theme.colors.border}`,
-  borderRadius: theme.radius.md,
-  background: theme.colors.accentSoft,
+  borderRadius: 10,
+  background: "rgba(255,255,255,0.04)",
   color: theme.colors.text,
-  padding: "10px 12px",
+  padding: "8px 12px",
   cursor: "pointer",
-  fontWeight: 700,
+  fontWeight: 600,
 } as const;
 
 export function TopBar({
@@ -40,26 +40,31 @@ export function TopBar({
   return (
     <header
       style={{
-        display: "flex",
+        display: "grid",
+        gridTemplateColumns: "minmax(0, 1fr) auto",
         alignItems: "center",
-        justifyContent: "space-between",
-        gap: "16px",
-        padding: "14px 18px",
+        gap: "14px",
+        padding: "12px 20px",
         borderBottom: `1px solid ${theme.colors.border}`,
-        background: "rgba(14,18,36,0.58)",
-        backdropFilter: "blur(12px)",
+        background: "rgba(12,18,30,0.9)",
+        backdropFilter: "blur(14px)",
+        position: "sticky",
+        top: 0,
+        zIndex: 20,
       }}
     >
       <div>
-        <div style={{ color: theme.colors.muted, fontSize: "11px" }}>{sectionEyebrow}</div>
-        <div style={{ display: "flex", alignItems: "center", gap: "10px", marginTop: "4px" }}>
-          <h2 style={{ margin: 0, fontSize: "16px" }}>{sectionTitle}</h2>
+        <div style={{ color: theme.colors.muted, fontSize: "11px", letterSpacing: "0.12em", textTransform: "uppercase" }}>{sectionEyebrow}</div>
+        <div style={{ display: "flex", alignItems: "baseline", gap: "10px", marginTop: "4px", flexWrap: "wrap" }}>
+          <h2 style={{ margin: 0, fontSize: "24px", lineHeight: 1.1 }}>{sectionTitle}</h2>
+          <div style={{ color: theme.colors.muted, fontSize: "12px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "720px" }}>
+            {sectionDescription}
+          </div>
           <StatusBadge tone={agent.health === "healthy" ? "positive" : agent.health === "warning" ? "warning" : "critical"}>{translateUiToken(agent.status, copy)}</StatusBadge>
         </div>
-        <div style={{ color: theme.colors.muted, fontSize: "12px", marginTop: "4px", lineHeight: 1.5 }}>{sectionDescription}</div>
       </div>
-      <div style={{ display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap", justifyContent: "end" }}>
-        <div style={{ display: "inline-flex", border: `1px solid ${theme.colors.border}`, borderRadius: theme.radius.md, overflow: "hidden" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap", justifyContent: "end" }}>
+        <div style={{ display: "inline-flex", border: `1px solid ${theme.colors.border}`, borderRadius: 10, overflow: "hidden" }}>
           {[
             { key: "en", label: "EN" },
             { key: "zh-CN", label: "中文" },
@@ -72,11 +77,11 @@ export function TopBar({
                 onClick={() => setLanguage(option.key as "en" | "zh-CN")}
                 style={{
                   border: "none",
-                  background: active ? "rgba(122,167,255,0.18)" : "transparent",
+                  background: active ? "rgba(122,167,255,0.14)" : "transparent",
                   color: theme.colors.text,
-                  padding: "8px 12px",
+                  padding: "7px 12px",
                   cursor: "pointer",
-                  fontWeight: 700,
+                  fontWeight: 600,
                 }}
               >
                 {option.label}

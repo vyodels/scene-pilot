@@ -347,7 +347,7 @@ class SyncService:
                 value = response.get(key)
                 if isinstance(value, str) and value.strip():
                     return value.strip()
-        return "Remote sync did not acknowledge the payload."
+        return "远端同步没有确认这次投递。"
 
 
 def _parse_iso_datetime(value: Any) -> datetime | None:

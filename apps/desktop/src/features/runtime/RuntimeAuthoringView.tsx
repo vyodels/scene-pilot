@@ -37,7 +37,7 @@ export function RuntimeAuthoringView({
 }: RuntimeAuthoringViewProps): JSX.Element {
   const { copy } = useI18n();
   const [instruction, setInstruction] = useState("打开网站，帮我找到值得用的 PDF 转换器，比较后输出 shortlist。");
-  const [title, setTitle] = useState("Research PDF converters");
+  const [title, setTitle] = useState("研究 PDF 转换工具");
   const [domainHint, setDomainHint] = useState("web_research");
 
   return (
@@ -112,7 +112,7 @@ export function RuntimeAuthoringView({
                   <div>
                     <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
                       <strong>{task.title}</strong>
-                      <StatusBadge tone="neutral">{task.domain}</StatusBadge>
+                      <StatusBadge tone="neutral">{translateUiToken(task.domain, copy)}</StatusBadge>
                       <StatusBadge tone={task.status.includes("ready") ? "positive" : "warning"}>{translateUiToken(task.status, copy)}</StatusBadge>
                     </div>
                     <div style={{ marginTop: "6px", color: theme.colors.muted, fontSize: "13px", lineHeight: 1.5 }}>{task.goal}</div>
@@ -139,7 +139,7 @@ export function RuntimeAuthoringView({
                 <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
                   {task.preferredCapabilities.map((capability) => (
                     <StatusBadge key={capability} tone="neutral">
-                      {capability}
+                      {translateUiToken(capability, copy)}
                     </StatusBadge>
                   ))}
                 </div>

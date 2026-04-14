@@ -57,14 +57,14 @@ export function AgentMonitorPage() {
         ...nextSummary.timeline.map((event) => ({
           id: event.id,
           level: toAgentEventLevel(event.tone),
-          source: "workflow",
+          source: "工作流",
           message: event.label,
           at: event.at,
         })),
         ...nextSummary.alerts.map((event) => ({
           id: event.id,
           level: toAgentEventLevel(event.tone),
-          source: "alert",
+          source: "告警",
           message: event.detail,
           at: event.at,
         })),
@@ -83,14 +83,14 @@ export function AgentMonitorPage() {
         ...desktopMockSnapshot.timeline.map((event) => ({
           id: event.id,
           level: toAgentEventLevel(event.tone),
-          source: "workflow",
+          source: "工作流",
           message: event.label,
           at: event.at,
         })),
         ...desktopMockSnapshot.alerts.map((event) => ({
           id: event.id,
           level: toAgentEventLevel(event.tone),
-          source: "alert",
+          source: "告警",
           message: event.detail,
           at: event.at,
         })),
@@ -222,7 +222,7 @@ export function AgentMonitorPage() {
               const firstCandidate = summary.candidates[0];
               await apiClient.queueTask({
                 taskType: "initial_screening",
-                payload: { jd_criteria: firstCandidate?.jdTitle ?? "Frontend Platform Engineer" },
+                payload: { jd_criteria: firstCandidate?.jdTitle ?? "前端平台工程师" },
                 priority: 180,
                 candidateId: firstCandidate?.id,
                 workflowNodeId: "initial_screening",

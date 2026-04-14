@@ -26,7 +26,7 @@ class ProviderRuntimeSettings(BaseModel):
     anthropic_base_url: str = "https://api.anthropic.com"
     anthropic_api_key: str | None = None
     anthropic_timeout_seconds: int = 30
-    site_account: str = Field(default="runtime-scene-01", validation_alias=AliasChoices("site_account", "boss_account"))
+    site_account: str = Field(default="本机场景 01", validation_alias=AliasChoices("site_account", "boss_account"))
     cooldown_days: int = 30
 
     def get(self, name: str, default: Any = None) -> Any:

@@ -2,6 +2,7 @@ import React from "react";
 import { Panel, StatusBadge } from "../../components";
 import { formatCompactDate } from "../../lib/format";
 import { useI18n } from "../../lib/i18n";
+import { translateUiToken } from "../../lib/uiText";
 import type { RuntimePatch } from "../../lib/types";
 
 interface PatchReviewViewProps {
@@ -24,9 +25,9 @@ export function PatchReviewView({ patches, busyPatchId, onApprove, onReject }: P
 
   return (
     <Panel
-      title={copy("Workflow patches", "工作流补丁")}
+      title={copy("Revision suggestions", "修订建议")}
       eyebrow={copy("Divergence review", "偏差审查")}
-      description={copy("When a trial diverges from the current plan, the runtime proposes a patch. Review it here before rollout.", "当试跑偏离当前计划时，运行时会提出一个 patch。请在 rollout 前在此审查。")}
+      description={copy("When a trial diverges from the current plan, the runtime proposes a revision suggestion. Review it here before rollout.", "当试跑偏离当前计划时，运行时会提出修订建议。请在正式生效前在这里审查。")}
     >
       <div style={{ display: "grid", gap: "12px" }}>
         {patches.map((patch) => {
@@ -48,11 +49,11 @@ export function PatchReviewView({ patches, busyPatchId, onApprove, onReject }: P
                   <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
                     <strong>{patch.title}</strong>
                     <StatusBadge tone={patch.status === "pending_review" ? "warning" : patch.status === "applied" ? "positive" : "critical"}>
-                      {patch.status}
+                      {translateUiToken(patch.status, copy)}
                     </StatusBadge>
                   </div>
                   <div style={{ marginTop: "6px", color: "rgba(233,239,255,0.7)", fontSize: "13px", lineHeight: 1.5 }}>
-                    {patch.divergenceSummary ?? patch.rationale ?? copy("No patch summary provided.", "未提供 patch 摘要。")}
+                    {patch.divergenceSummary ?? patch.rationale ?? copy("No revision summary provided.", "未提供修订摘要。")}
                   </div>
                 </div>
                 <div style={{ color: "rgba(233,239,255,0.56)", fontSize: "12px" }}>
@@ -60,9 +61,9 @@ export function PatchReviewView({ patches, busyPatchId, onApprove, onReject }: P
                 </div>
               </div>
               <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-                <StatusBadge tone="neutral">{patch.patchKind}</StatusBadge>
+                <StatusBadge tone="neutral">{translateUiToken(patch.patchKind, copy)}</StatusBadge>
                 {patch.templateId ? <StatusBadge tone="neutral">{copy(`template ${patch.templateId.slice(0, 8)}`, `模板 ${patch.templateId.slice(0, 8)}`)}</StatusBadge> : null}
-                {patch.executionEpisodeId ? <StatusBadge tone="neutral">{copy(`episode ${patch.executionEpisodeId.slice(0, 8)}`, `episode ${patch.executionEpisodeId.slice(0, 8)}`)}</StatusBadge> : null}
+                {patch.executionEpisodeId ? <StatusBadge tone="neutral">{copy(`instance ${patch.executionEpisodeId.slice(0, 8)}`, `实例 ${patch.executionEpisodeId.slice(0, 8)}`)}</StatusBadge> : null}
                 {patch.runtimeMetadata?.apply_result && typeof patch.runtimeMetadata.apply_result === "object" ? (
                   <StatusBadge tone="positive">
                     {copy(`plan ${String((patch.runtimeMetadata.apply_result as Record<string, unknown>).execution_plan_version ?? "applied")}`, `计划 ${String((patch.runtimeMetadata.apply_result as Record<string, unknown>).execution_plan_version ?? "applied")}`)}

@@ -2,6 +2,7 @@ import React from "react";
 import { Panel, StatusBadge } from "../../components";
 import { useI18n } from "../../lib/i18n";
 import { theme } from "../../lib/theme";
+import { translateUiToken } from "../../lib/uiText";
 import type { DomainPackRecord } from "../../lib/types";
 
 interface DomainPacksViewProps {
@@ -17,12 +18,12 @@ export function DomainPacksView({ domainPacks }: DomainPacksViewProps): JSX.Elem
         <Panel
           key={pack.key}
           title={pack.name}
-          eyebrow={pack.key}
+          eyebrow={translateUiToken(pack.key, copy)}
           description={pack.description}
           actions={
             <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
               <StatusBadge tone="neutral">{copy(`${pack.templateKeys.length} templates`, `${pack.templateKeys.length} 个模板`)}</StatusBadge>
-              <StatusBadge tone={pack.maturity === "beta" ? "positive" : "warning"}>{pack.maturity}</StatusBadge>
+              <StatusBadge tone={pack.maturity === "beta" ? "positive" : "warning"}>{translateUiToken(pack.maturity, copy)}</StatusBadge>
               <StatusBadge tone="neutral">v{pack.version}</StatusBadge>
             </div>
           }
@@ -35,7 +36,7 @@ export function DomainPacksView({ domainPacks }: DomainPacksViewProps): JSX.Elem
               </StatusBadge>
               {pack.defaultCapabilities.map((capability) => (
                 <StatusBadge key={capability} tone="neutral">
-                  {capability}
+                  {translateUiToken(capability, copy)}
                 </StatusBadge>
               ))}
             </div>
@@ -51,7 +52,7 @@ export function DomainPacksView({ domainPacks }: DomainPacksViewProps): JSX.Elem
             ) : null}
             {Object.keys(pack.qualityGates).length ? (
               <div style={{ color: theme.colors.muted, fontSize: "13px", lineHeight: 1.6 }}>
-                {copy("Quality gates", "质量门槛")}: {Object.entries(pack.qualityGates).map(([key, value]) => `${key}=${String(value)}`).join(" · ")}
+                {copy("Quality gates", "质量门槛")}: {Object.entries(pack.qualityGates).map(([key, value]) => `${translateUiToken(key, copy)}=${typeof value === "string" ? translateUiToken(value, copy) : String(value)}`).join(" · ")}
               </div>
             ) : null}
             <div>

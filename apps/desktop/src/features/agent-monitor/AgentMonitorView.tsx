@@ -51,7 +51,7 @@ function syncModeDescription(syncStatus: SyncStatusSnapshot | null | undefined, 
     return copy("No sync status available.", "暂无同步状态。");
   }
   if (!syncStatus.enabled) {
-    return copy("Remote sync is disabled. Backlog entries stay local until an intranet target is enabled.", "远端同步未启用。backlog 项会保留在本地，直到启用内网目标。");
+    return copy("Remote sync is disabled. Pending sync items stay local until an intranet target is enabled.", "远端同步未启用。待同步内容会继续保留在本地，直到启用内网目标。");
   }
   if (!syncStatus.remoteAvailable) {
     return copy("Remote sync is enabled, but the target is currently unavailable.", "远端同步已启用，但当前目标不可用。");
@@ -79,7 +79,7 @@ export function AgentMonitorView({
 
   return (
     <div style={{ display: "grid", gap: "18px" }}>
-      <div style={{ display: "grid", gap: "18px", gridTemplateColumns: "minmax(0, 1.1fr) minmax(320px, 0.9fr)" }}>
+      <div style={{ display: "grid", gap: "18px", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))" }}>
         <Panel
           title={copy("Runtime operations", "运行控制")}
           eyebrow={copy("Serialized execution", "串行执行")}
@@ -109,7 +109,7 @@ export function AgentMonitorView({
             </div>
           </div>
         </Panel>
-        <Panel title={copy("Sync backlog", "同步 backlog")} eyebrow={copy("Local-First Sync", "本地优先同步")} description={copy("Local backlog state and manual flush controls for optional intranet sync.", "可选内网同步的本地 backlog 状态和手动 flush 控制。")}>
+        <Panel title={copy("Sync queue", "同步积压")} eyebrow={copy("Local-First Sync", "本地优先同步")} description={copy("Local queued sync state and manual retry controls for optional intranet sync.", "用于可选内网同步的本地积压状态与手动重试控制。")}>
           <div style={{ display: "grid", gap: "12px" }}>
             <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
               <StatusBadge tone={syncStatus?.enabled ? "positive" : "neutral"}>{translateUiToken(syncStatus?.mode ?? "local_only", copy)}</StatusBadge>
@@ -137,12 +137,12 @@ export function AgentMonitorView({
             </div>
             {syncStatus?.byStatus && Object.keys(syncStatus.byStatus).length ? (
               <div style={{ color: theme.colors.muted, fontSize: "13px", lineHeight: 1.6 }}>
-                {copy("Status mix", "状态分布")}: {Object.entries(syncStatus.byStatus).map(([key, value]) => `${key}=${value}`).join(" · ")}
+                {copy("Status mix", "状态分布")}: {Object.entries(syncStatus.byStatus).map(([key, value]) => `${translateUiToken(key, copy)}=${value}`).join(" · ")}
               </div>
             ) : null}
             {onFlushSync ? (
               <button type="button" onClick={onFlushSync} disabled={syncingAction} style={actionButtonStyle}>
-                {syncingAction ? copy("Flushing...", "刷新中...") : copy("Flush backlog", "刷新 backlog")}
+                {syncingAction ? copy("Retrying...", "重试中...") : copy("Retry queued sync", "重试同步积压")}
               </button>
             ) : null}
           </div>
@@ -194,7 +194,7 @@ export function AgentMonitorView({
         </div>
       </Panel>
 
-      <div style={{ display: "grid", gap: "18px", gridTemplateColumns: "minmax(0, 1.1fr) minmax(320px, 0.9fr)" }}>
+      <div style={{ display: "grid", gap: "18px", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))" }}>
         <Panel title={copy("Replay diagnostics", "回放诊断")} eyebrow={copy("Workflow instance replay", "工作流实例回放")} description={copy("Select a supervised workflow instance to inspect divergence, snapshots, and derived learning artifacts.", "选择一个受监督工作流实例，检查偏差、快照和衍生学习产物。")}>
           <div style={{ display: "grid", gap: "12px" }}>
             {episodes.length ? (
@@ -232,7 +232,7 @@ export function AgentMonitorView({
             )}
           </div>
         </Panel>
-        <Panel title={copy("Replay context", "回放上下文")} eyebrow={copy("Snapshots and backlog", "快照与 backlog")} description={copy("Captured environment state and the newest local sync backlog entries.", "捕获的环境状态与最新本地同步 backlog 条目。")}>
+        <Panel title={copy("Replay context", "回放上下文")} eyebrow={copy("Snapshots and sync queue", "快照与同步积压")} description={copy("Captured environment state and the newest local queued sync entries.", "捕获的环境状态与最新本地同步积压条目。")}>
           <div style={{ display: "grid", gap: "12px" }}>
             {replay?.snapshots?.length ? (
               replay.snapshots.map((snapshot) => (

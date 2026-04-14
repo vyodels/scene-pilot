@@ -41,6 +41,13 @@ class _SequentialProvider:
         return response
 
 
+class _FailingProvider:
+    provider_name = "failing"
+
+    def generate(self, messages, *, tools=None, task=None, max_tokens=None, temperature=None):
+        raise AssertionError("Managed execution should not call the live executor for blocked preflight scenes")
+
+
 class _SemanticCompileProvider:
     provider_name = "openai_compatible"
 
@@ -546,7 +553,8 @@ class ApiRuntimeTests(unittest.TestCase):
             },
         )
         self.assertEqual(compiled_task.status_code, 400)
-        self.assertIn("llm task compiler failed", compiled_task.json()["detail"].lower())
+        self.assertIn("llm", compiled_task.json()["detail"].lower())
+        self.assertIn("任务编译失败", compiled_task.json()["detail"])
 
     def test_task_compile_repairs_schema_valid_but_quality_incomplete_llm_output(self) -> None:
         from scene_pilot.runtime.models import LLMResponse
@@ -1053,6 +1061,90 @@ class ApiRuntimeTests(unittest.TestCase):
             follow_up_plan_id,
             replanned_item["execution_plan"]["id"],
         )
+
+    def test_managed_runtime_execution_waits_for_human_when_preflight_is_blocked(self) -> None:
+        compiled_task = self.client.post(
+            "/api/runtime/task-specs/compile",
+            json={
+                "instruction": "打开招聘网站，按照要求找到候选人，查看候选人资料和简历，完成初筛评分，并输出候选人结论和下一步建议。",
+                "title": "Recruiting production run",
+                "domain_hint": "recruiting",
+                "constraints": {
+                    "requires_human_supervision": True,
+                    "no_outbound_messaging_without_approval": True,
+                    "no_downstream_write_without_approval": True,
+                },
+                "preferred_capabilities": ["browser", "search", "document", "llm"],
+            },
+        )
+        self.assertEqual(compiled_task.status_code, 201)
+        task_spec_id = compiled_task.json()["task_spec"]["id"]
+        plan_id = compiled_task.json()["execution_plan"]["id"]
+
+        trial = self.client.post(
+            "/api/runtime/workflow-instances",
+            json={
+                "task_spec_id": task_spec_id,
+                "execution_plan_id": plan_id,
+                "requested_by": "desktop-user",
+            },
+        )
+        self.assertEqual(trial.status_code, 201)
+        episode_id = trial.json()["id"]
+
+        execute_trial = self.client.post(
+            f"/api/runtime/workflow-instances/{episode_id}/execute",
+            json={
+                "source": "browser",
+                "url": "https://example.com/recruiting/listing",
+                "title": "候选人列表页",
+                "page_type": "listing_surface",
+                "observed_entities": [
+                    {"kind": "candidate_card", "label": "候选人卡片"},
+                    {"kind": "resume_entry", "label": "简历入口"},
+                ],
+                "affordances": [
+                    {"kind": "open_detail", "label": "查看候选人详情"},
+                    {"kind": "open_resume", "label": "打开简历"},
+                ],
+            },
+        )
+        self.assertEqual(execute_trial.status_code, 200)
+
+        confirm = self.client.post(
+            f"/api/runtime/workflow-instances/{episode_id}/confirm",
+            json={"reviewer": "desktop-user", "reason": "Promote for production", "activate_template": True},
+        )
+        self.assertEqual(confirm.status_code, 200)
+
+        self.container.agent_control.agent_loop.provider = _FailingProvider()
+
+        launch = self.client.post(
+            f"/api/runtime/plans/{plan_id}/launch",
+            json={
+                "task_spec_id": task_spec_id,
+                "requested_by": "desktop-user",
+                "mode": "production",
+                "payload": {},
+            },
+        )
+        self.assertEqual(launch.status_code, 201)
+        execution_episode_id = launch.json()["execution_episode"]["id"]
+
+        run_once = self.client.post("/api/agent/run-once")
+        self.assertEqual(run_once.status_code, 200)
+        self.assertEqual(run_once.json()["status"], "waiting_human")
+
+        refreshed_episode = self.client.get(f"/api/runtime/workflow-instances/{execution_episode_id}")
+        self.assertEqual(refreshed_episode.status_code, 200)
+        self.assertEqual(refreshed_episode.json()["status"], "awaiting_review")
+        self.assertIn("缺少实时浏览器场景快照", refreshed_episode.json()["result_summary"])
+
+        approvals = self.client.get("/api/approvals")
+        self.assertEqual(approvals.status_code, 200)
+        blocked = [item for item in approvals.json() if item["target_type"] == "blocked_task"]
+        self.assertTrue(blocked)
+        self.assertEqual(blocked[0]["status"], "pending")
 
 
 if __name__ == "__main__":

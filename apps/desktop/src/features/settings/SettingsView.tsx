@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { Panel, StatusBadge } from "../../components";
 import { useI18n } from "../../lib/i18n";
+import { translateUiToken } from "../../lib/uiText";
 import type { SettingsSnapshot } from "../../lib/types";
 
 interface SettingsViewProps {
@@ -11,9 +12,10 @@ interface SettingsViewProps {
 
 function translateSettingLabel(value: string): string {
   const table: Record<string, string> = {
-    "Recruiting scene profile": "招聘场景配置",
-    "Primary OpenAI API": "主 OpenAI API",
-    "Fallback Anthropic": "备用 Anthropic",
+    "Recruiting scene profile": "招聘场景画像",
+    "Runtime scene profile": "运行时场景画像",
+    "Primary OpenAI API": "主 OpenAI 接口",
+    "Fallback Anthropic": "备用 Anthropic 接口",
   };
   return table[value] ?? value;
 }
@@ -153,7 +155,7 @@ export function SettingsView({ settings, saving, onSave }: SettingsViewProps): J
             <article key={provider.name} style={{ padding: "14px", borderRadius: "16px", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)" }}>
               <div style={{ display: "flex", justifyContent: "space-between", gap: "8px" }}>
                 <strong>{translateSettingLabel(provider.name)}</strong>
-                <StatusBadge tone={provider.enabled ? "positive" : "neutral"}>{provider.kind}</StatusBadge>
+                <StatusBadge tone={provider.enabled ? "positive" : "neutral"}>{translateUiToken(provider.kind.replace(/-/g, "_"), copy)}</StatusBadge>
               </div>
               <div style={{ color: "rgba(233,239,255,0.72)", fontSize: "13px", marginTop: "6px" }}>{provider.model}</div>
             </article>

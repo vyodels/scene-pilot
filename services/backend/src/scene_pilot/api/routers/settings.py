@@ -14,7 +14,7 @@ router = APIRouter(prefix="/api/settings", tags=["settings"])
 
 def _runtime_scene_account(settings: AppSettings) -> str:
     provider_config = settings.provider_config or {}
-    return str(provider_config.get("site_account") or provider_config.get("boss_account") or "runtime-scene-01")
+    return str(provider_config.get("site_account") or provider_config.get("boss_account") or "本机场景 01")
 
 
 def _to_desktop_settings(settings: AppSettings) -> SettingsSnapshotRead:
@@ -31,7 +31,7 @@ def _to_desktop_settings(settings: AppSettings) -> SettingsSnapshotRead:
             "providers": [
                 {
                     "kind": "openai-compatible",
-                    "name": "Primary OpenAI API",
+                    "name": "主 OpenAI 接口",
                     "model": settings.provider_config.get("openai_model", "gpt-5.4"),
                     "enabled": True,
                     "temperature": 0.2,
@@ -39,7 +39,7 @@ def _to_desktop_settings(settings: AppSettings) -> SettingsSnapshotRead:
                 },
                 {
                     "kind": "anthropic",
-                    "name": "Fallback Anthropic",
+                    "name": "备用 Anthropic 接口",
                     "model": settings.provider_config.get("anthropic_model", "claude-sonnet-4"),
                     "enabled": False,
                     "temperature": 0.2,
@@ -53,7 +53,7 @@ def _to_desktop_settings(settings: AppSettings) -> SettingsSnapshotRead:
                 "timeoutSeconds": settings.intranet_sync.timeout_seconds,
             },
             "platform": {
-                "name": "Runtime scene profile",
+                "name": "运行时场景画像",
                 "account": _runtime_scene_account(settings),
                 "cooldownDays": settings.provider_config.get("cooldown_days", 30),
                 "allowOutboundMessaging": settings.feature_flags.enable_outbound_messaging,

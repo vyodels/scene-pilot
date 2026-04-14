@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from "react";
-import { Panel, SectionTabs, StatusBadge } from "../../components";
+import { Panel, StatusBadge, TopTabPage } from "../../components";
 import { formatCompactDate } from "../../lib/format";
 import { useI18n } from "../../lib/i18n";
 import { theme } from "../../lib/theme";
@@ -58,6 +58,16 @@ function toneFromStatus(value: string): "positive" | "neutral" | "warning" | "cr
     return "positive";
   }
   return "neutral";
+}
+
+function translateWorkflowManagementText(value: string, copy: (en: string, zh: string) => string): string {
+  return value
+    .replace("Approve resume screening Skill", "批准 Resume Screening Skill")
+    .replace("Approve Resume Screening Skill", "批准 Resume Screening Skill")
+    .replace("Review the new initial screening strategy before activation.", "在启用前先审查新的初筛策略。")
+    .replace("Enables the workflow path from scoring to human review.", "启用从评分到人工审查的工作流路径。")
+    .replace("Activate talent pool handoff", "激活人才库交接")
+    .replace("repository_listing", translateUiToken("repository_listing", copy));
 }
 
 export function WorkflowManagementView({
@@ -158,7 +168,7 @@ export function WorkflowManagementView({
         ))}
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.1fr) minmax(320px, 0.9fr)", gap: "18px", alignItems: "start" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: "18px", alignItems: "start" }}>
         <Panel
           title={copy("Workflow lifecycle board", "工作流生命周期看板")}
           eyebrow={copy("From draft to release", "从草稿到发布")}
@@ -186,7 +196,7 @@ export function WorkflowManagementView({
                     <div style={{ color: theme.colors.muted, fontSize: "13px", marginTop: "6px", lineHeight: 1.6 }}>{item.task.goal}</div>
                   </div>
                   <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-                    <StatusBadge tone="neutral">{item.task.domain}</StatusBadge>
+                    <StatusBadge tone="neutral">{translateUiToken(item.task.domain, copy)}</StatusBadge>
                     <StatusBadge tone={toneFromStatus(item.task.status)}>{translateUiToken(item.task.status, copy)}</StatusBadge>
                   </div>
                 </div>
@@ -267,7 +277,7 @@ export function WorkflowManagementView({
                     <StatusBadge tone="warning">{copy("pending review", "待审查")}</StatusBadge>
                   </div>
                   <div style={{ color: theme.colors.muted, fontSize: "13px", lineHeight: 1.6 }}>
-                    {patch.divergenceSummary ?? patch.rationale ?? copy("Waiting for operator review.", "等待操作员审查。")}
+                    {translateWorkflowManagementText(patch.divergenceSummary ?? patch.rationale ?? copy("Waiting for operator review.", "等待操作员审查。"), copy)}
                   </div>
                 </article>
               ))}
@@ -287,10 +297,10 @@ export function WorkflowManagementView({
                   }}
                 >
                   <div style={{ display: "flex", justifyContent: "space-between", gap: "8px", flexWrap: "wrap" }}>
-                    <strong>{approval.title}</strong>
+                    <strong>{translateWorkflowManagementText(approval.title, copy)}</strong>
                     <StatusBadge tone="warning">{copy("pending approval", "待审批")}</StatusBadge>
                   </div>
-                  <div style={{ color: theme.colors.muted, fontSize: "13px", lineHeight: 1.6 }}>{approval.detail}</div>
+                  <div style={{ color: theme.colors.muted, fontSize: "13px", lineHeight: 1.6 }}>{translateWorkflowManagementText(approval.detail, copy)}</div>
                 </article>
               ))}
           </div>
@@ -311,17 +321,7 @@ export function WorkflowManagementView({
             : "workflow-scenes";
 
   return (
-    <div style={{ display: "grid", gap: "18px" }}>
-      <Panel
-        title={copy("Workflow management", "工作流管理")}
-        eyebrow={copy("Lifecycle first", "以生命周期为中心")}
-        description={copy(
-          "Describe a business need, shape the scene profile, generate a workflow draft, run supervised trials, then confirm versions and revisions before broader reuse.",
-          "先描述业务需求，再整理场景画像、生成工作流草稿、进行受监督试跑，最后确认版本与修订建议，再进入更广泛的复用。",
-        )}
-      >
-        <SectionTabs items={topItems} active={tab} onChange={(key) => setTab(key as WorkflowManagementTab)} />
-      </Panel>
+    <TopTabPage items={topItems} active={tab} onChange={(key) => setTab(key as WorkflowManagementTab)}>
       {tab === "board" ? (
         board
       ) : (
@@ -350,6 +350,6 @@ export function WorkflowManagementView({
           onRejectPatch={onRejectPatch}
         />
       )}
-    </div>
+    </TopTabPage>
   );
 }

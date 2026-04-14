@@ -99,22 +99,22 @@ def _json_ready(value: Any) -> Any:
 
 DOMAIN_PACKS: dict[str, dict[str, Any]] = {
     "general": {
-        "name": "General Automation",
-        "description": "A generic supervised automation pack for exploratory browser or desktop tasks.",
+        "name": "通用自动化",
+        "description": "适用于探索型网页或桌面任务的通用受监督场景画像。",
         "version": "1.2.0",
         "maturity": "beta",
         "runtime_only": True,
         "default_capabilities": ["analyze", "browser", "llm", "document"],
         "sample_tasks": [
-            "Open a site, inspect the page, and summarize the useful information.",
-            "Try a new workflow once under supervision and propose follow-up fixes.",
+            "打开一个网站，观察页面后提炼有价值的信息。",
+            "在人工监督下试跑一条新工作流，并提出后续修正建议。",
         ],
         "default_constraints": {"requires_human_supervision": True},
         "default_output_contract": {"kind": "summary", "format": "markdown"},
         "template_keys": ["general_supervised_trial", "patch_review_loop"],
         "compiler_hints": [
-            "Prefer capability-oriented steps over fixed site flows.",
-            "Assume a supervised trial is required until the runtime proves a reusable pattern.",
+            "优先按能力驱动来组织步骤，而不是写死固定站点流程。",
+            "在运行时证明可复用模式之前，默认都应先走受监督试跑。",
         ],
         "quality_gates": {
             "requires_goal_clarity": True,
@@ -125,22 +125,22 @@ DOMAIN_PACKS: dict[str, dict[str, Any]] = {
         "trial_expectations": {"requires_supervised_trial": True, "requires_scene_assessment_for_browser": True},
     },
     "recruiting": {
-        "name": "Recruiting",
-        "description": "Source candidates, capture profile context, screen resumes, and prepare approved handoffs.",
+        "name": "招聘",
+        "description": "寻找候选人、获取档案上下文、完成简历初筛，并准备经过批准的交接材料。",
         "version": "1.1.0",
         "maturity": "beta",
         "runtime_only": True,
         "default_capabilities": ["browser", "search", "document", "llm", "api"],
         "sample_tasks": [
-            "Find matching candidates, extract resumes, and score them before upload.",
-            "Review candidate profiles, capture evidence, and prepare recruiter notes.",
+            "找到匹配候选人，提取简历，并在上传前完成评分。",
+            "查看候选人档案、记录证据，并整理招聘备注。",
         ],
         "default_constraints": {"requires_human_supervision": True, "respect_messaging_approval": True},
         "default_output_contract": {"kind": "candidate_bundle", "fields": ["resume", "score", "notes"]},
         "template_keys": ["recruiting_trial_screening"],
         "compiler_hints": [
-            "Treat recruiting sites and intranet systems as runtime scenes, not fixed integrations.",
-            "Resume capture, scoring, and downstream write steps must remain approval-aware.",
+            "把招聘网站和内网系统都视为运行时场景，而不是固定集成。",
+            "简历获取、评分和后续写入步骤必须始终保留审批感知。",
         ],
         "quality_gates": {
             "requires_candidate_evidence": True,
@@ -151,22 +151,22 @@ DOMAIN_PACKS: dict[str, dict[str, Any]] = {
         "trial_expectations": {"requires_supervised_trial": True, "requires_scene_assessment_for_browser": True},
     },
     "market_news": {
-        "name": "Market News",
-        "description": "Collect the newest market news, compare sources, and generate a concise daily digest.",
+        "name": "市场新闻",
+        "description": "收集最新市场新闻、比较来源，并生成简洁的日报摘要。",
         "version": "0.4.0",
         "maturity": "experimental",
         "runtime_only": True,
         "default_capabilities": ["search", "http", "browser", "llm", "document"],
         "sample_tasks": [
-            "Find the latest stock market news and prepare a digest with sources.",
-            "Summarize the biggest market-moving headlines and why they matter.",
+            "查找最新股市新闻，并整理带来源的摘要。",
+            "总结最能影响市场的头条，并解释它们为什么重要。",
         ],
         "default_constraints": {"requires_source_links": True},
         "default_output_contract": {"kind": "news_digest", "format": "bullet_summary"},
         "template_keys": ["market_news_digest"],
         "compiler_hints": [
-            "Preserve links to primary sources and keep the digest focused on current market impact.",
-            "Bias toward source discovery before article synthesis.",
+            "保留一手来源链接，并让摘要聚焦当前市场影响。",
+            "在做文章综合之前，优先完成来源发现。",
         ],
         "quality_gates": {
             "requires_source_links": True,
@@ -177,22 +177,22 @@ DOMAIN_PACKS: dict[str, dict[str, Any]] = {
         "trial_expectations": {"minimum_sources": 3, "requires_scene_assessment_for_browser": True},
     },
     "web_research": {
-        "name": "Web Research",
-        "description": "Search the web, evaluate options, and produce shortlists with reasons and links.",
+        "name": "网页研究",
+        "description": "在公开网络中搜索、评估选项，并输出带理由和链接的候选清单。",
         "version": "0.4.0",
         "maturity": "experimental",
         "runtime_only": True,
         "default_capabilities": ["search", "browser", "http", "llm", "document"],
         "sample_tasks": [
-            "Find useful PDF converters, compare them, and return the shortlist.",
-            "Research tools across the web and explain why they are worth trying.",
+            "找出好用的 PDF 转换工具，比较后给出 shortlist。",
+            "在全网研究工具，并说明为什么值得尝试。",
         ],
         "default_constraints": {"requires_source_links": True},
         "default_output_contract": {"kind": "research_shortlist", "format": "table"},
         "template_keys": ["web_research_shortlist"],
         "compiler_hints": [
-            "Prefer shortlist-oriented outputs with reasons, links, and tradeoffs.",
-            "Use search plus browser inspection before final synthesis when the scene is exploratory.",
+            "优先输出带理由、链接和取舍说明的候选清单。",
+            "当场景仍在探索阶段时，先用搜索和浏览器观察，再做最终综合。",
         ],
         "quality_gates": {
             "requires_source_links": True,
@@ -203,22 +203,22 @@ DOMAIN_PACKS: dict[str, dict[str, Any]] = {
         "trial_expectations": {"minimum_candidates": 3, "requires_scene_assessment_for_browser": True},
     },
     "github_trends": {
-        "name": "GitHub Trends",
-        "description": "Inspect GitHub activity, identify trending repositories, and summarize why they matter.",
+        "name": "GitHub 热点",
+        "description": "查看 GitHub 活动，识别热门仓库，并总结它们值得关注的原因。",
         "version": "0.4.0",
         "maturity": "experimental",
         "runtime_only": True,
         "default_capabilities": ["http", "search", "browser", "llm", "document"],
         "sample_tasks": [
-            "List today's hot GitHub repositories with links and one-line summaries.",
-            "Watch trending open-source projects and prepare a lightweight briefing.",
+            "列出今天的 GitHub 热门仓库，并附上链接和一句话摘要。",
+            "追踪热门开源项目，并整理一份简明简报。",
         ],
         "default_constraints": {"requires_source_links": True},
         "default_output_contract": {"kind": "repository_digest", "format": "table"},
         "template_keys": ["github_trends_digest"],
         "compiler_hints": [
-            "Keep repository links, one-line summaries, and evidence about why the project is notable.",
-            "Use HTTP or search for breadth, then browser inspection for detail verification.",
+            "保留仓库链接、一句话摘要，以及项目为什么值得关注的证据。",
+            "先用 HTTP 或搜索做广度发现，再用浏览器完成细节核验。",
         ],
         "quality_gates": {
             "requires_source_links": True,
@@ -233,7 +233,7 @@ DOMAIN_PACKS: dict[str, dict[str, Any]] = {
 
 CAPABILITY_DRIVERS: dict[str, dict[str, Any]] = {
     "analyze": {
-        "description": "Reason about a task, compare evidence, or decide the next step without changing the environment.",
+        "description": "在不改变环境的前提下分析任务、比较证据，或决定下一步动作。",
         "risk": "low",
         "signal_labels": ["task_contract", "plan_fit", "divergence_signal"],
         "executor_mode": "deliberate",
@@ -243,7 +243,7 @@ CAPABILITY_DRIVERS: dict[str, dict[str, Any]] = {
         "checkpoint_policy": {"checkpoint_on_divergence": True},
     },
     "browser": {
-        "description": "Observe or interact with websites and web apps as runtime scenes.",
+        "description": "把网站和 Web 应用当作运行时场景进行观察或交互。",
         "risk": "medium",
         "signal_labels": [
             "observed_entities",
@@ -270,7 +270,7 @@ CAPABILITY_DRIVERS: dict[str, dict[str, Any]] = {
         },
     },
     "search": {
-        "description": "Discover relevant targets, sources, candidates, or options across search surfaces.",
+        "description": "在搜索界面中发现相关目标、来源、候选项或备选方案。",
         "risk": "low",
         "signal_labels": ["query_intent", "result_listing", "ranking_signal"],
         "executor_mode": "discover",
@@ -280,7 +280,7 @@ CAPABILITY_DRIVERS: dict[str, dict[str, Any]] = {
         "checkpoint_policy": {"checkpoint_on_empty_results": True},
     },
     "http": {
-        "description": "Call structured HTTP or API endpoints to read or write machine-facing data.",
+        "description": "调用结构化 HTTP 或 API 接口，读取或写入面向机器的数据。",
         "risk": "medium",
         "signal_labels": ["endpoint_schema", "response_contract", "transport_state"],
         "executor_mode": "request_response",
@@ -290,7 +290,7 @@ CAPABILITY_DRIVERS: dict[str, dict[str, Any]] = {
         "checkpoint_policy": {"checkpoint_on_schema_mismatch": True},
     },
     "document": {
-        "description": "Draft, summarize, or format durable output artifacts.",
+        "description": "起草、摘要或格式化可长期保存的输出材料。",
         "risk": "low",
         "signal_labels": ["artifact_outline", "summary_contract", "handoff_bundle"],
         "executor_mode": "artifact",
@@ -300,7 +300,7 @@ CAPABILITY_DRIVERS: dict[str, dict[str, Any]] = {
         "checkpoint_policy": {"checkpoint_before_publish": False},
     },
     "filesystem": {
-        "description": "Read, write, stage, or organize local files and folders under runtime policy controls.",
+        "description": "在运行时策略控制下读取、写入、暂存或整理本地文件与目录。",
         "risk": "medium",
         "signal_labels": ["path_target", "artifact_store", "file_state"],
         "executor_mode": "local_io",
@@ -310,7 +310,7 @@ CAPABILITY_DRIVERS: dict[str, dict[str, Any]] = {
         "checkpoint_policy": {"checkpoint_on_write": True},
     },
     "api": {
-        "description": "Write structured data into a downstream system or service.",
+        "description": "把结构化数据写入下游系统或服务。",
         "risk": "high",
         "signal_labels": ["write_contract", "destination_system", "sync_result"],
         "executor_mode": "downstream_write",
@@ -320,7 +320,7 @@ CAPABILITY_DRIVERS: dict[str, dict[str, Any]] = {
         "checkpoint_policy": {"checkpoint_before_write": True, "checkpoint_after_write": True},
     },
     "command": {
-        "description": "Run local system commands under approval and policy controls.",
+        "description": "在审批和策略控制下执行本地系统命令。",
         "risk": "high",
         "signal_labels": ["command_intent", "stdout_signal", "system_mutation"],
         "executor_mode": "command",
@@ -330,7 +330,7 @@ CAPABILITY_DRIVERS: dict[str, dict[str, Any]] = {
         "checkpoint_policy": {"requires_approval": True, "checkpoint_on_mutation": True},
     },
     "llm": {
-        "description": "Delegate reasoning, synthesis, or classification to the language model runtime.",
+        "description": "把推理、综合或分类任务交给语言模型运行时处理。",
         "risk": "low",
         "signal_labels": ["prompt_contract", "synthesis_result", "classification_signal"],
         "executor_mode": "reason",
@@ -340,7 +340,7 @@ CAPABILITY_DRIVERS: dict[str, dict[str, Any]] = {
         "checkpoint_policy": {"checkpoint_on_low_confidence": True},
     },
     "approval": {
-        "description": "Pause for a human review or approval checkpoint.",
+        "description": "在人工审查或审批检查点暂停流程。",
         "risk": "low",
         "signal_labels": ["review_gate", "human_decision", "approval_reason"],
         "executor_mode": "checkpoint",
@@ -355,7 +355,7 @@ CAPABILITY_DRIVERS: dict[str, dict[str, Any]] = {
 DEFAULT_WORKFLOW_TEMPLATES: tuple[dict[str, Any], ...] = (
     {
         "template_key": "general_supervised_trial",
-        "name": "General Supervised Trial",
+        "name": "通用受监督试跑",
         "domain": "general",
         "status": "active",
         "version": 1,
@@ -368,11 +368,11 @@ DEFAULT_WORKFLOW_TEMPLATES: tuple[dict[str, Any], ...] = (
             ]
         },
         "activation_strategy": {"mode": "trial_first"},
-        "validation_summary": "Seeded baseline supervised runtime workflow.",
+        "validation_summary": "通用受监督运行时工作流的基线版本。",
     },
     {
         "template_key": "patch_review_loop",
-        "name": "Patch Review Loop",
+        "name": "修订审查循环",
         "domain": "general",
         "status": "active",
         "version": 1,
@@ -384,11 +384,11 @@ DEFAULT_WORKFLOW_TEMPLATES: tuple[dict[str, Any], ...] = (
             ]
         },
         "activation_strategy": {"mode": "approval_gated"},
-        "validation_summary": "Seeded workflow patch review template.",
+        "validation_summary": "工作流修订建议的种子审查模板。",
     },
     {
         "template_key": "recruiting_trial_screening",
-        "name": "Recruiting Trial Screening",
+        "name": "招聘试跑初筛",
         "domain": "recruiting",
         "status": "active",
         "version": 1,
@@ -402,11 +402,11 @@ DEFAULT_WORKFLOW_TEMPLATES: tuple[dict[str, Any], ...] = (
             ]
         },
         "activation_strategy": {"mode": "trial_first", "requires_approval": True},
-        "validation_summary": "Seeded recruiting workflow for supervised screening runs.",
+        "validation_summary": "用于受监督初筛试跑的招聘工作流种子版本。",
     },
     {
         "template_key": "market_news_digest",
-        "name": "Market News Digest",
+        "name": "市场新闻摘要",
         "domain": "market_news",
         "status": "active",
         "version": 1,
@@ -419,11 +419,11 @@ DEFAULT_WORKFLOW_TEMPLATES: tuple[dict[str, Any], ...] = (
             ]
         },
         "activation_strategy": {"mode": "trial_first"},
-        "validation_summary": "Seeded template for supervised market-news digests.",
+        "validation_summary": "用于受监督市场新闻摘要的种子模板。",
     },
     {
         "template_key": "web_research_shortlist",
-        "name": "Web Research Shortlist",
+        "name": "网页研究候选清单",
         "domain": "web_research",
         "status": "active",
         "version": 1,
@@ -436,11 +436,11 @@ DEFAULT_WORKFLOW_TEMPLATES: tuple[dict[str, Any], ...] = (
             ]
         },
         "activation_strategy": {"mode": "trial_first"},
-        "validation_summary": "Seeded template for web tool research and shortlisting.",
+        "validation_summary": "用于网页工具研究和 shortlist 的种子模板。",
     },
     {
         "template_key": "github_trends_digest",
-        "name": "GitHub Trends Digest",
+        "name": "GitHub 热点摘要",
         "domain": "github_trends",
         "status": "active",
         "version": 1,
@@ -453,7 +453,7 @@ DEFAULT_WORKFLOW_TEMPLATES: tuple[dict[str, Any], ...] = (
             ]
         },
         "activation_strategy": {"mode": "trial_first"},
-        "validation_summary": "Seeded template for GitHub trends monitoring.",
+        "validation_summary": "用于 GitHub 热点观察的种子模板。",
     },
 )
 
@@ -857,7 +857,7 @@ class PersistedRuntimeService:
         replanned = plan_repo.create(
             {
                 "task_spec_id": current_plan.task_spec_id,
-                "name": payload.name or f"{current_plan.name} Replan v{int(current_plan.version) + 1}",
+                "name": payload.name or f"{current_plan.name} 重规划 v{int(current_plan.version) + 1}",
                 "mode": current_plan.mode,
                 "status": status,
                 "version": int(current_plan.version) + 1,
@@ -891,7 +891,7 @@ class PersistedRuntimeService:
             execution_plan=ExecutionPlanRead.model_validate(replanned),
             assessment=assessment,
             status="replanned",
-            summary=str(payload.reason or "Generated a revised execution plan from the latest runtime scene."),
+            summary=str(payload.reason or "已根据最新运行时场景生成修订后的执行计划。"),
             compiler_notes=compiler_notes,
             recommended_capability_keys=list(assessment.recommended_capabilities),
             audit_metadata=audit_metadata,
@@ -981,7 +981,7 @@ class PersistedRuntimeService:
                 requires_scene_assessment=bool(environment_requirements.get("scene_assessment_required")),
                 requires_human_review=planner_posture == "recover" or bool(blockers),
                 should_checkpoint=True,
-                rationale=["Reconstructed from persisted replan metadata."],
+                rationale=["已根据持久化的重规划元数据还原场景评估。"],
             ),
             recommended_capabilities=recommended_capabilities,
             blockers=blockers,
@@ -1001,7 +1001,7 @@ class PersistedRuntimeService:
             plan = self.compile_plan(
                 CompilePlanRequest(
                     task_spec_id=task.id,
-                    name=f"{task.title} Trial Plan",
+                    name=f"{task.title} 试跑计划",
                     mode="trial",
                     status="planned",
                     compiled_from_instruction=payload.instruction,
@@ -1035,12 +1035,12 @@ class PersistedRuntimeService:
         if self.allow_heuristic_fallback:
             return self._compile_task_spec_heuristic(payload, notes=llm_errors)
         if llm_errors:
-            raise ValueError("LLM task compiler failed: " + " ".join(llm_errors))
-        raise ValueError("LLM task compiler is required, but no configured non-scripted provider is available.")
+            raise ValueError("LLM 任务编译失败：" + " ".join(llm_errors))
+        raise ValueError("任务编译依赖 LLM，但当前没有可用的非脚本化 Provider。")
 
     def _compile_task_spec_with_llm(self, payload: TaskCompileRequest) -> tuple[CompiledTaskDraft | None, list[str]]:
         if self.providers is None:
-            return None, ["No provider registry is configured for semantic task compilation."]
+            return None, ["当前没有为语义任务编译配置 Provider 注册表。"]
 
         errors: list[str] = []
         for provider_name in self._semantic_compiler_provider_names():
@@ -1070,11 +1070,11 @@ class PersistedRuntimeService:
                         quality_review,
                     )
                     raise ValueError(
-                        "Critical semantic compile quality gaps: "
+                        "语义编译结果存在关键质量缺口："
                         + ", ".join(list(quality_review["critical_issues"]))
                     )
                 compiler_notes = list(draft.compiler_notes or [])
-                compiler_notes.append(f"Semantic task compiler succeeded via provider: {provider_name}.")
+                compiler_notes.append(f"语义任务编译已通过 Provider {provider_name} 成功完成。")
                 return (
                     self._materialize_compiled_task_draft(
                         payload=payload,
@@ -1088,7 +1088,7 @@ class PersistedRuntimeService:
                 )
             except (ValidationError, ValueError, json.JSONDecodeError) as exc:
                 if response is None:
-                    errors.append(f"LLM semantic compiler via {provider_name} failed: {exc}.")
+                    errors.append(f"LLM 语义编译器通过 {provider_name} 执行失败：{exc}。")
                     continue
                 try:
                     repaired_response = provider.generate(
@@ -1110,7 +1110,7 @@ class PersistedRuntimeService:
                         )
                     compiler_notes = list(draft.compiler_notes or [])
                     compiler_notes.append(
-                        f"Semantic task compiler succeeded via provider: {provider_name} after one repair pass."
+                        f"语义任务编译已通过 Provider {provider_name} 成功完成，并执行了一次修复。"
                     )
                     return (
                         self._materialize_compiled_task_draft(
@@ -1126,14 +1126,14 @@ class PersistedRuntimeService:
                     )
                 except (ProviderError, ValidationError, ValueError, json.JSONDecodeError) as repair_exc:
                     errors.append(
-                        f"LLM semantic compiler via {provider_name} failed initial validation ({exc}) "
-                        f"and repair ({repair_exc})."
+                        f"LLM 语义编译器通过 {provider_name} 首次校验失败（{exc}），"
+                        f"且修复流程也失败（{repair_exc}）。"
                     )
             except ProviderError as exc:
-                errors.append(f"LLM semantic compiler via {provider_name} failed: {exc}.")
+                errors.append(f"LLM 语义编译器通过 {provider_name} 执行失败：{exc}。")
 
         if not errors:
-            errors.append("No configured non-scripted provider is available for semantic task compilation.")
+            errors.append("当前没有可用于语义任务编译的非脚本化 Provider。")
         return None, errors
 
     def _compile_task_spec_heuristic(
@@ -1157,7 +1157,7 @@ class PersistedRuntimeService:
             payload.approval_policy,
         )
         output_contract = self._merge_dicts(dict(domain_config.get("default_output_contract") or {}), payload.output_contract)
-        compiler_notes.append("Fell back to heuristic task compiler.")
+        compiler_notes.append("已回退到启发式任务编译器。")
         quality_audit = self._build_compiler_quality_audit(
             compiler_name="heuristic",
             domain_key=domain_key,
@@ -1172,7 +1172,7 @@ class PersistedRuntimeService:
             step_outline=[],
             compiler_notes=compiler_notes,
             fallback_used=True,
-            warnings=["Heuristic fallback was used because semantic compilation was unavailable or invalid."],
+            warnings=["由于语义编译不可用或结果无效，系统已回退到启发式编译。"],
         )
         return CompiledTaskDraft(
             task_spec=TaskSpecCreate(
@@ -1761,7 +1761,7 @@ class PersistedRuntimeService:
                     summary=str(
                         metadata.get("replan_reason")
                         or (assessment.assessment_notes[0] if assessment.assessment_notes else "")
-                        or "Generated a revised execution plan from the latest runtime scene."
+                        or "已根据最新运行时场景生成修订后的执行计划。"
                     ),
                     compiler_notes=compiler_notes,
                     recommended_capability_keys=list(assessment.recommended_capabilities),
@@ -3346,15 +3346,15 @@ class PersistedRuntimeService:
         scene_profile: SceneProfileRead,
         planner_guidance: PlannerGuidanceRead,
     ) -> list[dict[str, Any]]:
-        checkpoints: list[dict[str, Any]] = [{"kind": "scene_assessment", "label": "Review environment assessment"}]
+        checkpoints: list[dict[str, Any]] = [{"kind": "scene_assessment", "label": "审查环境评估结果"}]
         if snapshot is not None and snapshot.source == "browser":
-            checkpoints.append({"kind": "snapshot", "label": "Confirm captured environment state"})
+            checkpoints.append({"kind": "snapshot", "label": "确认已捕获的环境状态"})
         if planner_guidance.requires_scene_assessment:
-            checkpoints.append({"kind": "planner", "label": "Confirm replanner posture before execution"})
+            checkpoints.append({"kind": "planner", "label": "执行前确认重规划姿态"})
         if scene_profile.auth_state in {"required", "challenged"}:
-            checkpoints.append({"kind": "approval", "label": "Handle authentication or verification before resuming"})
+            checkpoints.append({"kind": "approval", "label": "恢复前先处理认证或校验问题"})
         if blockers:
-            checkpoints.append({"kind": "approval", "label": "Review blockers before execution"})
+            checkpoints.append({"kind": "approval", "label": "执行前先处理阻塞项"})
         return checkpoints
 
     def _build_assessment_notes(
@@ -3945,19 +3945,19 @@ class PersistedRuntimeService:
 
     def _default_checkpoints(self, task_spec, template) -> list[dict[str, Any]]:
         domain_config = DOMAIN_PACKS.get(task_spec.domain) or DOMAIN_PACKS["general"]
-        checkpoints = [{"kind": "approval", "label": "Review trial output"}]
+        checkpoints = [{"kind": "approval", "label": "审查试跑输出"}]
         checkpoints.extend(list((task_spec.compiled_payload or {}).get("checkpoints") or []))
         if template is not None:
             checkpoints.append({"kind": "template", "label": template.template_key})
         if task_spec.approval_policy:
-            checkpoints.append({"kind": "policy", "label": "Respect task approval policy"})
+            checkpoints.append({"kind": "policy", "label": "遵守任务审批策略"})
         if "browser" in (task_spec.preferred_capabilities or []):
-            checkpoints.append({"kind": "snapshot", "label": "Capture environment snapshot"})
-            checkpoints.append({"kind": "planner", "label": "Validate runtime scene before proceeding"})
+            checkpoints.append({"kind": "snapshot", "label": "捕获环境快照"})
+            checkpoints.append({"kind": "planner", "label": "继续前验证当前运行时场景"})
         if (domain_config.get("quality_gates") or {}).get("requires_source_links"):
-            checkpoints.append({"kind": "quality_gate", "label": "Verify source links before finalizing output"})
+            checkpoints.append({"kind": "quality_gate", "label": "输出定稿前核对来源链接"})
         if (domain_config.get("quality_gates") or {}).get("requires_downstream_write_review"):
-            checkpoints.append({"kind": "approval", "label": "Review downstream write or handoff before release"})
+            checkpoints.append({"kind": "approval", "label": "发布前审查下游写入或交接动作"})
         deduped: list[dict[str, Any]] = []
         seen: set[str] = set()
         for checkpoint in checkpoints:
@@ -4518,7 +4518,7 @@ class PersistedRuntimeService:
                 patch_checkpoints.append(
                     {
                         "kind": "approval",
-                        "label": str(operation.get("summary") or fallback_label or "Review patched execution"),
+                        "label": str(operation.get("summary") or fallback_label or "审查修订后的执行路径"),
                         "target": operation.get("target"),
                     }
                 )
@@ -4538,7 +4538,7 @@ class PersistedRuntimeService:
                     {
                         "id": f"patch_review_{index}",
                         "capability": "approval",
-                        "summary": str(operation.get("summary") or "Review the patched checkpoint before continuing."),
+                        "summary": str(operation.get("summary") or "继续前先审查修订后的检查点。"),
                     }
                 )
         return self._normalize_steps([*operation_steps, *current_steps])
@@ -4648,7 +4648,7 @@ class PersistedRuntimeService:
         if learning is not None:
             add_event(
                 "learning",
-                "Learning draft generated",
+                "已生成学习草案",
                 detail=learning.content.splitlines()[0] if learning.content else None,
                 occurred_at=learning.created_at,
                 payload={"learning_id": learning.id, "tags": list(learning.tags or []), "is_active": learning.is_active},
@@ -4663,7 +4663,7 @@ class PersistedRuntimeService:
             )
         add_event(
             "episode_status",
-            "Episode replay complete",
+            "实例回放已完成",
             detail=episode.result_summary,
             occurred_at=episode.finished_at or episode.updated_at,
             payload={"status": episode.status, "metrics": dict(episode.metrics or {}), "last_error": episode.last_error},
@@ -4796,51 +4796,51 @@ class PersistedRuntimeService:
     def _step_summary(self, domain: str, capability: str) -> str:
         match (domain, capability):
             case ("recruiting", "browser"):
-                return "Inspect the recruiting workspace and candidate detail page."
+                return "观察招聘工作区和候选人详情页。"
             case ("recruiting", "search"):
-                return "Search for matching candidate profiles."
+                return "搜索匹配的候选人档案。"
             case ("recruiting", "api"):
-                return "Prepare the approved handoff or intranet sync payload."
+                return "准备经过批准的交接或同步载荷。"
             case ("market_news", "search"):
-                return "Search recent market headlines across trusted sources."
+                return "在可信来源中搜索最新市场头条。"
             case ("market_news", "browser"):
-                return "Open the most relevant articles to inspect context."
+                return "打开最相关的文章并观察上下文。"
             case ("web_research", "search"):
-                return "Search the web for candidate tools and references."
+                return "在全网搜索候选工具和参考资料。"
             case ("github_trends", "http"):
-                return "Fetch or inspect trending repository metadata."
+                return "抓取或检查热门仓库元数据。"
             case (_, "browser"):
-                return "Inspect the active browser environment."
+                return "观察当前浏览器环境。"
             case (_, "search"):
-                return "Discover relevant sources or targets."
+                return "发现相关来源或目标。"
             case (_, "http"):
-                return "Query an external API or structured endpoint."
+                return "请求外部 API 或结构化接口。"
             case (_, "api"):
-                return "Send structured data to a configured downstream system."
+                return "向已配置的下游系统发送结构化数据。"
             case (_, "document"):
-                return "Write the final summary or structured artifact."
+                return "写出最终摘要或结构化产物。"
             case _:
-                return "Reason about the next automation step."
+                return "推理下一步自动化动作。"
 
     def _observation_summary(self, domain: str, capability: str) -> str:
         if domain == "recruiting" and capability == "document":
-            return "Captured candidate context and resume evidence."
+            return "已捕获候选人上下文和简历证据。"
         if domain == "market_news" and capability == "browser":
-            return "Validated that the source article page contains publishable content."
+            return "已确认来源文章页面包含可发布内容。"
         if domain == "github_trends" and capability == "browser":
-            return "Verified repository metadata and README context."
+            return "已核对仓库元数据和 README 上下文。"
         return self._step_summary(domain, capability)
 
     def _result_summary(self, domain: str, notes: str | None) -> str:
         base = {
-            "recruiting": "Trial run captured candidate evidence and produced a supervised screening summary.",
-            "market_news": "Trial run collected recent market headlines and assembled a draft digest.",
-            "web_research": "Trial run explored the web and produced a shortlist-oriented summary.",
-            "github_trends": "Trial run gathered trending repositories and prepared a digest.",
-            "general": "Trial run completed and recorded the observed execution pattern.",
-        }.get(domain, "Trial run completed and recorded the observed execution pattern.")
+            "recruiting": "试跑已捕获候选人证据，并生成受监督的初筛摘要。",
+            "market_news": "试跑已收集近期市场头条，并整理出摘要草稿。",
+            "web_research": "试跑已完成网页探索，并生成面向 shortlist 的摘要。",
+            "github_trends": "试跑已收集热门仓库，并整理出热点摘要。",
+            "general": "试跑已完成，并记录了观察到的执行模式。",
+        }.get(domain, "试跑已完成，并记录了观察到的执行模式。")
         if notes:
-            return f"{base} Notes: {notes}"
+            return f"{base} 备注：{notes}"
         return base
 
     def _derive_snapshot_title(self, task_spec, plan, url: str | None) -> str:
@@ -4864,11 +4864,11 @@ class PersistedRuntimeService:
     def _default_affordances(self, domain: str) -> list[dict[str, Any]]:
         if domain == "recruiting":
             return [
-                {"kind": "open_profile", "label": "Open candidate profile"},
-                {"kind": "capture_resume", "label": "Capture resume details"},
+                {"kind": "open_profile", "label": "打开候选人档案"},
+                {"kind": "capture_resume", "label": "捕获简历详情"},
             ]
         if domain == "market_news":
-            return [{"kind": "open_article", "label": "Open latest article"}]
+            return [{"kind": "open_article", "label": "打开最新文章"}]
         if domain == "github_trends":
-            return [{"kind": "open_repository", "label": "Open repository page"}]
-        return [{"kind": "review_output", "label": "Review generated output"}]
+            return [{"kind": "open_repository", "label": "打开仓库页面"}]
+        return [{"kind": "review_output", "label": "审查生成结果"}]

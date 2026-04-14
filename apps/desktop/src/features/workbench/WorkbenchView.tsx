@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Panel, SectionTabs, StatusBadge, Timeline } from "../../components";
+import { Panel, StatusBadge, Timeline, TopTabPage } from "../../components";
 import { formatCompactDate } from "../../lib/format";
 import { useI18n } from "../../lib/i18n";
 import { theme } from "../../lib/theme";
@@ -99,7 +99,7 @@ export function WorkbenchView({
     () =>
       events.slice(-6).map((event) => ({
         id: event.id,
-        label: event.source,
+        label: translateUiToken(event.source, copy),
         detail: event.message,
         at: event.at,
         tone:
@@ -144,6 +144,25 @@ export function WorkbenchView({
     }
   }, [onSelectEpisode, selectedWorkflow, workflowTab]);
 
+  const renderInlineEmptyState = (title: string, detail: string) => (
+    <div
+      style={{
+        padding: "14px",
+        borderRadius: "16px",
+        border: "1px solid rgba(255,255,255,0.08)",
+        background: "rgba(255,255,255,0.03)",
+        color: theme.colors.muted,
+        fontSize: "13px",
+        lineHeight: 1.6,
+        display: "grid",
+        gap: "6px",
+      }}
+    >
+      <strong style={{ color: theme.colors.text }}>{title}</strong>
+      <span>{detail}</span>
+    </div>
+  );
+
   const renderGlobalOverview = () => (
     <div style={{ display: "grid", gap: "18px" }}>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: "14px" }}>
@@ -175,7 +194,7 @@ export function WorkbenchView({
         ))}
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.1fr) minmax(320px, 0.9fr)", gap: "18px", alignItems: "start" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: "18px", alignItems: "start" }}>
         <Panel
           title={copy("Workflow operations", "工作流运行情况")}
           eyebrow={copy("Live workbench board", "实时工作台总览")}
@@ -183,50 +202,55 @@ export function WorkbenchView({
             "Track how many workflow instances are active, blocked, or waiting for operator review under each workflow.",
             "查看每条工作流下有多少工作流实例正在运行、阻塞或等待人工审查。",
           )}
-        >
+          >
           <div style={{ display: "grid", gap: "12px" }}>
-            {workflowScopes.map((scope) => (
-              <button
-                key={scope.task.id}
-                type="button"
-                onClick={() => setScopeId(scope.task.id)}
-                style={{
-                  cursor: "pointer",
-                  width: "100%",
-                  textAlign: "left",
-                  padding: "14px",
-                  borderRadius: "16px",
-                  border: `1px solid ${scopeId === scope.task.id ? "rgba(122,167,255,0.36)" : theme.colors.border}`,
-                  background: scopeId === scope.task.id ? "rgba(122,167,255,0.12)" : "rgba(255,255,255,0.02)",
-                  color: theme.colors.text,
-                  display: "grid",
-                  gap: "8px",
-                }}
-              >
-                <div style={{ display: "flex", justifyContent: "space-between", gap: "10px", alignItems: "start", flexWrap: "wrap" }}>
-                  <div>
-                    <strong>{scope.task.title}</strong>
-                    <div style={{ color: theme.colors.muted, fontSize: "13px", marginTop: "6px" }}>{scope.task.goal}</div>
-                  </div>
-                  <StatusBadge tone={toneFromStatus(scope.task.status)}>{translateUiToken(scope.task.status, copy)}</StatusBadge>
-                </div>
-                <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-                  <StatusBadge tone="neutral">{scope.task.domain}</StatusBadge>
-                  <StatusBadge tone={scope.episodes.some((episode) => /(running|pending|awaiting_review)/i.test(episode.status)) ? "warning" : "neutral"}>
-                    {copy(`${scope.episodes.length} workflow instances`, `${scope.episodes.length} 个工作流实例`)}
-                  </StatusBadge>
-                  <StatusBadge tone="neutral">{copy(`${scope.templates.length} versions`, `${scope.templates.length} 个版本`)}</StatusBadge>
-                  {scope.adjustments.filter((patch) => patch.status === "pending_review").length ? (
-                    <StatusBadge tone="warning">
-                      {copy(
-                        `${scope.adjustments.filter((patch) => patch.status === "pending_review").length} pending revisions`,
-                        `${scope.adjustments.filter((patch) => patch.status === "pending_review").length} 个待处理修订建议`,
-                      )}
-                    </StatusBadge>
-                  ) : null}
-                </div>
-              </button>
-            ))}
+            {workflowScopes.length
+              ? workflowScopes.map((scope) => (
+                  <button
+                    key={scope.task.id}
+                    type="button"
+                    onClick={() => setScopeId(scope.task.id)}
+                    style={{
+                      cursor: "pointer",
+                      width: "100%",
+                      textAlign: "left",
+                      padding: "14px",
+                      borderRadius: "16px",
+                      border: `1px solid ${scopeId === scope.task.id ? "rgba(122,167,255,0.36)" : theme.colors.border}`,
+                      background: scopeId === scope.task.id ? "rgba(122,167,255,0.12)" : "rgba(255,255,255,0.02)",
+                      color: theme.colors.text,
+                      display: "grid",
+                      gap: "8px",
+                    }}
+                  >
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: "10px", alignItems: "start", flexWrap: "wrap" }}>
+                      <div>
+                        <strong>{scope.task.title}</strong>
+                        <div style={{ color: theme.colors.muted, fontSize: "13px", marginTop: "6px" }}>{scope.task.goal}</div>
+                      </div>
+                      <StatusBadge tone={toneFromStatus(scope.task.status)}>{translateUiToken(scope.task.status, copy)}</StatusBadge>
+                    </div>
+                    <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                      <StatusBadge tone="neutral">{translateUiToken(scope.task.domain, copy)}</StatusBadge>
+                      <StatusBadge tone={scope.episodes.some((episode) => /(running|pending|awaiting_review)/i.test(episode.status)) ? "warning" : "neutral"}>
+                        {copy(`${scope.episodes.length} workflow instances`, `${scope.episodes.length} 个工作流实例`)}
+                      </StatusBadge>
+                      <StatusBadge tone="neutral">{copy(`${scope.templates.length} versions`, `${scope.templates.length} 个版本`)}</StatusBadge>
+                      {scope.adjustments.filter((patch) => patch.status === "pending_review").length ? (
+                        <StatusBadge tone="warning">
+                          {copy(
+                            `${scope.adjustments.filter((patch) => patch.status === "pending_review").length} pending revisions`,
+                            `${scope.adjustments.filter((patch) => patch.status === "pending_review").length} 个待处理修订建议`,
+                          )}
+                        </StatusBadge>
+                      ) : null}
+                    </div>
+                  </button>
+                ))
+              : renderInlineEmptyState(
+                  copy("No workflows yet", "还没有工作流"),
+                  copy("Create the first workflow to see active workflow instance distribution and runtime status here.", "创建第一条工作流后，这里会显示工作流实例分布和实时运行状态。"),
+                )}
           </div>
         </Panel>
 
@@ -273,7 +297,7 @@ export function WorkbenchView({
           description={selectedWorkflow.task.goal}
           actions={
             <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-              <StatusBadge tone="neutral">{selectedWorkflow.task.domain}</StatusBadge>
+              <StatusBadge tone="neutral">{translateUiToken(selectedWorkflow.task.domain, copy)}</StatusBadge>
               <StatusBadge tone={toneFromStatus(selectedWorkflow.task.status)}>{translateUiToken(selectedWorkflow.task.status, copy)}</StatusBadge>
             </div>
           }
@@ -287,7 +311,7 @@ export function WorkbenchView({
             </div>
             {latestAssessment ? (
               <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-                <StatusBadge tone={toneFromStatus(latestAssessment.status)}>{latestAssessment.sceneType}</StatusBadge>
+                <StatusBadge tone={toneFromStatus(latestAssessment.status)}>{translateUiToken(latestAssessment.sceneType, copy)}</StatusBadge>
                 <StatusBadge tone="neutral">{copy(`confidence ${Math.round(latestAssessment.confidence * 100)}%`, `置信度 ${Math.round(latestAssessment.confidence * 100)}%`)}</StatusBadge>
                 <StatusBadge tone={latestAssessment.plannerGuidance.requiresHumanReview ? "warning" : "positive"}>
                   {latestAssessment.plannerGuidance.requiresHumanReview ? copy("needs review", "需要审查") : copy("ready to proceed", "可以继续")}
@@ -298,7 +322,7 @@ export function WorkbenchView({
         </Panel>
 
         {selectedWorkflow.task.domain === "recruiting" ? (
-          <div style={{ display: "grid", gap: "18px" }}>
+          <div style={{ display: "grid", gap: "18px", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))" }}>
             <Panel
               title={copy("Recruiting workbench", "招聘工作台")}
               eyebrow={copy("Domain-specific operations", "领域专属操作")}
@@ -321,7 +345,7 @@ export function WorkbenchView({
             </Panel>
           </div>
         ) : (
-          <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(320px, 0.9fr)", gap: "18px", alignItems: "start" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: "18px", alignItems: "start" }}>
             <Panel
               title={copy("Scene observations", "场景观察")}
               eyebrow={copy("Live environment", "实时环境")}
@@ -331,23 +355,28 @@ export function WorkbenchView({
               )}
             >
               <div style={{ display: "grid", gap: "10px" }}>
-                {selectedWorkflow.assessments.slice(0, 4).map((assessment) => (
-                  <article
-                    key={assessment.id}
-                    style={{
-                      padding: "14px",
-                      borderRadius: "16px",
-                      border: "1px solid rgba(255,255,255,0.08)",
-                      background: "rgba(255,255,255,0.03)",
-                    }}
-                  >
-                    <div style={{ display: "flex", justifyContent: "space-between", gap: "10px", flexWrap: "wrap" }}>
-                      <strong>{assessment.sceneLabel}</strong>
-                      <StatusBadge tone={toneFromStatus(assessment.status)}>{translateUiToken(assessment.status, copy)}</StatusBadge>
-                    </div>
-                    <div style={{ color: theme.colors.muted, fontSize: "13px", marginTop: "8px", lineHeight: 1.6 }}>{assessment.summary}</div>
-                  </article>
-                ))}
+                {selectedWorkflow.assessments.length
+                  ? selectedWorkflow.assessments.slice(0, 4).map((assessment) => (
+                      <article
+                        key={assessment.id}
+                        style={{
+                          padding: "14px",
+                          borderRadius: "16px",
+                          border: "1px solid rgba(255,255,255,0.08)",
+                          background: "rgba(255,255,255,0.03)",
+                        }}
+                      >
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: "10px", flexWrap: "wrap" }}>
+                          <strong>{assessment.sceneLabel}</strong>
+                          <StatusBadge tone={toneFromStatus(assessment.status)}>{translateUiToken(assessment.status, copy)}</StatusBadge>
+                        </div>
+                        <div style={{ color: theme.colors.muted, fontSize: "13px", marginTop: "8px", lineHeight: 1.6 }}>{assessment.summary}</div>
+                      </article>
+                    ))
+                  : renderInlineEmptyState(
+                      copy("No scene observations yet", "还没有场景观察"),
+                      copy("This workflow has not recorded a fresh scene assessment yet.", "这条工作流还没有记录新的场景评估。"),
+                    )}
               </div>
             </Panel>
             <Panel
@@ -359,16 +388,25 @@ export function WorkbenchView({
               )}
             >
               <div style={{ display: "grid", gap: "10px" }}>
-                {selectedWorkflow.templates.slice(0, 3).map((template) => (
-                  <div key={template.id} style={{ color: theme.colors.muted, fontSize: "13px", lineHeight: 1.6 }}>
-                    {copy(`Version ${template.version}`, `版本 ${template.version}`)} · {template.name}
-                  </div>
-                ))}
-                {selectedWorkflow.adjustments.slice(0, 3).map((patch) => (
-                  <div key={patch.id} style={{ color: theme.colors.muted, fontSize: "13px", lineHeight: 1.6 }}>
-                    {copy("Revision", "修订")} · {patch.title}
-                  </div>
-                ))}
+                {selectedWorkflow.templates.length || selectedWorkflow.adjustments.length ? (
+                  <>
+                    {selectedWorkflow.templates.slice(0, 3).map((template) => (
+                      <div key={template.id} style={{ color: theme.colors.muted, fontSize: "13px", lineHeight: 1.6 }}>
+                        {copy(`Version ${template.version}`, `版本 ${template.version}`)} · {template.name}
+                      </div>
+                    ))}
+                    {selectedWorkflow.adjustments.slice(0, 3).map((patch) => (
+                      <div key={patch.id} style={{ color: theme.colors.muted, fontSize: "13px", lineHeight: 1.6 }}>
+                        {copy("Revision", "修订")} · {patch.title}
+                      </div>
+                    ))}
+                  </>
+                ) : (
+                  renderInlineEmptyState(
+                    copy("No versions or revisions yet", "还没有版本或修订"),
+                    copy("Versions and revision suggestions for this workflow will appear here after trial execution.", "这条工作流在试跑后产出的版本和修订建议会显示在这里。"),
+                  )
+                )}
               </div>
             </Panel>
           </div>
@@ -425,7 +463,7 @@ export function WorkbenchView({
           </div>
         </Panel>
 
-        <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(320px, 0.9fr)", gap: "18px", alignItems: "start" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: "18px", alignItems: "start" }}>
           <Panel
             title={copy("Replay and diagnostics", "回放与诊断")}
             eyebrow={copy("Instance evidence", "实例证据")}
@@ -452,28 +490,37 @@ export function WorkbenchView({
             )}
           >
             <div style={{ display: "grid", gap: "10px" }}>
-              {snapshots.slice(0, 3).map((snapshot) => (
-                <article
-                  key={snapshot.id}
-                  style={{
-                    padding: "12px",
-                    borderRadius: "14px",
-                    border: "1px solid rgba(255,255,255,0.08)",
-                    background: "rgba(255,255,255,0.03)",
-                  }}
-                >
-                  <div style={{ display: "flex", justifyContent: "space-between", gap: "8px", flexWrap: "wrap" }}>
-                    <strong>{snapshot.title ?? snapshot.environmentKey ?? snapshot.id}</strong>
-                    <StatusBadge tone="neutral">{snapshot.pageType ?? snapshot.source}</StatusBadge>
-                  </div>
-                  <div style={{ color: theme.colors.muted, fontSize: "13px", marginTop: "8px" }}>{snapshot.url ?? copy("No URL captured.", "未捕获 URL。")}</div>
-                </article>
-              ))}
-              {queueForEpisode.slice(0, 2).map((item) => (
-                <div key={item.taskId} style={{ color: theme.colors.muted, fontSize: "13px", lineHeight: 1.6 }}>
-                  {item.taskType} · {translateUiToken(item.status, copy)}
-                </div>
-              ))}
+              {snapshots.length || queueForEpisode.length ? (
+                <>
+                  {snapshots.slice(0, 3).map((snapshot) => (
+                    <article
+                      key={snapshot.id}
+                      style={{
+                        padding: "12px",
+                        borderRadius: "14px",
+                        border: "1px solid rgba(255,255,255,0.08)",
+                        background: "rgba(255,255,255,0.03)",
+                      }}
+                    >
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: "8px", flexWrap: "wrap" }}>
+                        <strong>{snapshot.title ?? snapshot.environmentKey ?? snapshot.id}</strong>
+                        <StatusBadge tone="neutral">{snapshot.pageType ?? snapshot.source}</StatusBadge>
+                      </div>
+                      <div style={{ color: theme.colors.muted, fontSize: "13px", marginTop: "8px" }}>{snapshot.url ?? copy("No URL captured.", "未捕获 URL。")}</div>
+                    </article>
+                  ))}
+                  {queueForEpisode.slice(0, 2).map((item) => (
+                    <div key={item.taskId} style={{ color: theme.colors.muted, fontSize: "13px", lineHeight: 1.6 }}>
+                      {item.taskType} · {translateUiToken(item.status, copy)}
+                    </div>
+                  ))}
+                </>
+              ) : (
+                renderInlineEmptyState(
+                  copy("No snapshots yet", "还没有快照"),
+                  copy("This workflow instance has not recorded snapshots or queue evidence yet.", "这个工作流实例还没有记录快照或队列证据。"),
+                )
+              )}
             </div>
           </Panel>
         </div>
@@ -498,102 +545,94 @@ export function WorkbenchView({
     : [];
 
   return (
-    <div style={{ display: "grid", gap: "18px" }}>
-      <Panel
-        title={copy("Workbench", "工作台")}
-        eyebrow={copy("Live workflow operations", "工作流实时运营")}
-        description={copy(
-          "The workbench keeps every workflow visible at runtime. Start from the global board, then drill into each workflow to inspect its workflow instances and domain-specific data.",
-          "工作台会把每条工作流在运行中的状态保持可见。你可以先看全局看板，再进入每条工作流查看它的工作流实例和领域专属数据。",
-        )}
-      >
-        <div style={{ display: "grid", gridTemplateColumns: "240px minmax(0, 1fr)", gap: "18px", alignItems: "start" }}>
-          <aside style={{ display: "grid", gap: "10px" }}>
-            <button
-              type="button"
-              onClick={() => setScopeId("global")}
-              style={{
-                cursor: "pointer",
-                textAlign: "left",
-                padding: "14px",
-                borderRadius: "16px",
-                border: `1px solid ${scopeId === "global" ? "rgba(122,167,255,0.36)" : theme.colors.border}`,
-                background: scopeId === "global" ? "rgba(122,167,255,0.12)" : "rgba(255,255,255,0.02)",
-                color: theme.colors.text,
-                display: "grid",
-                gap: "6px",
-              }}
-            >
-              <strong>{copy("Global board", "全局看板")}</strong>
-              <span style={{ color: theme.colors.muted, fontSize: "12px", lineHeight: 1.5 }}>
-                {copy("Across all workflows", "查看所有工作流")}
-              </span>
-            </button>
-            {workflowScopes.map((scope) => (
-              <button
-                key={scope.task.id}
-                type="button"
-                onClick={() => setScopeId(scope.task.id)}
-                style={{
-                  cursor: "pointer",
-                  textAlign: "left",
-                  padding: "14px",
-                  borderRadius: "16px",
-                  border: `1px solid ${scopeId === scope.task.id ? "rgba(122,167,255,0.36)" : theme.colors.border}`,
-                  background: scopeId === scope.task.id ? "rgba(122,167,255,0.12)" : "rgba(255,255,255,0.02)",
-                  color: theme.colors.text,
-                  display: "grid",
-                  gap: "6px",
-                }}
-              >
-                <div style={{ display: "flex", justifyContent: "space-between", gap: "8px", alignItems: "start" }}>
-                  <strong style={{ fontSize: "14px" }}>{scope.task.title}</strong>
-                  <StatusBadge tone={scope.episodes.some((episode) => /(running|pending|awaiting_review)/i.test(episode.status)) ? "warning" : "neutral"}>
-                    {scope.episodes.length}
-                  </StatusBadge>
-                </div>
-                <span style={{ color: theme.colors.muted, fontSize: "12px", lineHeight: 1.5 }}>
-                  {scope.task.domain}
-                  {scope.episodes.length ? copy(` · ${scope.episodes.length} workflow instances`, ` · ${scope.episodes.length} 个工作流实例`) : ""}
-                </span>
-              </button>
-            ))}
-          </aside>
-
-          <div style={{ display: "grid", gap: "18px", minWidth: 0 }}>
-            {scopeId === "global" ? (
-              <>
-                <SectionTabs items={globalTabs} active={globalTab} onChange={(key) => setGlobalTab(key as WorkbenchGlobalTab)} />
-                {globalTab === "overview" ? (
-                  renderGlobalOverview()
-                ) : (
-                  <AgentMonitorView
-                    agent={agent}
-                    events={events}
-                    episodes={data.episodes}
-                    selectedEpisodeId={selectedEpisodeId}
-                    replay={replay}
-                    syncStatus={syncStatus}
-                    syncBacklog={syncBacklog}
-                    queueItems={queueItems}
-                    runningAction={runningAction}
-                    syncingAction={syncingAction}
-                    onRunOnce={onRunOnce}
-                    onQueueScreeningTask={onQueueScreeningTask}
-                    onFlushSync={onFlushSync}
-                    onSelectEpisode={onSelectEpisode}
-                  />
-                )}
-              </>
-            ) : selectedWorkflow ? (
-              <>
-                <SectionTabs items={workflowTabs} active={workflowTab} onChange={setWorkflowTab} />
-                {workflowTab === "overview" ? renderSelectedWorkflowOverview() : renderSelectedWorkflowInstance()}
-              </>
-            ) : null}
+    <div style={{ display: "grid", gap: "10px" }}>
+      {scopeId === "global" ? (
+        <TopTabPage items={globalTabs} active={globalTab} onChange={(key) => setGlobalTab(key as WorkbenchGlobalTab)}>
+          <div style={{ display: "grid", gap: "12px", minWidth: 0 }}>
+            {globalTab === "overview" ? (
+              renderGlobalOverview()
+            ) : (
+              <AgentMonitorView
+                agent={agent}
+                events={events}
+                episodes={data.episodes}
+                selectedEpisodeId={selectedEpisodeId}
+                replay={replay}
+                syncStatus={syncStatus}
+                syncBacklog={syncBacklog}
+                queueItems={queueItems}
+                runningAction={runningAction}
+                syncingAction={syncingAction}
+                onRunOnce={onRunOnce}
+                onQueueScreeningTask={onQueueScreeningTask}
+                onFlushSync={onFlushSync}
+                onSelectEpisode={onSelectEpisode}
+              />
+            )}
           </div>
-        </div>
-      </Panel>
+        </TopTabPage>
+      ) : selectedWorkflow ? (
+        <TopTabPage items={workflowTabs} active={workflowTab} onChange={setWorkflowTab}>
+          <div style={{ display: "grid", gridTemplateColumns: "220px minmax(0, 1fr)", gap: "14px", alignItems: "start" }}>
+            <aside style={{ display: "grid", gap: "10px", position: "sticky", top: "128px" }}>
+              <div style={{ display: "grid", gap: "8px" }}>
+                <button
+                  type="button"
+                  onClick={() => setScopeId("global")}
+                  style={{
+                    cursor: "pointer",
+                    textAlign: "left",
+                    padding: "10px 12px",
+                    borderRadius: "14px",
+                    border: `1px solid ${theme.colors.border}`,
+                    background: "rgba(255,255,255,0.02)",
+                    color: theme.colors.text,
+                    fontWeight: 600,
+                  }}
+                >
+                  {copy("Back to global workbench", "返回全局工作台")}
+                </button>
+                <div style={{ color: theme.colors.muted, fontSize: "12px", letterSpacing: "0.08em", textTransform: "uppercase" }}>
+                  {copy("Workflow list", "工作流列表")}
+                </div>
+              </div>
+              {workflowScopes.map((scope) => (
+                <button
+                  key={scope.task.id}
+                  type="button"
+                  onClick={() => setScopeId(scope.task.id)}
+                  style={{
+                    cursor: "pointer",
+                    textAlign: "left",
+                    padding: "12px",
+                    borderRadius: "16px",
+                    border: `1px solid ${scopeId === scope.task.id ? "rgba(122,167,255,0.36)" : theme.colors.border}`,
+                    background: scopeId === scope.task.id ? "rgba(122,167,255,0.12)" : "rgba(255,255,255,0.02)",
+                    color: theme.colors.text,
+                    display: "grid",
+                    gap: "6px",
+                  }}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: "8px", alignItems: "start" }}>
+                    <strong style={{ fontSize: "14px" }}>{scope.task.title}</strong>
+                    <StatusBadge tone={scope.episodes.some((episode) => /(running|pending|awaiting_review)/i.test(episode.status)) ? "warning" : "neutral"}>
+                      {scope.episodes.length}
+                    </StatusBadge>
+                  </div>
+                  <span style={{ color: theme.colors.muted, fontSize: "12px", lineHeight: 1.5 }}>
+                    {translateUiToken(scope.task.domain, copy)}
+                    {scope.episodes.length ? copy(` · ${scope.episodes.length} workflow instances`, ` · ${scope.episodes.length} 个工作流实例`) : ""}
+                  </span>
+                </button>
+              ))}
+            </aside>
+
+            <div style={{ display: "grid", gap: "12px", minWidth: 0 }}>
+              {workflowTab === "overview" ? renderSelectedWorkflowOverview() : renderSelectedWorkflowInstance()}
+            </div>
+          </div>
+        </TopTabPage>
+      ) : null}
     </div>
   );
 }

@@ -166,7 +166,7 @@ class AgentControlService:
                 result = AgentResult(
                     success=True,
                     status="completed",
-                    content=f"Discovered {len(discovered)} candidates in the current runtime scene.",
+                    content=f"已在当前运行时场景中发现 {len(discovered)} 位候选人。",
                     data={
                         "status": "pass",
                         "discovered_count": len(discovered),
@@ -191,7 +191,7 @@ class AgentControlService:
                 result = AgentResult(
                     success=True,
                     status="completed",
-                    content="Resume request submitted in the current runtime scene.",
+                    content="已在当前运行时场景中提交简历请求。",
                     data={"status": "pass", "platform_result": platform_result},
                     metadata={"platform_action": "request_resume"},
                 )
@@ -220,7 +220,7 @@ class AgentControlService:
                 result = AgentResult(
                     success=True,
                     status="completed",
-                    content="Outbound communication submitted in the current runtime scene.",
+                    content="已在当前运行时场景中提交外联消息。",
                     data={"status": "pass", "platform_result": platform_result},
                     metadata={"platform_action": "send_message"},
                 )
@@ -244,7 +244,7 @@ class AgentControlService:
                 result = AgentResult(
                     success=True,
                     status="completed",
-                    content="Candidate archived in the current runtime scene.",
+                    content="已在当前运行时场景中归档候选人。",
                     data={"status": "pass", "platform_result": platform_result},
                     metadata={"platform_action": "archive_candidate"},
                 )
@@ -263,7 +263,7 @@ class AgentControlService:
                 result = AgentResult(
                     success=True,
                     status="completed",
-                    content="Synthetic runtime executed without a live provider.",
+                    content="在没有实时 provider 的情况下完成了一次模拟运行。",
                     data={
                         "status": "pass",
                         "task_id": task.task_id,
@@ -354,7 +354,10 @@ class AgentControlService:
         skill_context: dict[str, Any] | None,
         platform_context: dict[str, Any],
     ) -> AgentResult:
-        if self.agent_loop is None:
+        preflight_block = self._managed_preflight_block_result(task, managed_execution=managed_execution)
+        if preflight_block is not None:
+            result = preflight_block
+        elif self.agent_loop is None:
             result = AgentResult(
                 success=True,
                 status="completed",
@@ -425,6 +428,75 @@ class AgentControlService:
                 )
         return result
 
+    def _managed_preflight_block_result(self, task: TaskEnvelope, *, managed_execution) -> AgentResult | None:
+        assessment = managed_execution.assessment
+        guidance = assessment.planner_guidance
+        blockers = list(assessment.blockers or [])
+        is_blocked = str(assessment.plan_fit) == "blocked"
+        requires_human_review = bool(guidance.requires_human_review)
+        hard_blockers = {"missing_browser_snapshot", "authentication_required", "verification_required"}
+
+        if not is_blocked or not requires_human_review or not any(blocker in hard_blockers for blocker in blockers):
+            return None
+
+        blocker_labels = {
+            "missing_browser_snapshot": "当前运行缺少实时浏览器场景快照。",
+            "scene_needs_reassessment": "当前场景需要重新评估后才能继续执行。",
+            "missing_required_capability": "当前运行缺少继续执行所需的能力。",
+        }
+        preferred_next_actions = [str(item) for item in list(guidance.preferred_next_actions or []) if str(item).strip()]
+        rationale = [str(item) for item in list(guidance.rationale or []) if str(item).strip()]
+        blocker_notes = [blocker_labels.get(blocker, blocker.replace("_", " ")) for blocker in blockers]
+        review_notes = blocker_notes + rationale
+        if not review_notes:
+            review_notes.append("当前运行在进入执行器前被运行时预检拦截。")
+
+        summary = "受管执行在预检阶段已暂停，等待人工补充场景信息后继续。"
+        if blocker_notes:
+            summary = f"{summary} {' '.join(blocker_notes)}"
+
+        executor_trace: dict[str, Any] = {
+            "preflight_gate": {
+                "kind": "waiting_human",
+                "summary": summary,
+                "task_id": task.task_id,
+                "plan_fit": assessment.plan_fit,
+                "scene_type": assessment.scene_type,
+                "scene_key": assessment.scene_key,
+                "blockers": blockers,
+                "preferred_next_actions": preferred_next_actions,
+                "requires_scene_assessment": bool(guidance.requires_scene_assessment),
+                "requires_human_review": requires_human_review,
+                "rationale": review_notes,
+            }
+        }
+        if assessment.snapshot is not None:
+            executor_trace["scene_updates"] = [assessment.snapshot.model_dump()]
+
+        return AgentResult(
+            success=False,
+            status="waiting_human",
+            content=summary,
+            data={
+                "status": "waiting_human",
+                "summary": summary,
+                "task_id": task.task_id,
+                "execution_plan_id": managed_execution.execution_plan.id,
+                "scene_type": assessment.scene_type,
+                "scene_key": assessment.scene_key,
+                "plan_fit": assessment.plan_fit,
+                "blockers": blockers,
+                "preferred_next_actions": preferred_next_actions,
+                "requires_scene_assessment": bool(guidance.requires_scene_assessment),
+                "requires_human_review": requires_human_review,
+                "review_notes": review_notes,
+            },
+            metadata={
+                "managed_execution_preflight_blocked": True,
+                "executor_trace": executor_trace,
+            },
+        )
+
     def _handle_managed_replan(
         self,
         task: TaskEnvelope,
@@ -440,13 +512,13 @@ class AgentControlService:
         latest_request = (trace.get("replan_requests") or [{}])[-1] if trace.get("replan_requests") else {}
         compiler_payload = {
             "compiler_notes": [
-                str(latest_request.get("reason") or result.content or "Runtime requested a plan revision."),
-                "Auto-generated replan from managed execution.",
+                str(latest_request.get("reason") or result.content or "运行时请求修订当前计划。"),
+                "系统已根据受管执行过程自动生成重规划建议。",
             ],
             "preferred_capabilities": list(latest_request.get("preferred_capabilities") or []),
             "step_outline": list(latest_request.get("suggested_steps") or []),
             "environment_requirements": {"scene_assessment_required": True},
-            "checkpoints": [{"kind": "planner", "label": "Review auto-replanned execution before retry"}],
+            "checkpoints": [{"kind": "planner", "label": "重试前先审查自动重规划结果"}],
         }
         replanned = runtime_service.replan_execution(
             managed_execution.execution_plan.id,
@@ -709,7 +781,7 @@ class AgentControlService:
                     candidate_session.last_active_at = utcnow()
                     if result.status == "waiting_human":
                         candidate_session.status = "waiting_human"
-                        candidate_session.suspend_reason = result.content or "Waiting for approval."
+                        candidate_session.suspend_reason = result.content or "等待审批。"
                     else:
                         candidate_session.status = "active"
                         candidate_session.suspend_reason = None
@@ -1042,13 +1114,13 @@ class AgentControlService:
                         "status": "pending",
                         "requested_by": "runtime",
                         "payload": payload,
-                        "notes": result.content or "Task paused for human review.",
+                        "notes": result.content or "任务已暂停，等待人工审查。",
                     }
                 )
                 self.events.publish(
                     "warning",
                     "approval",
-                    "Blocked task queued for desktop approval.",
+                    "阻塞任务已进入桌面审批队列。",
                     task_id=task.task_id,
                     task_type=task.task_type,
                 )
@@ -1056,7 +1128,7 @@ class AgentControlService:
             self.events.publish(
                 "error",
                 "approval",
-                "Failed to persist blocked task approval.",
+                "保存阻塞任务审批失败。",
                 task_id=task.task_id,
                 error=str(exc),
             )
@@ -1074,9 +1146,9 @@ class AgentControlService:
 
         skill_name = draft.get("skill_name") or draft.get("name")
         if isinstance(skill_name, str) and skill_name.strip():
-            return f"Runtime skill draft proposed for {skill_name.strip()}."
+            return f"已为 {skill_name.strip()} 生成运行时 skill 草案。"
 
-        return f"Runtime learning captured for {task.task_type}."
+        return f"已为 {task.task_type} 捕获运行时学习结果。"
 
     def _build_blocked_task_payload(self, task: TaskEnvelope, result: AgentResult) -> dict[str, Any]:
         task_snapshot = self._task_snapshot(task)
@@ -1096,8 +1168,8 @@ class AgentControlService:
                 },
             },
             "resolution": None,
-            "summary": result.content or "Task paused for human review.",
-            "reason": result.content or "Human review required.",
+            "summary": result.content or "任务已暂停，等待人工审查。",
+            "reason": result.content or "需要人工审查。",
         }
 
     def _enqueue_task_snapshot(self, snapshot: dict[str, Any]) -> bool:

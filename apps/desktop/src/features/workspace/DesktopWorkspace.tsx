@@ -4,6 +4,7 @@ import { apiClient } from "../../lib/api";
 import { useI18n } from "../../lib/i18n";
 import { desktopAgentQueueMock, desktopMockSnapshot, desktopReplayMockByEpisode, desktopRuntimeMock, desktopSyncBacklogMock, desktopSyncStatusMock } from "../../lib/mockData";
 import { theme } from "../../lib/theme";
+import { translateUiToken } from "../../lib/uiText";
 import type {
   AgentEvent,
   AgentQueueItem,
@@ -69,8 +70,8 @@ export function DesktopWorkspace(): JSX.Element {
   const [summary, setSummary] = useState<DashboardSummary>(desktopMockSnapshot);
   const [runtimeData, setRuntimeData] = useState<RuntimeWorkspaceData>(desktopRuntimeMock);
   const [events, setEvents] = useState<AgentEvent[]>([
-    { id: "stream-001", level: "info", source: "bootstrap", message: copy("Workspace loaded from mock snapshot.", "工作区已从本地 mock 快照加载。"), at: "now" },
-    { id: "stream-002", level: "warning", source: "runtime", message: copy("New workflows default into supervised trial mode.", "新工作流默认进入受监督试跑模式。"), at: "now" },
+    { id: "stream-001", level: "info", source: "bootstrap", message: copy("Workspace loaded from the local sample snapshot.", "工作区已从本地示例快照加载。"), at: copy("now", "刚刚") },
+    { id: "stream-002", level: "warning", source: "runtime", message: copy("New workflows default into supervised trial mode.", "新工作流默认进入受监督试跑模式。"), at: copy("now", "刚刚") },
   ]);
   const [refreshing, setRefreshing] = useState(false);
   const [settingsSaving, setSettingsSaving] = useState(false);
@@ -136,12 +137,12 @@ export function DesktopWorkspace(): JSX.Element {
       setSyncBacklog(desktopSyncBacklogMock);
       setQueueItems(desktopAgentQueueMock);
       setSelectedReplay(desktopReplayMockByEpisode[selectedEpisodeId ?? "episode-001"] ?? desktopReplayMockByEpisode["episode-001"]);
-      setErrorMessage(error instanceof Error ? error.message : "Failed to refresh workspace.");
+      setErrorMessage(error instanceof Error ? error.message : copy("Failed to refresh workspace.", "刷新工作区失败。"));
       appendEvent({
         id: `local-error-${Date.now()}`,
         level: "warning",
         source: "desktop",
-        message: "Backend unavailable. Using local mock runtime snapshot.",
+        message: copy("Backend unavailable. Using the local sample runtime snapshot.", "本地后端暂时不可用，已切换到本地示例运行时快照。"),
         at: new Date().toISOString(),
       });
     } finally {
@@ -177,7 +178,7 @@ export function DesktopWorkspace(): JSX.Element {
             id: "stream-live-001",
             level: "success",
             source: "api",
-            message: "Workspace refreshed from the local backend.",
+            message: copy("Workspace refreshed from the local backend.", "工作区已从本地后端刷新。"),
             at: new Date().toISOString(),
           },
         ]);
@@ -291,7 +292,7 @@ export function DesktopWorkspace(): JSX.Element {
     setApprovalActionId(id);
     try {
       await apiClient.approveItem(id);
-      await loadWorkspace(`Approval ${id} accepted.`);
+      await loadWorkspace(copy(`Approval ${id} accepted.`, `已批准审批项 ${id}。`));
     } finally {
       setApprovalActionId(undefined);
     }
@@ -300,8 +301,8 @@ export function DesktopWorkspace(): JSX.Element {
   const handleReject = async (id: string) => {
     setApprovalActionId(id);
     try {
-      await apiClient.rejectItem(id, "Rejected from desktop workspace.");
-      await loadWorkspace(`Approval ${id} rejected.`);
+      await apiClient.rejectItem(id, "由桌面工作区拒绝。");
+      await loadWorkspace(copy(`Approval ${id} rejected.`, `已拒绝审批项 ${id}。`));
     } finally {
       setApprovalActionId(undefined);
     }
@@ -314,7 +315,7 @@ export function DesktopWorkspace(): JSX.Element {
       startTransition(() => {
         setSummary((current) => ({ ...current, settings: nextSettings }));
       });
-      await loadWorkspace("Settings saved.");
+      await loadWorkspace(copy("Settings saved.", "设置已保存。"));
     } finally {
       setSettingsSaving(false);
     }
@@ -324,7 +325,7 @@ export function DesktopWorkspace(): JSX.Element {
     setRuntimeActionBusy(true);
     try {
       const result = await apiClient.runAgentOnce();
-      await loadWorkspace(`Run once completed with status ${result.status}.`);
+      await loadWorkspace(copy(`Run once completed with status ${result.status}.`, `单次运行已完成，状态为 ${translateUiToken(result.status, copy)}。`));
     } finally {
       setRuntimeActionBusy(false);
     }
@@ -336,12 +337,12 @@ export function DesktopWorkspace(): JSX.Element {
       const firstCandidate = summary.candidates[0];
       const task = await apiClient.queueTask({
         taskType: "initial_screening",
-        payload: { jd_criteria: firstCandidate?.jdTitle ?? "Frontend Platform Engineer" },
+        payload: { jd_criteria: firstCandidate?.jdTitle ?? "前端平台工程师" },
         priority: 180,
         candidateId: firstCandidate?.id,
         workflowNodeId: "initial_screening",
       });
-      await loadWorkspace(`Queued task ${task.taskType} with depth ${task.queueDepth}.`);
+      await loadWorkspace(copy(`Queued task ${task.taskType} with depth ${task.queueDepth}.`, `已将任务 ${task.taskType} 放入队列，当前深度为 ${task.queueDepth}。`));
     } finally {
       setRuntimeActionBusy(false);
     }
@@ -356,12 +357,12 @@ export function DesktopWorkspace(): JSX.Element {
         id: `compile-${Date.now()}`,
         level: "success",
         source: "compiler",
-        message: `Compiled ${result.taskSpec.title} for ${result.domainPack.name}.`,
+        message: copy(`Compiled ${result.taskSpec.title} for ${result.domainPack.name}.`, `已为 ${result.domainPack.name} 编译工作流《${result.taskSpec.title}》。`),
         at: new Date().toISOString(),
       });
-      await loadWorkspace(`Compiled task ${result.taskSpec.title}.`);
+      await loadWorkspace(copy(`Compiled task ${result.taskSpec.title}.`, `已完成工作流《${result.taskSpec.title}》的编译。`));
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Task compilation failed.";
+      const message = error instanceof Error ? error.message : copy("Task compilation failed.", "任务编译失败。");
       setErrorMessage(message);
       appendEvent({
         id: `compile-error-${Date.now()}`,
@@ -384,10 +385,10 @@ export function DesktopWorkspace(): JSX.Element {
         id: `launch-${launched.taskId}`,
         level: "info",
         source: "runtime-launch",
-        message: `Queued managed execution ${launched.taskId} for plan ${planId}.`,
+        message: copy(`Queued managed execution ${launched.taskId} for plan ${planId}.`, `已为计划 ${planId} 排入托管运行 ${launched.taskId}。`),
         at: new Date().toISOString(),
       });
-      await loadWorkspace(`Queued managed execution ${launched.taskId}.`);
+      await loadWorkspace(copy(`Queued managed execution ${launched.taskId}.`, `已排入托管运行 ${launched.taskId}。`));
     } finally {
       setBusyPlanId(undefined);
     }
@@ -396,16 +397,16 @@ export function DesktopWorkspace(): JSX.Element {
   const handleCreateTrial = async (taskSpecId: string, executionPlanId: string) => {
     setTrialTaskId(taskSpecId);
     try {
-      const episode = await apiClient.createTrialRun(taskSpecId, executionPlanId, "Created from desktop control plane.");
+      const episode = await apiClient.createTrialRun(taskSpecId, executionPlanId, "由桌面控制台创建。");
       appendEvent({
         id: `trial-${episode.id}`,
         level: "info",
         source: "trial",
-        message: `Created supervised trial ${episode.id}.`,
+        message: copy(`Created supervised trial ${episode.id}.`, `已创建受监督试跑 ${episode.id}。`),
         at: new Date().toISOString(),
       });
       setSelectedEpisodeId(episode.id);
-      await loadWorkspace(`Created trial run ${episode.id}.`);
+      await loadWorkspace(copy(`Created trial run ${episode.id}.`, `已创建试跑 ${episode.id}。`));
     } finally {
       setTrialTaskId(undefined);
     }
@@ -414,9 +415,9 @@ export function DesktopWorkspace(): JSX.Element {
   const handleExecuteTrial = async (episodeId: string) => {
     setBusyEpisodeId(episodeId);
     try {
-      const outcome = await apiClient.executeTrialRun(episodeId, "Executed from the desktop control plane.");
+      const outcome = await apiClient.executeTrialRun(episodeId, "由桌面控制台执行。");
       setLastOutcome(outcome);
-      await loadWorkspace(`Executed trial ${episodeId}.`);
+      await loadWorkspace(copy(`Executed trial ${episodeId}.`, `已执行试跑 ${episodeId}。`));
     } finally {
       setBusyEpisodeId(undefined);
     }
@@ -427,7 +428,7 @@ export function DesktopWorkspace(): JSX.Element {
     try {
       const outcome = await apiClient.refreshRuntimeLearning(episodeId);
       setLastOutcome(outcome);
-      await loadWorkspace(`Refreshed learning for trial ${episodeId}.`);
+      await loadWorkspace(copy(`Refreshed learning for trial ${episodeId}.`, `已刷新试跑 ${episodeId} 的学习结果。`));
     } finally {
       setBusyEpisodeId(undefined);
     }
@@ -436,9 +437,9 @@ export function DesktopWorkspace(): JSX.Element {
   const handleConfirmTrial = async (episodeId: string) => {
     setBusyEpisodeId(episodeId);
     try {
-      const outcome = await apiClient.confirmTrialRun(episodeId, "Approved after supervised desktop review.");
+      const outcome = await apiClient.confirmTrialRun(episodeId, "经桌面端受监督审查后批准。");
       setLastOutcome(outcome);
-      await loadWorkspace(`Confirmed trial ${episodeId}.`);
+      await loadWorkspace(copy(`Confirmed trial ${episodeId}.`, `已确认试跑 ${episodeId}。`));
     } finally {
       setBusyEpisodeId(undefined);
     }
@@ -447,8 +448,8 @@ export function DesktopWorkspace(): JSX.Element {
   const handleApprovePatch = async (id: string) => {
     setBusyPatchId(id);
     try {
-      await apiClient.approveRuntimePatch(id, "Approved from desktop patch review.");
-      await loadWorkspace(`Approved patch ${id}.`);
+      await apiClient.approveRuntimePatch(id, "由桌面端修订审查批准。");
+      await loadWorkspace(copy(`Approved patch ${id}.`, `已批准修订建议 ${id}。`));
     } finally {
       setBusyPatchId(undefined);
     }
@@ -457,8 +458,8 @@ export function DesktopWorkspace(): JSX.Element {
   const handleRejectPatch = async (id: string) => {
     setBusyPatchId(id);
     try {
-      await apiClient.rejectRuntimePatch(id, "Rejected from desktop patch review.");
-      await loadWorkspace(`Rejected patch ${id}.`);
+      await apiClient.rejectRuntimePatch(id, "由桌面端修订审查拒绝。");
+      await loadWorkspace(copy(`Rejected patch ${id}.`, `已拒绝修订建议 ${id}。`));
     } finally {
       setBusyPatchId(undefined);
     }
@@ -495,7 +496,7 @@ export function DesktopWorkspace(): JSX.Element {
         id: `assessment-${Date.now()}`,
         level: assessment.driftSignals.length ? "warning" : "success",
         source: "scene-assessment",
-        message: `Assessed ${assessment.sceneLabel} for plan ${executionPlanId}.`,
+        message: copy(`Assessed ${assessment.sceneLabel} for plan ${executionPlanId}.`, `已为计划 ${executionPlanId} 完成场景《${assessment.sceneLabel}》评估。`),
         at: new Date().toISOString(),
       });
     } finally {
@@ -545,7 +546,7 @@ export function DesktopWorkspace(): JSX.Element {
         id: `replan-${result.id}`,
         level: result.patch ? "warning" : "success",
         source: "replanner",
-        message: `Prepared replan ${result.executionPlan.name} from ${executionPlanId}.`,
+        message: copy(`Prepared replan ${result.executionPlan.name} from ${executionPlanId}.`, `已基于 ${executionPlanId} 生成重规划《${result.executionPlan.name}》。`),
         at: new Date().toISOString(),
       });
     } finally {
@@ -559,7 +560,7 @@ export function DesktopWorkspace(): JSX.Element {
       id: `replay-${episodeId}-${Date.now()}`,
       level: "info",
       source: "replay",
-      message: `Loaded replay diagnostics for ${episodeId}.`,
+      message: copy(`Loaded replay diagnostics for ${episodeId}.`, `已加载 ${episodeId} 的回放诊断信息。`),
       at: new Date().toISOString(),
     });
   };
@@ -663,10 +664,10 @@ export function DesktopWorkspace(): JSX.Element {
           sectionEyebrow={sectionMeta[tab].eyebrow}
           sectionTitle={sectionMeta[tab].title}
           sectionDescription={sectionMeta[tab].description}
-          onRefresh={() => void loadWorkspace("Manual refresh completed.")}
+          onRefresh={() => void loadWorkspace(copy("Manual refresh completed.", "已完成手动刷新。"))}
           refreshing={refreshing}
         />
-        <div style={{ padding: "22px", minWidth: 0, display: "grid", gap: "14px" }}>
+        <div style={{ padding: "0 22px 22px", minWidth: 0, display: "grid", gap: "18px" }}>
           {errorMessage ? (
             <div
               style={{

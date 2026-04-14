@@ -63,9 +63,9 @@ export function RuntimeControlView({
   onCompile(payload: CompileTaskRequest): Promise<void>;
 }): JSX.Element {
   const { copy } = useI18n();
-  const [instruction, setInstruction] = useState("Open the web and find useful PDF converters, compare them, and prepare a shortlist.");
+  const [instruction, setInstruction] = useState("打开网页，找到好用的 PDF 转换工具，做对比并整理候选清单。");
   const [domainHint, setDomainHint] = useState("web_research");
-  const [title, setTitle] = useState("Research PDF converters");
+  const [title, setTitle] = useState("调研 PDF 转换工具");
 
   const recentTasks = useMemo(() => runtime.taskSpecs.slice(0, 6), [runtime.taskSpecs]);
 
@@ -99,7 +99,7 @@ export function RuntimeControlView({
               />
             </label>
             <label style={{ display: "grid", gap: "8px" }}>
-              <span style={mutedText}>{copy("Domain pack", "领域包")}</span>
+              <span style={mutedText}>{copy("Scene profile", "场景画像")}</span>
               <select
                 value={domainHint}
                 onChange={(event) => setDomainHint(event.target.value)}
@@ -137,7 +137,7 @@ export function RuntimeControlView({
             />
           </label>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "12px", flexWrap: "wrap" }}>
-            <div style={mutedText}>{copy("The compiler will infer domain pack, approval gates, default output contract, and a first trial plan.", "编译器会推断领域包、审批关卡、默认输出契约和首个试跑计划。")}</div>
+            <div style={mutedText}>{copy("The compiler will infer a scene profile, approval gates, default output contract, and a first trial plan.", "编译器会推断场景画像、审批关卡、默认输出约定，以及首个试跑计划。")}</div>
             <button type="submit" style={actionButton} disabled={compiling}>
               {compiling ? copy("Compiling...", "编译中...") : copy("Compile Task", "编译任务")}
             </button>
@@ -145,8 +145,8 @@ export function RuntimeControlView({
         </form>
       </Panel>
 
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.1fr) minmax(320px, 0.9fr)", gap: "18px", alignItems: "start" }}>
-        <Panel title={copy("Recent Task Specs", "最近任务规格")} eyebrow={copy("Runtime backlog", "运行时 backlog")} description={copy("Compiled tasks stay local-first and point to their active trial plan.", "已编译任务保持本地优先，并指向当前活动的试跑计划。")}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: "18px", alignItems: "start" }}>
+        <Panel title={copy("Recent Task Specs", "最近任务规格")} eyebrow={copy("Runtime queue", "运行时待处理")} description={copy("Compiled tasks stay local-first and point to their active trial plan.", "已编译任务保持本地优先，并指向当前活动的试跑计划。")}>
           <div style={{ display: "grid", gap: "12px" }}>
             {recentTasks.map((task) => (
               <article key={task.id} style={{ padding: "14px", borderRadius: "16px", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)" }}>
@@ -204,7 +204,7 @@ export function TrialRunsView({
       <Panel
         title={copy("Supervised Trial Runs", "受监督试跑")}
         eyebrow={copy("Trial supervision", "试跑监督")}
-        description={copy("New workflows are exercised under human supervision first. Divergence generates patches; stable runs can be confirmed into reusable templates.", "新工作流会先在人工监督下运行。偏差会生成 patch，稳定的运行则可被确认为可复用模板。")}
+        description={copy("New workflows are exercised under human supervision first. Divergence generates revision suggestions; stable runs can be confirmed into reusable templates.", "新工作流会先在人工监督下运行。发生偏差时会生成修订建议，稳定的运行则可被确认为可复用模板。")}
       >
         <div style={{ display: "grid", gap: "12px" }}>
           {runtime.episodes.map((episode) => {
@@ -304,7 +304,7 @@ export function RuntimePatchesView({ patches }: { patches: RuntimePatch[] }): JS
     <Panel
       title={copy("Workflow Patches", "工作流补丁")}
       eyebrow={copy("Divergence review", "偏差审查")}
-      description={copy("When the runtime sees the live environment drift away from the expected plan, it proposes approval-gated workflow patches.", "当运行时发现真实环境偏离预期计划时，会提出受审批控制的工作流 patch。")}
+      description={copy("When the runtime sees the live environment drift away from the expected plan, it proposes approval-gated workflow revisions.", "当运行时发现真实环境偏离预期计划时，会提出受审批控制的工作流修订建议。")}
     >
       <div style={{ display: "grid", gap: "12px" }}>
         {patches.map((patch) => (
@@ -312,7 +312,7 @@ export function RuntimePatchesView({ patches }: { patches: RuntimePatch[] }): JS
             <div style={{ display: "flex", justifyContent: "space-between", gap: "12px", alignItems: "start" }}>
               <div>
                 <strong>{patch.title}</strong>
-                <div style={{ ...mutedText, marginTop: "6px" }}>{patch.divergenceSummary ?? patch.rationale ?? copy("Patch awaiting review.", "Patch 等待审查。")}</div>
+                <div style={{ ...mutedText, marginTop: "6px" }}>{patch.divergenceSummary ?? patch.rationale ?? copy("Revision suggestion awaiting review.", "修订建议等待审查。")}</div>
               </div>
               <StatusBadge tone={templateTone(patch.status)}>{translateUiToken(patch.status, copy)}</StatusBadge>
             </div>
@@ -335,7 +335,7 @@ export function DomainPacksView({ domainPacks }: { domainPacks: DomainPackRecord
         <Panel
           key={pack.key}
           title={pack.name}
-          eyebrow={copy(`Domain Pack · ${pack.key}`, `领域包 · ${pack.key}`)}
+          eyebrow={copy(`Scene Profile · ${pack.key}`, `场景画像 · ${pack.key}`)}
           description={pack.description}
         >
           <div style={{ display: "grid", gap: "12px" }}>
@@ -365,9 +365,9 @@ export function RecruitingPackView({
   return (
     <div style={{ display: "grid", gap: "18px" }}>
       <Panel
-        title={copy("Recruiting Domain Pack", "招聘领域包")}
+        title={copy("Recruiting Scene Profile", "招聘场景画像")}
         eyebrow={copy("Specialized capability", "专用能力")}
-        description={copy("Recruiting remains available as a domain pack on top of the shared runtime. This view keeps the pipeline and workflow-specific state visible.", "招聘仍然作为共享运行时之上的领域包保留。这个视图会继续展示流水线和工作流专属状态。")}
+        description={copy("Recruiting remains available as a reusable scene profile on top of the shared runtime. This view keeps the pipeline and workflow-specific state visible.", "招聘仍然作为共享运行时之上的可复用场景画像保留。这个视图会继续展示流水线和工作流专属状态。")}
       >
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: "12px" }}>
           {candidates.map((candidate) => (

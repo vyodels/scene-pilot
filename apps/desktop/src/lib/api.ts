@@ -649,7 +649,7 @@ function normalizeRuntimeReplanResult(raw: unknown): RuntimePlanReplanResult {
         record.detail ??
         runtimeMetadata.replan_reason ??
         environmentAssessment?.summary ??
-        "Generated a new plan revision from the latest runtime scene.",
+        "已根据最新运行时场景生成新的计划修订。",
     ),
     compilerNotes: asArray<string>(record.compilerNotes ?? record.compiler_notes),
     recommendedCapabilityKeys: asArray<string>(
@@ -1471,7 +1471,7 @@ function createMockClient(): DesktopApiClient {
       synced: 0,
       failed: desktopSyncBacklogMock.length,
       remoteAvailable: false,
-      message: "Mock flush kept the backlog locally because intranet sync is disabled.",
+      message: "模拟重试未真正投递，因为内网同步未启用，积压内容仍保留在本地。",
     }),
     listCandidates: async () => snapshot.candidates,
     listWorkflows: async () => snapshot.workflows,
