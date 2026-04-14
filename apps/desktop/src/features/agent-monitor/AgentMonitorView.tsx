@@ -81,13 +81,13 @@ export function AgentMonitorView({
     <div style={{ display: "grid", gap: "18px" }}>
       <div style={{ display: "grid", gap: "18px", gridTemplateColumns: "minmax(0, 1.1fr) minmax(320px, 0.9fr)" }}>
         <Panel
-          title={copy("Agent runtime", "Agent 运行态")}
+          title={copy("Runtime operations", "运行控制")}
           eyebrow={copy("Serialized execution", "串行执行")}
-          description={copy("Current run state, browser lock status, and direct operator actions.", "当前运行状态、浏览器锁状态，以及可直接触发的操作员动作。")}
+          description={copy("Current run state, browser lock status, and direct operator actions for the local workbench.", "本地工作台当前的运行状态、浏览器锁状态，以及可直接触发的操作动作。")}
           actions={
             <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
               <button type="button" onClick={onQueueScreeningTask} disabled={runningAction} style={actionButtonStyle}>
-                {copy("Queue recruiting task", "加入招聘任务")}
+                {copy("Queue recruiting task", "加入招聘工作流")}
               </button>
               <button type="button" onClick={onRunOnce} disabled={runningAction} style={actionButtonStyle}>
                 {runningAction ? copy("Running...", "运行中...") : copy("Run next task", "运行下一个任务")}
@@ -149,7 +149,7 @@ export function AgentMonitorView({
         </Panel>
       </div>
 
-      <Panel title={copy("Queue audit", "队列审计")} eyebrow={copy("Persistent queue", "持久化队列")} description={copy("Recent queued work and lifecycle audit emitted by the serialized scheduler.", "串行调度器输出的近期排队任务和生命周期审计。")}>
+      <Panel title={copy("Queue audit", "队列审计")} eyebrow={copy("Persistent queue", "持久化队列")} description={copy("Recent queued work and lifecycle audit emitted by the serialized scheduler.", "串行调度器输出的近期排队工作和生命周期审计。")}>
         <div style={{ display: "grid", gap: "12px" }}>
           {queueItems.length ? (
             queueItems.slice(0, 4).map((item) => (
@@ -195,7 +195,7 @@ export function AgentMonitorView({
       </Panel>
 
       <div style={{ display: "grid", gap: "18px", gridTemplateColumns: "minmax(0, 1.1fr) minmax(320px, 0.9fr)" }}>
-        <Panel title={copy("Replay diagnostics", "回放诊断")} eyebrow={copy("Episode Replay", "Episode 回放")} description={copy("Select a supervised episode to inspect divergence, snapshots, and derived learning artifacts.", "选择一个受监督 episode，检查偏差、快照和衍生学习产物。")}>
+        <Panel title={copy("Replay diagnostics", "回放诊断")} eyebrow={copy("Workflow instance replay", "工作流实例回放")} description={copy("Select a supervised workflow instance to inspect divergence, snapshots, and derived learning artifacts.", "选择一个受监督工作流实例，检查偏差、快照和衍生学习产物。")}>
           <div style={{ display: "grid", gap: "12px" }}>
             {episodes.length ? (
               <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
@@ -218,8 +218,8 @@ export function AgentMonitorView({
               <div style={{ display: "grid", gap: "12px" }}>
                 <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
                   <StatusBadge tone={replay.episode.divergenceDetected ? "critical" : "positive"}>{translateUiToken(replay.episode.status, copy)}</StatusBadge>
-                  {replay.patch ? <StatusBadge tone="warning">{copy("patch proposed", "patch 已提出")}</StatusBadge> : null}
-                  {replay.template ? <StatusBadge tone="positive">{copy("template ready", "模板已就绪")}</StatusBadge> : null}
+                  {replay.patch ? <StatusBadge tone="warning">{copy("revision proposed", "已提出修订建议")}</StatusBadge> : null}
+                  {replay.template ? <StatusBadge tone="positive">{copy("version ready", "版本已就绪")}</StatusBadge> : null}
                   {replay.approval ? <StatusBadge tone="warning">{copy("approval pending", "审批待处理")}</StatusBadge> : null}
                 </div>
                 <div style={{ color: theme.colors.muted, fontSize: "13px", lineHeight: 1.6 }}>
@@ -228,7 +228,7 @@ export function AgentMonitorView({
                 <Timeline events={replay.diagnostics} />
               </div>
             ) : (
-              <div style={{ color: theme.colors.muted, fontSize: "13px" }}>{copy("Replay diagnostics will appear after you select a trial episode.", "选择试跑 episode 后，这里会显示回放诊断。")}</div>
+              <div style={{ color: theme.colors.muted, fontSize: "13px" }}>{copy("Replay diagnostics will appear after you select a workflow instance.", "选择工作流实例后，这里会显示回放诊断。")}</div>
             )}
           </div>
         </Panel>

@@ -9,6 +9,9 @@ interface TopBarProps {
   agent: AgentSnapshot;
   settings: SettingsSnapshot;
   transport: "mock" | "http";
+  sectionEyebrow: string;
+  sectionTitle: string;
+  sectionDescription: string;
   onRefresh(): void;
   refreshing: boolean;
 }
@@ -23,7 +26,16 @@ const actionButtonStyle = {
   fontWeight: 700,
 } as const;
 
-export function TopBar({ agent, settings, transport, onRefresh, refreshing }: TopBarProps): JSX.Element {
+export function TopBar({
+  agent,
+  settings,
+  transport,
+  sectionEyebrow,
+  sectionTitle,
+  sectionDescription,
+  onRefresh,
+  refreshing,
+}: TopBarProps): JSX.Element {
   const { language, setLanguage, copy } = useI18n();
   return (
     <header
@@ -32,18 +44,19 @@ export function TopBar({ agent, settings, transport, onRefresh, refreshing }: To
         alignItems: "center",
         justifyContent: "space-between",
         gap: "16px",
-        padding: "18px 22px",
+        padding: "14px 18px",
         borderBottom: `1px solid ${theme.colors.border}`,
-        background: "rgba(14,18,36,0.65)",
-        backdropFilter: "blur(16px)",
+        background: "rgba(14,18,36,0.58)",
+        backdropFilter: "blur(12px)",
       }}
     >
       <div>
-        <div style={{ color: theme.colors.muted, fontSize: "12px" }}>{copy("Workspace", "工作台")}</div>
+        <div style={{ color: theme.colors.muted, fontSize: "11px" }}>{sectionEyebrow}</div>
         <div style={{ display: "flex", alignItems: "center", gap: "10px", marginTop: "4px" }}>
-          <h2 style={{ margin: 0, fontSize: "18px" }}>{copy("General automation runtime", "通用自动化运行时")}</h2>
+          <h2 style={{ margin: 0, fontSize: "16px" }}>{sectionTitle}</h2>
           <StatusBadge tone={agent.health === "healthy" ? "positive" : agent.health === "warning" ? "warning" : "critical"}>{translateUiToken(agent.status, copy)}</StatusBadge>
         </div>
+        <div style={{ color: theme.colors.muted, fontSize: "12px", marginTop: "4px", lineHeight: 1.5 }}>{sectionDescription}</div>
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap", justifyContent: "end" }}>
         <div style={{ display: "inline-flex", border: `1px solid ${theme.colors.border}`, borderRadius: theme.radius.md, overflow: "hidden" }}>

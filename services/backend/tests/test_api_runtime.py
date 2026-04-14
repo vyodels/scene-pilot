@@ -82,6 +82,14 @@ class _SemanticCompileProvider:
             capabilities = ["browser", "search", "document", "llm", "api"]
             output_contract = {"kind": "screening_packet", "format": "markdown", "include_score": True}
             success_criteria = {"requires_candidate_evidence": True, "requires_score": True}
+            step_outline = [
+                {"id": "confirm_requirements", "action": "确认任务输入"},
+                {"id": "assess_recruiting_scene", "action": "评估招聘场景"},
+                {"id": "search_candidates", "action": "搜索并选择候选人"},
+                {"id": "inspect_candidate_resume", "action": "查看资料与简历并提取证据"},
+                {"id": "score_candidate", "action": "完成初筛评分"},
+                {"id": "prepare_screening_summary", "action": "输出候选人结论与下一步建议"},
+            ]
 
         environment_requirements = {"requires_browser": "browser" in capabilities}
         return LLMResponse(
@@ -128,7 +136,7 @@ class ApiRuntimeTests(unittest.TestCase):
         self._load_settings.cache_clear()
 
     def test_natural_language_compile_trial_execution_and_snapshot_flow(self) -> None:
-        domain_packs = self.client.get("/api/runtime/domain-packs")
+        domain_packs = self.client.get("/api/runtime/scene-profiles")
         self.assertEqual(domain_packs.status_code, 200)
         self.assertTrue(any(item["key"] == "web_research" for item in domain_packs.json()))
         self.assertTrue(any(item["version"] for item in domain_packs.json()))
@@ -144,7 +152,7 @@ class ApiRuntimeTests(unittest.TestCase):
         self.assertTrue(any(item["key"] == "browser" for item in compiler_payload["available_capabilities"]))
 
         compiled_task = self.client.post(
-            "/api/runtime/task-specs/compile",
+            "/api/runtime/workflows/compile",
             json={
                 "instruction": "Open the web and find useful PDF converters, compare them, and prepare a shortlist.",
                 "title": "Research PDF converters",
@@ -169,14 +177,14 @@ class ApiRuntimeTests(unittest.TestCase):
             )
         )
 
-        listed_tasks = self.client.get("/api/runtime/task-specs")
+        listed_tasks = self.client.get("/api/runtime/workflows")
         self.assertEqual(listed_tasks.status_code, 200)
         created_task = next(item for item in listed_tasks.json() if item["id"] == task_spec_id)
         self.assertEqual(created_task["status"], "trial_ready")
         self.assertEqual(created_task["active_plan_id"], plan_id)
 
         created_trial = self.client.post(
-            "/api/runtime/trial-runs",
+            "/api/runtime/workflow-instances",
             json={
                 "task_spec_id": task_spec_id,
                 "execution_plan_id": plan_id,
@@ -193,7 +201,7 @@ class ApiRuntimeTests(unittest.TestCase):
         episode_id = episode_payload["id"]
 
         executed_trial = self.client.post(
-            f"/api/runtime/trial-runs/{episode_id}/execute",
+            f"/api/runtime/workflow-instances/{episode_id}/execute",
             json={
                 "source": "browser",
                 "url": "https://example.com",
@@ -216,7 +224,7 @@ class ApiRuntimeTests(unittest.TestCase):
         self.assertIn("governance", executed_payload["template_approval"]["payload"])
 
         confirmed_trial = self.client.post(
-            f"/api/runtime/trial-runs/{episode_id}/confirm",
+            f"/api/runtime/workflow-instances/{episode_id}/confirm",
             json={"reviewer": "desktop-user", "reason": "Ready for production", "activate_template": True},
         )
         self.assertEqual(confirmed_trial.status_code, 200)
@@ -226,7 +234,7 @@ class ApiRuntimeTests(unittest.TestCase):
         self.assertEqual(confirmed_payload["template"]["status"], "active")
         self.assertEqual(confirmed_payload["template_approval"]["status"], "approved")
 
-        refreshed_task = self.client.get("/api/runtime/task-specs")
+        refreshed_task = self.client.get("/api/runtime/workflows")
         self.assertEqual(refreshed_task.status_code, 200)
         self.assertEqual(
             next(item for item in refreshed_task.json() if item["id"] == task_spec_id)["status"],
@@ -237,15 +245,31 @@ class ApiRuntimeTests(unittest.TestCase):
         self.assertEqual(listed_snapshots.status_code, 200)
         self.assertEqual(len(listed_snapshots.json()), 1)
         self.assertEqual(listed_snapshots.json()[0]["page_type"], "tool_listing")
+        self.assertEqual(self.client.get("/api/runtime/workflow-versions").status_code, 200)
+        self.assertEqual(self.client.get("/api/runtime/workflow-adjustments").status_code, 200)
 
-        missing_plan = self.client.post(
-            "/api/runtime/trial-runs",
+    def test_recruiting_compile_infers_actionable_step_capabilities(self) -> None:
+        compiled_task = self.client.post(
+            "/api/runtime/task-specs/compile",
             json={
-                "task_spec_id": task_spec_id,
-                "execution_plan_id": "missing-plan",
+                "instruction": "打开招聘网站，按照要求找到候选人，查看候选人资料和简历，完成初筛评分，并输出候选人结论和下一步建议。",
+                "title": "Recruiting supervised trial",
+                "domain_hint": "recruiting",
+                "constraints": {
+                    "requires_human_supervision": True,
+                    "no_outbound_messaging_without_approval": True,
+                    "no_downstream_write_without_approval": True,
+                },
+                "preferred_capabilities": ["browser", "search", "document", "llm"],
             },
         )
-        self.assertEqual(missing_plan.status_code, 404)
+        self.assertEqual(compiled_task.status_code, 201)
+        plan_steps = compiled_task.json()["execution_plan"]["plan_body"]["steps"]
+        self.assertEqual(plan_steps[0]["capability"], "analyze")
+        capability_sequence = [step["capability"] for step in plan_steps]
+        self.assertIn("browser", capability_sequence)
+        self.assertIn("search", capability_sequence)
+        self.assertTrue(any(item in capability_sequence for item in ("llm", "document")))
 
     def test_capability_driver_catalog_and_environment_assessment(self) -> None:
         capability_response = self.client.get("/api/runtime/capability-drivers?domain=web_research")

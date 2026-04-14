@@ -89,12 +89,12 @@ export function DashboardView({ summary }: DashboardViewProps): JSX.Element {
               {copy("Live command center", "实时指挥中心")}
             </div>
             <h2 style={{ margin: "8px 0 6px", fontSize: "34px", lineHeight: 1.05 }}>
-              {copy("General automation runtime health is visible at a glance.", "通用自动化运行时的健康状态一眼可见。")}
+              {copy("Workflow health and operator signals are visible at a glance.", "工作流健康状态和操作信号一眼可见。")}
             </h2>
             <p style={{ margin: 0, maxWidth: "760px", color: "rgba(233,239,255,0.78)", lineHeight: 1.6 }}>
               {copy(
-                "The workspace keeps task compilation, supervised trials, approvals, and reusable skills visible in one place while preserving domain-pack operations like recruiting.",
-                "工作台将任务编译、受监督试跑、审批与可复用 skills 集中展示，同时保留招聘等领域包的实际运行状态。",
+                "The console keeps workflow creation, supervised trials, approvals, reusable Skills, and live operations visible in one place.",
+                "控制台会把工作流创建、受监督试跑、审批、可复用 Skills，以及实时运行情况集中展示在同一个界面里。",
               )}
             </p>
           </div>
@@ -108,7 +108,7 @@ export function DashboardView({ summary }: DashboardViewProps): JSX.Element {
       </section>
 
       <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.1fr) minmax(320px, 0.9fr)", gap: "18px", alignItems: "start" }}>
-        <Panel title={copy("Pack throughput", "能力包吞吐")} eyebrow={copy("Operational throughput", "运行吞吐")} description={copy("Current domain-pack volume and headroom against the active target capacity.", "当前领域包负载与目标容量余量。")}>
+        <Panel title={copy("Workflow throughput", "工作流吞吐")} eyebrow={copy("Operational throughput", "运行吞吐")} description={copy("Current workflow load and headroom against the active target capacity.", "当前工作流负载与目标容量余量。")}>
           <ProgressBars stages={localizedPipeline} />
         </Panel>
         <Panel title={copy("Live events", "实时事件")} eyebrow={copy("Recent state changes", "最新状态变化")} description={copy("The latest runtime, workflow, and supervision events that matter to an operator.", "对操作员最重要的运行时、工作流与监督事件。")}>
@@ -117,10 +117,10 @@ export function DashboardView({ summary }: DashboardViewProps): JSX.Element {
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: "18px" }}>
-        <Panel title={copy("Alerts", "告警")} eyebrow={copy("Safety and drift", "安全与漂移")} description={copy("Warnings that should block further automation or trigger a workflow patch review.", "需要阻止继续自动化或触发工作流补丁审查的告警。")}>
+        <Panel title={copy("Alerts", "告警")} eyebrow={copy("Safety and drift", "安全与漂移")} description={copy("Warnings that should block further automation or trigger a workflow revision review.", "需要阻止继续自动化或触发工作流修订审查的告警。")}>
           <Timeline events={localizedAlerts} />
         </Panel>
-        <Panel title={copy("Human review queue", "人工审查队列")} eyebrow={copy("Approval gates", "审批关卡")} description={copy("Items waiting for approval before a template, patch, or skill can become active.", "模板、补丁或 skill 在生效前等待审批的事项。")}>
+        <Panel title={copy("Human review queue", "人工审查队列")} eyebrow={copy("Approval gates", "审批关卡")} description={copy("Items waiting for approval before a workflow version, revision suggestion, or skill can become active.", "工作流版本、修订建议或 skill 在生效前等待审批的事项。")}>
           <div style={{ display: "grid", gap: "12px" }}>
             {localizedApprovals.map((item) => (
               <article key={item.id} style={{ padding: "14px", borderRadius: "16px", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)" }}>

@@ -58,6 +58,7 @@ def _raise_runtime_http_error(exc: ValueError) -> None:
     raise HTTPException(status_code=400, detail=detail) from exc
 
 
+@router.get("/scene-profiles", response_model=list[DomainPackRead])
 @router.get("/domain-packs", response_model=list[DomainPackRead])
 def list_domain_packs(
     service: PersistedRuntimeService = Depends(get_runtime_service),
@@ -81,6 +82,7 @@ def list_capability_drivers(
     return service.list_capability_drivers(domain=domain)
 
 
+@router.get("/workflows", response_model=list[TaskSpecRead])
 @router.get("/task-specs", response_model=list[TaskSpecRead])
 @router.get("/tasks", response_model=list[TaskSpecRead])
 def list_task_specs(
@@ -92,6 +94,7 @@ def list_task_specs(
     return service.list_task_specs(domain=domain, limit=limit, offset=offset)
 
 
+@router.post("/workflows", response_model=TaskSpecRead, status_code=201)
 @router.post("/task-specs", response_model=TaskSpecRead, status_code=201)
 @router.post("/tasks", response_model=TaskSpecRead, status_code=201)
 def create_task_spec(
@@ -104,6 +107,7 @@ def create_task_spec(
         _raise_runtime_http_error(exc)
 
 
+@router.post("/workflows/compile", response_model=TaskCompileResponse, status_code=201)
 @router.post("/task-specs/compile", response_model=TaskCompileResponse, status_code=201)
 @router.post("/tasks/compile", response_model=TaskCompileResponse, status_code=201)
 def compile_task_spec(
@@ -217,6 +221,7 @@ def list_replans(
     return service.list_replans(limit=limit, offset=offset)
 
 
+@router.get("/workflow-instances", response_model=list[ExecutionEpisodeRead])
 @router.get("/episodes", response_model=list[ExecutionEpisodeRead])
 @router.get("/trial-runs", response_model=list[ExecutionEpisodeRead])
 def list_execution_episodes(
@@ -228,6 +233,7 @@ def list_execution_episodes(
     return service.list_episodes(execution_plan_id=execution_plan_id, limit=limit, offset=offset)
 
 
+@router.get("/workflow-instances/{episode_id}", response_model=ExecutionEpisodeRead)
 @router.get("/episodes/{episode_id}", response_model=ExecutionEpisodeRead)
 def get_execution_episode(
     episode_id: str,
@@ -239,6 +245,7 @@ def get_execution_episode(
         _raise_runtime_http_error(exc)
 
 
+@router.get("/workflow-instances/{episode_id}/replay", response_model=RuntimeEpisodeReplayRead)
 @router.get("/episodes/{episode_id}/replay", response_model=RuntimeEpisodeReplayRead)
 @router.get("/trial-runs/{episode_id}/replay", response_model=RuntimeEpisodeReplayRead)
 def get_execution_episode_replay(
@@ -251,6 +258,7 @@ def get_execution_episode_replay(
         _raise_runtime_http_error(exc)
 
 
+@router.post("/workflow-instances", response_model=ExecutionEpisodeRead, status_code=201)
 @router.post("/episodes", response_model=ExecutionEpisodeRead, status_code=201)
 def create_execution_episode(
     payload: ExecutionEpisodeCreate,
@@ -273,6 +281,7 @@ def create_trial_run(
         _raise_runtime_http_error(exc)
 
 
+@router.post("/workflow-instances/{episode_id}/execute", response_model=RuntimeLearningOutcomeRead)
 @router.post("/trial-runs/{episode_id}/execute", response_model=RuntimeLearningOutcomeRead)
 @router.post("/episodes/{episode_id}/execute", response_model=RuntimeLearningOutcomeRead)
 def execute_trial_run(
@@ -286,6 +295,7 @@ def execute_trial_run(
         _raise_runtime_http_error(exc)
 
 
+@router.post("/workflow-instances/{episode_id}/learn", response_model=RuntimeLearningOutcomeRead)
 @router.post("/trial-runs/{episode_id}/learn", response_model=RuntimeLearningOutcomeRead)
 @router.post("/episodes/{episode_id}/learn", response_model=RuntimeLearningOutcomeRead)
 def derive_learning_from_episode(
@@ -298,6 +308,7 @@ def derive_learning_from_episode(
         _raise_runtime_http_error(exc)
 
 
+@router.post("/workflow-instances/{episode_id}/confirm", response_model=RuntimeLearningOutcomeRead)
 @router.post("/trial-runs/{episode_id}/confirm", response_model=RuntimeLearningOutcomeRead)
 @router.post("/episodes/{episode_id}/confirm", response_model=RuntimeLearningOutcomeRead)
 def confirm_episode(
@@ -338,6 +349,7 @@ def create_environment_snapshot(
         _raise_runtime_http_error(exc)
 
 
+@router.post("/scene-assessments", response_model=EnvironmentAssessmentRead)
 @router.post("/environment-assessments", response_model=EnvironmentAssessmentRead)
 @router.post("/environment-assessment", response_model=EnvironmentAssessmentRead)
 @router.post("/scene-assessment", response_model=EnvironmentAssessmentRead)
@@ -351,6 +363,7 @@ def assess_environment(
         _raise_runtime_http_error(exc)
 
 
+@router.get("/scene-assessments", response_model=list[EnvironmentAssessmentRead])
 @router.get("/environment-assessments", response_model=list[EnvironmentAssessmentRead])
 @router.get("/environment-assessment", response_model=list[EnvironmentAssessmentRead])
 @router.get("/scene-assessment", response_model=list[EnvironmentAssessmentRead])
@@ -369,6 +382,7 @@ def list_environment_assessments(
     )
 
 
+@router.get("/workflow-versions", response_model=list[WorkflowTemplateRead])
 @router.get("/templates", response_model=list[WorkflowTemplateRead])
 def list_workflow_templates(
     domain: str | None = Query(default=None),
@@ -379,6 +393,7 @@ def list_workflow_templates(
     return service.list_templates(domain=domain, limit=limit, offset=offset)
 
 
+@router.get("/workflow-versions/{template_id}", response_model=WorkflowTemplateRead)
 @router.get("/templates/{template_id}", response_model=WorkflowTemplateRead)
 def get_workflow_template(
     template_id: str,
@@ -390,6 +405,7 @@ def get_workflow_template(
         _raise_runtime_http_error(exc)
 
 
+@router.post("/workflow-versions", response_model=WorkflowTemplateRead, status_code=201)
 @router.post("/templates", response_model=WorkflowTemplateRead, status_code=201)
 def create_workflow_template(
     payload: WorkflowTemplateCreate,
@@ -401,6 +417,7 @@ def create_workflow_template(
         _raise_runtime_http_error(exc)
 
 
+@router.patch("/workflow-versions/{template_id}", response_model=WorkflowTemplateRead)
 @router.patch("/templates/{template_id}", response_model=WorkflowTemplateRead)
 def update_workflow_template(
     template_id: str,
@@ -413,6 +430,7 @@ def update_workflow_template(
         _raise_runtime_http_error(exc)
 
 
+@router.get("/workflow-adjustments", response_model=list[WorkflowPatchRead])
 @router.get("/workflow-patches", response_model=list[WorkflowPatchRead])
 @router.get("/patches", response_model=list[WorkflowPatchRead])
 def list_workflow_patches(
@@ -430,6 +448,7 @@ def list_workflow_patches(
     )
 
 
+@router.post("/workflow-adjustments", response_model=WorkflowPatchRead, status_code=201)
 @router.post("/workflow-patches", response_model=WorkflowPatchRead, status_code=201)
 @router.post("/patches", response_model=WorkflowPatchRead, status_code=201)
 def create_workflow_patch(
@@ -442,6 +461,7 @@ def create_workflow_patch(
         _raise_runtime_http_error(exc)
 
 
+@router.post("/workflow-adjustments/{patch_id}/approve", response_model=WorkflowPatchRead)
 @router.post("/workflow-patches/{patch_id}/approve", response_model=WorkflowPatchRead)
 @router.post("/patches/{patch_id}/approve", response_model=WorkflowPatchRead)
 def approve_workflow_patch(
@@ -455,6 +475,7 @@ def approve_workflow_patch(
         _raise_runtime_http_error(exc)
 
 
+@router.post("/workflow-adjustments/{patch_id}/reject", response_model=WorkflowPatchRead)
 @router.post("/workflow-patches/{patch_id}/reject", response_model=WorkflowPatchRead)
 @router.post("/patches/{patch_id}/reject", response_model=WorkflowPatchRead)
 def reject_workflow_patch(

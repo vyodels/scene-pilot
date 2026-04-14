@@ -18,8 +18,8 @@ export function CandidatesView({ candidates }: CandidatesViewProps): JSX.Element
     <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.2fr) minmax(320px, 0.8fr)", gap: "18px", alignItems: "start" }}>
       <Panel
         title={copy("Candidate pipeline", "候选人流水线")}
-        eyebrow={copy("Recruiting scene", "招聘场景")}
-        description={copy("The current working set ordered by screening readiness across the active recruiting scene.", "当前工作集合按初筛准备度排序，反映活跃招聘场景中的处理顺序。")}
+        eyebrow={copy("Recruiting workbench", "招聘工作台")}
+        description={copy("The current working set ordered by screening readiness inside the recruiting workflow workbench.", "当前工作集合按初筛准备度排序，反映招聘工作流工作台中的处理顺序。")}
       >
         <div style={{ display: "grid", gap: "10px" }}>
           {candidates.map((candidate) => (

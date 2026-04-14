@@ -39,6 +39,18 @@ class FakeHTTPResponse:
         return self._body
 
 
+class FakeOpener:
+    def __init__(self, response: FakeHTTPResponse) -> None:
+        self.response = response
+        self.request = None
+        self.timeout = None
+
+    def open(self, request, timeout=None):
+        self.request = request
+        self.timeout = timeout
+        return self.response
+
+
 class ProviderTests(unittest.TestCase):
     def tearDown(self) -> None:
         for key in [
@@ -237,6 +249,37 @@ class ProviderTests(unittest.TestCase):
         with mock.patch("scene_pilot.runtime.providers.urlopen", side_effect=URLError("down")):
             with self.assertRaisesRegex(ProviderError, "Transport error calling"):
                 provider.generate([Message(role="user", content="hi")])
+
+    def test_loopback_provider_bypasses_proxy_opener(self) -> None:
+        provider = OpenAICompatibleProvider(
+            ProviderConfig(
+                provider_name="openai_compatible",
+                model="gpt-5.4",
+                base_url="http://127.0.0.1:8317/v1",
+                api_key="test-openai-key",
+                timeout_seconds=7,
+            )
+        )
+        fake_opener = FakeOpener(
+            FakeHTTPResponse(
+                {
+                    "choices": [{"finish_reason": "stop", "message": {"content": "ok"}}],
+                    "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+                }
+            )
+        )
+
+        with (
+            mock.patch("scene_pilot.runtime.providers.build_opener", return_value=fake_opener) as build_opener_mock,
+            mock.patch("scene_pilot.runtime.providers.urlopen") as urlopen_mock,
+        ):
+            response = provider.generate([Message(role="user", content="hello")])
+
+        self.assertEqual(response.content, "ok")
+        self.assertEqual(fake_opener.request.full_url, "http://127.0.0.1:8317/v1/chat/completions")
+        self.assertEqual(fake_opener.timeout, 7)
+        build_opener_mock.assert_called_once()
+        urlopen_mock.assert_not_called()
 
 
 if __name__ == "__main__":

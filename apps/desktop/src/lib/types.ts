@@ -1,14 +1,9 @@
 export type WorkspaceTab =
   | "dashboard"
-  | "runtime"
-  | "trials"
-  | "templates"
-  | "patches"
-  | "domains"
-  | "recruiting"
+  | "workflow-management"
+  | "workbench"
   | "skills"
   | "approvals"
-  | "monitor"
   | "settings";
 
 export type ProviderKind = "openai-compatible" | "anthropic";

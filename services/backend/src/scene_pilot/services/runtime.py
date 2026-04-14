@@ -1793,7 +1793,10 @@ class PersistedRuntimeService:
             if template is None:
                 raise ValueError("Workflow template not found")
 
-        steps = list(payload.steps) or self._default_steps(task_spec, template)
+        steps = self._normalize_steps(
+            list(payload.steps) or self._default_steps(task_spec, template),
+            domain=task_spec.domain,
+        )
         item = ExecutionPlanRepository(self.session).create(
             {
                 "task_spec_id": task_spec.id,
@@ -3525,7 +3528,12 @@ class PersistedRuntimeService:
         else:
             steps = [
                 *self._scene_driven_replan_steps(assessment),
-                *self._normalize_steps(current_steps),
+                *self._normalize_steps(
+                    current_steps,
+                    domain=(assessment.execution_plan.plan_body or {}).get("domain", "general")
+                    if assessment.execution_plan is not None
+                    else "general",
+                ),
             ]
             if assessment.blockers and not any(str(step.get("id") or "") == "reassess_environment" for step in steps):
                 steps.insert(
@@ -3565,15 +3573,22 @@ class PersistedRuntimeService:
                     "summary": "Pause for review before executing the updated plan.",
                 }
             )
-        return self._normalize_steps(steps)
+        return self._normalize_steps(
+            steps,
+            domain=(assessment.execution_plan.plan_body or {}).get("domain", "general")
+            if assessment.execution_plan is not None
+            else "general",
+        )
 
-    def _normalize_steps(self, steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def _normalize_steps(self, steps: list[dict[str, Any]], *, domain: str = "general") -> list[dict[str, Any]]:
         normalized: list[dict[str, Any]] = []
         seen: set[str] = set()
         for index, raw_step in enumerate(steps, start=1):
             if not isinstance(raw_step, dict):
                 continue
-            capability = str(raw_step.get("capability") or "analyze").strip().lower()
+            capability = str(raw_step.get("capability") or "").strip().lower()
+            if not capability:
+                capability = self._infer_step_capability(raw_step, domain=domain)
             if capability not in CAPABILITY_DRIVERS:
                 capability = "analyze"
             step_id = str(raw_step.get("id") or f"{capability}_{index}").strip() or f"{capability}_{index}"
@@ -3586,10 +3601,36 @@ class PersistedRuntimeService:
                     **dict(raw_step),
                     "id": step_id,
                     "capability": capability,
-                    "summary": raw_step.get("summary") or self._step_summary("general", capability),
+                    "summary": raw_step.get("summary") or self._step_summary(domain, capability),
                 }
             )
         return normalized
+
+    def _infer_step_capability(self, raw_step: dict[str, Any], *, domain: str) -> str:
+        text = " ".join(
+            str(raw_step.get(key) or "").strip()
+            for key in ("action", "summary", "details", "name", "objective", "id")
+        ).lower()
+        if not text:
+            return "analyze"
+
+        keyword_groups = [
+            ("analyze", ("requirements", "input", "scope", "constraint", "goal", "任务输入", "岗位要求", "评分标准", "约束", "目标")),
+            ("approval", ("approve", "approval", "review", "checkpoint", "人工确认", "审批", "审阅")),
+            ("command", ("command", "shell", "terminal", "cli", "命令", "终端")),
+            ("api", ("upload", "sync", "submit", "push", "handoff", "write", "api", "提交", "同步", "写入", "上传")),
+            ("filesystem", ("file", "filesystem", "download", "export", "保存到本地", "文件", "导出", "下载")),
+            ("search", ("search", "find", "locate", "discover", "query", "筛选", "搜索", "查找", "发现", "选择候选人")),
+            ("browser", ("open", "inspect", "view", "browse", "page", "site", "workspace", "profile", "resume", "scene", "页面", "网站", "工作台", "资料", "简历", "浏览", "查看")),
+            ("document", ("summarize", "draft", "record", "capture evidence", "prepare output", "bundle", "report", "summary", "输出", "整理", "记录", "总结", "证据", "结论")),
+            ("llm", ("score", "evaluate", "assess", "reason", "recommend", "classify", "rank", "评分", "评估", "分析", "判断", "建议")),
+        ]
+        for capability, keywords in keyword_groups:
+            if any(keyword in text for keyword in keywords):
+                return capability
+
+        domain_defaults = list((DOMAIN_PACKS.get(domain) or DOMAIN_PACKS["general"]).get("default_capabilities") or [])
+        return domain_defaults[0] if domain_defaults else "analyze"
 
     def _dedupe_dict_list(self, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
         deduped: list[dict[str, Any]] = []

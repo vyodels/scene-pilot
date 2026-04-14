@@ -221,8 +221,8 @@ function normalizeSettings(raw: unknown): SettingsSnapshot {
       timeoutSeconds: Number(intranetSync.timeoutSeconds ?? intranetSync.timeout_seconds ?? 15),
     },
     platform: {
-      name: String(platform.name ?? "Runtime scene profile"),
-      account: String(platform.account ?? "runtime-scene-01"),
+      name: String(platform.name ?? "本地场景画像"),
+      account: String(platform.account ?? "本机场景 01"),
       cooldownDays: Number(platform.cooldownDays ?? platform.cooldown_days ?? 30),
       allowOutboundMessaging: Boolean(platform.allowOutboundMessaging ?? platform.allow_outbound_messaging ?? false),
     },
@@ -984,10 +984,10 @@ function resolveWebSocketUrl(baseUrl: string): string {
 
 async function requestRuntimeReplay(baseUrl: string, episodeId: string): Promise<RuntimeEpisodeReplay> {
   try {
-    return normalizeRuntimeReplay(await requestJson<unknown>(baseUrl, `/api/runtime/trial-runs/${episodeId}/replay`));
+    return normalizeRuntimeReplay(await requestJson<unknown>(baseUrl, `/api/runtime/workflow-instances/${episodeId}/replay`));
   } catch (error) {
     if (error instanceof Error && /404/.test(error.message)) {
-      return normalizeRuntimeReplay(await requestJson<unknown>(baseUrl, `/api/runtime/episodes/${episodeId}/replay`));
+      return normalizeRuntimeReplay(await requestJson<unknown>(baseUrl, `/api/runtime/trial-runs/${episodeId}/replay`));
     }
     throw error;
   }
@@ -1000,15 +1000,15 @@ function createFetchClient(baseUrl: string): DesktopApiClient {
       const [compilerContract, domainPacks, taskSpecs, plans, episodes, snapshots, capabilityDrivers, environmentAssessments, templates, patches, replans] =
         await Promise.all([
         requestJson<unknown>(baseUrl, "/api/runtime/compiler-contract"),
-        requestJson<unknown>(baseUrl, "/api/runtime/domain-packs"),
-        requestJson<unknown>(baseUrl, "/api/runtime/task-specs"),
+        requestJson<unknown>(baseUrl, "/api/runtime/scene-profiles"),
+        requestJson<unknown>(baseUrl, "/api/runtime/workflows"),
         requestJson<unknown>(baseUrl, "/api/runtime/plans"),
-        requestJson<unknown>(baseUrl, "/api/runtime/trial-runs"),
+        requestJson<unknown>(baseUrl, "/api/runtime/workflow-instances"),
         requestJson<unknown>(baseUrl, "/api/runtime/environment-snapshots"),
         requestOptionalJson<unknown>(baseUrl, "/api/runtime/capability-drivers"),
-        requestOptionalJson<unknown>(baseUrl, "/api/runtime/environment-assessments"),
-        requestJson<unknown>(baseUrl, "/api/runtime/templates"),
-        requestJson<unknown>(baseUrl, "/api/runtime/workflow-patches"),
+        requestOptionalJson<unknown>(baseUrl, "/api/runtime/scene-assessments"),
+        requestJson<unknown>(baseUrl, "/api/runtime/workflow-versions"),
+        requestJson<unknown>(baseUrl, "/api/runtime/workflow-adjustments"),
         requestOptionalJson<unknown>(baseUrl, "/api/runtime/replans"),
       ]);
       return {
@@ -1027,11 +1027,11 @@ function createFetchClient(baseUrl: string): DesktopApiClient {
     },
     getTaskCompilerContract: async () =>
       normalizeRuntimeCompilerContract(await requestJson<unknown>(baseUrl, "/api/runtime/compiler-contract")),
-    listDomainPacks: async () => asArray(await requestJson<unknown>(baseUrl, "/api/runtime/domain-packs")).map(normalizeDomainPack),
-    listRuntimeTasks: async () => asArray(await requestJson<unknown>(baseUrl, "/api/runtime/task-specs")).map(normalizeRuntimeTask),
+    listDomainPacks: async () => asArray(await requestJson<unknown>(baseUrl, "/api/runtime/scene-profiles")).map(normalizeDomainPack),
+    listRuntimeTasks: async () => asArray(await requestJson<unknown>(baseUrl, "/api/runtime/workflows")).map(normalizeRuntimeTask),
     compileRuntimeTask: async (payload) =>
       normalizeCompileTaskResponse(
-        await requestJson<unknown>(baseUrl, "/api/runtime/task-specs/compile", {
+        await requestJson<unknown>(baseUrl, "/api/runtime/workflows/compile", {
           method: "POST",
           body: JSON.stringify({
             instruction: payload.instruction,
@@ -1059,7 +1059,7 @@ function createFetchClient(baseUrl: string): DesktopApiClient {
       ),
     createTrialRun: async (taskSpecId, executionPlanId, notes) =>
       normalizeRuntimeEpisode(
-        await requestJson<unknown>(baseUrl, "/api/runtime/trial-runs", {
+        await requestJson<unknown>(baseUrl, "/api/runtime/workflow-instances", {
           method: "POST",
           body: JSON.stringify({
             task_spec_id: taskSpecId,
@@ -1069,10 +1069,10 @@ function createFetchClient(baseUrl: string): DesktopApiClient {
           }),
         }),
       ),
-    listRuntimeEpisodes: async () => asArray(await requestJson<unknown>(baseUrl, "/api/runtime/trial-runs")).map(normalizeRuntimeEpisode),
+    listRuntimeEpisodes: async () => asArray(await requestJson<unknown>(baseUrl, "/api/runtime/workflow-instances")).map(normalizeRuntimeEpisode),
     executeTrialRun: async (episodeId, notes) =>
       normalizeRuntimeLearningOutcome(
-        await requestJson<unknown>(baseUrl, `/api/runtime/trial-runs/${episodeId}/execute`, {
+        await requestJson<unknown>(baseUrl, `/api/runtime/workflow-instances/${episodeId}/execute`, {
           method: "POST",
           body: JSON.stringify({
             operator: "desktop-user",
@@ -1083,13 +1083,13 @@ function createFetchClient(baseUrl: string): DesktopApiClient {
       ),
     refreshRuntimeLearning: async (episodeId) =>
       normalizeRuntimeLearningOutcome(
-        await requestJson<unknown>(baseUrl, `/api/runtime/trial-runs/${episodeId}/learn`, {
+        await requestJson<unknown>(baseUrl, `/api/runtime/workflow-instances/${episodeId}/learn`, {
           method: "POST",
         }),
       ),
     confirmTrialRun: async (episodeId, reason) =>
       normalizeRuntimeLearningOutcome(
-        await requestJson<unknown>(baseUrl, `/api/runtime/trial-runs/${episodeId}/confirm`, {
+        await requestJson<unknown>(baseUrl, `/api/runtime/workflow-instances/${episodeId}/confirm`, {
           method: "POST",
           body: JSON.stringify({
             reviewer: "desktop-user",
@@ -1105,12 +1105,12 @@ function createFetchClient(baseUrl: string): DesktopApiClient {
       return payload ? asArray(payload).map(normalizeRuntimeCapabilityDriver) : [];
     },
     listRuntimeEnvironmentAssessments: async () => {
-      const payload = await requestOptionalJson<unknown>(baseUrl, "/api/runtime/environment-assessments");
+      const payload = await requestOptionalJson<unknown>(baseUrl, "/api/runtime/scene-assessments");
       return payload ? asArray(payload).map(normalizeRuntimeEnvironmentAssessment) : [];
     },
     assessRuntimeEnvironment: async (payload) =>
       normalizeRuntimeEnvironmentAssessment(
-        await requestJson<unknown>(baseUrl, "/api/runtime/environment-assessments", {
+        await requestJson<unknown>(baseUrl, "/api/runtime/scene-assessments", {
           method: "POST",
           body: JSON.stringify({
             task_spec_id: payload.taskSpecId,
@@ -1136,8 +1136,8 @@ function createFetchClient(baseUrl: string): DesktopApiClient {
           }),
         }),
       ),
-    listRuntimeTemplates: async () => asArray(await requestJson<unknown>(baseUrl, "/api/runtime/templates")).map(normalizeRuntimeTemplate),
-    listRuntimePatches: async () => asArray(await requestJson<unknown>(baseUrl, "/api/runtime/workflow-patches")).map(normalizeRuntimePatch),
+    listRuntimeTemplates: async () => asArray(await requestJson<unknown>(baseUrl, "/api/runtime/workflow-versions")).map(normalizeRuntimeTemplate),
+    listRuntimePatches: async () => asArray(await requestJson<unknown>(baseUrl, "/api/runtime/workflow-adjustments")).map(normalizeRuntimePatch),
     listRuntimeReplans: async () => {
       const payload = await requestOptionalJson<unknown>(baseUrl, "/api/runtime/replans");
       return payload ? asArray(payload).map(normalizeRuntimeReplanResult) : [];
@@ -1179,14 +1179,14 @@ function createFetchClient(baseUrl: string): DesktopApiClient {
       ),
     approveRuntimePatch: async (id, reason) =>
       normalizeRuntimePatch(
-        await requestJson<unknown>(baseUrl, `/api/runtime/workflow-patches/${id}/approve`, {
+        await requestJson<unknown>(baseUrl, `/api/runtime/workflow-adjustments/${id}/approve`, {
           method: "POST",
           body: JSON.stringify({ reviewer: "desktop-user", reason, apply_immediately: true }),
         }),
       ),
     rejectRuntimePatch: async (id, reason) =>
       normalizeRuntimePatch(
-        await requestJson<unknown>(baseUrl, `/api/runtime/workflow-patches/${id}/reject`, {
+        await requestJson<unknown>(baseUrl, `/api/runtime/workflow-adjustments/${id}/reject`, {
           method: "POST",
           body: JSON.stringify({ reviewer: "desktop-user", reason }),
         }),

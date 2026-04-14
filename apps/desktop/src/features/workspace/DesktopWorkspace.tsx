@@ -1,5 +1,5 @@
 import React, { startTransition, useEffect, useMemo, useState } from "react";
-import { Panel, Sidebar, TopBar } from "../../components";
+import { Sidebar, TopBar } from "../../components";
 import { apiClient } from "../../lib/api";
 import { useI18n } from "../../lib/i18n";
 import { desktopAgentQueueMock, desktopMockSnapshot, desktopReplayMockByEpisode, desktopRuntimeMock, desktopSyncBacklogMock, desktopSyncStatusMock } from "../../lib/mockData";
@@ -18,14 +18,12 @@ import type {
   SyncStatusSnapshot,
   WorkspaceTab,
 } from "../../lib/types";
-import { AgentMonitorView } from "../agent-monitor/AgentMonitorView";
 import { ApprovalsView } from "../approvals/ApprovalsView";
 import { DashboardView } from "../dashboard/DashboardView";
-import { CandidatesView } from "../candidates/CandidatesView";
 import { SettingsView } from "../settings/SettingsView";
 import { SkillsView } from "../skills/SkillsView";
-import { RuntimeControlView } from "../runtime/RuntimeControlView";
-import { WorkflowsView } from "../workflows/WorkflowsView";
+import { WorkflowManagementView } from "../workflow-management/WorkflowManagementView";
+import { WorkbenchView } from "../workbench/WorkbenchView";
 
 function prependUniqueById<T extends { id: string }>(preferred: T[], fallback: T[]): T[] {
   const seen = new Set<string>();
@@ -245,17 +243,48 @@ export function DesktopWorkspace(): JSX.Element {
   const counts = useMemo(
     () =>
       ({
-        runtime: runtimeData.taskSpecs.length,
-        trials: runtimeData.episodes.filter((episode) => episode.status !== "confirmed").length,
-        templates: runtimeData.templates.length,
-        patches: runtimeData.patches.filter((patch) => patch.status === "pending_review").length,
-        domains: runtimeData.domainPacks.length,
-        recruiting: summary.candidates.length,
+        "workflow-management": runtimeData.taskSpecs.length,
+        workbench: runtimeData.episodes.filter((episode) => /(pending|running|awaiting_review)/i.test(episode.status)).length,
         skills: summary.skills.filter((skill) => skill.status !== "active").length,
         approvals: summary.approvals.filter((approval) => approval.status === "pending").length,
-        monitor: summary.agent.queueDepth,
       }) satisfies Partial<Record<WorkspaceTab, number>>,
     [runtimeData, summary],
+  );
+
+  const sectionMeta = useMemo(
+    (): Record<WorkspaceTab, { eyebrow: string; title: string; description: string }> => ({
+      dashboard: {
+        eyebrow: copy("ScenePilot", "ScenePilot"),
+        title: copy("Overview", "概览"),
+        description: copy("A concise global view of health, approvals, and cross-workflow movement.", "集中查看健康状态、审批情况和跨工作流的整体变化。"),
+      },
+      "workflow-management": {
+        eyebrow: copy("Workflow lifecycle", "工作流生命周期"),
+        title: copy("Workflow management", "工作流管理"),
+        description: copy("Create workflows, shape scene profiles, run trials, review revisions, and release reusable versions.", "创建工作流、整理场景画像、执行试跑、审查修订建议，并发布可复用版本。"),
+      },
+      workbench: {
+        eyebrow: copy("Live operations", "实时运营"),
+        title: copy("Workbench", "工作台"),
+        description: copy("Inspect each workflow and its workflow instances with workflow-specific operational views.", "查看每条工作流及其工作流实例，并进入该工作流的专属工作台视图。"),
+      },
+      skills: {
+        eyebrow: copy("Skill governance", "Skill 治理"),
+        title: copy("Skills", "Skills"),
+        description: copy("Track Skills approval, health, and evolution across released workflows.", "查看 Skills 在已发布工作流中的审批、健康状态和演进情况。"),
+      },
+      approvals: {
+        eyebrow: copy("Human gates", "人工关卡"),
+        title: copy("Approvals", "审批中心"),
+        description: copy("Review approvals before workflow versions, revision suggestions, or sensitive actions go live.", "在工作流版本、修订建议或敏感动作生效前完成审批。"),
+      },
+      settings: {
+        eyebrow: copy("Local operator settings", "本地操作设置"),
+        title: copy("Settings", "设置"),
+        description: copy("Manage providers, local sync behavior, and operator controls for this machine.", "管理本机的 provider、本地同步行为和操作员控制项。"),
+      },
+    }),
+    [copy],
   );
 
   const handleApprove = async (id: string) => {
@@ -549,15 +578,11 @@ export function DesktopWorkspace(): JSX.Element {
     switch (tab) {
       case "dashboard":
         return <DashboardView summary={summary} />;
-      case "runtime":
-      case "trials":
-      case "templates":
-      case "patches":
-      case "domains":
+      case "workflow-management":
         return (
-          <RuntimeControlView
-            mode={tab}
+          <WorkflowManagementView
             data={runtimeData}
+            approvals={summary.approvals}
             busy={runtimeActionBusy}
             busyEpisodeId={busyEpisodeId}
             selectedEpisodeId={selectedEpisodeId}
@@ -580,42 +605,13 @@ export function DesktopWorkspace(): JSX.Element {
             onRejectPatch={handleRejectPatch}
           />
         );
-      case "recruiting":
+      case "workbench":
         return (
-          <div style={{ display: "grid", gap: "18px" }}>
-            <Panel
-              title={copy("Candidates", "候选人")}
-              eyebrow={copy("Recruiting Domain Pack", "招聘领域包")}
-              description={copy("Candidate pipeline and profile summaries remain available as a domain-specific operator view.", "候选人流水线和档案摘要仍作为领域化操作视图保留。")}
-            >
-              <CandidatesView candidates={summary.candidates} />
-            </Panel>
-            <Panel
-              title={copy("Workflows", "工作流")}
-              eyebrow={copy("Recruiting Templates", "招聘模板")}
-              description={copy("Existing recruiting workflows remain available while the core product moves to dynamic runtime planning.", "在核心产品转向动态运行时规划的同时，现有招聘工作流仍可继续使用。")}
-            >
-              <WorkflowsView workflows={summary.workflows} />
-            </Panel>
-          </div>
-        );
-      case "skills":
-        return <SkillsView skills={summary.skills} />;
-      case "approvals":
-        return (
-          <ApprovalsView
-            approvals={summary.approvals}
-            pendingActionId={approvalActionId}
-            onApprove={handleApprove}
-            onReject={handleReject}
-          />
-        );
-      case "monitor":
-        return (
-          <AgentMonitorView
+          <WorkbenchView
+            summary={summary}
+            data={runtimeData}
             agent={summary.agent}
             events={events}
-            episodes={runtimeData.episodes}
             selectedEpisodeId={selectedEpisodeId}
             replay={selectedReplay}
             syncStatus={syncStatus}
@@ -627,6 +623,17 @@ export function DesktopWorkspace(): JSX.Element {
             onQueueScreeningTask={handleQueueScreeningTask}
             onFlushSync={handleFlushSync}
             onSelectEpisode={handleInspectEpisode}
+          />
+        );
+      case "skills":
+        return <SkillsView skills={summary.skills} />;
+      case "approvals":
+        return (
+          <ApprovalsView
+            approvals={summary.approvals}
+            pendingActionId={approvalActionId}
+            onApprove={handleApprove}
+            onReject={handleReject}
           />
         );
       case "settings":
@@ -641,9 +648,9 @@ export function DesktopWorkspace(): JSX.Element {
       style={{
         minHeight: "100vh",
         display: "grid",
-        gridTemplateColumns: "280px minmax(0, 1fr)",
+        gridTemplateColumns: "248px minmax(0, 1fr)",
         background:
-          "radial-gradient(circle at top left, rgba(122,167,255,0.20), transparent 34%), radial-gradient(circle at bottom right, rgba(93,216,163,0.12), transparent 28%), linear-gradient(180deg, #070b16 0%, #0b1020 100%)",
+          "linear-gradient(180deg, #0a101a 0%, #0d1320 100%)",
         color: theme.colors.text,
       }}
     >
@@ -653,6 +660,9 @@ export function DesktopWorkspace(): JSX.Element {
           agent={summary.agent}
           settings={summary.settings}
           transport={transport}
+          sectionEyebrow={sectionMeta[tab].eyebrow}
+          sectionTitle={sectionMeta[tab].title}
+          sectionDescription={sectionMeta[tab].description}
           onRefresh={() => void loadWorkspace("Manual refresh completed.")}
           refreshing={refreshing}
         />

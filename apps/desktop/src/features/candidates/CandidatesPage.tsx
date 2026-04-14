@@ -33,7 +33,7 @@ export function CandidatesPage() {
 
   if (loading && candidates.length === 0) {
     return (
-      <Panel title={copy("Candidate pipeline", "候选人流水线")} eyebrow={copy("Recruiting scene", "招聘场景")} description={copy("Loading candidates from the local backend...", "正在从本地后端加载候选人...")}>
+      <Panel title={copy("Candidate pipeline", "候选人流水线")} eyebrow={copy("Recruiting workbench", "招聘工作台")} description={copy("Loading candidates from the local backend...", "正在从本地后端加载候选人...")}>
         <div style={{ color: "rgba(233,239,255,0.72)", fontSize: "14px" }}>{copy("Synchronizing workspace state.", "正在同步工作区状态。")}</div>
       </Panel>
     );
@@ -44,7 +44,7 @@ export function CandidatesPage() {
       {error ? (
         <Panel
           title={copy("Candidate pipeline", "候选人流水线")}
-          eyebrow={copy("Recruiting scene", "招聘场景")}
+          eyebrow={copy("Recruiting workbench", "招聘工作台")}
           description={copy("The desktop client could not refresh from the backend.", "桌面客户端无法从后端刷新数据。")}
           actions={<StatusBadge tone="critical">error</StatusBadge>}
         >

@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
+from ipaddress import ip_address
 from dataclasses import dataclass, field
 from typing import Any, Callable, Protocol
 from urllib.error import HTTPError, URLError
-from urllib.parse import urljoin
-from urllib.request import Request, urlopen
+from urllib.parse import urljoin, urlparse
+from urllib.request import ProxyHandler, Request, build_opener, urlopen
 
 from .models import LLMResponse, Message
 
@@ -266,7 +267,7 @@ def _post_json(url: str, payload: dict[str, Any], *, headers: dict[str, str], ti
     body = json.dumps(payload).encode("utf-8")
     request = Request(url, data=body, headers=headers, method="POST")
     try:
-        with urlopen(request, timeout=timeout_seconds) as response:  # type: ignore[arg-type]
+        with _open_url(request, url=url, timeout_seconds=timeout_seconds) as response:  # type: ignore[arg-type]
             return _read_json_response(response)
     except HTTPError as exc:
         error_body = exc.read().decode("utf-8", errors="replace")
@@ -274,6 +275,25 @@ def _post_json(url: str, payload: dict[str, Any], *, headers: dict[str, str], ti
         raise ProviderError(f"HTTP {exc.code} calling {url}: {message}") from exc
     except URLError as exc:
         raise ProviderError(f"Transport error calling {url}: {exc.reason}") from exc
+
+
+def _open_url(request: Request, *, url: str, timeout_seconds: int) -> Any:
+    if _should_bypass_proxies(url):
+        opener = build_opener(ProxyHandler({}))
+        return opener.open(request, timeout=timeout_seconds)
+    return urlopen(request, timeout=timeout_seconds)
+
+
+def _should_bypass_proxies(url: str) -> bool:
+    hostname = (urlparse(url).hostname or "").strip().lower()
+    if not hostname:
+        return False
+    if hostname == "localhost":
+        return True
+    try:
+        return ip_address(hostname).is_loopback
+    except ValueError:
+        return False
 
 
 def _read_json_response(response: Any) -> dict[str, Any]:
