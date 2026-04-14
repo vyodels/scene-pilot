@@ -1,21 +1,23 @@
 appId: com.recruitagent.desktop
 productName: Recruit Agent
+electronDist: ../../.release/electron-dist
 directories:
   output: dist/packages
-  buildResources: apps/desktop
+  buildResources: .
 files:
-  - from: apps/desktop/dist-renderer
+  - package.json
+  - from: dist-renderer
     to: dist-renderer
-  - from: apps/desktop/dist-electron
+  - from: dist-electron
     to: dist-electron
 extraMetadata:
   main: dist-electron/electron/main.js
 extraResources:
-  - from: .release/backend-src
+  - from: ../../.release/backend-src
     to: backend-src/src
-  - from: .release/backend-pyproject/pyproject.toml
+  - from: ../../.release/backend-pyproject/pyproject.toml
     to: backend-src/pyproject.toml
-  - from: .release/backend-dist
+  - from: ../../.release/backend-dist
     to: backend-dist
     filter:
       - "**/*"

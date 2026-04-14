@@ -6,7 +6,9 @@ import url from "node:url";
 const scriptDir = path.dirname(url.fileURLToPath(import.meta.url));
 const rootDir = path.resolve(scriptDir, "..");
 const releaseDir = path.join(rootDir, ".release");
-const electronPackageJsonPath = path.join(rootDir, "node_modules", "electron", "package.json");
+const desktopDir = path.join(rootDir, "apps", "desktop");
+const electronPackageJsonPath = path.join(desktopDir, "node_modules", "electron", "package.json");
+const stagedElectronDistPath = path.join(releaseDir, "electron-dist");
 const rendererEntryPath = path.join(rootDir, "apps", "desktop", "dist-renderer", "index.html");
 const electronMainPath = path.join(rootDir, "apps", "desktop", "dist-electron", "electron", "main.js");
 const stagedBackendSourcePath = path.join(releaseDir, "backend-src", "recruit_agent");
@@ -44,16 +46,25 @@ async function inspectElectronInstall() {
     : process.platform === "win32"
       ? path.join(electronModuleDir, "dist", "electron.exe")
       : path.join(electronModuleDir, "dist", "electron");
+  const packagedBinaryPresent = await pathExists(packagedBinary);
 
-  if (!(await pathExists(packagedBinary))) {
+  const stagedBinary = process.platform === "darwin"
+    ? path.join(stagedElectronDistPath, "Electron.app", "Contents", "MacOS", "Electron")
+    : process.platform === "win32"
+      ? path.join(stagedElectronDistPath, "electron.exe")
+      : path.join(stagedElectronDistPath, "electron");
+
+  if (!(await pathExists(stagedBinary))) {
     throw new Error(
-      `Electron runtime binary is missing for electron@${packageVersion ?? "unknown"}. Reinstall with scripts enabled on a machine with registry access.`,
+      `Staged Electron runtime is missing at ${path.relative(rootDir, stagedBinary)}. Run \`npm run desktop:release:prepare\` first.`,
     );
   }
 
   return {
     packageVersion: packageVersion ?? "unknown",
-    packagedBinary,
+    packagedBinary: packagedBinaryPresent ? packagedBinary : null,
+    packagedBinaryPresent,
+    stagedBinary,
   };
 }
 
@@ -78,7 +89,9 @@ async function main() {
         ok: true,
         mode,
         electronVersion: electron.packageVersion,
-        electronBinary: path.relative(rootDir, electron.packagedBinary),
+        electronBinary: electron.packagedBinary ? path.relative(rootDir, electron.packagedBinary) : null,
+        electronBinaryPresent: electron.packagedBinaryPresent,
+        stagedElectronBinary: path.relative(rootDir, electron.stagedBinary),
         stagedBackendDistDirectory: path.relative(rootDir, stagedBackendDistPath),
         stagedBackendDistPresent: stagedBackendDistStats.isDirectory(),
       },
