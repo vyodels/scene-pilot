@@ -12,6 +12,11 @@ from recruit_agent.services.container import AppContainer
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
 
+def _runtime_scene_account(settings: AppSettings) -> str:
+    provider_config = settings.provider_config or {}
+    return str(provider_config.get("site_account") or provider_config.get("boss_account") or "runtime-scene-01")
+
+
 def _to_desktop_settings(settings: AppSettings) -> SettingsSnapshotRead:
     return SettingsSnapshotRead.model_validate(
         {
@@ -47,8 +52,8 @@ def _to_desktop_settings(settings: AppSettings) -> SettingsSnapshotRead:
                 "timeoutSeconds": settings.intranet_sync.timeout_seconds,
             },
             "platform": {
-                "name": "Recruiting site",
-                "account": settings.provider_config.get("boss_account", "recruiter-01"),
+                "name": "Runtime scene profile",
+                "account": _runtime_scene_account(settings),
                 "cooldownDays": settings.provider_config.get("cooldown_days", 30),
                 "allowOutboundMessaging": settings.feature_flags.enable_outbound_messaging,
             },
@@ -93,7 +98,7 @@ def update_settings(
         platform_data = payload.platform.model_dump(exclude_none=True)
         provider_config = data.setdefault("provider_config", {})
         if "account" in platform_data:
-            provider_config["boss_account"] = platform_data["account"]
+            provider_config["site_account"] = platform_data["account"]
         if "cooldownDays" in platform_data:
             provider_config["cooldown_days"] = platform_data["cooldownDays"]
         if "allowOutboundMessaging" in platform_data:

@@ -23,7 +23,7 @@ class AppSettingsBase(BaseModel):
     database_echo: bool = False
     scheduler_lock_timeout_seconds: int = 300
     approval_source: str = "desktop_app"
-    default_platform: str = "boss"
+    default_platform: str = "site"
     feature_flags: FeatureFlags = Field(default_factory=FeatureFlags)
     provider_config: dict[str, Any] = Field(default_factory=dict)
     intranet_sync: dict[str, Any] = Field(default_factory=dict)
@@ -51,7 +51,7 @@ class AppSettingsUpdate(BaseModel):
 
 class CandidateBase(BaseModel):
     name: str
-    platform: str = "boss"
+    platform: str = "site"
     platform_candidate_id: str | None = None
     status: str = "discovered"
     current_workflow_node: str | None = None
@@ -461,7 +461,7 @@ class SkillBase(BaseModel):
     version: int = 1
     status: str = "draft"
     bound_to_workflow_node: str | None = None
-    platform: str = "boss"
+    platform: str = "site"
     strategy: dict[str, Any] = Field(default_factory=dict)
     execution_hints: dict[str, Any] = Field(default_factory=dict)
     health_check_config: dict[str, Any] = Field(default_factory=dict)

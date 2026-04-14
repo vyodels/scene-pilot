@@ -31,6 +31,11 @@ def _sync_setting(settings: AppSettings, key: str, default: Any = None) -> Any:
     return getattr(sync_settings, key, default)
 
 
+def _runtime_scene_account(settings: AppSettings) -> str:
+    provider_config = settings.provider_config or {}
+    return str(provider_config.get("site_account") or provider_config.get("boss_account") or "runtime-scene-01")
+
+
 def _workflow_nodes_for_dashboard(config: dict[str, Any]) -> list[dict[str, Any]]:
     raw_nodes = config.get("nodes") or []
     normalized: list[dict[str, Any]] = []
@@ -291,8 +296,8 @@ class DashboardService:
                     "timeoutSeconds": _sync_setting(settings, "timeout_seconds", 10),
                 },
                 "platform": {
-                    "name": "Recruiting site",
-                    "account": settings.provider_config.get("boss_account", "recruiter-01"),
+                    "name": "Runtime scene profile",
+                    "account": _runtime_scene_account(settings),
                     "cooldownDays": settings.provider_config.get("cooldown_days", 30),
                     "allowOutboundMessaging": settings.feature_flags.enable_outbound_messaging,
                 },

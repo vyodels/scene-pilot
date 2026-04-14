@@ -119,7 +119,7 @@ class ProviderTests(unittest.TestCase):
         self.assertEqual(runtime_settings.anthropic_base_url, "https://example.com/anthropic")
         self.assertEqual(runtime_settings.anthropic_api_key, "test-anthropic-key")
         self.assertEqual(runtime_settings.anthropic_timeout_seconds, 17)
-        self.assertEqual(runtime_settings.boss_account, "boss-02")
+        self.assertEqual(runtime_settings.site_account, "boss-02")
         self.assertEqual(runtime_settings.cooldown_days, 21)
 
     def test_openai_default_transport_posts_expected_payload(self) -> None:

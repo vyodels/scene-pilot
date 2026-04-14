@@ -369,7 +369,7 @@ class SkillRepository(BaseRepository[Skill]):
             Skill.bound_to_workflow_node == workflow_node_id,
         )
         if platform:
-            stmt = stmt.where(Skill.platform.in_((platform, platform.lower(), platform.upper(), "boss", "Boss直聘")))
+            stmt = stmt.where(Skill.platform.in_((platform, platform.lower(), platform.upper(), "site", "boss", "Boss直聘")))
         stmt = stmt.order_by(Skill.updated_at.desc(), Skill.id.asc())
         return list(self.session.scalars(stmt).all())
 

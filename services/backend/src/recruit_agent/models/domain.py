@@ -14,7 +14,7 @@ class Candidate(Base, TimestampMixin):
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=generate_id)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
-    platform: Mapped[str] = mapped_column(String(64), nullable=False, default="boss", index=True)
+    platform: Mapped[str] = mapped_column(String(64), nullable=False, default="site", index=True)
     platform_candidate_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     status: Mapped[str] = mapped_column(String(64), nullable=False, default="discovered", index=True)
     current_workflow_node: Mapped[str | None] = mapped_column(String(128), nullable=True)
@@ -50,7 +50,7 @@ class CommunicationLog(Base):
     direction: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     message_type: Mapped[str] = mapped_column(String(32), nullable=False, default="text")
-    platform: Mapped[str] = mapped_column(String(64), nullable=False, default="boss", index=True)
+    platform: Mapped[str] = mapped_column(String(64), nullable=False, default="site", index=True)
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
@@ -257,7 +257,7 @@ class Skill(Base, TimestampMixin):
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="draft", index=True)
     bound_to_workflow_node: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
-    platform: Mapped[str] = mapped_column(String(64), nullable=False, default="boss", index=True)
+    platform: Mapped[str] = mapped_column(String(64), nullable=False, default="site", index=True)
     strategy: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     execution_hints: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     health_check_config: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)

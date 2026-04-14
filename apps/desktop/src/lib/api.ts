@@ -134,8 +134,8 @@ function normalizeSettings(raw: unknown): SettingsSnapshot {
       timeoutSeconds: Number(intranetSync.timeoutSeconds ?? intranetSync.timeout_seconds ?? 15),
     },
     platform: {
-      name: String(platform.name ?? "Recruiting site"),
-      account: String(platform.account ?? "recruiter-01"),
+      name: String(platform.name ?? "Runtime scene profile"),
+      account: String(platform.account ?? "runtime-scene-01"),
       cooldownDays: Number(platform.cooldownDays ?? platform.cooldown_days ?? 30),
       allowOutboundMessaging: Boolean(platform.allowOutboundMessaging ?? platform.allow_outbound_messaging ?? false),
     },

@@ -9,11 +9,11 @@ class CandidateSnapshot:
     candidate_id: str
     name: str | None = None
     status: str | None = None
-    source: str = "boss"
+    source: str = "site"
     raw: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def from_payload(cls, payload: dict[str, Any] | "CandidateSnapshot", *, default_source: str = "boss") -> "CandidateSnapshot":
+    def from_payload(cls, payload: dict[str, Any] | "CandidateSnapshot", *, default_source: str = "site") -> "CandidateSnapshot":
         if isinstance(payload, cls):
             return payload
 
@@ -40,7 +40,7 @@ class CandidateSnapshot:
         )
 
 
-class PlatformAdapter(Protocol):
+class SiteEnvironmentAdapter(Protocol):
     platform_name: str
 
     def healthcheck(self) -> bool: ...
@@ -58,3 +58,6 @@ class PlatformAdapter(Protocol):
     def archive_candidate(self, candidate_id: str, reason: str) -> dict[str, Any]: ...
 
     def check_cooldown(self, candidate_id: str) -> bool: ...
+
+
+PlatformAdapter = SiteEnvironmentAdapter

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import sys
 import tempfile
@@ -17,6 +18,15 @@ except ModuleNotFoundError:
     TestClient = None  # type: ignore[assignment]
 
 
+class _StaticProvider:
+    def __init__(self, provider_name: str, response) -> None:
+        self.provider_name = provider_name
+        self._response = response
+
+    def generate(self, messages, *, tools=None, task=None, max_tokens=None, temperature=None):
+        return self._response
+
+
 @unittest.skipIf(TestClient is None, "FastAPI test dependencies are not installed")
 class ApiRuntimeTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -28,6 +38,7 @@ class ApiRuntimeTests(unittest.TestCase):
         load_settings.cache_clear()
         self.client = TestClient(create_app())
         self.client.__enter__()
+        self.container = self.client.app.state.container
         self._load_settings = load_settings
 
     def tearDown(self) -> None:
@@ -128,6 +139,66 @@ class ApiRuntimeTests(unittest.TestCase):
             },
         )
         self.assertEqual(missing_plan.status_code, 404)
+
+    def test_task_compile_prefers_llm_semantic_compiler_when_provider_returns_valid_json(self) -> None:
+        from recruit_agent.runtime.models import LLMResponse
+
+        self.container.providers.providers["openai_compatible"] = _StaticProvider(
+            "openai_compatible",
+            LLMResponse(
+                content=json.dumps(
+                    {
+                        "title": "Daily market-moving headlines",
+                        "description": "Compile a fresh digest of market-moving news.",
+                        "goal": "Collect the newest stock-market headlines, compare sources, and publish a concise digest.",
+                        "domain": "market_news",
+                        "constraints": {"requires_source_links": True},
+                        "success_criteria": {"minimum_sources": 4, "include_market_impact": True},
+                        "approval_policy": {"mode": "desktop_review"},
+                        "output_contract": {"kind": "news_digest", "format": "bullet_summary"},
+                        "preferred_capabilities": ["search", "browser", "document", "llm"],
+                        "preferred_domains": ["market_news", "general"],
+                        "compiler_notes": ["Detected a source-comparison and summarization task."],
+                    }
+                )
+            ),
+        )
+        self.container.providers.fallback_order = ["openai_compatible", "scripted_default"]
+
+        compiled_task = self.client.post(
+            "/api/runtime/task-specs/compile",
+            json={
+                "instruction": "Find today's most important stock market news and turn it into a short digest with sources.",
+            },
+        )
+        self.assertEqual(compiled_task.status_code, 201)
+        payload = compiled_task.json()
+        self.assertEqual(payload["domain_pack"]["key"], "market_news")
+        self.assertEqual(payload["task_spec"]["compiled_payload"]["compiler"], "llm_structured")
+        self.assertEqual(payload["execution_plan"]["runtime_metadata"]["compiler"], "llm_structured")
+        self.assertIn("openai_compatible", "\n".join(payload["compiler_notes"]))
+
+    def test_task_compile_falls_back_to_heuristic_when_llm_output_is_invalid(self) -> None:
+        from recruit_agent.runtime.models import LLMResponse
+
+        self.container.providers.providers["openai_compatible"] = _StaticProvider(
+            "openai_compatible",
+            LLMResponse(content="This is not valid JSON."),
+        )
+        self.container.providers.fallback_order = ["openai_compatible", "scripted_default"]
+
+        compiled_task = self.client.post(
+            "/api/runtime/task-specs/compile",
+            json={
+                "instruction": "Open GitHub trending and prepare a repository digest.",
+            },
+        )
+        self.assertEqual(compiled_task.status_code, 201)
+        payload = compiled_task.json()
+        self.assertEqual(payload["domain_pack"]["key"], "github_trends")
+        self.assertEqual(payload["task_spec"]["compiled_payload"]["compiler"], "heuristic")
+        self.assertIn("failed", "\n".join(payload["compiler_notes"]).lower())
+        self.assertIn("fell back", "\n".join(payload["compiler_notes"]).lower())
 
     def test_templates_and_workflow_patch_review_scaffold(self) -> None:
         created_task = self.client.post(

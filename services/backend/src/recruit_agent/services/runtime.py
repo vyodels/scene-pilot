@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlparse
 
-from pydantic import AliasChoices, BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field, ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -50,6 +51,9 @@ from recruit_agent.schemas import (
     WorkflowTemplateRead,
     WorkflowTemplateUpdate,
 )
+from recruit_agent.runtime.models import Message
+from recruit_agent.runtime.providers import ProviderError, ProviderRegistry, ScriptedProvider
+from recruit_agent.runtime.prompts import PromptBuilder
 from recruit_agent.services.skills import SkillHealthCheckService
 
 
@@ -113,6 +117,46 @@ DOMAIN_PACKS: dict[str, dict[str, Any]] = {
         "default_constraints": {"requires_source_links": True},
         "default_output_contract": {"kind": "repository_digest", "format": "table"},
         "template_keys": ["github_trends_digest"],
+    },
+}
+
+
+CAPABILITY_DRIVERS: dict[str, dict[str, Any]] = {
+    "analyze": {
+        "description": "Reason about a task, compare evidence, or decide the next step without changing the environment.",
+        "risk": "low",
+    },
+    "browser": {
+        "description": "Observe or interact with websites and web apps as runtime scenes.",
+        "risk": "medium",
+    },
+    "search": {
+        "description": "Discover relevant targets, sources, candidates, or options across search surfaces.",
+        "risk": "low",
+    },
+    "http": {
+        "description": "Call structured HTTP or API endpoints to read or write machine-facing data.",
+        "risk": "medium",
+    },
+    "document": {
+        "description": "Draft, summarize, or format durable output artifacts.",
+        "risk": "low",
+    },
+    "api": {
+        "description": "Write structured data into a downstream system or service.",
+        "risk": "high",
+    },
+    "command": {
+        "description": "Run local system commands under approval and policy controls.",
+        "risk": "high",
+    },
+    "llm": {
+        "description": "Delegate reasoning, synthesis, or classification to the language model runtime.",
+        "risk": "low",
+    },
+    "approval": {
+        "description": "Pause for a human review or approval checkpoint.",
+        "risk": "low",
     },
 }
 
@@ -239,38 +283,179 @@ class CompilePlanRequest(BaseModel):
     steps: list[dict[str, Any]] = Field(default_factory=list)
 
 
+class SemanticTaskCompileDraft(BaseModel):
+    title: str | None = None
+    description: str | None = None
+    goal: str
+    domain: str = "general"
+    inputs: dict[str, Any] = Field(default_factory=dict)
+    constraints: dict[str, Any] = Field(default_factory=dict)
+    success_criteria: dict[str, Any] = Field(default_factory=dict)
+    approval_policy: dict[str, Any] = Field(default_factory=dict)
+    output_contract: dict[str, Any] = Field(default_factory=dict)
+    preferred_capabilities: list[str] = Field(default_factory=list)
+    preferred_domains: list[str] = Field(default_factory=list)
+    environment_requirements: dict[str, Any] = Field(default_factory=dict)
+    checkpoints: list[dict[str, Any]] = Field(default_factory=list)
+    step_outline: list[dict[str, Any]] = Field(default_factory=list)
+    compiler_notes: list[str] = Field(default_factory=list)
+
+
+@dataclass(slots=True)
+class CompiledTaskDraft:
+    task_spec: TaskSpecCreate
+    domain_key: str
+    compiler_name: str
+    compiler_notes: list[str]
+
+
 @dataclass(slots=True)
 class PersistedRuntimeService:
     session: Session
+    providers: ProviderRegistry | None = None
+    prompt_builder: PromptBuilder = field(default_factory=PromptBuilder)
 
     def list_domain_packs(self) -> list[DomainPackRead]:
         return [self._domain_pack_read(key, config) for key, config in DOMAIN_PACKS.items()]
 
     def compile_task(self, payload: TaskCompileRequest) -> TaskCompileResponse:
-        domain_key, domain_config, notes = self._resolve_domain_pack(
+        compiled = self._compile_task_spec(payload)
+        domain_config = DOMAIN_PACKS[compiled.domain_key]
+        task = self.create_task_spec(compiled.task_spec)
+
+        plan = None
+        if payload.auto_plan:
+            plan = self.compile_plan(
+                CompilePlanRequest(
+                    task_spec_id=task.id,
+                    name=f"{task.title} Trial Plan",
+                    mode="trial",
+                    status="planned",
+                    compiled_from_instruction=payload.instruction,
+                    runtime_metadata={
+                        "compiler": compiled.compiler_name,
+                        "requested_by": payload.requested_by,
+                    },
+                )
+            )
+            task_repo = TaskSpecRepository(self.session)
+            task_model = task_repo.get(task.id)
+            if task_model is not None:
+                task = TaskSpecRead.model_validate(
+                    task_repo.update(
+                        task_model,
+                        {"active_plan_id": plan.id, "status": "trial_ready"},
+                    )
+                )
+
+        return TaskCompileResponse(
+            domain_pack=self._domain_pack_read(compiled.domain_key, domain_config),
+            compiler_notes=compiled.compiler_notes,
+            task_spec=task,
+            execution_plan=plan,
+        )
+
+    def _compile_task_spec(self, payload: TaskCompileRequest) -> CompiledTaskDraft:
+        llm_draft = self._compile_task_spec_with_llm(payload)
+        if llm_draft is not None:
+            return llm_draft
+        return self._compile_task_spec_heuristic(payload)
+
+    def _compile_task_spec_with_llm(self, payload: TaskCompileRequest) -> CompiledTaskDraft | None:
+        if self.providers is None:
+            return None
+
+        errors: list[str] = []
+        for provider_name in self._semantic_compiler_provider_names():
+            provider = self.providers.providers.get(provider_name)
+            if provider is None:
+                continue
+            response = None
+            try:
+                compile_messages = self._build_semantic_compile_messages(payload)
+                response = provider.generate(
+                    compile_messages,
+                    task={
+                        "task_type": "semantic_task_compile",
+                        "instruction": payload.instruction,
+                        "output_schema": "SemanticTaskCompileDraft",
+                    },
+                    max_tokens=1_400,
+                    temperature=0.1,
+                )
+                draft = self._parse_semantic_compile_response(response)
+                compiler_notes = list(draft.compiler_notes or [])
+                compiler_notes.append(f"Semantic task compiler succeeded via provider: {provider_name}.")
+                return self._materialize_compiled_task_draft(
+                    payload=payload,
+                    draft=draft,
+                    compiler_name="llm_structured",
+                    compiler_notes=compiler_notes,
+                    provider_name=provider_name,
+                )
+            except (ValidationError, ValueError, json.JSONDecodeError) as exc:
+                if response is None:
+                    errors.append(f"LLM semantic compiler via {provider_name} failed: {exc}.")
+                    continue
+                try:
+                    repaired_response = provider.generate(
+                        self._build_semantic_compile_repair_messages(payload, response, str(exc)),
+                        task={
+                            "task_type": "semantic_task_compile_repair",
+                            "instruction": payload.instruction,
+                            "output_schema": "SemanticTaskCompileDraft",
+                        },
+                        max_tokens=1_400,
+                        temperature=0.0,
+                    )
+                    draft = self._parse_semantic_compile_response(repaired_response)
+                    compiler_notes = list(draft.compiler_notes or [])
+                    compiler_notes.append(
+                        f"Semantic task compiler succeeded via provider: {provider_name} after one repair pass."
+                    )
+                    return self._materialize_compiled_task_draft(
+                        payload=payload,
+                        draft=draft,
+                        compiler_name="llm_structured",
+                        compiler_notes=compiler_notes,
+                        provider_name=provider_name,
+                    )
+                except (ProviderError, ValidationError, ValueError, json.JSONDecodeError) as repair_exc:
+                    errors.append(
+                        f"LLM semantic compiler via {provider_name} failed initial validation ({exc}) "
+                        f"and repair ({repair_exc})."
+                    )
+            except ProviderError as exc:
+                errors.append(f"LLM semantic compiler via {provider_name} failed: {exc}.")
+
+        if not errors:
+            return None
+        return self._compile_task_spec_heuristic(payload, notes=errors)
+
+    def _compile_task_spec_heuristic(
+        self,
+        payload: TaskCompileRequest,
+        *,
+        notes: list[str] | None = None,
+    ) -> CompiledTaskDraft:
+        compiler_notes = list(notes or [])
+        domain_key, domain_config, heuristic_notes = self._resolve_domain_pack(
             payload.domain_hint,
             payload.instruction,
             payload.preferred_domains,
         )
+        compiler_notes.extend(heuristic_notes)
         capabilities = self._infer_capabilities(payload.instruction, domain_key, payload.preferred_capabilities)
         constraints = self._merge_dicts(domain_config.get("default_constraints") or {}, payload.constraints)
         success_criteria = payload.success_criteria or self._default_success_criteria(domain_key)
-        approval_policy = payload.approval_policy or {
-            "mode": "desktop_review",
-            "trial_required": True,
-            "requires_confirmation_before_production": True,
-        }
-        output_contract = payload.output_contract or dict(domain_config.get("default_output_contract") or {})
-        compiled_payload = {
-            "task_key": self._slugify(payload.title or payload.instruction),
-            "compiler_notes": notes,
-            "domain_pack": domain_key,
-            "keyword_hits": self._keyword_hits(payload.instruction),
-            "requires_trial": True,
-        }
-
-        task = self.create_task_spec(
-            TaskSpecCreate(
+        approval_policy = self._merge_dicts(
+            self._default_approval_policy(payload.instruction, capabilities),
+            payload.approval_policy,
+        )
+        output_contract = self._merge_dicts(dict(domain_config.get("default_output_contract") or {}), payload.output_contract)
+        compiler_notes.append("Fell back to heuristic task compiler.")
+        return CompiledTaskDraft(
+            task_spec=TaskSpecCreate(
                 title=payload.title or self._derive_title(payload.instruction, domain_config["name"]),
                 description=payload.description or f"Compiled from natural language for {domain_config['name']}.",
                 goal=self._derive_goal(payload.instruction),
@@ -285,38 +470,278 @@ class PersistedRuntimeService:
                 output_contract=output_contract,
                 preferred_capabilities=capabilities,
                 preferred_domains=list(dict.fromkeys([domain_key, *payload.preferred_domains])),
-                compiled_payload=compiled_payload,
+                compiled_payload={
+                    "task_key": self._slugify(payload.title or payload.instruction),
+                    "compiler": "heuristic",
+                    "compiler_notes": compiler_notes,
+                    "domain_pack": domain_key,
+                    "keyword_hits": self._keyword_hits(payload.instruction),
+                    "requires_trial": True,
+                },
+            ),
+            domain_key=domain_key,
+            compiler_name="heuristic",
+            compiler_notes=compiler_notes,
+        )
+
+    def _materialize_compiled_task_draft(
+        self,
+        *,
+        payload: TaskCompileRequest,
+        draft: SemanticTaskCompileDraft,
+        compiler_name: str,
+        compiler_notes: list[str],
+        provider_name: str | None,
+    ) -> CompiledTaskDraft:
+        domain_key, domain_config, domain_notes = self._select_compiled_domain(
+            compiled_domain=draft.domain,
+            domain_hint=payload.domain_hint,
+            instruction=payload.instruction,
+            preferred_domains=payload.preferred_domains,
+        )
+        notes = [*compiler_notes, *domain_notes]
+        capabilities = self._select_compiled_capabilities(
+            compiled_capabilities=draft.preferred_capabilities,
+            instruction=payload.instruction,
+            domain_key=domain_key,
+            preferred_capabilities=payload.preferred_capabilities,
+        )
+        constraints = self._merge_dicts(domain_config.get("default_constraints") or {}, draft.constraints)
+        constraints = self._merge_dicts(constraints, payload.constraints)
+        success_criteria = self._merge_dicts(self._default_success_criteria(domain_key), draft.success_criteria)
+        success_criteria = self._merge_dicts(success_criteria, payload.success_criteria)
+        approval_policy = self._merge_dicts(self._default_approval_policy(payload.instruction, capabilities), draft.approval_policy)
+        approval_policy = self._merge_dicts(approval_policy, payload.approval_policy)
+        output_contract = self._merge_dicts(dict(domain_config.get("default_output_contract") or {}), draft.output_contract)
+        output_contract = self._merge_dicts(output_contract, payload.output_contract)
+        preferred_domains = list(
+            dict.fromkeys(
+                [
+                    domain_key,
+                    *[self._normalize_domain(item) for item in draft.preferred_domains],
+                    *payload.preferred_domains,
+                ]
             )
         )
 
-        plan = None
-        if payload.auto_plan:
-            plan = self.compile_plan(
-                CompilePlanRequest(
-                    task_spec_id=task.id,
-                    name=f"{task.title} Trial Plan",
-                    mode="trial",
-                    status="planned",
-                    compiled_from_instruction=payload.instruction,
-                    runtime_metadata={"compiler": "heuristic", "requested_by": payload.requested_by},
-                )
-            )
-            task_repo = TaskSpecRepository(self.session)
-            task_model = task_repo.get(task.id)
-            if task_model is not None:
-                task = TaskSpecRead.model_validate(
-                    task_repo.update(
-                        task_model,
-                        {"active_plan_id": plan.id, "status": "trial_ready"},
-                    )
-                )
+        title = payload.title or draft.title or self._derive_title(payload.instruction, domain_config["name"])
+        description = payload.description or draft.description or f"Semantically compiled for {domain_config['name']}."
+        goal = draft.goal.strip() if draft.goal.strip() else self._derive_goal(payload.instruction)
 
-        return TaskCompileResponse(
-            domain_pack=self._domain_pack_read(domain_key, domain_config),
+        return CompiledTaskDraft(
+            task_spec=TaskSpecCreate(
+                title=title,
+                description=description,
+                goal=goal,
+                domain=domain_key,
+                status="compiled",
+                source_kind="natural_language",
+                source_text=payload.instruction,
+                inputs=self._merge_dicts(draft.inputs, payload.inputs),
+                constraints=constraints,
+                success_criteria=success_criteria,
+                approval_policy=approval_policy,
+                output_contract=output_contract,
+                preferred_capabilities=capabilities,
+                preferred_domains=preferred_domains,
+                compiled_payload={
+                    "task_key": self._slugify(title or payload.instruction),
+                    "compiler": compiler_name,
+                    "compiler_provider": provider_name,
+                    "compiler_notes": notes,
+                    "domain_pack": domain_key,
+                    "requires_trial": True,
+                    "capability_catalog": list(CAPABILITY_DRIVERS.keys()),
+                    "environment_requirements": dict(draft.environment_requirements or {}),
+                    "checkpoints": list(draft.checkpoints or []),
+                    "step_outline": list(draft.step_outline or []),
+                },
+            ),
+            domain_key=domain_key,
+            compiler_name=compiler_name,
             compiler_notes=notes,
-            task_spec=task,
-            execution_plan=plan,
         )
+
+    def _semantic_compiler_provider_names(self) -> list[str]:
+        if self.providers is None:
+            return []
+        provider_names: list[str] = []
+        for provider_name in self.providers.fallback_order:
+            provider = self.providers.providers.get(provider_name)
+            if provider is None or isinstance(provider, ScriptedProvider):
+                continue
+            provider_names.append(provider_name)
+        return provider_names
+
+    def _build_semantic_compile_messages(self, payload: TaskCompileRequest) -> list[Message]:
+        domain_catalog = {
+            key: {
+                "description": value["description"],
+                "default_capabilities": value["default_capabilities"],
+                "default_constraints": value["default_constraints"],
+                "default_output_contract": value["default_output_contract"],
+            }
+            for key, value in DOMAIN_PACKS.items()
+        }
+        capability_catalog = {
+            key: {
+                "description": value["description"],
+                "risk": value["risk"],
+            }
+            for key, value in CAPABILITY_DRIVERS.items()
+        }
+        compiler_request = {
+            "instruction": payload.instruction,
+            "title_hint": payload.title,
+            "description_hint": payload.description,
+            "domain_hint": payload.domain_hint,
+            "inputs": payload.inputs,
+            "constraints": payload.constraints,
+            "success_criteria": payload.success_criteria,
+            "approval_policy": payload.approval_policy,
+            "output_contract": payload.output_contract,
+            "preferred_capabilities": payload.preferred_capabilities,
+            "preferred_domains": payload.preferred_domains,
+            "available_domains": domain_catalog,
+            "available_capabilities": capability_catalog,
+        }
+        base_parts = [
+            self.prompt_builder.loader.load_text(path).strip()
+            for path in self.prompt_builder.base_prompts
+        ]
+        compiler_prompt = self.prompt_builder.loader.load_text("tasks/runtime_task_compiler.md").strip()
+        system_prompt = "\n\n---\n\n".join(part for part in [*base_parts, compiler_prompt] if part)
+        user_prompt = self.prompt_builder.build_user_prompt(
+            "runtime_task_compiler",
+            context={
+                "request": json.dumps(compiler_request, ensure_ascii=False, indent=2),
+            },
+        )
+        return [
+            Message(role="system", content=system_prompt),
+            Message(role="user", content=user_prompt),
+        ]
+
+    def _build_semantic_compile_repair_messages(
+        self,
+        payload: TaskCompileRequest,
+        response,
+        error: str,
+    ) -> list[Message]:
+        original_messages = self._build_semantic_compile_messages(payload)
+        prior_output = ""
+        if isinstance(response.result_data, dict):
+            prior_output = json.dumps(response.result_data, ensure_ascii=False)
+        elif response.content:
+            prior_output = response.content
+        elif response.raw:
+            prior_output = json.dumps(response.raw, ensure_ascii=False)
+        repair_prompt = json.dumps(
+            {
+                "repair_error": error,
+                "instructions": [
+                    "Return corrected JSON only.",
+                    "Keep the same schema as SemanticTaskCompileDraft.",
+                    "If a field is unknown, use an empty object, empty list, or the 'general' domain instead of prose.",
+                ],
+                "invalid_output": prior_output,
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        return [
+            *original_messages,
+            Message(role="assistant", content=prior_output),
+            Message(role="user", content=repair_prompt),
+        ]
+
+    def _parse_semantic_compile_response(self, response) -> SemanticTaskCompileDraft:
+        if isinstance(response.result_data, dict):
+            return SemanticTaskCompileDraft.model_validate(response.result_data)
+
+        content = (response.content or "").strip()
+        if not content:
+            raise ValueError("Compiler returned an empty response")
+        return SemanticTaskCompileDraft.model_validate(self._extract_json_object(content))
+
+    def _extract_json_object(self, content: str) -> dict[str, Any]:
+        fenced = re.search(r"```(?:json)?\s*(\{.*\})\s*```", content, flags=re.DOTALL)
+        if fenced:
+            return dict(json.loads(fenced.group(1)))
+
+        start = content.find("{")
+        end = content.rfind("}")
+        if start == -1 or end == -1 or end < start:
+            raise ValueError("Compiler response did not contain a JSON object")
+        return dict(json.loads(content[start : end + 1]))
+
+    def _select_compiled_domain(
+        self,
+        *,
+        compiled_domain: str,
+        domain_hint: str | None,
+        instruction: str,
+        preferred_domains: list[str],
+    ) -> tuple[str, dict[str, Any], list[str]]:
+        notes: list[str] = []
+        hinted_domain = self._normalize_domain(domain_hint)
+        if hinted_domain in DOMAIN_PACKS:
+            notes.append(f"Respected explicit domain hint: {hinted_domain}.")
+            return hinted_domain, DOMAIN_PACKS[hinted_domain], notes
+
+        normalized = self._normalize_domain(compiled_domain)
+        if normalized in DOMAIN_PACKS:
+            notes.append(f"Selected domain pack from semantic compiler output: {normalized}.")
+            return normalized, DOMAIN_PACKS[normalized], notes
+
+        fallback_domain, fallback_config, fallback_notes = self._resolve_domain_pack(None, instruction, preferred_domains)
+        notes.append(f"Semantic compiler proposed unknown domain '{compiled_domain}'.")
+        notes.extend(fallback_notes)
+        return fallback_domain, fallback_config, notes
+
+    def _select_compiled_capabilities(
+        self,
+        *,
+        compiled_capabilities: list[str],
+        instruction: str,
+        domain_key: str,
+        preferred_capabilities: list[str],
+    ) -> list[str]:
+        cleaned = [str(item).strip().lower() for item in compiled_capabilities if str(item).strip()]
+        accepted = [item for item in cleaned if item in CAPABILITY_DRIVERS]
+        if not accepted:
+            accepted = self._infer_capabilities(instruction, domain_key, [])
+        accepted.extend(preferred_capabilities)
+        return list(dict.fromkeys(accepted))
+
+    def _default_approval_policy(self, instruction: str, capabilities: list[str]) -> dict[str, Any]:
+        actions: list[str] = []
+        normalized_instruction = instruction.lower()
+        keyword_actions = {
+            "upload": "write_to_downstream_system",
+            "push": "write_to_downstream_system",
+            "sync": "write_to_downstream_system",
+            "send": "outbound_communication",
+            "message": "outbound_communication",
+            "command": "local_command",
+            "terminal": "local_command",
+            "shell": "local_command",
+        }
+        for keyword, action in keyword_actions.items():
+            if keyword in normalized_instruction:
+                actions.append(action)
+        if "api" in capabilities:
+            actions.append("write_to_downstream_system")
+        if "command" in capabilities:
+            actions.append("local_command")
+
+        return {
+            "mode": "desktop_review",
+            "trial_required": True,
+            "requires_confirmation_before_production": True,
+            "requires_environment_snapshot": "browser" in capabilities,
+            "approval_actions": list(dict.fromkeys(actions)),
+        }
 
     def list_task_specs(self, *, domain: str | None = None, limit: int = 100, offset: int = 0) -> list[TaskSpecRead]:
         repo = TaskSpecRepository(self.session)
@@ -355,8 +780,13 @@ class PersistedRuntimeService:
                     "instruction": payload.compiled_from_instruction or task_spec.source_text or task_spec.goal,
                     "domain": task_spec.domain,
                 },
-                "environment_requirements": dict(payload.environment_requirements)
-                or self._default_environment_requirements(task_spec.domain, task_spec.preferred_capabilities),
+                "environment_requirements": self._merge_dicts(
+                    self._merge_dicts(
+                        self._default_environment_requirements(task_spec.domain, task_spec.preferred_capabilities),
+                        dict((task_spec.compiled_payload or {}).get("environment_requirements") or {}),
+                    ),
+                    dict(payload.environment_requirements),
+                ),
                 "checkpoints": list(payload.checkpoints) or self._default_checkpoints(task_spec, template),
                 "runtime_metadata": {
                     **dict(payload.runtime_metadata),
@@ -829,6 +1259,9 @@ class PersistedRuntimeService:
             template_steps = list((template.template_body or {}).get("steps") or [])
             if template_steps:
                 return template_steps
+        compiled_steps = list((task_spec.compiled_payload or {}).get("step_outline") or [])
+        if compiled_steps:
+            return compiled_steps
         capabilities = list(task_spec.preferred_capabilities or [])
         if not capabilities:
             capabilities = list((DOMAIN_PACKS.get(task_spec.domain) or DOMAIN_PACKS["general"])["default_capabilities"])
@@ -846,13 +1279,22 @@ class PersistedRuntimeService:
 
     def _default_checkpoints(self, task_spec, template) -> list[dict[str, Any]]:
         checkpoints = [{"kind": "approval", "label": "Review trial output"}]
+        checkpoints.extend(list((task_spec.compiled_payload or {}).get("checkpoints") or []))
         if template is not None:
             checkpoints.append({"kind": "template", "label": template.template_key})
         if task_spec.approval_policy:
             checkpoints.append({"kind": "policy", "label": "Respect task approval policy"})
         if "browser" in (task_spec.preferred_capabilities or []):
             checkpoints.append({"kind": "snapshot", "label": "Capture environment snapshot"})
-        return checkpoints
+        deduped: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for checkpoint in checkpoints:
+            key = json.dumps(checkpoint, ensure_ascii=False, sort_keys=True, default=str)
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(checkpoint)
+        return deduped
 
     def _default_environment_requirements(self, domain: str, capabilities: list[str]) -> dict[str, Any]:
         hints = {"requires_browser": "browser" in capabilities, "requires_network": any(cap in capabilities for cap in ("http", "search", "browser"))}

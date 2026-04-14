@@ -4,7 +4,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import make_url
 
@@ -25,7 +25,7 @@ class ProviderRuntimeSettings(BaseModel):
     anthropic_base_url: str = "https://api.anthropic.com"
     anthropic_api_key: str | None = None
     anthropic_timeout_seconds: int = 30
-    boss_account: str = "recruiter-01"
+    site_account: str = Field(default="runtime-scene-01", validation_alias=AliasChoices("site_account", "boss_account"))
     cooldown_days: int = 30
 
     def get(self, name: str, default: Any = None) -> Any:
@@ -56,7 +56,7 @@ class AppSettings(BaseSettings):
     database_echo: bool = False
     scheduler_lock_timeout_seconds: int = 300
     approval_source: str = "desktop_app"
-    default_platform: str = "boss"
+    default_platform: str = "site"
     feature_flags: FeatureFlags = Field(default_factory=FeatureFlags)
     provider_config: dict[str, Any] = Field(default_factory=dict)
     intranet_sync: IntranetSyncSettings = Field(default_factory=IntranetSyncSettings)

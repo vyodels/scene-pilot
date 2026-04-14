@@ -3,7 +3,8 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
-from recruit_agent.api.deps import get_session
+from recruit_agent.api.deps import get_container, get_session
+from recruit_agent.services.container import AppContainer
 from recruit_agent.schemas import (
     DomainPackRead,
     EpisodeConfirmRequest,
@@ -32,8 +33,11 @@ from recruit_agent.services.runtime import CompilePlanRequest, PersistedRuntimeS
 router = APIRouter(prefix="/api/runtime", tags=["runtime"])
 
 
-def get_runtime_service(session: Session = Depends(get_session)) -> PersistedRuntimeService:
-    return PersistedRuntimeService(session=session)
+def get_runtime_service(
+    container: AppContainer = Depends(get_container),
+    session: Session = Depends(get_session),
+) -> PersistedRuntimeService:
+    return PersistedRuntimeService(session=session, providers=container.providers)
 
 
 def _raise_runtime_http_error(exc: ValueError) -> None:

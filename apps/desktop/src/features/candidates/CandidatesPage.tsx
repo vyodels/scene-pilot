@@ -31,7 +31,7 @@ export function CandidatesPage() {
 
   if (loading && candidates.length === 0) {
     return (
-      <Panel title="Candidate pipeline" eyebrow="Recruiting site" description="Loading candidates from the local backend...">
+      <Panel title="Candidate pipeline" eyebrow="Recruiting scene" description="Loading candidates from the local backend...">
         <div style={{ color: "rgba(233,239,255,0.72)", fontSize: "14px" }}>Synchronizing workspace state.</div>
       </Panel>
     );
@@ -42,7 +42,7 @@ export function CandidatesPage() {
       {error ? (
         <Panel
           title="Candidate pipeline"
-          eyebrow="Recruiting site"
+          eyebrow="Recruiting scene"
           description="The desktop client could not refresh from the backend."
           actions={<StatusBadge tone="critical">error</StatusBadge>}
         >

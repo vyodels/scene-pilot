@@ -1,5 +1,4 @@
-from .base import CandidateSnapshot, PlatformAdapter
+from .base import CandidateSnapshot, PlatformAdapter, SiteEnvironmentAdapter
 from .boss import BossPlatformAdapter
 
-__all__ = ["BossPlatformAdapter", "CandidateSnapshot", "PlatformAdapter"]
-
+__all__ = ["BossPlatformAdapter", "CandidateSnapshot", "PlatformAdapter", "SiteEnvironmentAdapter"]

@@ -16,7 +16,7 @@ class TaskEnvelope:
     task_type: str
     priority: int = 100
     payload: dict[str, Any] = field(default_factory=dict)
-    platform: str = "boss"
+    platform: str = "site"
     workflow_id: str | None = None
     workflow_node_id: str | None = None
     candidate_id: str | None = None
@@ -60,7 +60,7 @@ def _deserialize_task(task_id: str, task_type: str, priority: int, attempts: int
         task_type=task_type,
         priority=priority,
         payload=dict(envelope.get("payload", {})),
-        platform=str(envelope.get("platform", "boss")),
+        platform=str(envelope.get("platform", "site")),
         workflow_id=envelope.get("workflow_id"),
         workflow_node_id=envelope.get("workflow_node_id"),
         candidate_id=envelope.get("candidate_id"),

@@ -9,14 +9,24 @@
 这意味着：
 
 - recruiting 只是 runtime 上的一组任务模板、skills、站点启发式和审批策略
-- Boss 之类的网站接入，只是运行时环境中的能力与状态，不是产品预设流程
+- 特定网站场景接入，只是运行时环境中的能力与状态，不是产品预设流程，也不是开发期固定集成任务
 - 同一套系统也可以支持市场新闻收集、工具研究、GitHub 热点抓取等任务
+
+换句话说，产品不是靠“提前把某个网站接好”来扩展，而是靠 runtime 在新场景里观察、试跑、学习、确认、沉淀来扩展。
+
+这里的 runtime scenes 包括但不限于：
+
+- Boss 等招聘网站
+- GitHub 等开发者平台
+- 企业内网系统
+- 桌面应用
+- 第三方工具网站与 SaaS
 
 ## 2. 核心设计原则
 
 ### Domain Packs, Not Product Flows
 
-产品核心不直接定义“招聘流程”“Boss 流程”。  
+产品核心不直接定义“招聘流程”或任何特定网站流程。  
 产品核心只提供任务编译、环境理解、计划执行、试跑监督、学习闭环和治理能力。
 
 domain pack 负责：
@@ -28,7 +38,7 @@ domain pack 负责：
 
 ### Runtime State Over Fixed Integrations
 
-Boss、GitHub、新闻站、工具网站等都属于运行时环境。
+招聘站点、GitHub、新闻站、工具网站等都属于运行时环境。
 
 系统在执行时关心的是：
 
@@ -37,11 +47,23 @@ Boss、GitHub、新闻站、工具网站等都属于运行时环境。
 - 当前离目标还有什么差距
 - 当前是否发生了偏差或阻塞
 
-所以“接入网站”不是固定工作流开发，而是为 runtime 提供 capability 和 environment observation。
+所以“接入网站”不是固定工作流开发，而是 runtime 在 capability + environment model + supervised trial + learning loop 下逐步学习和沉淀场景能力。
+
+这条原则也适用于：
+
+- 内网系统
+- 桌面应用
+- 第三方 SaaS
+- 本地文件与命令环境
+
+它们都不应被描述为“开发期固定集成任务”，而应被描述为 runtime 可能遇到的环境场景。
 
 ### Natural Language First
 
 新工作流的起点不是人工编排固定 DAG，而是自然语言任务。
+
+这里的 `Task Compiler` 必须被明确理解为 `LLM-first structured semantic compiler`。  
+它的职责是把自然语言任务编译成结构化任务合同，而不是做关键词匹配、规则分类或静态模板跳转。
 
 系统先把自然语言编译为：
 
@@ -49,6 +71,17 @@ Boss、GitHub、新闻站、工具网站等都属于运行时环境。
 - `ExecutionPlan`
 
 然后再进入试跑和收敛过程。
+
+一个成熟的 compiler 至少要补全：
+
+- `goal`
+- `inputs`
+- `constraints`
+- `success_criteria`
+- `approval_policy`
+- `output_contract`
+- `preferred_domains`
+- `preferred_capabilities`
 
 ### Supervised Before Promotion
 
@@ -153,14 +186,59 @@ Episode 是学习和回放的基础。
 
 ## 4. 系统分层
 
-### Core Runtime
+### 4.1 Compiler
 
 - `Task Compiler`
+
+职责：
+
+- 接收自然语言任务
+- 结合历史模板、skills、上下文和用户约束
+- 产出结构化 `TaskSpec`
+- 为后续 planner 提供清晰的任务合同
+
+非职责：
+
+- 不直接执行动作
+- 不靠关键词规则器决定业务流向
+
+### 4.2 Planner / Replanner
+
 - `Execution Planner`
-- `Plan Runner`
+- `Replanner`
+
+职责：
+
+- 根据 `TaskSpec + EnvironmentSnapshot` 生成 `ExecutionPlan`
+- 在执行偏差、环境变化、失败恢复时局部修正计划
+- 为 supervised trial 和 production 执行都提供同一计划语义
+
+### 4.3 Supervised Trial & Learning
+
 - `Episode Recorder`
 - `Patch Proposal Engine`
 - `Learning Loop`
+- `Template / Skill Governance`
+
+职责：
+
+- 承接 supervised trial run
+- 记录 episode、观察、动作、失败点和人工确认
+- 从 episode 中提炼 `WorkflowTemplate`、`WorkflowPatch`、`Skill`
+- 做审批、确认、激活、停用和健康治理
+
+### 4.4 ReAct-like Executor
+
+- observe
+- reason
+- act
+- submit result
+
+职责：
+
+- 在 capability 边界内执行具体动作循环
+- 把环境观察和 planner 提供的目标连接起来
+- 负责单次执行推进，不负责产品级业务流程建模
 
 ### Capability Drivers
 
@@ -170,6 +248,9 @@ Episode 是学习和回放的基础。
 - Filesystem capability
 - Document capability
 - Local command capability
+
+Capability drivers 负责提供“可以做什么”的通用动作面，不负责把某个具体网站流程写死。  
+具体场景的可执行路径，要由 environment model、trial 结果和 learning loop 在运行时逐步收敛。
 
 ### Domain Packs
 
@@ -200,6 +281,13 @@ Episode 是学习和回放的基础。
 10. patch 经人工确认后更新模板
 11. health check 持续淘汰失效 skill
 
+这里的关键不是“先实现某站点流程，再交给用户使用”，而是：
+
+1. runtime 先进入场景
+2. 在监督下完成第一次可解释的试跑
+3. 从试跑中沉淀站点/应用/工具层面的可复用能力
+4. 之后再逐步降低对人工监督的依赖
+
 ## 6. Recruiting 在新架构中的位置
 
 Recruiting 是首个 domain pack。
@@ -209,9 +297,12 @@ Recruiting 是首个 domain pack。
 - candidate sourcing / screening / scoring 相关 prompt
 - candidate-specific templates
 - recruiting-specific skill seeds
-- Boss 等站点的环境识别启发式
+- 招聘站点等环境场景的识别启发式
 
 但 recruiting 不再定义整个产品的数据模型和控制面。
+
+同理，Boss 或其他具体招聘站点都不应被理解为“当前版本需要先完成的固定接入任务”。  
+它们是 recruiting domain pack 在 runtime 中可能遇到的具体环境场景。
 
 ## 7. 第一波重构重点
 
@@ -227,7 +318,18 @@ Recruiting 是首个 domain pack。
 - 所有旧 recruiting 页面改名/迁移
 - 完整 task compiler 与 browser capability 实战能力
 
-## 8. 设计约束
+这不是说系统不会进入这些网站或平台，而是说这件事应由 runtime 在执行时完成首轮学习与沉淀，而不是在开发期预写为固定交付件。
+
+## 8. 当前代码中的过渡实现
+
+当前仓库里的实现仍有明显过渡层，文档需要显式标记，避免把历史结构误读成目标架构：
+
+- 仍然存在的 recruiting 专用页面、字段、命名和兼容接口，只代表首个 domain pack 的保留兼容层。
+- 部分 workflow、scheduler、agent 执行路径仍延续了早期固定流程实现，这些属于向 `Planner / Replanner + ReAct-like Executor` 迁移过程中的中间态。
+- 部分具体站点名、平台名、tool 名称仍可能保留在示例数据、兼容入口、历史字段或 seed 中；它们不是要求继续扩展的固定平台集成列表。
+- 当前 `TaskSpec`、trial、patch、skill 生命周期已经具备最小可用形态，但 compiler、planner、learning loop 仍未达到最终成熟实现。
+
+## 9. 设计约束
 
 - 本地优先：SQLite 仍是事实源
 - 审批门控：patch、skill 激活、敏感动作都要过人

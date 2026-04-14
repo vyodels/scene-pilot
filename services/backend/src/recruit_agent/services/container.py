@@ -101,7 +101,7 @@ def _candidate_payload(candidate: Candidate) -> dict[str, Any]:
         "candidate_id": candidate_key,
         "platform_candidate_id": candidate.platform_candidate_id or candidate_key,
         "name": candidate.name,
-        "platform": "boss",
+        "platform": candidate.platform or "site",
         "status": candidate.status,
         "contact_info": dict(candidate.contact_info or {}),
         "ai_scores": dict(candidate.ai_scores or {}),
@@ -120,7 +120,7 @@ def _resolve_candidate(session: Session, candidate_id: str) -> Candidate:
     candidate = session.query(Candidate).filter(Candidate.platform_candidate_id == candidate_id).first()
     if candidate is not None:
         return candidate
-    raise KeyError(f"Unknown recruiting-site candidate: {candidate_id}")
+    raise KeyError(f"Unknown runtime-scene candidate: {candidate_id}")
 
 
 def _build_recruiting_site_adapter(session_factory: sessionmaker[Session], settings: AppSettings) -> PlatformAdapter:
@@ -228,7 +228,7 @@ def _register_recruiting_site_tools(tools: ToolRegistry, adapter: PlatformAdapte
     tools.register(
         ToolDefinition(
             name="boss_discover_candidates",
-            description="Compatibility tool: discover candidates in the current recruiting-site environment.",
+            description="Compatibility alias: discover candidates in the current runtime scene.",
             parameters={
                 "type": "object",
                 "properties": {},
@@ -240,7 +240,7 @@ def _register_recruiting_site_tools(tools: ToolRegistry, adapter: PlatformAdapte
     tools.register(
         ToolDefinition(
             name="boss_inspect_candidate",
-            description="Compatibility tool: inspect a candidate profile in the current recruiting-site environment.",
+            description="Compatibility alias: inspect a candidate profile in the current runtime scene.",
             parameters={
                 "type": "object",
                 "properties": {"candidate_id": {"type": "string"}},
@@ -252,7 +252,7 @@ def _register_recruiting_site_tools(tools: ToolRegistry, adapter: PlatformAdapte
     tools.register(
         ToolDefinition(
             name="boss_send_message",
-            description="Compatibility tool: send a message to a candidate in the current recruiting-site environment.",
+            description="Compatibility alias: send a message to a candidate in the current runtime scene.",
             parameters={
                 "type": "object",
                 "properties": {
@@ -267,7 +267,7 @@ def _register_recruiting_site_tools(tools: ToolRegistry, adapter: PlatformAdapte
     tools.register(
         ToolDefinition(
             name="boss_request_resume",
-            description="Compatibility tool: request a resume from a candidate in the current recruiting-site environment.",
+            description="Compatibility alias: request a resume from a candidate in the current runtime scene.",
             parameters={
                 "type": "object",
                 "properties": {"candidate_id": {"type": "string"}},
@@ -279,7 +279,7 @@ def _register_recruiting_site_tools(tools: ToolRegistry, adapter: PlatformAdapte
     tools.register(
         ToolDefinition(
             name="boss_score_candidate",
-            description="Compatibility tool: record structured scoring for a candidate in the current recruiting-site environment.",
+            description="Compatibility alias: record structured scoring for a candidate in the current runtime scene.",
             parameters={
                 "type": "object",
                 "properties": {
@@ -294,7 +294,7 @@ def _register_recruiting_site_tools(tools: ToolRegistry, adapter: PlatformAdapte
     tools.register(
         ToolDefinition(
             name="boss_archive_candidate",
-            description="Compatibility tool: archive a candidate in the current recruiting-site environment with a reason.",
+            description="Compatibility alias: archive a candidate in the current runtime scene with a reason.",
             parameters={
                 "type": "object",
                 "properties": {
@@ -549,8 +549,8 @@ class AppContainer:
                 [
                     Candidate(
                         name="Mia Chen",
-                        platform="Recruiting site",
-                        platform_candidate_id="boss_001",
+                        platform="Recruiting scene",
+                        platform_candidate_id="site_001",
                         status="screening",
                         current_workflow_node="initial_screening",
                         jd_id="Frontend Platform Engineer",
@@ -568,8 +568,8 @@ class AppContainer:
                     ),
                     Candidate(
                         name="Jason Li",
-                        platform="Recruiting site",
-                        platform_candidate_id="boss_002",
+                        platform="Recruiting scene",
+                        platform_candidate_id="site_002",
                         status="pending_communication",
                         current_workflow_node="initiate_communication",
                         jd_id="Platform Engineer",
@@ -585,8 +585,8 @@ class AppContainer:
                     ),
                     Candidate(
                         name="Luna Wang",
-                        platform="Recruiting site",
-                        platform_candidate_id="boss_003",
+                        platform="Recruiting scene",
+                        platform_candidate_id="site_003",
                         status="cooldown",
                         current_workflow_node="cooldown",
                         jd_id="Product Lead",
@@ -640,12 +640,12 @@ class AppContainer:
                         },
                     ),
                     Skill(
-                        skill_id="boss_outreach_drafting",
-                        name="Recruiting Site Outreach Drafting",
+                        skill_id="site_scene_outreach_drafting",
+                        name="Recruiting Scene Outreach Drafting",
                         version=1,
                         status="active",
                         bound_to_workflow_node="initiate_communication",
-                        platform="Recruiting site",
+                        platform="Recruiting scene",
                         strategy={"summary": "Produces short, respectful outreach with role-specific context."},
                         last_health_status="healthy",
                         last_health_check=_utcnow(),
@@ -656,7 +656,7 @@ class AppContainer:
                         version=1,
                         status="pending_review",
                         bound_to_workflow_node="initial_screening",
-                        platform="Recruiting site",
+                        platform="Recruiting scene",
                         strategy={"summary": "Drafted from recent candidate examples and pending approval."},
                         last_health_status="warning",
                         last_health_check=_utcnow(),

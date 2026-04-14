@@ -133,7 +133,7 @@ class AgentControlService:
                 result = AgentResult(
                     success=True,
                     status="completed",
-                    content=f"Discovered {len(discovered)} candidates in the recruiting-site environment.",
+                    content=f"Discovered {len(discovered)} candidates in the current runtime scene.",
                     data={
                         "status": "pass",
                         "discovered_count": len(discovered),
@@ -158,7 +158,7 @@ class AgentControlService:
                 result = AgentResult(
                     success=True,
                     status="completed",
-                    content="Resume request submitted in the recruiting-site environment.",
+                    content="Resume request submitted in the current runtime scene.",
                     data={"status": "pass", "platform_result": platform_result},
                     metadata={"platform_action": "request_resume"},
                 )
@@ -187,7 +187,7 @@ class AgentControlService:
                 result = AgentResult(
                     success=True,
                     status="completed",
-                    content="Outbound communication submitted in the recruiting-site environment.",
+                    content="Outbound communication submitted in the current runtime scene.",
                     data={"status": "pass", "platform_result": platform_result},
                     metadata={"platform_action": "send_message"},
                 )
@@ -211,7 +211,7 @@ class AgentControlService:
                 result = AgentResult(
                     success=True,
                     status="completed",
-                    content="Candidate archived in the recruiting-site environment.",
+                    content="Candidate archived in the current runtime scene.",
                     data={"status": "pass", "platform_result": platform_result},
                     metadata={"platform_action": "archive_candidate"},
                 )
