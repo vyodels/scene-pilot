@@ -21,7 +21,8 @@ from recruit_agent.services.agent import AgentControlService
 from recruit_agent.services.dashboard import DashboardService
 from recruit_agent.services.events import EventStreamService
 from recruit_agent.services.feature_flags import FeatureFlagService
-from recruit_agent.services.skills import SkillLifecycleService, SkillSafetyService
+from recruit_agent.repositories import SkillRepository
+from recruit_agent.services.skills import SkillHealthSweepService, SkillLifecycleService, SkillSafetyService
 from recruit_agent.services.sync import SyncService
 from recruit_agent.services.system_commands import SystemCommandService
 from recruit_agent.workflows.engine import WorkflowEngine
@@ -354,6 +355,7 @@ class AppContainer:
         self.flags.merge(
             {
                 "skills.auto_activate": False,
+                "skills.health_autonomy": settings.feature_flags.enable_skill_health_autonomy,
                 "skills.system_command": settings.feature_flags.enable_system_commands,
                 "feature.autonomy": settings.feature_flags.enable_autonomy,
                 "feature.outbound_messaging": settings.feature_flags.enable_outbound_messaging,
@@ -381,6 +383,7 @@ class AppContainer:
         flags = FeatureFlagService(
             {
                 "skills.auto_activate": False,
+                "skills.health_autonomy": resolved_settings.feature_flags.enable_skill_health_autonomy,
                 "skills.system_command": resolved_settings.feature_flags.enable_system_commands,
                 "feature.autonomy": resolved_settings.feature_flags.enable_autonomy,
                 "feature.outbound_messaging": resolved_settings.feature_flags.enable_outbound_messaging,
@@ -466,6 +469,53 @@ class AppContainer:
             )
         events.publish("info", "bootstrap", "Application container initialized.")
         return container
+
+    def run_skill_health_sweep(
+        self,
+        *,
+        statuses: list[str] | None = None,
+        platform: str | None = None,
+        observed_results_by_skill: dict[str, dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        with self.session_factory() as session:
+            repo = SkillRepository(session)
+            sweep = SkillHealthSweepService()
+            selected_statuses = statuses or ["active", "approved"]
+            selected_skills = sweep.filter_skills(
+                repo.list(limit=5000, offset=0),
+                statuses=selected_statuses,
+                platform=platform,
+            )
+            sweep_result = sweep.run(
+                selected_skills,
+                observed_results_by_skill=observed_results_by_skill,
+            )
+
+            degraded_skill_ids: list[str] = []
+            healthy_skill_ids: list[str] = []
+            for skill, _result in sweep_result.results:
+                updated = repo.update(
+                    skill,
+                    {
+                        "status": str(skill.status),
+                        "last_health_check": skill.last_health_check,
+                        "last_health_status": skill.last_health_status,
+                        "updated_at": skill.updated_at,
+                    },
+                )
+                if updated.status == "degraded":
+                    degraded_skill_ids.append(updated.skill_id)
+                elif updated.last_health_status == "healthy":
+                    healthy_skill_ids.append(updated.skill_id)
+
+            return {
+                "checked_count": sweep_result.checked_count,
+                "degraded_count": sweep_result.degraded_count,
+                "statuses": selected_statuses,
+                "platform": platform,
+                "degraded_skill_ids": degraded_skill_ids,
+                "healthy_skill_ids": healthy_skill_ids,
+            }
 
     def seed(self) -> None:
         with self.session_factory() as session:

@@ -11,6 +11,7 @@ from sqlalchemy.engine import make_url
 
 class FeatureFlags(BaseModel):
     enable_autonomy: bool = False
+    enable_skill_health_autonomy: bool = False
     enable_system_commands: bool = False
     enable_intranet_sync: bool = False
     enable_outbound_messaging: bool = False
@@ -55,6 +56,7 @@ class AppSettings(BaseSettings):
     database_url: str = "sqlite:///./recruit-agent.db"
     database_echo: bool = False
     scheduler_lock_timeout_seconds: int = 300
+    skill_health_autonomy_interval_seconds: int = 300
     approval_source: str = "desktop_app"
     default_platform: str = "site"
     feature_flags: FeatureFlags = Field(default_factory=FeatureFlags)

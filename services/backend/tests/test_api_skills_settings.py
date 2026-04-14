@@ -24,11 +24,14 @@ def test_settings_and_skill_lifecycle(tmp_path):
             "/api/settings",
             json={
                 "approval_source": "desktop_app",
-                "feature_flags": {"enable_autonomy": True},
+                "feature_flags": {"enable_autonomy": True, "enable_skill_health_autonomy": True},
+                "skill_health_autonomy_interval_seconds": 30,
             },
         )
         assert update_response.status_code == 200
         assert update_response.json()["feature_flags"]["enable_autonomy"] is True
+        assert update_response.json()["feature_flags"]["enable_skill_health_autonomy"] is True
+        assert update_response.json()["skill_health_autonomy_interval_seconds"] == 30
 
         skill_response = client.post(
             "/api/skills",

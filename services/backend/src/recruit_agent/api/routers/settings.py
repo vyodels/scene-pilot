@@ -24,6 +24,7 @@ def _to_desktop_settings(settings: AppSettings) -> SettingsSnapshotRead:
             "timezone": "Asia/Shanghai",
             "intranetEnabled": settings.feature_flags.enable_intranet_sync,
             "desktopApprovalsOnly": settings.approval_source == "desktop_app",
+            "skill_health_autonomy_interval_seconds": settings.skill_health_autonomy_interval_seconds,
             "approval_source": settings.approval_source,
             "feature_flags": settings.feature_flags.model_dump(),
             "provider_config": settings.provider_config,
@@ -94,6 +95,8 @@ def update_settings(
             intranet_sync["timeout_seconds"] = sync_data["timeoutSeconds"]
     if payload.desktopApprovalsOnly is not None:
         data["approval_source"] = "desktop_app" if payload.desktopApprovalsOnly else "hybrid"
+    if payload.skill_health_autonomy_interval_seconds is not None:
+        data["skill_health_autonomy_interval_seconds"] = payload.skill_health_autonomy_interval_seconds
     if payload.platform is not None:
         platform_data = payload.platform.model_dump(exclude_none=True)
         provider_config = data.setdefault("provider_config", {})

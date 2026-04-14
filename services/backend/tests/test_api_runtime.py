@@ -108,6 +108,8 @@ class ApiRuntimeTests(unittest.TestCase):
         self.assertIsNotNone(executed_payload["learning_draft"])
         self.assertIsNotNone(executed_payload["approval"])
         self.assertEqual(executed_payload["approval"]["target_type"], "skill_draft")
+        self.assertIsNotNone(executed_payload["template_approval"])
+        self.assertEqual(executed_payload["template_approval"]["target_type"], "template_candidate")
 
         confirmed_trial = self.client.post(
             f"/api/runtime/trial-runs/{episode_id}/confirm",
@@ -118,6 +120,7 @@ class ApiRuntimeTests(unittest.TestCase):
         self.assertEqual(confirmed_payload["episode"]["status"], "confirmed")
         self.assertIsNotNone(confirmed_payload["template"])
         self.assertEqual(confirmed_payload["template"]["status"], "active")
+        self.assertEqual(confirmed_payload["template_approval"]["status"], "approved")
 
         refreshed_task = self.client.get("/api/runtime/task-specs")
         self.assertEqual(refreshed_task.status_code, 200)
@@ -147,6 +150,9 @@ class ApiRuntimeTests(unittest.TestCase):
         browser_driver = next(item for item in capability_payload if item["key"] == "browser")
         self.assertIn("web_research", browser_driver["supported_domains"])
         self.assertTrue(browser_driver["requires_supervision"])
+        all_capabilities = self.client.get("/api/runtime/capability-drivers")
+        self.assertEqual(all_capabilities.status_code, 200)
+        self.assertTrue(any(item["key"] == "filesystem" for item in all_capabilities.json()))
 
         compiled_task = self.client.post(
             "/api/runtime/task-specs/compile",
@@ -356,7 +362,7 @@ class ApiRuntimeTests(unittest.TestCase):
         self.assertEqual(templates.status_code, 200)
         self.assertGreaterEqual(len(templates.json()), 1)
         plan_id = created_task.json()["execution_plan"]["id"]
-        template_id = next(item["id"] for item in templates.json() if item["template_key"] == "patch_review_loop")
+        _ = next(item["id"] for item in templates.json() if item["template_key"] == "patch_review_loop")
 
         created_trial = self.client.post(
             "/api/runtime/trial-runs",
@@ -399,12 +405,46 @@ class ApiRuntimeTests(unittest.TestCase):
         self.assertEqual(approved_payload["status"], "applied")
         self.assertEqual(approved_payload["reviewed_by"], "desktop-user")
         self.assertIsNotNone(approved_payload["applied_at"])
+        patched_plan_id = approved_payload["runtime_metadata"]["apply_result"]["execution_plan_id"]
+        patched_template_id = approved_payload["runtime_metadata"]["apply_result"]["template_id"]
+        self.assertEqual(approved_payload["runtime_metadata"]["apply_result"]["previous_plan_id"], plan_id)
+        self.assertIsNotNone(patched_template_id)
 
         refreshed_approvals = self.client.get("/api/approvals")
         self.assertEqual(refreshed_approvals.status_code, 200)
         approved_approval = next(item for item in refreshed_approvals.json() if item["target_id"] == patch_payload["id"])
         self.assertEqual(approved_approval["status"], "approved")
         self.assertEqual(approved_approval["payload"]["resolution"]["status"], "applied")
+        self.assertEqual(approved_approval["payload"]["resolution"]["execution_plan_id"], patched_plan_id)
+        self.assertEqual(approved_approval["payload"]["resolution"]["template_id"], patched_template_id)
+
+        plans = self.client.get(f"/api/runtime/plans?task_spec_id={task_spec_id}")
+        self.assertEqual(plans.status_code, 200)
+        plan_by_id = {item["id"]: item for item in plans.json()}
+        self.assertIn(patched_plan_id, plan_by_id)
+        self.assertEqual(plan_by_id[patched_plan_id]["compiled_from_patch_id"], patch_payload["id"])
+        self.assertEqual(plan_by_id[patched_plan_id]["runtime_metadata"]["workflow_template_id"], patched_template_id)
+
+        templates = self.client.get("/api/runtime/templates")
+        self.assertEqual(templates.status_code, 200)
+        template_by_id = {item["id"]: item for item in templates.json()}
+        self.assertIn(patched_template_id, template_by_id)
+        self.assertEqual(template_by_id[patched_template_id]["status"], "active")
+        self.assertTrue(
+            any(
+                checkpoint["label"] == "Add or refine a supervised checkpoint before repeating this action."
+                for checkpoint in template_by_id[patched_template_id]["template_body"]["checkpoints"]
+            )
+        )
+
+        approved_patch_again = self.client.post(
+            f"/api/runtime/workflow-patches/{patch_payload['id']}/approve",
+            json={"reviewer": "desktop-user", "reason": "Reconfirm applied patch", "apply_immediately": True},
+        )
+        self.assertEqual(approved_patch_again.status_code, 200)
+        second_payload = approved_patch_again.json()
+        self.assertEqual(second_payload["runtime_metadata"]["apply_result"]["execution_plan_id"], patched_plan_id)
+        self.assertEqual(second_payload["runtime_metadata"]["apply_result"]["template_id"], patched_template_id)
 
     def test_learning_endpoint_is_repeatable_and_returns_skill_health_when_plan_has_skill_id(self) -> None:
         created_task = self.client.post(
@@ -457,10 +497,20 @@ class ApiRuntimeTests(unittest.TestCase):
         self.assertEqual(execute.status_code, 200)
         self.assertIsNotNone(execute.json()["skill_health"])
         self.assertEqual(execute.json()["skill_health"]["health"], "healthy")
+        first_template = execute.json()["template"]
+        first_learning = execute.json()["learning_draft"]
+        first_template_approval = execute.json()["template_approval"]
+        self.assertIsNotNone(first_template)
+        self.assertIsNotNone(first_learning)
+        self.assertIsNotNone(first_template_approval)
 
         learn_again = self.client.post(f"/api/runtime/trial-runs/{episode_id}/learn")
         self.assertEqual(learn_again.status_code, 200)
         self.assertEqual(learn_again.json()["episode"]["id"], episode_id)
+        self.assertEqual(learn_again.json()["template"]["id"], first_template["id"])
+        self.assertEqual(learn_again.json()["template"]["version"], first_template["version"])
+        self.assertEqual(learn_again.json()["learning_draft"]["id"], first_learning["id"])
+        self.assertEqual(learn_again.json()["template_approval"]["id"], first_template_approval["id"])
 
     def test_episode_replay_returns_task_plan_snapshot_and_timeline(self) -> None:
         compiled_task = self.client.post(

@@ -148,6 +148,10 @@ CAPABILITY_DRIVERS: dict[str, dict[str, Any]] = {
         "description": "Draft, summarize, or format durable output artifacts.",
         "risk": "low",
     },
+    "filesystem": {
+        "description": "Read, write, stage, or organize local files and folders under runtime policy controls.",
+        "risk": "medium",
+    },
     "api": {
         "description": "Write structured data into a downstream system or service.",
         "risk": "high",
@@ -1063,9 +1067,9 @@ class PersistedRuntimeService:
 
         snapshots = EnvironmentSnapshotRepository(self.session).for_episode(episode.id, limit=500, offset=0)
         patch = self._get_episode_patch(episode)
-        template = self._get_episode_template(plan=plan, task_spec=task_spec, patch=patch)
-        learning = self._get_episode_learning(task_spec_id=task_spec.id)
-        approvals = self._get_episode_approvals(patch=patch, learning=learning)
+        template = self._episode_template(episode) or self._get_episode_template(plan=plan, task_spec=task_spec, patch=patch)
+        learning = self._episode_learning(episode) or self._get_episode_learning(task_spec_id=task_spec.id)
+        approvals = self._get_episode_approvals(episode=episode, patch=patch, learning=learning)
 
         diagnostics = RuntimeReplayDiagnosticsRead(
             domain=str(task_spec.domain),
@@ -1223,6 +1227,12 @@ class PersistedRuntimeService:
             raise ValueError("Task spec not found")
 
         template = self._materialize_template(task_spec=task_spec, plan=plan, episode=episode)
+        template_approval = self._ensure_template_candidate_approval(
+            task_spec=task_spec,
+            plan=plan,
+            episode=episode,
+            template=template,
+        )
         patch = self._materialize_patch(task_spec=task_spec, plan=plan, episode=episode, template=template)
         learning = self._materialize_learning(task_spec=task_spec, plan=plan, episode=episode)
         approval = self._materialize_skill_draft_approval(task_spec=task_spec, plan=plan, episode=episode, learning=learning)
@@ -1243,7 +1253,8 @@ class PersistedRuntimeService:
             template=WorkflowTemplateRead.model_validate(template) if template is not None else None,
             patch=WorkflowPatchRead.model_validate(patch) if patch is not None else None,
             learning_draft=LearningDraftRead.model_validate(learning) if learning is not None else None,
-            approval=ApprovalRead.model_validate(approval) if approval is not None else None,
+            approval=ApprovalRead.model_validate(approval) if approval is not None else ApprovalRead.model_validate(template_approval) if template_approval is not None else None,
+            template_approval=ApprovalRead.model_validate(template_approval) if template_approval is not None else None,
             skill_health=skill_health,
         )
 
@@ -1264,6 +1275,7 @@ class PersistedRuntimeService:
             raise ValueError("Task spec not found")
 
         template = None
+        template_approval = outcome.template_approval
         if outcome.template is not None:
             template_repo = WorkflowTemplateRepository(self.session)
             template_model = template_repo.get(outcome.template.id)
@@ -1277,6 +1289,13 @@ class PersistedRuntimeService:
                         last_validated_at=utcnow(),
                     ),
                 )
+            template_approval = self._mark_template_candidate_approval(
+                episode_id=episode.id,
+                reviewer=payload.reviewer,
+                reason=payload.reason,
+                approved=True,
+                template=template_model if template_model is not None else None,
+            )
 
         plan_repo.update(
             plan,
@@ -1316,6 +1335,7 @@ class PersistedRuntimeService:
             patch=outcome.patch,
             learning_draft=outcome.learning_draft,
             approval=outcome.approval,
+            template_approval=ApprovalRead.model_validate(template_approval) if template_approval is not None else outcome.template_approval,
             skill_health=outcome.skill_health,
         )
 
@@ -1414,6 +1434,10 @@ class PersistedRuntimeService:
         if item is None:
             raise ValueError("Workflow patch not found")
 
+        applied_artifacts: dict[str, Any] = {}
+        if approve and payload.apply_immediately:
+            applied_artifacts = self._apply_workflow_patch(item, reviewer=payload.reviewer, reason=payload.reason)
+
         status = "applied" if approve and payload.apply_immediately else "approved" if approve else "rejected"
         updated = repo.mark_review(
             item,
@@ -1422,6 +1446,16 @@ class PersistedRuntimeService:
             rationale=payload.reason,
             applied_at=utcnow() if approve and payload.apply_immediately else None,
         )
+        if applied_artifacts:
+            updated = repo.update(
+                updated,
+                {
+                    "runtime_metadata": {
+                        **dict(updated.runtime_metadata or {}),
+                        "apply_result": applied_artifacts,
+                    }
+                },
+            )
         self._sync_patch_approval(updated, payload=payload, approve=approve)
         return WorkflowPatchRead.model_validate(updated)
 
@@ -1448,6 +1482,67 @@ class PersistedRuntimeService:
             }
         )
 
+    def _ensure_template_candidate_approval(self, *, task_spec, plan, episode, template):
+        if template is None or not episode.requires_confirmation:
+            return None
+
+        existing = self._get_template_candidate_approval(episode.id)
+        if existing is not None:
+            self._remember_episode_artifact(episode, "template_approval_id", existing.id)
+            return existing
+
+        approval = ApprovalRepository(self.session).create(
+            {
+                "target_type": "template_candidate",
+                "target_id": episode.id,
+                "title": f"Review template candidate for {task_spec.title}",
+                "status": "pending",
+                "requested_by": episode.requested_by or "runtime",
+                "payload": {
+                    "template_id": template.id,
+                    "task_spec_id": task_spec.id,
+                    "execution_plan_id": plan.id,
+                    "execution_episode_id": episode.id,
+                    "template_key": template.template_key,
+                    "template_version": template.version,
+                    "summary": template.validation_summary,
+                },
+            }
+        )
+        self._remember_episode_artifact(episode, "template_approval_id", approval.id)
+        return approval
+
+    def _mark_template_candidate_approval(
+        self,
+        *,
+        episode_id: str,
+        reviewer: str,
+        reason: str | None,
+        approved: bool,
+        template=None,
+    ) -> ApprovalItem | None:
+        approval = self._get_template_candidate_approval(episode_id)
+        if approval is None:
+            return None
+        approval.payload = {
+            **dict(approval.payload or {}),
+            "resolution": {
+                "status": "approved" if approved else "rejected",
+                "reviewer": reviewer,
+                "reason": reason,
+                "reviewed_at": utcnow().isoformat(),
+                "template_id": getattr(template, "id", None) or dict(approval.payload or {}).get("template_id"),
+                "template_version": getattr(template, "version", None) or dict(approval.payload or {}).get("template_version"),
+            },
+        }
+        self.session.commit()
+        return ApprovalRepository(self.session).mark_review(
+            approval,
+            "approved" if approved else "rejected",
+            reviewer=reviewer,
+            notes=reason,
+        )
+
     def _sync_patch_approval(
         self,
         patch: WorkflowPatch,
@@ -1465,6 +1560,7 @@ class PersistedRuntimeService:
                 "reviewer": payload.reviewer,
                 "reason": payload.reason,
                 "apply_immediately": payload.apply_immediately if approve else False,
+                **dict((patch.runtime_metadata or {}).get("apply_result") or {}),
             },
         }
         self.session.commit()
@@ -1481,6 +1577,172 @@ class PersistedRuntimeService:
             ApprovalItem.target_id == patch_id,
         )
         return self.session.scalars(stmt).first()
+
+    def _get_template_candidate_approval(self, episode_id: str) -> ApprovalItem | None:
+        stmt = select(ApprovalItem).where(
+            ApprovalItem.target_type == "template_candidate",
+            ApprovalItem.target_id == episode_id,
+        )
+        return self.session.scalars(stmt).first()
+
+    def _apply_workflow_patch(
+        self,
+        patch: WorkflowPatch,
+        *,
+        reviewer: str,
+        reason: str | None,
+    ) -> dict[str, Any]:
+        existing_result = dict((patch.runtime_metadata or {}).get("apply_result") or {})
+        if existing_result.get("execution_plan_id"):
+            existing_plan = ExecutionPlanRepository(self.session).get(str(existing_result["execution_plan_id"]))
+            if existing_plan is not None:
+                return existing_result
+
+        apply_result: dict[str, Any] = {
+            "applied_by": reviewer,
+            "applied_reason": reason,
+            "applied_at": utcnow().isoformat(),
+        }
+
+        template_repo = WorkflowTemplateRepository(self.session)
+        plan_repo = ExecutionPlanRepository(self.session)
+        task_repo = TaskSpecRepository(self.session)
+
+        current_plan = plan_repo.get(patch.execution_plan_id) if patch.execution_plan_id else None
+        task_spec = task_repo.get(patch.task_spec_id) if patch.task_spec_id else None
+        if task_spec is None and current_plan is not None:
+            task_spec = task_repo.get(current_plan.task_spec_id)
+
+        template = template_repo.get(patch.template_id) if patch.template_id else None
+        if template is None and current_plan is not None and task_spec is not None:
+            template = self._get_episode_template(
+                plan=current_plan,
+                task_spec=task_spec,
+                patch=patch,
+            )
+
+        fallback_label = patch.divergence_summary or patch.title
+        if task_spec is not None:
+            if template is None:
+                template_key = f"{self._template_key(task_spec)}_patch"
+                template = template_repo.by_template_key(template_key)
+                base_body = {
+                    "steps": list((current_plan.plan_body or {}).get("steps") or []) if current_plan is not None else self._default_steps(task_spec, None),
+                    "checkpoints": list(current_plan.checkpoints or []) if current_plan is not None else self._default_checkpoints(task_spec, None),
+                    "success_criteria": dict(task_spec.success_criteria or {}),
+                    "patch_history": [],
+                }
+                if template is None:
+                    template = template_repo.create(
+                        WorkflowTemplateCreate(
+                            template_key=template_key,
+                            name=f"{task_spec.title} Patch Template",
+                            domain=task_spec.domain,
+                            status="draft",
+                            source_task_spec_id=task_spec.id,
+                            template_body=base_body,
+                            activation_strategy={
+                                "mode": "patch_review",
+                                "lineage": {
+                                    "source_task_spec_id": task_spec.id,
+                                    "created_from_patch_id": patch.id,
+                                    "created_from_plan_id": current_plan.id if current_plan is not None else None,
+                                },
+                            },
+                            validation_summary=patch.divergence_summary or patch.rationale or patch.title,
+                            last_validated_at=utcnow(),
+                        )
+                    )
+            if template is not None:
+                template_steps = list((template.template_body or {}).get("steps") or [])
+                patched_checkpoints = self._merge_patch_checkpoints(
+                    list((template.template_body or {}).get("checkpoints") or []),
+                    patch.patch_body,
+                    fallback_label=fallback_label,
+                )
+                patched_steps = self._merge_patch_steps(template_steps, patch.patch_body) or template_steps
+                patch_history = [
+                    *list((template.template_body or {}).get("patch_history") or []),
+                    {
+                        "patch_id": patch.id,
+                        "reviewer": reviewer,
+                        "reason": reason,
+                        "applied_at": utcnow().isoformat(),
+                    },
+                ]
+                lineage = {
+                    **dict((template.activation_strategy or {}).get("lineage") or {}),
+                    "source_task_spec_id": task_spec.id,
+                    "last_applied_patch_id": patch.id,
+                    "last_applied_plan_id": current_plan.id if current_plan is not None else None,
+                }
+                template = template_repo.update(
+                    template,
+                    WorkflowTemplateUpdate(
+                        version=int(template.version) + 1,
+                        status="active",
+                        template_body={
+                            **dict(template.template_body or {}),
+                            "steps": patched_steps,
+                            "checkpoints": patched_checkpoints,
+                            "patch_history": patch_history[-20:],
+                        },
+                        activation_strategy={
+                            **dict(template.activation_strategy or {}),
+                            "mode": "patch_review",
+                            "lineage": lineage,
+                        },
+                        validation_summary=reason or patch.divergence_summary or template.validation_summary,
+                        last_validated_at=utcnow(),
+                    ),
+                )
+                apply_result["template_id"] = template.id
+                apply_result["template_version"] = template.version
+
+        if current_plan is not None:
+            new_checkpoints = self._merge_patch_checkpoints(
+                list(current_plan.checkpoints or []),
+                patch.patch_body,
+                fallback_label=fallback_label,
+            )
+            new_steps = self._merge_patch_steps(list((current_plan.plan_body or {}).get("steps") or []), patch.patch_body)
+            replanned = plan_repo.create(
+                {
+                    "task_spec_id": current_plan.task_spec_id,
+                    "name": f"{current_plan.name} Patch v{int(current_plan.version) + 1}",
+                    "mode": current_plan.mode,
+                    "status": "validated",
+                    "version": int(current_plan.version) + 1,
+                    "approval_state": "approved",
+                    "plan_body": {
+                        **dict(current_plan.plan_body or {}),
+                        "steps": new_steps,
+                    },
+                    "environment_requirements": self._merge_dicts(
+                        dict(current_plan.environment_requirements or {}),
+                        dict(patch.patch_body.get("environment_requirements") or {}),
+                    ),
+                    "checkpoints": new_checkpoints,
+                    "runtime_metadata": {
+                        **dict(current_plan.runtime_metadata or {}),
+                        "patched_from_plan_id": current_plan.id,
+                        "applied_patch_id": patch.id,
+                        "patched_by": reviewer,
+                        "patch_reason": reason,
+                        "workflow_template_id": template.id if template is not None else dict(current_plan.runtime_metadata or {}).get("workflow_template_id"),
+                        "workflow_template_key": template.template_key if template is not None else dict(current_plan.runtime_metadata or {}).get("workflow_template_key"),
+                    },
+                    "compiled_from_patch_id": patch.id,
+                }
+            )
+            task = task_repo.get(current_plan.task_spec_id)
+            if task is not None:
+                task_repo.update(task, {"active_plan_id": replanned.id, "status": "validated"})
+            apply_result["execution_plan_id"] = replanned.id
+            apply_result["execution_plan_version"] = replanned.version
+            apply_result["previous_plan_id"] = current_plan.id
+
+        return apply_result
 
     def _seed_template(self, repo: WorkflowTemplateRepository, payload: dict[str, Any]):
         existing = repo.by_template_key(payload["template_key"])
@@ -1576,6 +1838,7 @@ class PersistedRuntimeService:
             "http": ["api_surface", "remote_service"],
             "api": ["remote_service", "write_surface"],
             "command": ["local_runtime", "execution_surface"],
+            "filesystem": ["local_runtime", "artifact_store"],
             "document": ["document_task", "result_pack"],
             "approval": ["review_gate"],
         }
@@ -1867,6 +2130,7 @@ class PersistedRuntimeService:
             "search": ("find", "search", "discover", "latest"),
             "http": ("api", "fetch", "request"),
             "document": ("summary", "digest", "report", "output", "write"),
+            "filesystem": ("file", "folder", "directory", "save", "export", "download"),
             "api": ("upload", "sync", "push"),
             "command": ("command", "terminal", "shell"),
         }
@@ -1981,6 +2245,9 @@ class PersistedRuntimeService:
         self.create_environment_snapshot(snapshot_payload)
 
     def _materialize_template(self, *, task_spec, plan, episode):
+        existing_template = self._episode_template(episode)
+        if existing_template is not None:
+            return existing_template
         if episode.divergence_detected:
             return None
         repo = WorkflowTemplateRepository(self.session)
@@ -2000,28 +2267,41 @@ class PersistedRuntimeService:
             "activation_strategy": {
                 "mode": "supervised_trial_first",
                 "requires_confirmation": episode.requires_confirmation,
+                "lineage": {
+                    "source_task_spec_id": task_spec.id,
+                    "last_materialized_episode_id": episode.id,
+                    "last_materialized_plan_id": plan.id,
+                },
             },
             "validation_summary": episode.result_summary or "Validated during supervised trial execution.",
             "last_validated_at": episode.finished_at or utcnow(),
         }
         if template is None:
-            return repo.create(payload)
-        return repo.update(
+            created = repo.create(payload)
+            self._remember_episode_artifact(episode, "template_id", created.id)
+            return created
+        updated = repo.update(
             template,
             WorkflowTemplateUpdate(
                 version=int(template.version) + 1,
                 template_body=payload["template_body"],
-                activation_strategy=payload["activation_strategy"],
+                activation_strategy={
+                    **dict(template.activation_strategy or {}),
+                    **payload["activation_strategy"],
+                },
                 validation_summary=payload["validation_summary"],
                 last_validated_at=payload["last_validated_at"],
             ),
         )
+        self._remember_episode_artifact(episode, "template_id", updated.id)
+        return updated
 
     def _materialize_patch(self, *, task_spec, plan, episode, template):
         if not episode.divergence_detected:
             return WorkflowPatchRepository(self.session).get(episode.patch_id) if episode.patch_id else None
-        if episode.patch_id:
-            return WorkflowPatchRepository(self.session).get(episode.patch_id)
+        existing_patch = self._episode_patch(episode)
+        if existing_patch is not None:
+            return existing_patch
 
         latest_snapshot = EnvironmentSnapshotRepository(self.session).latest_for_episode(episode.id)
         snapshot_hint = latest_snapshot.page_type if latest_snapshot is not None else "runtime_state"
@@ -2049,33 +2329,60 @@ class PersistedRuntimeService:
             )
         )
         self._ensure_patch_approval(patch)
-        ExecutionEpisodeRepository(self.session).update(episode, {"patch_id": patch.id, "divergence_detected": True})
+        ExecutionEpisodeRepository(self.session).update(
+            episode,
+            {
+                "patch_id": patch.id,
+                "divergence_detected": True,
+                "runtime_metadata": {
+                    **dict(episode.runtime_metadata or {}),
+                    "derived_patch_id": patch.id,
+                },
+            },
+        )
         return patch
 
     def _materialize_learning(self, *, task_spec, plan, episode):
+        existing_learning = self._episode_learning(episode)
+        if existing_learning is not None:
+            return existing_learning
         capability = self._primary_capability(plan)
         summary = episode.result_summary or f"Stable execution pattern detected for {task_spec.title}."
         content = (
             f"Task: {task_spec.title}\n"
             f"Domain: {task_spec.domain}\n"
+            f"Episode: {episode.id}\n"
             f"Primary capability: {capability}\n"
             f"Summary: {summary}"
         )
         repo = AgentLearningRepository(self.session)
-        return repo.create(
+        learning = repo.create(
             {
                 "content": content,
-                "tags": [task_spec.domain, capability, "trial" if episode.mode == "trial" else episode.mode],
+                "tags": [
+                    task_spec.domain,
+                    capability,
+                    "trial" if episode.mode == "trial" else episode.mode,
+                    f"episode:{episode.id}",
+                ],
                 "source_task_id": task_spec.id,
                 "consolidated_at": episode.finished_at or utcnow(),
                 "is_active": not episode.divergence_detected,
             }
         )
+        self._remember_episode_artifact(episode, "learning_id", learning.id)
+        return learning
 
     def _materialize_skill_draft_approval(self, *, task_spec, plan, episode, learning):
         capability = self._primary_capability(plan)
         if capability in {"analyze", "llm", "document"}:
             return None
+
+        approval_id = str((episode.runtime_metadata or {}).get("derived_skill_approval_id") or "").strip()
+        if approval_id:
+            approval = ApprovalRepository(self.session).get(approval_id)
+            if approval is not None:
+                return approval
 
         approval_repo = ApprovalRepository(self.session)
         existing_stmt = select(ApprovalItem).where(
@@ -2084,10 +2391,11 @@ class PersistedRuntimeService:
         )
         existing = self.session.scalars(existing_stmt).first()
         if existing is not None:
+            self._remember_episode_artifact(episode, "skill_approval_id", existing.id)
             return existing
 
         skill_name = f"{task_spec.domain.replace('_', ' ').title()} {capability.title()} Skill"
-        return approval_repo.create(
+        approval = approval_repo.create(
             {
                 "target_type": "skill_draft",
                 "target_id": learning.id,
@@ -2125,6 +2433,8 @@ class PersistedRuntimeService:
                 },
             }
         )
+        self._remember_episode_artifact(episode, "skill_approval_id", approval.id)
+        return approval
 
     def _evaluate_skill_health(self, *, plan, episode) -> dict[str, Any] | None:
         runtime_metadata = dict(plan.runtime_metadata or {})
@@ -2188,7 +2498,35 @@ class PersistedRuntimeService:
         )
         return self.session.scalars(stmt).first()
 
-    def _get_episode_approvals(self, *, patch, learning) -> list[ApprovalItem]:
+    def _episode_template(self, episode):
+        template_id = str((episode.runtime_metadata or {}).get("derived_template_id") or "").strip()
+        if not template_id:
+            return None
+        return WorkflowTemplateRepository(self.session).get(template_id)
+
+    def _episode_patch(self, episode):
+        patch_id = str((episode.runtime_metadata or {}).get("derived_patch_id") or "").strip()
+        if patch_id:
+            patch = WorkflowPatchRepository(self.session).get(patch_id)
+            if patch is not None:
+                return patch
+        return self._get_episode_patch(episode)
+
+    def _episode_learning(self, episode):
+        learning_id = str((episode.runtime_metadata or {}).get("derived_learning_id") or "").strip()
+        if not learning_id:
+            return None
+        return AgentLearningRepository(self.session).get(learning_id)
+
+    def _remember_episode_artifact(self, episode, artifact_key: str, artifact_id: str) -> None:
+        normalized_key = artifact_key if artifact_key.startswith("derived_") else f"derived_{artifact_key}"
+        runtime_metadata = dict(episode.runtime_metadata or {})
+        if runtime_metadata.get(normalized_key) == artifact_id:
+            return
+        runtime_metadata[normalized_key] = artifact_id
+        ExecutionEpisodeRepository(self.session).update(episode, {"runtime_metadata": runtime_metadata})
+
+    def _get_episode_approvals(self, *, episode, patch, learning) -> list[ApprovalItem]:
         approvals: list[ApprovalItem] = []
         if patch is not None:
             patch_approval = self._get_patch_approval(patch.id)
@@ -2204,8 +2542,51 @@ class PersistedRuntimeService:
                 .order_by(ApprovalItem.created_at.asc(), ApprovalItem.id.asc())
             )
             approvals.extend(list(self.session.scalars(stmt).all()))
+        template_approval = self._get_template_candidate_approval(episode.id)
+        if template_approval is not None:
+            approvals.append(template_approval)
         approvals.sort(key=lambda item: (item.created_at, item.id))
         return approvals
+
+    def _merge_patch_checkpoints(
+        self,
+        current_checkpoints: list[dict[str, Any]],
+        patch_body: dict[str, Any],
+        *,
+        fallback_label: str,
+    ) -> list[dict[str, Any]]:
+        patch_checkpoints = list(patch_body.get("checkpoints") or [])
+        for operation in list(patch_body.get("operations") or []):
+            if not isinstance(operation, dict):
+                continue
+            if str(operation.get("op") or "").strip() == "review_checkpoint":
+                patch_checkpoints.append(
+                    {
+                        "kind": "approval",
+                        "label": str(operation.get("summary") or fallback_label or "Review patched execution"),
+                        "target": operation.get("target"),
+                    }
+                )
+        return self._dedupe_dict_list([*current_checkpoints, *patch_checkpoints])
+
+    def _merge_patch_steps(self, current_steps: list[dict[str, Any]], patch_body: dict[str, Any]) -> list[dict[str, Any]]:
+        patch_steps = self._normalize_steps(list(patch_body.get("steps") or []))
+        if patch_steps:
+            return patch_steps
+
+        operation_steps: list[dict[str, Any]] = []
+        for index, operation in enumerate(list(patch_body.get("operations") or []), start=1):
+            if not isinstance(operation, dict):
+                continue
+            if str(operation.get("op") or "").strip() == "review_checkpoint":
+                operation_steps.append(
+                    {
+                        "id": f"patch_review_{index}",
+                        "capability": "approval",
+                        "summary": str(operation.get("summary") or "Review the patched checkpoint before continuing."),
+                    }
+                )
+        return self._normalize_steps([*operation_steps, *current_steps])
 
     def _build_episode_timeline(
         self,

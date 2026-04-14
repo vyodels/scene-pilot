@@ -20,6 +20,9 @@ async def lifespan(app: FastAPI):
         agent_control=container.agent_control,
         events=container.events,
         enabled=container.flags.is_enabled("feature.autonomy"),
+        run_skill_health_sweep=container.run_skill_health_sweep,
+        health_sweep_enabled=container.flags.is_enabled("skills.health_autonomy"),
+        health_sweep_interval=float(container.settings.skill_health_autonomy_interval_seconds),
     )
     app.state.container = container
     app.state.settings = container.settings

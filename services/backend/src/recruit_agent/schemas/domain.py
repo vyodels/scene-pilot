@@ -8,6 +8,7 @@ from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 class FeatureFlags(BaseModel):
     enable_autonomy: bool = False
+    enable_skill_health_autonomy: bool = False
     enable_system_commands: bool = False
     enable_intranet_sync: bool = False
     enable_outbound_messaging: bool = False
@@ -22,6 +23,7 @@ class AppSettingsBase(BaseModel):
     database_url: str = "sqlite:///./recruit-agent.db"
     database_echo: bool = False
     scheduler_lock_timeout_seconds: int = 300
+    skill_health_autonomy_interval_seconds: int = 300
     approval_source: str = "desktop_app"
     default_platform: str = "site"
     feature_flags: FeatureFlags = Field(default_factory=FeatureFlags)
@@ -42,6 +44,7 @@ class AppSettingsUpdate(BaseModel):
     database_url: str | None = None
     database_echo: bool | None = None
     scheduler_lock_timeout_seconds: int | None = None
+    skill_health_autonomy_interval_seconds: int | None = None
     approval_source: str | None = None
     default_platform: str | None = None
     feature_flags: FeatureFlags | None = None
@@ -639,6 +642,7 @@ class RuntimeLearningOutcomeRead(BaseModel):
     patch: "WorkflowPatchRead | None" = None
     learning_draft: LearningDraftRead | None = None
     approval: "ApprovalRead | None" = None
+    template_approval: "ApprovalRead | None" = None
     skill_health: dict[str, Any] | None = None
 
 
@@ -832,6 +836,7 @@ class SettingsSnapshotRead(BaseModel):
     timezone: str
     intranetEnabled: bool
     desktopApprovalsOnly: bool
+    skill_health_autonomy_interval_seconds: int | None = None
     providers: list[ProviderConfigRead]
     intranetSync: IntranetSyncConfigRead
     platform: PlatformSettingsRead
@@ -845,6 +850,7 @@ class SettingsSnapshotUpdate(BaseModel):
     timezone: str | None = None
     intranetEnabled: bool | None = None
     desktopApprovalsOnly: bool | None = None
+    skill_health_autonomy_interval_seconds: int | None = None
     approval_source: str | None = None
     feature_flags: FeatureFlags | None = None
     provider_config: dict[str, Any] | None = None
