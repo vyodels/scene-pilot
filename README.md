@@ -65,6 +65,13 @@ Some parts of the current codebase are still transitional:
 
 Those transitional pieces should not be read as the final architecture.
 
+Latest validated state:
+
+- workflow lifecycle UI has been reorganized around `工作流管理 / 工作台 / 审批中心`
+- user-facing terminology has been normalized to `场景画像 / 工作流 / 工作流实例`
+- recruiting workflow validation has been run against the live local OpenAI-compatible provider
+- production execution now stops at human review when a live browser scene snapshot is missing, instead of running into a misleading timeout
+
 ## Core Runtime Concepts
 
 - `TaskSpec`: normalized task contract compiled from natural language

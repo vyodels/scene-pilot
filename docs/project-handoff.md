@@ -16,7 +16,7 @@ Concrete sites, internal systems, desktop apps, and tools are all `runtime scene
 
 ## Current State
 
-As of `2026-04-14`, the current local refactor wave is complete.
+As of `2026-04-15`, the current local refactor wave is complete.
 
 Completed:
 
@@ -31,6 +31,23 @@ Completed:
 - `Capability Drivers` expanded and wired into planning and execution
 - `Learning Loop` hardened with replay, patch approval/apply, template candidate approval, skill health checks, and single-machine governance
 - local queue / replay / diagnostics / runtime launch flow working in the desktop control plane
+- desktop information architecture reorganized around workflow lifecycle:
+  - `概览`
+  - `工作流管理`
+  - `工作台`
+  - `审批中心`
+  - `Skills`
+  - `设置`
+- user-facing terminology updated:
+  - `domain pack` -> `场景画像`
+  - `task` -> `工作流`
+  - `task instance` -> `工作流实例`
+- formal recruiting workflow validation completed against the live local provider
+  - compile path used `llm_structured`
+  - supervised trial succeeded
+  - trial confirmation promoted an active workflow version
+  - production execution now stops at `waiting_human` / `awaiting_review` when no live browser snapshot is available
+  - previous false `timeout / Token budget exceeded` behavior is fixed
 
 Verified locally:
 
@@ -45,6 +62,8 @@ Verified locally:
 - `003fd06` `feat: harden runtime compiler and queue governance`
 - `f495857` `feat: deepen runtime browser scene planning`
 - `52051c0` `feat: publish runtime compiler contract`
+- `b1d35e1` `feat: reorganize workflow lifecycle workspace`
+- `896cb7d` `feat: refine workflow console and validation gating`
 
 ## What Is Not Pending As Core Dev Work
 
@@ -69,6 +88,24 @@ Remaining items are external or later-stage:
 - Apple signing / notarization credentials and release run
 - final validation against the real intranet environment
 
+## Most Recent Validation Outcome
+
+The most recent formal validation target was the recruiting workflow.
+
+What was verified:
+
+- natural language request -> workflow compile
+- compile used the live local OpenAI-compatible provider
+- trial run -> review -> version activation
+- production launch through the queue
+- managed execution preflight gating
+
+Important outcome:
+
+- if production execution lacks a live browser/environment snapshot, the runtime now stops early and requests human review
+- it no longer proceeds into the executor loop and wastes tokens
+- a blocked-task approval is created for desktop review
+
 ## Resume Checklist On Another Machine
 
 1. Clone the repository to any path you want.
@@ -76,6 +113,7 @@ Remaining items are external or later-stage:
 3. Run backend tests.
 4. Run desktop typecheck/build.
 5. If you need a local OpenAI-compatible provider, configure it via `SCENE_PILOT_...` env vars or `/api/settings`.
+6. For the current recruiting validation flow, ensure the backend settings point at the local provider and then run a supervised trial before production launch.
 
 Recommended verification commands:
 
@@ -105,7 +143,12 @@ npm run desktop:dev
 
 ## Local Provider Note
 
-A local OpenAI-compatible provider was previously validated during development, but no secret is stored in the repository.
+A local OpenAI-compatible provider was validated during development:
+
+- base URL: `http://127.0.0.1:8317/v1`
+- model: `gpt-5.4`
+
+No secret is stored in the repository.
 
 If you want to resume with a local provider, set it locally through environment variables or the settings API/UI.
 
