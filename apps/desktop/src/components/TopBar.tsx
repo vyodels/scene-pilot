@@ -38,7 +38,7 @@ export function TopBar({ agent, settings, transport, onRefresh, refreshing }: To
       <div>
         <div style={{ color: theme.colors.muted, fontSize: "12px" }}>Workspace</div>
         <div style={{ display: "flex", alignItems: "center", gap: "10px", marginTop: "4px" }}>
-          <h2 style={{ margin: 0, fontSize: "18px" }}>Boss直聘 automation</h2>
+          <h2 style={{ margin: 0, fontSize: "18px" }}>General automation runtime</h2>
           <StatusBadge tone={agent.health === "healthy" ? "positive" : agent.health === "warning" ? "warning" : "critical"}>{agent.status}</StatusBadge>
         </div>
       </div>

@@ -79,6 +79,141 @@ class WorkflowRun(Base, TimestampMixin):
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
+class TaskSpec(Base, TimestampMixin):
+    __tablename__ = "task_specs"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=generate_id)
+    title: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    goal: Mapped[str] = mapped_column(Text, nullable=False)
+    domain: Mapped[str] = mapped_column(String(64), nullable=False, default="general", index=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="draft", index=True)
+    source_kind: Mapped[str] = mapped_column(String(32), nullable=False, default="natural_language", index=True)
+    source_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    inputs: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    constraints: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    success_criteria: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    approval_policy: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    output_contract: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    preferred_capabilities: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    preferred_domains: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    compiled_payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    active_plan_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+
+
+class ExecutionPlan(Base, TimestampMixin):
+    __tablename__ = "execution_plans"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=generate_id)
+    task_spec_id: Mapped[str] = mapped_column(ForeignKey("task_specs.id", ondelete="CASCADE"), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    mode: Mapped[str] = mapped_column(String(32), nullable=False, default="trial", index=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="draft", index=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    approval_state: Mapped[str] = mapped_column(String(32), nullable=False, default="unreviewed", index=True)
+    plan_body: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    environment_requirements: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    checkpoints: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
+    runtime_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    compiled_from_patch_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+
+
+class ExecutionEpisode(Base, TimestampMixin):
+    __tablename__ = "execution_episodes"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=generate_id)
+    task_spec_id: Mapped[str] = mapped_column(ForeignKey("task_specs.id", ondelete="CASCADE"), nullable=False, index=True)
+    execution_plan_id: Mapped[str] = mapped_column(
+        ForeignKey("execution_plans.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    mode: Mapped[str] = mapped_column(String(32), nullable=False, default="trial", index=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending", index=True)
+    requested_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    requires_confirmation: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    result_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    observations: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
+    actions: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
+    metrics: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    divergence_detected: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, index=True)
+    patch_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    runtime_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class WorkflowTemplate(Base, TimestampMixin):
+    __tablename__ = "workflow_templates"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=generate_id)
+    template_key: Mapped[str] = mapped_column(String(128), nullable=False, unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    domain: Mapped[str] = mapped_column(String(64), nullable=False, default="general", index=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="draft", index=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    source_task_spec_id: Mapped[str | None] = mapped_column(
+        ForeignKey("task_specs.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    template_body: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    activation_strategy: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    validation_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_validated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class WorkflowPatch(Base, TimestampMixin):
+    __tablename__ = "workflow_patches"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=generate_id)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    patch_kind: Mapped[str] = mapped_column(String(64), nullable=False, default="execution_divergence", index=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending_review", index=True)
+    template_id: Mapped[str | None] = mapped_column(
+        ForeignKey("workflow_templates.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    task_spec_id: Mapped[str | None] = mapped_column(
+        ForeignKey("task_specs.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    execution_plan_id: Mapped[str | None] = mapped_column(
+        ForeignKey("execution_plans.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    execution_episode_id: Mapped[str | None] = mapped_column(
+        ForeignKey("execution_episodes.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    proposed_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    reviewed_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    applied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    divergence_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    rationale: Mapped[str | None] = mapped_column(Text, nullable=True)
+    patch_body: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    runtime_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+
+
+class EnvironmentSnapshot(Base, TimestampMixin):
+    __tablename__ = "environment_snapshots"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=generate_id)
+    task_spec_id: Mapped[str | None] = mapped_column(
+        ForeignKey("task_specs.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    execution_plan_id: Mapped[str | None] = mapped_column(
+        ForeignKey("execution_plans.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    execution_episode_id: Mapped[str | None] = mapped_column(
+        ForeignKey("execution_episodes.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    source: Mapped[str] = mapped_column(String(64), nullable=False, default="browser", index=True)
+    environment_key: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="observed", index=True)
+    url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    title: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    page_type: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    capability_hints: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    observed_entities: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
+    affordances: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
+    runtime_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+
+
 class TaskQueueItem(Base, TimestampMixin):
     __tablename__ = "task_queue"
 

@@ -24,9 +24,9 @@ export function DashboardView({ summary }: DashboardViewProps): JSX.Element {
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", flexWrap: "wrap" }}>
           <div>
             <div style={{ color: "rgba(233,239,255,0.7)", fontSize: "12px", letterSpacing: "0.18em", textTransform: "uppercase" }}>Live command center</div>
-            <h2 style={{ margin: "8px 0 6px", fontSize: "34px", lineHeight: 1.05 }}>Recruiting Agent health is visible at a glance.</h2>
+            <h2 style={{ margin: "8px 0 6px", fontSize: "34px", lineHeight: 1.05 }}>General automation runtime health is visible at a glance.</h2>
             <p style={{ margin: 0, maxWidth: "760px", color: "rgba(233,239,255,0.78)", lineHeight: 1.6 }}>
-              The workspace keeps candidate handling local-first, serial, and approval-gated while surfacing queue depth, approvals, and skill drift.
+              The workspace keeps task compilation, supervised trials, approvals, and reusable skills visible in one place while preserving domain-pack operations like recruiting.
             </p>
           </div>
           {spend ? <StatusBadge tone={spend.tone === "warning" ? "warning" : "neutral"}>{spend.value}</StatusBadge> : null}
@@ -39,19 +39,19 @@ export function DashboardView({ summary }: DashboardViewProps): JSX.Element {
       </section>
 
       <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.1fr) minmax(320px, 0.9fr)", gap: "18px", alignItems: "start" }}>
-        <Panel title="Pipeline depth" eyebrow="Operational throughput" description="Candidate volume by stage and the current headroom against target capacity.">
+        <Panel title="Pack throughput" eyebrow="Operational throughput" description="Current domain-pack volume and headroom against the active target capacity.">
           <ProgressBars stages={summary.pipeline} />
         </Panel>
-        <Panel title="Live events" eyebrow="Recent state changes" description="The latest runtime and workflow events that matter to an operator.">
+        <Panel title="Live events" eyebrow="Recent state changes" description="The latest runtime, workflow, and supervision events that matter to an operator.">
           <Timeline events={summary.timeline} />
         </Panel>
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: "18px" }}>
-        <Panel title="Alerts" eyebrow="Safety and drift" description="Warnings that should block further automation until reviewed.">
+        <Panel title="Alerts" eyebrow="Safety and drift" description="Warnings that should block further automation or trigger a workflow patch review.">
           <Timeline events={summary.alerts} />
         </Panel>
-        <Panel title="Human review queue" eyebrow="Approval gates" description="Items waiting for approval before they can become active.">
+        <Panel title="Human review queue" eyebrow="Approval gates" description="Items waiting for approval before a template, patch, or skill can become active.">
           <div style={{ display: "grid", gap: "12px" }}>
             {summary.approvals.map((item) => (
               <article key={item.id} style={{ padding: "14px", borderRadius: "16px", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)" }}>

@@ -11,9 +11,13 @@ interface SidebarProps {
 }
 
 const tabs: Array<{ key: WorkspaceTab; label: string; detail: string }> = [
-  { key: "dashboard", label: "Dashboard", detail: "Summary and health" },
-  { key: "candidates", label: "Candidates", detail: "Pipeline and profiles" },
-  { key: "workflows", label: "Workflows", detail: "Nodes and versions" },
+  { key: "dashboard", label: "Overview", detail: "Mission control" },
+  { key: "runtime", label: "Runtime", detail: "Task compiler and plans" },
+  { key: "trials", label: "Trials", detail: "Supervised executions" },
+  { key: "templates", label: "Templates", detail: "Reusable workflows" },
+  { key: "patches", label: "Patches", detail: "Divergence proposals" },
+  { key: "domains", label: "Domains", detail: "Pack inventory" },
+  { key: "recruiting", label: "Recruiting", detail: "Domain pack view" },
   { key: "skills", label: "Skills", detail: "Approval and health" },
   { key: "approvals", label: "Approvals", detail: "Human gates" },
   { key: "monitor", label: "Monitor", detail: "Agent runtime" },
@@ -32,10 +36,10 @@ export function Sidebar({ active, onChange, counts }: SidebarProps): JSX.Element
       }}
     >
       <div style={{ marginBottom: "18px" }}>
-        <div style={{ color: theme.colors.accent, textTransform: "uppercase", letterSpacing: "0.2em", fontSize: "11px" }}>Recruit Agent</div>
-        <h1 style={{ margin: "10px 0 6px", fontSize: "28px", lineHeight: 1.05 }}>Desktop Operator</h1>
+        <div style={{ color: theme.colors.accent, textTransform: "uppercase", letterSpacing: "0.2em", fontSize: "11px" }}>General Automation Runtime</div>
+        <h1 style={{ margin: "10px 0 6px", fontSize: "28px", lineHeight: 1.05 }}>Desktop Control Plane</h1>
         <p style={{ margin: 0, color: theme.colors.muted, fontSize: "14px", lineHeight: 1.5 }}>
-          Local-first recruiting automation with human review gates and serialized browser control.
+          Local-first natural-language automation with supervised trial runs, approvals, runtime patches, and reusable domain packs.
         </p>
       </div>
       <div style={{ display: "grid", gap: "10px" }}>
@@ -70,4 +74,3 @@ export function Sidebar({ active, onChange, counts }: SidebarProps): JSX.Element
     </aside>
   );
 }
-

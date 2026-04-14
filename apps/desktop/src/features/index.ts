@@ -5,6 +5,7 @@ export * from "./candidates/CandidatesView";
 export * from "./dashboard/DashboardView";
 export * from "./monitor/AgentMonitorPage";
 export * from "./overview/OverviewPage";
+export * from "./runtime/RuntimeControlView";
 export * from "./settings/SettingsPage";
 export * from "./skills/SkillsPage";
 export * from "./workflows/WorkflowsPage";

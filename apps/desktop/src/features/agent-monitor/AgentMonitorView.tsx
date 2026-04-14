@@ -36,7 +36,7 @@ export function AgentMonitorView({
         actions={
           <div style={{ display: "flex", gap: "8px" }}>
             <button type="button" onClick={onQueueScreeningTask} disabled={runningAction} style={actionButtonStyle}>
-              Queue screening
+              Queue recruiting task
             </button>
             <button type="button" onClick={onRunOnce} disabled={runningAction} style={actionButtonStyle}>
               {runningAction ? "Running..." : "Run next task"}

@@ -16,10 +16,16 @@ from recruit_agent.models import (
     CandidateSession,
     CommunicationLog,
     DecisionLog,
+    EnvironmentSnapshot,
+    ExecutionEpisode,
+    ExecutionPlan,
     Skill,
     SyncBacklogEntry,
+    TaskSpec,
     TaskQueueItem,
     Workflow,
+    WorkflowPatch,
+    WorkflowTemplate,
     WorkflowRun,
 )
 from recruit_agent.schemas import AppSettingsRead, MetricsSummary
@@ -31,6 +37,14 @@ def _apply_update(instance: Any, data: dict[str, Any]) -> Any:
     for key, value in data.items():
         setattr(instance, key, value)
     return instance
+
+
+def _deep_merge(target: dict[str, Any], patch: dict[str, Any]) -> None:
+    for key, value in patch.items():
+        if isinstance(value, dict) and isinstance(target.get(key), dict):
+            _deep_merge(target[key], value)
+        else:
+            target[key] = value
 
 
 class BaseRepository(Generic[ModelT]):
@@ -154,6 +168,179 @@ class WorkflowRunRepository(BaseRepository[WorkflowRun]):
             .order_by(WorkflowRun.created_at.desc(), WorkflowRun.id.desc())
         )
         return self.session.scalars(stmt).first()
+
+
+class TaskSpecRepository(BaseRepository[TaskSpec]):
+    model = TaskSpec
+
+    def by_task_key(self, task_key: str) -> TaskSpec | None:
+        normalized = task_key.strip().lower()
+        for item in self.list(limit=5000, offset=0):
+            compiled_payload = dict(item.compiled_payload or {})
+            candidate_key = str(compiled_payload.get("task_key") or item.title).strip().lower()
+            if candidate_key == normalized:
+                return item
+        return None
+
+    def by_domain(self, domain: str, limit: int = 100, offset: int = 0) -> list[TaskSpec]:
+        stmt = (
+            select(TaskSpec)
+            .where(TaskSpec.domain == domain)
+            .order_by(TaskSpec.updated_at.desc(), TaskSpec.id.asc())
+            .offset(offset)
+            .limit(limit)
+        )
+        return list(self.session.scalars(stmt).all())
+
+    def list_by_status(self, status: str, limit: int = 100, offset: int = 0) -> list[TaskSpec]:
+        stmt = (
+            select(TaskSpec)
+            .where(TaskSpec.status == status)
+            .order_by(TaskSpec.updated_at.desc(), TaskSpec.id.asc())
+            .offset(offset)
+            .limit(limit)
+        )
+        return list(self.session.scalars(stmt).all())
+
+
+class WorkflowTemplateRepository(BaseRepository[WorkflowTemplate]):
+    model = WorkflowTemplate
+
+    def by_template_key(self, template_key: str) -> WorkflowTemplate | None:
+        stmt = select(WorkflowTemplate).where(WorkflowTemplate.template_key == template_key)
+        return self.session.scalars(stmt).first()
+
+    def active(self, limit: int = 100, offset: int = 0) -> list[WorkflowTemplate]:
+        stmt = (
+            select(WorkflowTemplate)
+            .where(WorkflowTemplate.status == "active")
+            .order_by(WorkflowTemplate.updated_at.desc(), WorkflowTemplate.id.asc())
+            .offset(offset)
+            .limit(limit)
+        )
+        return list(self.session.scalars(stmt).all())
+
+
+class ExecutionPlanRepository(BaseRepository[ExecutionPlan]):
+    model = ExecutionPlan
+
+    def by_task_spec(self, task_spec_id: str, limit: int = 100, offset: int = 0) -> list[ExecutionPlan]:
+        stmt = (
+            select(ExecutionPlan)
+            .where(ExecutionPlan.task_spec_id == task_spec_id)
+            .order_by(ExecutionPlan.updated_at.desc(), ExecutionPlan.id.asc())
+            .offset(offset)
+            .limit(limit)
+        )
+        return list(self.session.scalars(stmt).all())
+
+    def for_task_spec(self, task_spec_id: str, limit: int = 20) -> list[ExecutionPlan]:
+        return self.by_task_spec(task_spec_id, limit=limit, offset=0)
+
+    def active(self, limit: int = 100, offset: int = 0) -> list[ExecutionPlan]:
+        stmt = (
+            select(ExecutionPlan)
+            .where(ExecutionPlan.status.in_(("planned", "running", "blocked")))
+            .order_by(ExecutionPlan.updated_at.desc(), ExecutionPlan.id.asc())
+            .offset(offset)
+            .limit(limit)
+        )
+        return list(self.session.scalars(stmt).all())
+
+
+class ExecutionEpisodeRepository(BaseRepository[ExecutionEpisode]):
+    model = ExecutionEpisode
+
+    def by_plan(self, execution_plan_id: str, limit: int = 100, offset: int = 0) -> list[ExecutionEpisode]:
+        stmt = (
+            select(ExecutionEpisode)
+            .where(ExecutionEpisode.execution_plan_id == execution_plan_id)
+            .order_by(ExecutionEpisode.created_at.desc(), ExecutionEpisode.id.desc())
+            .offset(offset)
+            .limit(limit)
+        )
+        return list(self.session.scalars(stmt).all())
+
+    def for_plan(self, execution_plan_id: str, limit: int = 50) -> list[ExecutionEpisode]:
+        return self.by_plan(execution_plan_id, limit=limit, offset=0)
+
+    def latest_for_task_spec(self, task_spec_id: str) -> ExecutionEpisode | None:
+        stmt = (
+            select(ExecutionEpisode)
+            .where(ExecutionEpisode.task_spec_id == task_spec_id)
+            .order_by(ExecutionEpisode.created_at.desc(), ExecutionEpisode.id.desc())
+        )
+        return self.session.scalars(stmt).first()
+
+
+class EnvironmentSnapshotRepository(BaseRepository[EnvironmentSnapshot]):
+    model = EnvironmentSnapshot
+
+    def for_episode(self, execution_episode_id: str, limit: int = 100, offset: int = 0) -> list[EnvironmentSnapshot]:
+        stmt = (
+            select(EnvironmentSnapshot)
+            .where(EnvironmentSnapshot.execution_episode_id == execution_episode_id)
+            .order_by(EnvironmentSnapshot.created_at.asc(), EnvironmentSnapshot.id.asc())
+            .offset(offset)
+            .limit(limit)
+        )
+        return list(self.session.scalars(stmt).all())
+
+    def latest_for_episode(self, execution_episode_id: str) -> EnvironmentSnapshot | None:
+        stmt = (
+            select(EnvironmentSnapshot)
+            .where(EnvironmentSnapshot.execution_episode_id == execution_episode_id)
+            .order_by(EnvironmentSnapshot.created_at.desc(), EnvironmentSnapshot.id.desc())
+        )
+        return self.session.scalars(stmt).first()
+
+
+class WorkflowPatchRepository(BaseRepository[WorkflowPatch]):
+    model = WorkflowPatch
+
+    def pending_review(self, limit: int = 100, offset: int = 0) -> list[WorkflowPatch]:
+        stmt = (
+            select(WorkflowPatch)
+            .where(WorkflowPatch.status == "pending_review")
+            .order_by(WorkflowPatch.created_at.asc(), WorkflowPatch.id.asc())
+            .offset(offset)
+            .limit(limit)
+        )
+        return list(self.session.scalars(stmt).all())
+
+    def for_template(self, workflow_template_id: str, limit: int = 50) -> list[WorkflowPatch]:
+        stmt = (
+            select(WorkflowPatch)
+            .where(WorkflowPatch.template_id == workflow_template_id)
+            .order_by(WorkflowPatch.created_at.desc(), WorkflowPatch.id.desc())
+            .limit(limit)
+        )
+        return list(self.session.scalars(stmt).all())
+
+    def mark_review(
+        self,
+        patch: WorkflowPatch,
+        *,
+        status: str,
+        reviewer: str | None = None,
+        reason: str | None = None,
+        rationale: str | None = None,
+        applied_at: Any | None = None,
+    ) -> WorkflowPatch:
+        patch.status = status
+        patch.reviewed_by = reviewer
+        patch.reviewed_at = utcnow()
+        review_reason = rationale if rationale is not None else reason
+        if review_reason is not None:
+            if hasattr(patch, "reason"):
+                patch.reason = review_reason
+            elif hasattr(patch, "rationale"):
+                patch.rationale = review_reason
+        if applied_at is not None:
+            patch.applied_at = applied_at
+        self.session.commit()
+        self.session.refresh(patch)
+        return patch
 
 
 class DecisionLogRepository(BaseRepository[DecisionLog]):
@@ -486,14 +673,6 @@ class SyncBacklogRepository:
         self.session.commit()
         self.session.refresh(record)
         return record
-
-
-def _deep_merge(target: dict[str, Any], patch: dict[str, Any]) -> None:
-    for key, value in patch.items():
-        if isinstance(value, dict) and isinstance(target.get(key), dict):
-            _deep_merge(target[key], value)
-        else:
-            target[key] = value
 
 
 class MetricsRepository:

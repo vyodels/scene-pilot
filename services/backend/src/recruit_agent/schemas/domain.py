@@ -121,6 +121,340 @@ class WorkflowRead(WorkflowBase):
     updated_at: datetime
 
 
+class TaskSpecBase(BaseModel):
+    title: str
+    description: str | None = None
+    goal: str
+    domain: str = "general"
+    status: str = "draft"
+    source_kind: str = "natural_language"
+    source_text: str | None = None
+    inputs: dict[str, Any] = Field(default_factory=dict)
+    constraints: dict[str, Any] = Field(default_factory=dict)
+    success_criteria: dict[str, Any] = Field(default_factory=dict)
+    approval_policy: dict[str, Any] = Field(default_factory=dict)
+    output_contract: dict[str, Any] = Field(default_factory=dict)
+    preferred_capabilities: list[str] = Field(default_factory=list)
+    preferred_domains: list[str] = Field(default_factory=list)
+    compiled_payload: dict[str, Any] = Field(default_factory=dict)
+    active_plan_id: str | None = None
+
+
+class TaskSpecCreate(TaskSpecBase):
+    pass
+
+
+class TaskSpecUpdate(BaseModel):
+    title: str | None = None
+    description: str | None = None
+    goal: str | None = None
+    domain: str | None = None
+    status: str | None = None
+    source_kind: str | None = None
+    source_text: str | None = None
+    inputs: dict[str, Any] | None = None
+    constraints: dict[str, Any] | None = None
+    success_criteria: dict[str, Any] | None = None
+    approval_policy: dict[str, Any] | None = None
+    output_contract: dict[str, Any] | None = None
+    preferred_capabilities: list[str] | None = None
+    preferred_domains: list[str] | None = None
+    compiled_payload: dict[str, Any] | None = None
+    active_plan_id: str | None = None
+
+
+class TaskSpecRead(TaskSpecBase):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class DomainPackRead(BaseModel):
+    key: str
+    name: str
+    description: str
+    default_capabilities: list[str] = Field(default_factory=list)
+    sample_tasks: list[str] = Field(default_factory=list)
+    default_constraints: dict[str, Any] = Field(default_factory=dict)
+    default_output_contract: dict[str, Any] = Field(default_factory=dict)
+    template_keys: list[str] = Field(default_factory=list)
+
+
+class TaskCompileRequest(BaseModel):
+    instruction: str = Field(validation_alias=AliasChoices("instruction", "source_text", "prompt"))
+    title: str | None = None
+    description: str | None = None
+    domain_hint: str | None = None
+    inputs: dict[str, Any] = Field(default_factory=dict)
+    constraints: dict[str, Any] = Field(default_factory=dict)
+    success_criteria: dict[str, Any] = Field(default_factory=dict)
+    approval_policy: dict[str, Any] = Field(default_factory=dict)
+    output_contract: dict[str, Any] = Field(default_factory=dict)
+    preferred_capabilities: list[str] = Field(default_factory=list)
+    preferred_domains: list[str] = Field(default_factory=list)
+    auto_plan: bool = True
+    requested_by: str = "desktop-user"
+
+
+class TaskCompileResponse(BaseModel):
+    domain_pack: DomainPackRead
+    compiler_notes: list[str] = Field(default_factory=list)
+    task_spec: TaskSpecRead
+    execution_plan: "ExecutionPlanRead | None" = None
+
+
+class ExecutionPlanBase(BaseModel):
+    task_spec_id: str
+    name: str
+    mode: str = "trial"
+    status: str = "draft"
+    version: int = 1
+    approval_state: str = "unreviewed"
+    plan_body: dict[str, Any] = Field(default_factory=dict)
+    environment_requirements: dict[str, Any] = Field(default_factory=dict)
+    checkpoints: list[dict[str, Any]] = Field(default_factory=list)
+    runtime_metadata: dict[str, Any] = Field(default_factory=dict)
+    compiled_from_patch_id: str | None = None
+
+
+class ExecutionPlanCreate(ExecutionPlanBase):
+    pass
+
+
+class ExecutionPlanUpdate(BaseModel):
+    task_spec_id: str | None = None
+    name: str | None = None
+    mode: str | None = None
+    status: str | None = None
+    version: int | None = None
+    approval_state: str | None = None
+    plan_body: dict[str, Any] | None = None
+    environment_requirements: dict[str, Any] | None = None
+    checkpoints: list[dict[str, Any]] | None = None
+    runtime_metadata: dict[str, Any] | None = None
+    compiled_from_patch_id: str | None = None
+
+
+class ExecutionPlanRead(ExecutionPlanBase):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class ExecutionEpisodeBase(BaseModel):
+    task_spec_id: str
+    execution_plan_id: str
+    mode: str = "trial"
+    status: str = "pending"
+    requested_by: str | None = None
+    requires_confirmation: bool = True
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    result_summary: str | None = None
+    observations: list[dict[str, Any]] = Field(default_factory=list)
+    actions: list[dict[str, Any]] = Field(default_factory=list)
+    metrics: dict[str, Any] = Field(default_factory=dict)
+    divergence_detected: bool = False
+    patch_id: str | None = None
+    runtime_metadata: dict[str, Any] = Field(default_factory=dict)
+    last_error: str | None = None
+
+
+class ExecutionEpisodeCreate(ExecutionEpisodeBase):
+    pass
+
+
+class ExecutionEpisodeUpdate(BaseModel):
+    task_spec_id: str | None = None
+    execution_plan_id: str | None = None
+    mode: str | None = None
+    status: str | None = None
+    requested_by: str | None = None
+    requires_confirmation: bool | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    result_summary: str | None = None
+    observations: list[dict[str, Any]] | None = None
+    actions: list[dict[str, Any]] | None = None
+    metrics: dict[str, Any] | None = None
+    divergence_detected: bool | None = None
+    patch_id: str | None = None
+    runtime_metadata: dict[str, Any] | None = None
+    last_error: str | None = None
+
+
+class ExecutionEpisodeRead(ExecutionEpisodeBase):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class TrialRunExecuteRequest(BaseModel):
+    operator: str = "desktop-user"
+    notes: str | None = None
+    source: str = "browser"
+    environment_key: str | None = None
+    url: str | None = None
+    title: str | None = None
+    page_type: str | None = None
+    observed_entities: list[dict[str, Any]] = Field(default_factory=list)
+    affordances: list[dict[str, Any]] = Field(default_factory=list)
+    capability_hints: list[str] = Field(default_factory=list)
+    runtime_metadata: dict[str, Any] = Field(default_factory=dict)
+    simulate_divergence: bool | None = None
+
+
+class EpisodeConfirmRequest(BaseModel):
+    reviewer: str = Field(default="desktop-user", validation_alias=AliasChoices("reviewer", "reviewed_by"))
+    reason: str | None = Field(default=None, validation_alias=AliasChoices("reason", "notes"))
+    activate_template: bool = True
+    template_name: str | None = None
+
+
+class WorkflowTemplateBase(BaseModel):
+    template_key: str
+    name: str
+    domain: str = "general"
+    status: str = "draft"
+    version: int = 1
+    source_task_spec_id: str | None = None
+    template_body: dict[str, Any] = Field(default_factory=dict)
+    activation_strategy: dict[str, Any] = Field(default_factory=dict)
+    validation_summary: str | None = None
+    last_validated_at: datetime | None = None
+
+
+class WorkflowTemplateCreate(WorkflowTemplateBase):
+    pass
+
+
+class WorkflowTemplateUpdate(BaseModel):
+    template_key: str | None = None
+    name: str | None = None
+    domain: str | None = None
+    status: str | None = None
+    version: int | None = None
+    source_task_spec_id: str | None = None
+    template_body: dict[str, Any] | None = None
+    activation_strategy: dict[str, Any] | None = None
+    validation_summary: str | None = None
+    last_validated_at: datetime | None = None
+
+
+class WorkflowTemplateRead(WorkflowTemplateBase):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class WorkflowPatchBase(BaseModel):
+    title: str
+    patch_kind: str = "execution_divergence"
+    status: str = "pending_review"
+    template_id: str | None = None
+    task_spec_id: str | None = None
+    execution_plan_id: str | None = None
+    execution_episode_id: str | None = None
+    proposed_by: str | None = None
+    reviewed_by: str | None = None
+    reviewed_at: datetime | None = None
+    applied_at: datetime | None = None
+    divergence_summary: str | None = None
+    rationale: str | None = Field(default=None, validation_alias=AliasChoices("rationale", "reason"))
+    patch_body: dict[str, Any] = Field(default_factory=dict)
+    runtime_metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @property
+    def reason(self) -> str | None:
+        return self.rationale
+
+
+class WorkflowPatchCreate(WorkflowPatchBase):
+    pass
+
+
+class WorkflowPatchUpdate(BaseModel):
+    title: str | None = None
+    patch_kind: str | None = None
+    status: str | None = None
+    template_id: str | None = None
+    task_spec_id: str | None = None
+    execution_plan_id: str | None = None
+    execution_episode_id: str | None = None
+    proposed_by: str | None = None
+    reviewed_by: str | None = None
+    reviewed_at: datetime | None = None
+    applied_at: datetime | None = None
+    divergence_summary: str | None = None
+    rationale: str | None = Field(default=None, validation_alias=AliasChoices("rationale", "reason"))
+    patch_body: dict[str, Any] | None = None
+    runtime_metadata: dict[str, Any] | None = None
+
+    @property
+    def reason(self) -> str | None:
+        return self.rationale
+
+
+class WorkflowPatchRead(WorkflowPatchBase):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class EnvironmentSnapshotBase(BaseModel):
+    task_spec_id: str | None = None
+    execution_plan_id: str | None = None
+    execution_episode_id: str | None = None
+    source: str = "browser"
+    environment_key: str | None = None
+    status: str = "observed"
+    url: str | None = None
+    title: str | None = None
+    page_type: str | None = None
+    capability_hints: list[str] = Field(default_factory=list)
+    observed_entities: list[dict[str, Any]] = Field(default_factory=list)
+    affordances: list[dict[str, Any]] = Field(default_factory=list)
+    runtime_metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class EnvironmentSnapshotCreate(EnvironmentSnapshotBase):
+    pass
+
+
+class EnvironmentSnapshotUpdate(BaseModel):
+    task_spec_id: str | None = None
+    execution_plan_id: str | None = None
+    execution_episode_id: str | None = None
+    source: str | None = None
+    environment_key: str | None = None
+    status: str | None = None
+    url: str | None = None
+    title: str | None = None
+    page_type: str | None = None
+    capability_hints: list[str] | None = None
+    observed_entities: list[dict[str, Any]] | None = None
+    affordances: list[dict[str, Any]] | None = None
+    runtime_metadata: dict[str, Any] | None = None
+
+
+class EnvironmentSnapshotRead(EnvironmentSnapshotBase):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    created_at: datetime
+    updated_at: datetime
+
+
 class SkillBase(BaseModel):
     skill_id: str
     name: str
@@ -205,6 +539,15 @@ class LearningDraftRead(LearningDraftBase):
     updated_at: datetime
 
 
+class RuntimeLearningOutcomeRead(BaseModel):
+    episode: ExecutionEpisodeRead
+    template: "WorkflowTemplateRead | None" = None
+    patch: "WorkflowPatchRead | None" = None
+    learning_draft: LearningDraftRead | None = None
+    approval: "ApprovalRead | None" = None
+    skill_health: dict[str, Any] | None = None
+
+
 class ApprovalBase(BaseModel):
     target_type: str
     target_id: str
@@ -258,6 +601,12 @@ class HealthResponse(BaseModel):
 class ApprovalDecisionRequest(BaseModel):
     reviewer: str = Field(default="desktop-user", validation_alias=AliasChoices("reviewer", "reviewed_by"))
     reason: str | None = Field(default=None, validation_alias=AliasChoices("reason", "notes"))
+
+
+class WorkflowPatchDecisionRequest(BaseModel):
+    reviewer: str = Field(default="desktop-user", validation_alias=AliasChoices("reviewer", "reviewed_by"))
+    reason: str | None = Field(default=None, validation_alias=AliasChoices("reason", "notes"))
+    apply_immediately: bool = False
 
 
 class ProviderConfigRead(BaseModel):
@@ -461,3 +810,11 @@ class AgentRunRead(BaseModel):
     task_id: str | None = None
     enqueued_follow_ups: int = 0
     error: str | None = None
+
+
+class TrialRunRequest(BaseModel):
+    task_spec_id: str
+    execution_plan_id: str
+    requested_by: str = "desktop-user"
+    notes: str | None = None
+    runtime_metadata: dict[str, Any] = Field(default_factory=dict)

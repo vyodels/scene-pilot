@@ -84,6 +84,41 @@ def _sync_backlog_protocol_columns(connection: Connection) -> None:
     )
 
 
+def _create_general_runtime_indexes(connection: Connection) -> None:
+    indexed_tables = {
+        row[0]
+        for row in connection.execute(text("SELECT name FROM sqlite_master WHERE type='table'")).fetchall()
+    }
+    statements_by_table = {
+        "task_specs": (
+            "CREATE INDEX IF NOT EXISTS ix_task_specs_status_domain ON task_specs (status, domain)",
+        ),
+        "workflow_templates": (
+            "CREATE INDEX IF NOT EXISTS ix_workflow_templates_status_domain ON workflow_templates (status, domain)",
+        ),
+        "execution_plans": (
+            "CREATE INDEX IF NOT EXISTS ix_execution_plans_status_mode ON execution_plans (status, mode)",
+            "CREATE INDEX IF NOT EXISTS ix_execution_plans_task_spec_created_at ON execution_plans (task_spec_id, created_at)",
+        ),
+        "execution_episodes": (
+            "CREATE INDEX IF NOT EXISTS ix_execution_episodes_status_mode ON execution_episodes (status, mode)",
+            "CREATE INDEX IF NOT EXISTS ix_execution_episodes_plan_created_at ON execution_episodes (execution_plan_id, created_at)",
+        ),
+        "environment_snapshots": (
+            "CREATE INDEX IF NOT EXISTS ix_environment_snapshots_episode_page_type ON environment_snapshots (execution_episode_id, page_type)",
+        ),
+        "workflow_patches": (
+            "CREATE INDEX IF NOT EXISTS ix_workflow_patches_status_kind ON workflow_patches (status, patch_kind)",
+            "CREATE INDEX IF NOT EXISTS ix_workflow_patches_template_created_at ON workflow_patches (template_id, created_at)",
+        ),
+    }
+    for table_name, statements in statements_by_table.items():
+        if table_name not in indexed_tables:
+            continue
+        for statement in statements:
+            connection.execute(text(statement))
+
+
 MIGRATIONS: tuple[SchemaMigration, ...] = (
     SchemaMigration(
         version=1,
@@ -99,6 +134,11 @@ MIGRATIONS: tuple[SchemaMigration, ...] = (
         version=3,
         name="sync_backlog_protocol_columns",
         apply=_sync_backlog_protocol_columns,
+    ),
+    SchemaMigration(
+        version=4,
+        name="general_runtime_indexes",
+        apply=_create_general_runtime_indexes,
     ),
 )
 
@@ -162,7 +202,7 @@ def describe_migrations() -> list[dict[str, object]]:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Inspect or apply Recruit Agent schema migrations")
+    parser = argparse.ArgumentParser(description="Inspect or apply General Automation Runtime schema migrations")
     parser.add_argument("command", choices=("current", "history", "upgrade"), nargs="?", default="upgrade")
     args = parser.parse_args()
 
