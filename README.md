@@ -78,6 +78,7 @@ Those transitional pieces should not be read as the final architecture.
 These concepts exist to support runtime adaptation. They are intentionally broader than any one website workflow.
 
 Read the detailed architecture in [docs/general-automation-runtime.md](./docs/general-automation-runtime.md) and the phased rollout in [Plan.md](./Plan.md).
+For a machine-to-machine resume guide, read [docs/project-handoff.md](./docs/project-handoff.md).
 
 ## Development Start Points
 
