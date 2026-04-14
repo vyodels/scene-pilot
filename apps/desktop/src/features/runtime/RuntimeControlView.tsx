@@ -30,6 +30,7 @@ interface RuntimeControlViewProps {
   lastAssessment?: RuntimeEnvironmentAssessment | null;
   lastReplan?: RuntimePlanReplanResult | null;
   onCompileTask(payload: CompileTaskRequest): Promise<void>;
+  onLaunchPlan(planId: string, taskSpecId: string): Promise<void>;
   onCreateTrialRun(taskSpecId: string, executionPlanId: string): Promise<void>;
   onExecuteTrialRun(episodeId: string): Promise<void>;
   onRefreshLearning(episodeId: string): Promise<void>;
@@ -176,6 +177,7 @@ export function RuntimeControlView({
   lastAssessment,
   lastReplan,
   onCompileTask,
+  onLaunchPlan,
   onCreateTrialRun,
   onExecuteTrialRun,
   onRefreshLearning,
@@ -358,13 +360,23 @@ export function RuntimeControlView({
                   ? `${linkedAssessment.sceneLabel} · confidence ${formatConfidence(linkedAssessment.confidence)}`
                   : "No scene assessment recorded yet."}
               </div>
-              <button
-                type="button"
-                onClick={() => setReplanPlanId(plan.id)}
-                style={{ ...actionButtonStyle, background: isSelected ? "rgba(122,167,255,0.24)" : actionButtonStyle.background }}
-              >
-                {isSelected ? "Selected for replan" : "Use for replan"}
-              </button>
+              <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                <button
+                  type="button"
+                  onClick={() => void onLaunchPlan(plan.id, plan.taskSpecId)}
+                  disabled={busy || busyPlanId === plan.id}
+                  style={{ ...actionButtonStyle, background: "rgba(93,216,163,0.12)" }}
+                >
+                  {busyPlanId === plan.id ? "Queueing..." : "Launch execution"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setReplanPlanId(plan.id)}
+                  style={{ ...actionButtonStyle, background: isSelected ? "rgba(122,167,255,0.24)" : actionButtonStyle.background }}
+                >
+                  {isSelected ? "Selected for replan" : "Use for replan"}
+                </button>
+              </div>
             </div>
           </article>
         );

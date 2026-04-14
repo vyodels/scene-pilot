@@ -14,12 +14,35 @@ from recruit_agent.scheduler.queue import TaskEnvelope
 from .definitions import WorkflowDefinition, WorkflowNode, build_default_recruiting_workflow, workflow_definition_from_config
 
 
+def _build_runtime_execution_workflow() -> WorkflowDefinition:
+    return WorkflowDefinition(
+        workflow_id="runtime-managed",
+        name="Runtime Managed Execution",
+        start_node_id="runtime_execution",
+        nodes={
+            "runtime_execution": WorkflowNode(
+                node_id="runtime_execution",
+                name="Runtime Execution",
+                task_type="runtime_execution",
+                transitions=[],
+                requires_skill=False,
+                metadata={"runtime_managed": True},
+            )
+        },
+        version="1.0.0",
+        metadata={"runtime_managed": True},
+    )
+
+
 @dataclass(slots=True)
 class WorkflowEngine:
     workflow: WorkflowDefinition = field(default_factory=build_default_recruiting_workflow)
+    runtime_workflow: WorkflowDefinition = field(default_factory=_build_runtime_execution_workflow)
     session_factory: sessionmaker[Session] | None = None
 
     def resolve_workflow(self, task: TaskEnvelope) -> WorkflowDefinition:
+        if self._is_runtime_managed_task(task):
+            return self.runtime_workflow
         if task.workflow_id and self.session_factory is not None:
             with self.session_factory() as session:
                 record = WorkflowRepository(session).get(task.workflow_id)
@@ -87,3 +110,9 @@ class WorkflowEngine:
             return self.next_tasks(task, result)
 
         return _follow_up
+
+    def _is_runtime_managed_task(self, task: TaskEnvelope) -> bool:
+        if task.task_type == "runtime_execution":
+            return True
+        metadata = dict(task.metadata or {})
+        return bool(metadata.get("task_spec_id") and metadata.get("execution_plan_id"))

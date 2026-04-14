@@ -156,6 +156,8 @@ class ToolExecutionResult:
     tool_name: str
     output: Any
     is_error: bool = False
+    arguments: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     def to_message_content(self) -> str:

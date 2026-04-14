@@ -215,6 +215,11 @@ class CapabilityDriverRead(BaseModel):
     supported_domains: list[str] = Field(default_factory=list)
     recommended_scene_types: list[str] = Field(default_factory=list)
     signal_labels: list[str] = Field(default_factory=list)
+    executor_mode: str = "tool_loop"
+    replan_on_error: bool = False
+    scene_required: bool = False
+    preferred_tools: list[str] = Field(default_factory=list)
+    checkpoint_policy: dict[str, Any] = Field(default_factory=dict)
     writes_state: bool = False
     requires_supervision: bool = False
     audit_tags: list[str] = Field(default_factory=list)
@@ -605,11 +610,18 @@ class ExecutionPlanReplanRequest(BaseModel):
 
 
 class ExecutionPlanReplanRead(BaseModel):
+    id: str | None = None
+    task_spec_id: str | None = None
+    base_execution_plan_id: str | None = None
     previous_plan: ExecutionPlanRead
     execution_plan: ExecutionPlanRead
     assessment: EnvironmentAssessmentRead
+    status: str = "replanned"
+    summary: str | None = None
     compiler_notes: list[str] = Field(default_factory=list)
+    recommended_capability_keys: list[str] = Field(default_factory=list)
     audit_metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime | None = None
 
 
 class SkillBase(BaseModel):
@@ -1058,6 +1070,11 @@ class AgentTaskCreate(BaseModel):
     candidate_id: str | None = None
     workflow_id: str | None = None
     workflow_node_id: str | None = None
+    task_spec_id: str | None = None
+    execution_plan_id: str | None = None
+    execution_episode_id: str | None = None
+    requested_by: str = "desktop-user"
+    mode: str = "production"
 
 
 class AgentTaskEnqueueRead(BaseModel):
@@ -1114,3 +1131,22 @@ class TrialRunRequest(BaseModel):
     requested_by: str = "desktop-user"
     notes: str | None = None
     runtime_metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class RuntimePlanEnqueueRequest(BaseModel):
+    task_spec_id: str | None = None
+    priority: int = 120
+    requested_by: str = "desktop-user"
+    mode: str = "production"
+    payload: dict[str, Any] = Field(default_factory=dict)
+    runtime_metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class RuntimePlanEnqueueRead(BaseModel):
+    task_id: str
+    task_type: str
+    priority: int
+    queue_depth: int
+    task_spec_id: str
+    execution_plan_id: str
+    execution_episode: ExecutionEpisodeRead

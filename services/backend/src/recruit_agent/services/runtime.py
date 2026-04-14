@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 from typing import Any
 from urllib.parse import urlparse
 
@@ -62,10 +63,25 @@ from recruit_agent.schemas import (
     WorkflowTemplateRead,
     WorkflowTemplateUpdate,
 )
-from recruit_agent.runtime.models import Message
+from recruit_agent.runtime.agent_loop import AgentLoop, AgentLoopConfig
+from recruit_agent.runtime.models import AgentResult, Message
 from recruit_agent.runtime.providers import ProviderError, ProviderRegistry, ScriptedProvider
 from recruit_agent.runtime.prompts import PromptBuilder
+from recruit_agent.runtime.tools import ToolRegistry
 from recruit_agent.services.skills import SkillHealthCheckService
+
+
+def _json_default(value: Any) -> Any:
+    if isinstance(value, BaseModel):
+        return value.model_dump(mode="json")
+    isoformat = getattr(value, "isoformat", None)
+    if callable(isoformat):
+        return isoformat()
+    return str(value)
+
+
+def _json_ready(value: Any) -> Any:
+    return json.loads(json.dumps(value, ensure_ascii=False, default=_json_default))
 
 
 DOMAIN_PACKS: dict[str, dict[str, Any]] = {
@@ -207,6 +223,11 @@ CAPABILITY_DRIVERS: dict[str, dict[str, Any]] = {
         "description": "Reason about a task, compare evidence, or decide the next step without changing the environment.",
         "risk": "low",
         "signal_labels": ["task_contract", "plan_fit", "divergence_signal"],
+        "executor_mode": "deliberate",
+        "replan_on_error": False,
+        "scene_required": False,
+        "preferred_tools": ["record_observation", "advance_plan_step", "submit_result"],
+        "checkpoint_policy": {"checkpoint_on_divergence": True},
     },
     "browser": {
         "description": "Observe or interact with websites and web apps as runtime scenes.",
@@ -219,46 +240,101 @@ CAPABILITY_DRIVERS: dict[str, dict[str, Any]] = {
             "verification_gate",
             "navigation_target",
         ],
+        "executor_mode": "observe_act",
+        "replan_on_error": True,
+        "scene_required": True,
+        "preferred_tools": [
+            "record_observation",
+            "advance_plan_step",
+            "request_replan",
+            "request_human_checkpoint",
+            "submit_result",
+        ],
+        "checkpoint_policy": {
+            "requires_scene_assessment": True,
+            "checkpoint_on_auth_gate": True,
+            "checkpoint_on_write_surface": True,
+        },
     },
     "search": {
         "description": "Discover relevant targets, sources, candidates, or options across search surfaces.",
         "risk": "low",
         "signal_labels": ["query_intent", "result_listing", "ranking_signal"],
+        "executor_mode": "discover",
+        "replan_on_error": False,
+        "scene_required": False,
+        "preferred_tools": ["record_observation", "advance_plan_step", "submit_result"],
+        "checkpoint_policy": {"checkpoint_on_empty_results": True},
     },
     "http": {
         "description": "Call structured HTTP or API endpoints to read or write machine-facing data.",
         "risk": "medium",
         "signal_labels": ["endpoint_schema", "response_contract", "transport_state"],
+        "executor_mode": "request_response",
+        "replan_on_error": True,
+        "scene_required": False,
+        "preferred_tools": ["record_observation", "advance_plan_step", "request_replan", "submit_result"],
+        "checkpoint_policy": {"checkpoint_on_schema_mismatch": True},
     },
     "document": {
         "description": "Draft, summarize, or format durable output artifacts.",
         "risk": "low",
         "signal_labels": ["artifact_outline", "summary_contract", "handoff_bundle"],
+        "executor_mode": "artifact",
+        "replan_on_error": False,
+        "scene_required": False,
+        "preferred_tools": ["record_observation", "advance_plan_step", "submit_result"],
+        "checkpoint_policy": {"checkpoint_before_publish": False},
     },
     "filesystem": {
         "description": "Read, write, stage, or organize local files and folders under runtime policy controls.",
         "risk": "medium",
         "signal_labels": ["path_target", "artifact_store", "file_state"],
+        "executor_mode": "local_io",
+        "replan_on_error": True,
+        "scene_required": False,
+        "preferred_tools": ["record_observation", "advance_plan_step", "request_human_checkpoint", "submit_result"],
+        "checkpoint_policy": {"checkpoint_on_write": True},
     },
     "api": {
         "description": "Write structured data into a downstream system or service.",
         "risk": "high",
         "signal_labels": ["write_contract", "destination_system", "sync_result"],
+        "executor_mode": "downstream_write",
+        "replan_on_error": True,
+        "scene_required": False,
+        "preferred_tools": ["record_observation", "advance_plan_step", "request_human_checkpoint", "submit_result"],
+        "checkpoint_policy": {"checkpoint_before_write": True, "checkpoint_after_write": True},
     },
     "command": {
         "description": "Run local system commands under approval and policy controls.",
         "risk": "high",
         "signal_labels": ["command_intent", "stdout_signal", "system_mutation"],
+        "executor_mode": "command",
+        "replan_on_error": True,
+        "scene_required": False,
+        "preferred_tools": ["record_observation", "advance_plan_step", "request_human_checkpoint", "submit_result"],
+        "checkpoint_policy": {"requires_approval": True, "checkpoint_on_mutation": True},
     },
     "llm": {
         "description": "Delegate reasoning, synthesis, or classification to the language model runtime.",
         "risk": "low",
         "signal_labels": ["prompt_contract", "synthesis_result", "classification_signal"],
+        "executor_mode": "reason",
+        "replan_on_error": False,
+        "scene_required": False,
+        "preferred_tools": ["record_observation", "advance_plan_step", "submit_result"],
+        "checkpoint_policy": {"checkpoint_on_low_confidence": True},
     },
     "approval": {
         "description": "Pause for a human review or approval checkpoint.",
         "risk": "low",
         "signal_labels": ["review_gate", "human_decision", "approval_reason"],
+        "executor_mode": "checkpoint",
+        "replan_on_error": False,
+        "scene_required": False,
+        "preferred_tools": ["request_human_checkpoint", "record_observation", "advance_plan_step", "submit_result"],
+        "checkpoint_policy": {"requires_approval": True},
     },
 }
 
@@ -412,9 +488,20 @@ class CompiledTaskDraft:
 
 
 @dataclass(slots=True)
+class ManagedExecutionContext:
+    task_spec: TaskSpecRead
+    execution_plan: ExecutionPlanRead
+    execution_episode: ExecutionEpisodeRead
+    assessment: EnvironmentAssessmentRead
+    capability_drivers: list[CapabilityDriverRead]
+    execution_contract: dict[str, Any]
+
+
+@dataclass(slots=True)
 class PersistedRuntimeService:
     session: Session
     providers: ProviderRegistry | None = None
+    tools: ToolRegistry | None = None
     prompt_builder: PromptBuilder = field(default_factory=PromptBuilder)
 
     def list_domain_packs(self) -> list[DomainPackRead]:
@@ -487,6 +574,11 @@ class PersistedRuntimeService:
                     supported_domains=supported_domains,
                     recommended_scene_types=self._recommended_scene_types_for_capability(key),
                     signal_labels=list(config.get("signal_labels") or []),
+                    executor_mode=str(config.get("executor_mode") or "tool_loop"),
+                    replan_on_error=bool(config.get("replan_on_error", False)),
+                    scene_required=bool(config.get("scene_required", False)),
+                    preferred_tools=list(config.get("preferred_tools") or []),
+                    checkpoint_policy=dict(config.get("checkpoint_policy") or {}),
                     writes_state=key in {"api", "command"},
                     requires_supervision=key in {"browser", "api", "command"} or str(config["risk"]) == "high",
                     audit_tags=[f"risk:{config['risk']}", "generic_runtime"],
@@ -620,12 +712,14 @@ class PersistedRuntimeService:
     def replan_execution(self, plan_id: str, payload: ExecutionPlanReplanRequest) -> ExecutionPlanReplanRead:
         plan_repo = ExecutionPlanRepository(self.session)
         task_repo = TaskSpecRepository(self.session)
+        episode_repo = ExecutionEpisodeRepository(self.session)
         current_plan = plan_repo.get(plan_id)
         if current_plan is None:
             raise ValueError("Execution plan not found")
         task_spec = task_repo.get(current_plan.task_spec_id)
         if task_spec is None:
             raise ValueError("Task spec not found")
+        source_episode = episode_repo.get(payload.execution_episode_id) if payload.execution_episode_id else None
 
         assessment = self.assess_environment(
             EnvironmentAssessmentRequest(
@@ -638,6 +732,11 @@ class PersistedRuntimeService:
                 plan_context=payload.plan_context,
             )
         )
+        if source_episode is not None and source_episode.divergence_detected:
+            assessment = self._coerce_recovery_assessment(
+                assessment,
+                reason=str(payload.reason or "Runtime divergence requested a safer recovery plan."),
+            )
         compiler_payload = dict(payload.compiler_payload or {})
         compiler_notes = [str(item) for item in compiler_payload.get("compiler_notes", []) if str(item).strip()]
         compiler_notes.extend(assessment.assessment_notes)
@@ -735,11 +834,111 @@ class PersistedRuntimeService:
             "site_assumption_policy": "generic_only",
         }
         return ExecutionPlanReplanRead(
+            id=replanned.id,
+            task_spec_id=current_plan.task_spec_id,
+            base_execution_plan_id=current_plan.id,
             previous_plan=ExecutionPlanRead.model_validate(current_plan),
             execution_plan=ExecutionPlanRead.model_validate(replanned),
             assessment=assessment,
+            status="replanned",
+            summary=str(payload.reason or "Generated a revised execution plan from the latest runtime scene."),
             compiler_notes=compiler_notes,
+            recommended_capability_keys=list(assessment.recommended_capabilities),
             audit_metadata=audit_metadata,
+            created_at=replanned.updated_at,
+        )
+
+    def _coerce_recovery_assessment(
+        self,
+        assessment: EnvironmentAssessmentRead,
+        *,
+        reason: str,
+    ) -> EnvironmentAssessmentRead:
+        blockers = list(assessment.blockers or [])
+        if "divergence_detected" not in blockers:
+            blockers.append("divergence_detected")
+        guidance = assessment.planner_guidance.model_copy(
+            update={
+                "posture": "recover",
+                "requires_human_review": True,
+                "should_checkpoint": True,
+                "rationale": [
+                    *list(assessment.planner_guidance.rationale or []),
+                    reason,
+                ],
+            }
+        )
+        scene_profile = assessment.scene_profile.model_copy(
+            update={"blockers": list(dict.fromkeys([*list(assessment.scene_profile.blockers or []), *blockers]))}
+        )
+        return assessment.model_copy(
+            update={
+                "plan_fit": "blocked",
+                "blockers": blockers,
+                "planner_guidance": guidance,
+                "scene_profile": scene_profile,
+            }
+        )
+
+    def _replan_assessment_from_metadata(
+        self,
+        *,
+        plan,
+        task_spec: TaskSpecRead | None,
+    ) -> EnvironmentAssessmentRead:
+        metadata = dict(plan.runtime_metadata or {})
+        assessment_payload = dict(metadata.get("replan_assessment") or {})
+        recommended_capabilities = [
+            str(item)
+            for item in list(assessment_payload.get("recommended_capabilities") or [])
+            if str(item).strip()
+        ]
+        blockers = [str(item) for item in list(assessment_payload.get("blockers") or []) if str(item).strip()]
+        planner_posture = str(assessment_payload.get("planner_posture") or "recover")
+        scene_signals = [str(item) for item in list(assessment_payload.get("scene_signals") or []) if str(item).strip()]
+        scene_type = str(assessment_payload.get("scene_type") or "runtime_scene")
+        scene_key = str(assessment_payload.get("scene_key") or f"{task_spec.domain if task_spec is not None else 'general'}:{scene_type}")
+        environment_requirements = dict(plan.environment_requirements or {})
+        return EnvironmentAssessmentRead(
+            task_spec=task_spec,
+            execution_plan=ExecutionPlanRead.model_validate(plan),
+            execution_episode=None,
+            snapshot=None,
+            scene_type=scene_type,
+            scene_key=scene_key,
+            confidence=0.74,
+            plan_fit=str(assessment_payload.get("plan_fit") or ("blocked" if blockers else "partial")),
+            observed_entities=[],
+            affordances=[],
+            scene_profile=SceneProfileRead(
+                source="runtime_metadata",
+                scene_type=scene_type,
+                interaction_mode="inspect",
+                volatility="medium",
+                auth_state="unknown",
+                entity_count=0,
+                affordance_count=0,
+                primary_targets=[],
+                signals=scene_signals,
+                blockers=blockers,
+                evidence={},
+            ),
+            planner_guidance=PlannerGuidanceRead(
+                posture=planner_posture,
+                required_capabilities=recommended_capabilities,
+                inserted_capabilities=[],
+                preferred_next_actions=[],
+                requires_scene_assessment=bool(environment_requirements.get("scene_assessment_required")),
+                requires_human_review=planner_posture == "recover" or bool(blockers),
+                should_checkpoint=True,
+                rationale=["Reconstructed from persisted replan metadata."],
+            ),
+            recommended_capabilities=recommended_capabilities,
+            blockers=blockers,
+            environment_requirements=environment_requirements,
+            checkpoints=list(plan.checkpoints or []),
+            assessment_notes=[],
+            audit_metadata={"site_assumption_policy": str(metadata.get("site_assumption_policy") or "generic_only")},
         )
 
     def compile_task(self, payload: TaskCompileRequest) -> TaskCompileResponse:
@@ -1459,10 +1658,69 @@ class PersistedRuntimeService:
         item = TaskSpecRepository(self.session).create(payload)
         return TaskSpecRead.model_validate(item)
 
+    def get_task_spec(self, task_spec_id: str) -> TaskSpecRead:
+        item = TaskSpecRepository(self.session).get(task_spec_id)
+        if item is None:
+            raise ValueError("Task spec not found")
+        return TaskSpecRead.model_validate(item)
+
     def list_plans(self, *, task_spec_id: str | None = None, limit: int = 100, offset: int = 0) -> list[ExecutionPlanRead]:
         repo = ExecutionPlanRepository(self.session)
         items = repo.by_task_spec(task_spec_id, limit=limit, offset=offset) if task_spec_id else repo.list(limit=limit, offset=offset)
         return [ExecutionPlanRead.model_validate(item) for item in items]
+
+    def list_replans(self, *, limit: int = 100, offset: int = 0) -> list[ExecutionPlanReplanRead]:
+        plan_repo = ExecutionPlanRepository(self.session)
+        task_repo = TaskSpecRepository(self.session)
+        replans: list[ExecutionPlanReplanRead] = []
+        for plan in plan_repo.list(limit=limit + offset + 200, offset=0):
+            metadata = dict(plan.runtime_metadata or {})
+            previous_plan_id = str(metadata.get("replanned_from_plan_id") or "").strip()
+            if not previous_plan_id:
+                continue
+            previous_plan = plan_repo.get(previous_plan_id)
+            if previous_plan is None:
+                continue
+            task_spec = task_repo.get(plan.task_spec_id)
+            task_spec_read = TaskSpecRead.model_validate(task_spec) if task_spec is not None else None
+            assessment = self._replan_assessment_from_metadata(plan=plan, task_spec=task_spec_read)
+            compiler_notes = [
+                str(item)
+                for item in list((metadata.get("replan_compiler_payload") or {}).get("compiler_notes") or [])
+                if str(item).strip()
+            ]
+            replans.append(
+                ExecutionPlanReplanRead(
+                    id=plan.id,
+                    task_spec_id=plan.task_spec_id,
+                    base_execution_plan_id=previous_plan.id,
+                    previous_plan=ExecutionPlanRead.model_validate(previous_plan),
+                    execution_plan=ExecutionPlanRead.model_validate(plan),
+                    assessment=assessment,
+                    status="replanned",
+                    summary=str(
+                        metadata.get("replan_reason")
+                        or (assessment.assessment_notes[0] if assessment.assessment_notes else "")
+                        or "Generated a revised execution plan from the latest runtime scene."
+                    ),
+                    compiler_notes=compiler_notes,
+                    recommended_capability_keys=list(assessment.recommended_capabilities),
+                    audit_metadata={
+                        **assessment.audit_metadata,
+                        "replanned_from_plan_id": previous_plan.id,
+                        "replanned_to_plan_id": plan.id,
+                    },
+                    created_at=plan.updated_at,
+                )
+            )
+        replans.sort(key=lambda item: item.execution_plan.updated_at, reverse=True)
+        return replans[offset : offset + limit]
+
+    def get_plan(self, plan_id: str) -> ExecutionPlanRead:
+        item = ExecutionPlanRepository(self.session).get(plan_id)
+        if item is None:
+            raise ValueError("Execution plan not found")
+        return ExecutionPlanRead.model_validate(item)
 
     def compile_plan(self, payload: CompilePlanRequest) -> ExecutionPlanRead:
         task_spec = TaskSpecRepository(self.session).get(payload.task_spec_id)
@@ -1529,6 +1787,24 @@ class PersistedRuntimeService:
         if item is None:
             raise ValueError("Execution episode not found")
         return ExecutionEpisodeRead.model_validate(item)
+
+    def recover_running_episodes(self) -> int:
+        recovered = ExecutionEpisodeRepository(self.session).recover_running()
+        if recovered:
+            active_plans = ExecutionPlanRepository(self.session).active(limit=500, offset=0)
+            for plan in active_plans:
+                if plan.status == "running":
+                    ExecutionPlanRepository(self.session).update(
+                        plan,
+                        {
+                            "status": "planned",
+                            "runtime_metadata": {
+                                **dict(plan.runtime_metadata or {}),
+                                "recovered_after_restart": True,
+                            },
+                        },
+                    )
+        return recovered
 
     def get_episode_replay(self, episode_id: str) -> RuntimeEpisodeReplayRead:
         episode = ExecutionEpisodeRepository(self.session).get(episode_id)
@@ -1599,6 +1875,265 @@ class PersistedRuntimeService:
         item = ExecutionEpisodeRepository(self.session).create(payload)
         return ExecutionEpisodeRead.model_validate(item)
 
+    def start_managed_execution(
+        self,
+        *,
+        task_spec_id: str,
+        execution_plan_id: str,
+        requested_by: str = "runtime",
+        mode: str = "production",
+        task_id: str | None = None,
+        task_payload: dict[str, Any] | None = None,
+        runtime_metadata: dict[str, Any] | None = None,
+        execution_episode_id: str | None = None,
+    ) -> ManagedExecutionContext:
+        task_repo = TaskSpecRepository(self.session)
+        plan_repo = ExecutionPlanRepository(self.session)
+        episode_repo = ExecutionEpisodeRepository(self.session)
+
+        task_spec = task_repo.get(task_spec_id)
+        if task_spec is None:
+            raise ValueError("Task spec not found")
+        plan = plan_repo.get(execution_plan_id)
+        if plan is None:
+            raise ValueError("Execution plan not found")
+        if plan.task_spec_id != task_spec.id:
+            raise ValueError("Execution plan does not belong to the task spec")
+
+        runtime_payload = dict(task_payload or {})
+        runtime_state = dict(runtime_metadata or {})
+        snapshot_payload = self._managed_snapshot_payload(
+            task_spec=task_spec,
+            plan=plan,
+            execution_episode_id=execution_episode_id,
+            task_payload=runtime_payload,
+            runtime_metadata=runtime_state,
+        )
+
+        if execution_episode_id:
+            episode_model = episode_repo.get(execution_episode_id)
+            if episode_model is None:
+                raise ValueError("Execution episode not found")
+        else:
+            episode_model = episode_repo.create(
+                ExecutionEpisodeCreate(
+                    task_spec_id=task_spec.id,
+                    execution_plan_id=plan.id,
+                    mode=mode,
+                    status="running",
+                    requested_by=requested_by,
+                    requires_confirmation=mode != "production",
+                    started_at=utcnow(),
+                    runtime_metadata={
+                        **runtime_state,
+                        "task_id": task_id,
+                        "task_payload": runtime_payload,
+                        "managed_execution": True,
+                    },
+                )
+            )
+
+        persisted_snapshot = None
+        if snapshot_payload is not None:
+            if snapshot_payload.execution_episode_id is None:
+                snapshot_payload = snapshot_payload.model_copy(update={"execution_episode_id": episode_model.id})
+            persisted_snapshot = self.create_environment_snapshot(snapshot_payload)
+
+        assessment = self.assess_environment(
+            EnvironmentAssessmentRequest(
+                task_spec_id=task_spec.id,
+                execution_plan_id=plan.id,
+                execution_episode_id=episode_model.id,
+                environment_snapshot_id=persisted_snapshot.id if persisted_snapshot is not None else None,
+                snapshot=None if persisted_snapshot is not None else snapshot_payload,
+                compiler_payload=dict(task_spec.compiled_payload or {}),
+                plan_context={"task_payload": runtime_payload, "mode": mode, **runtime_state},
+            )
+        )
+        if assessment.plan_fit == "blocked" or assessment.planner_guidance.posture == "recover":
+            replanned = self.replan_execution(
+                plan.id,
+                ExecutionPlanReplanRequest(
+                    reason="Managed execution preflight detected a scene/plan mismatch.",
+                    requested_by=requested_by,
+                    execution_episode_id=episode_model.id,
+                    snapshot=snapshot_payload,
+                    compiler_payload={
+                        "compiler_notes": [
+                            "Managed execution requested a preflight replan before entering the executor loop."
+                        ],
+                        "preferred_capabilities": list(assessment.recommended_capabilities),
+                    },
+                    plan_context={"task_payload": runtime_payload, "mode": mode, **runtime_state},
+                    runtime_metadata={"generated_by": "managed_execution_preflight"},
+                    preserve_active_plan=True,
+                ),
+            )
+            replanned_model = plan_repo.get(replanned.execution_plan.id)
+            if replanned_model is not None:
+                plan = replanned_model
+                episode_model = episode_repo.update(
+                    episode_model,
+                    {
+                        "execution_plan_id": plan.id,
+                        "runtime_metadata": {
+                            **dict(episode_model.runtime_metadata or {}),
+                            "preflight_replanned_from_plan_id": replanned.previous_plan.id,
+                            "preflight_replanned_to_plan_id": plan.id,
+                        },
+                    },
+                )
+                assessment = self.assess_environment(
+                    EnvironmentAssessmentRequest(
+                        task_spec_id=task_spec.id,
+                        execution_plan_id=plan.id,
+                        execution_episode_id=episode_model.id,
+                        snapshot=snapshot_payload,
+                        compiler_payload=dict(task_spec.compiled_payload or {}),
+                        plan_context={"task_payload": runtime_payload, "mode": mode, **runtime_state},
+                    )
+                )
+        capability_drivers = self.list_capability_drivers(domain=task_spec.domain)
+        execution_contract = self._build_execution_contract(
+            task_spec=task_spec,
+            plan=plan,
+            episode=episode_model,
+            assessment=assessment,
+            capability_drivers=capability_drivers,
+            task_payload=runtime_payload,
+        )
+        plan = plan_repo.update(
+            plan,
+            {
+                "status": "running",
+                "runtime_metadata": _json_ready(
+                    {
+                        **dict(plan.runtime_metadata or {}),
+                        "last_episode_id": episode_model.id,
+                        "last_task_id": task_id,
+                        "last_execution_contract": execution_contract,
+                        "planner_guidance": assessment.planner_guidance,
+                        "scene_profile": assessment.scene_profile,
+                    }
+                ),
+            },
+        )
+        episode = episode_repo.update(
+            episode_model,
+            {
+                "runtime_metadata": _json_ready(
+                    {
+                        **dict(episode_model.runtime_metadata or {}),
+                        "execution_contract": execution_contract,
+                        "scene_assessment": assessment,
+                        "environment_snapshot_id": persisted_snapshot.id if persisted_snapshot is not None else None,
+                    }
+                )
+            },
+        )
+        return ManagedExecutionContext(
+            task_spec=TaskSpecRead.model_validate(task_spec),
+            execution_plan=ExecutionPlanRead.model_validate(plan),
+            execution_episode=ExecutionEpisodeRead.model_validate(episode),
+            assessment=assessment,
+            capability_drivers=capability_drivers,
+            execution_contract=execution_contract,
+        )
+
+    def finalize_managed_execution(
+        self,
+        *,
+        execution_episode_id: str,
+        result: AgentResult,
+        task_payload: dict[str, Any] | None = None,
+        runtime_metadata: dict[str, Any] | None = None,
+    ) -> RuntimeLearningOutcomeRead:
+        episode_repo = ExecutionEpisodeRepository(self.session)
+        plan_repo = ExecutionPlanRepository(self.session)
+        task_repo = TaskSpecRepository(self.session)
+
+        episode = episode_repo.get(execution_episode_id)
+        if episode is None:
+            raise ValueError("Execution episode not found")
+        plan = plan_repo.get(episode.execution_plan_id)
+        if plan is None:
+            raise ValueError("Execution plan not found")
+        task_spec = task_repo.get(episode.task_spec_id)
+        if task_spec is None:
+            raise ValueError("Task spec not found")
+
+        trace = dict(result.metadata.get("executor_trace") or {})
+        observations = self._managed_observations(episode=episode, trace=trace, result=result)
+        actions = self._managed_actions(episode=episode, trace=trace)
+        metrics = self._managed_metrics(plan=plan, trace=trace, result=result)
+        divergence_detected = result.status == "replan_requested"
+        status = self._managed_episode_status(result, requires_confirmation=bool(episode.requires_confirmation))
+        finished_at = utcnow()
+        merged_runtime_metadata = _json_ready(
+            {
+                **dict(episode.runtime_metadata or {}),
+                **dict(runtime_metadata or {}),
+                "final_result_status": result.status,
+                "final_result_success": result.success,
+                "final_result_data": dict(result.data or {}),
+                "executor_metadata": dict(result.metadata or {}),
+            }
+        )
+
+        updated_episode = episode_repo.update(
+            episode,
+            ExecutionEpisodeUpdate(
+                status=status,
+                started_at=episode.started_at or utcnow(),
+                finished_at=finished_at,
+                result_summary=result.content or self._runtime_result_summary(task_spec.domain, result),
+                observations=observations,
+                actions=actions,
+                metrics=metrics,
+                divergence_detected=divergence_detected,
+                runtime_metadata=merged_runtime_metadata,
+                last_error=None if result.success else result.content,
+            ),
+        )
+
+        scene_snapshot = self._latest_scene_update(trace)
+        if scene_snapshot is not None:
+            self.create_environment_snapshot(
+                self._managed_environment_snapshot_create(
+                    task_spec=task_spec,
+                    plan=plan,
+                    episode=updated_episode,
+                    task_payload=dict(task_payload or {}),
+                    scene_snapshot=scene_snapshot,
+                )
+            )
+
+        plan_status = "active" if result.success else "blocked" if result.status == "waiting_human" else "diverged" if divergence_detected else "failed"
+        updated_plan = plan_repo.update(
+            plan,
+            {
+                "status": plan_status,
+                "approval_state": "pending_review" if result.status in {"waiting_human", "replan_requested"} else plan.approval_state,
+                "runtime_metadata": _json_ready(
+                    {
+                        **dict(plan.runtime_metadata or {}),
+                        "last_episode_id": updated_episode.id,
+                        "last_executor_trace": trace,
+                        "last_result_status": result.status,
+                    }
+                ),
+            },
+        )
+
+        if result.status in {"completed", "replan_requested"}:
+            outcome = self.derive_learning_from_episode(updated_episode.id)
+        else:
+            outcome = RuntimeLearningOutcomeRead(
+                episode=ExecutionEpisodeRead.model_validate(updated_episode),
+                skill_health=self._evaluate_skill_health(plan=updated_plan, episode=updated_episode),
+            )
+        return outcome
+
     def create_trial_run(self, payload: TrialRunRequest) -> ExecutionEpisodeRead:
         plan = ExecutionPlanRepository(self.session).get(payload.execution_plan_id)
         if plan is None:
@@ -1632,6 +2167,97 @@ class PersistedRuntimeService:
         task_spec = TaskSpecRepository(self.session).get(episode.task_spec_id)
         if task_spec is None:
             raise ValueError("Task spec not found")
+
+        if self.providers is not None and self.tools is not None:
+            managed_payload = self._trial_task_payload(task_spec=task_spec, plan=plan, payload=payload)
+            managed = self.start_managed_execution(
+                task_spec_id=task_spec.id,
+                execution_plan_id=plan.id,
+                execution_episode_id=episode.id,
+                requested_by=payload.operator,
+                mode="trial",
+                task_payload=managed_payload,
+                runtime_metadata={
+                    **dict(episode.runtime_metadata or {}),
+                    **dict(payload.runtime_metadata),
+                    "operator": payload.operator,
+                    "last_execution_notes": payload.notes,
+                },
+            )
+            runtime_task = SimpleNamespace(
+                task_type="runtime_execution",
+                workflow_node_id="runtime_execution",
+                payload={
+                    **managed_payload,
+                    "goal": managed.task_spec.goal,
+                    "domain": managed.task_spec.domain,
+                    "plan_name": managed.execution_plan.name,
+                },
+                max_turns=8,
+                token_budget=6_144,
+            )
+            loop = AgentLoop(
+                provider=self.providers,
+                tools=self.tools,
+                prompt_builder=self.prompt_builder,
+                config=AgentLoopConfig(max_turns=8, token_budget=6_144),
+            )
+            result = loop.run(
+                runtime_task,
+                extra_context={
+                    "scene_assessment": managed.assessment.model_dump(),
+                    "capability_drivers": [driver.model_dump() for driver in managed.capability_drivers],
+                    "execution_episode": managed.execution_episode.model_dump(),
+                    "execution_plan": managed.execution_plan.model_dump(),
+                    "scene_profile": managed.assessment.scene_profile.model_dump(),
+                    "planner_guidance": managed.assessment.planner_guidance.model_dump(),
+                    "execution_contract": managed.execution_contract,
+                },
+            )
+            if payload.simulate_divergence and result.status not in {"replan_requested", "waiting_human"}:
+                result = self._simulate_managed_divergence(
+                    result=result,
+                    episode=managed.execution_episode,
+                    plan=managed.execution_plan,
+                )
+            outcome = self.finalize_managed_execution(
+                execution_episode_id=managed.execution_episode.id,
+                result=result,
+                task_payload=managed_payload,
+                runtime_metadata={
+                    "operator": payload.operator,
+                    "last_execution_notes": payload.notes,
+                    "trial_execution_mode": "managed_runtime",
+                },
+            )
+            if result.status == "replan_requested":
+                latest_request = self._latest_replan_request(result)
+                replan = self.replan_execution(
+                    managed.execution_plan.id,
+                    ExecutionPlanReplanRequest(
+                        reason=str(latest_request.get("reason") or result.content or "Managed trial requested replanning."),
+                        requested_by=payload.operator,
+                        execution_episode_id=managed.execution_episode.id,
+                        environment_snapshot_id=self._latest_snapshot_id(managed.execution_episode.id),
+                        compiler_payload={
+                            "compiler_notes": [
+                                str(latest_request.get("reason") or result.content or "Managed trial requested replanning."),
+                                "Auto-generated replan from managed trial execution.",
+                            ],
+                            "preferred_capabilities": list(latest_request.get("preferred_capabilities") or []),
+                            "step_outline": list(latest_request.get("suggested_steps") or []),
+                            "checkpoints": [{"kind": "planner", "label": "Review auto-replanned trial execution"}],
+                        },
+                        plan_context={"task_payload": managed_payload, "trial_mode": True},
+                        runtime_metadata={"generated_by": "managed_trial_executor", "execution_episode_id": managed.execution_episode.id},
+                        preserve_active_plan=False,
+                    ),
+                )
+                outcome.episode.runtime_metadata = {
+                    **dict(outcome.episode.runtime_metadata or {}),
+                    "replanned_execution_plan_id": replan.execution_plan.id,
+                }
+            return outcome
 
         observations, actions, metrics, result_summary = self._simulate_episode(task_spec, plan, episode, payload)
         started_at = episode.started_at or utcnow()
@@ -2918,6 +3544,271 @@ class PersistedRuntimeService:
             deduped.append(item)
         return deduped
 
+    def _build_execution_contract(
+        self,
+        *,
+        task_spec,
+        plan,
+        episode,
+        assessment: EnvironmentAssessmentRead,
+        capability_drivers: list[CapabilityDriverRead],
+        task_payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        driver_by_key = {driver.key: driver for driver in capability_drivers}
+        steps: list[dict[str, Any]] = []
+        for index, raw_step in enumerate(self._normalize_steps(list((plan.plan_body or {}).get("steps") or [])), start=1):
+            capability = str(raw_step.get("capability") or "analyze")
+            driver = driver_by_key.get(capability)
+            steps.append(
+                {
+                    **dict(raw_step),
+                    "index": index,
+                    "executor_mode": driver.executor_mode if driver is not None else "tool_loop",
+                    "replan_on_error": bool(driver.replan_on_error) if driver is not None else False,
+                    "scene_required": bool(driver.scene_required) if driver is not None else False,
+                    "preferred_tools": list(driver.preferred_tools) if driver is not None else [],
+                    "checkpoint_policy": dict(driver.checkpoint_policy) if driver is not None else {},
+                }
+            )
+
+        return {
+            "contract_version": "runtime-execution-contract-v1",
+            "task_spec_id": task_spec.id,
+            "execution_plan_id": plan.id,
+            "execution_episode_id": episode.id,
+            "plan_name": plan.name,
+            "domain": task_spec.domain,
+            "goal": task_spec.goal,
+            "mode": episode.mode,
+            "status": plan.status,
+            "scene_type": assessment.scene_type,
+            "planner_posture": assessment.planner_guidance.posture,
+            "approval_policy": dict(task_spec.approval_policy or {}),
+            "output_contract": dict(task_spec.output_contract or {}),
+            "environment_requirements": self._merge_dicts(
+                dict(plan.environment_requirements or {}),
+                assessment.environment_requirements,
+            ),
+            "checkpoints": self._dedupe_dict_list(
+                [*list(plan.checkpoints or []), *list(assessment.checkpoints or [])]
+            ),
+            "planner_guidance": assessment.planner_guidance.model_dump(),
+            "scene_profile": assessment.scene_profile.model_dump(),
+            "recommended_capabilities": list(assessment.recommended_capabilities),
+            "preferred_next_actions": list(assessment.planner_guidance.preferred_next_actions),
+            "blockers": list(assessment.blockers),
+            "task_payload": task_payload,
+            "steps": steps,
+            "current_step_id": steps[0]["id"] if steps else None,
+        }
+
+    def _trial_task_payload(self, *, task_spec, plan, payload: TrialRunExecuteRequest) -> dict[str, Any]:
+        return {
+            "instruction": task_spec.source_text or task_spec.goal,
+            "goal": task_spec.goal,
+            "domain": task_spec.domain,
+            "plan_name": plan.name,
+            "operator": payload.operator,
+            "notes": payload.notes,
+            "environment_snapshot": {
+                "source": payload.source,
+                "environment_key": payload.environment_key,
+                "url": payload.url,
+                "title": payload.title,
+                "page_type": payload.page_type,
+                "observed_entities": list(payload.observed_entities or []),
+                "affordances": list(payload.affordances or []),
+                "capability_hints": list(payload.capability_hints or []),
+                "runtime_metadata": dict(payload.runtime_metadata or {}),
+            },
+        }
+
+    def _latest_replan_request(self, result: AgentResult) -> dict[str, Any]:
+        trace = dict(result.metadata.get("executor_trace") or {})
+        requests = list(trace.get("replan_requests") or [])
+        if requests:
+            return dict(requests[-1])
+        control = dict(result.metadata.get("executor_control") or {})
+        return control if control else {}
+
+    def _latest_snapshot_id(self, execution_episode_id: str) -> str | None:
+        latest = EnvironmentSnapshotRepository(self.session).latest_for_episode(execution_episode_id)
+        return latest.id if latest is not None else None
+
+    def _managed_snapshot_payload(
+        self,
+        *,
+        task_spec,
+        plan,
+        execution_episode_id: str | None,
+        task_payload: dict[str, Any],
+        runtime_metadata: dict[str, Any],
+    ) -> EnvironmentSnapshotCreate | None:
+        raw_snapshot = (
+            runtime_metadata.get("environment_snapshot")
+            or runtime_metadata.get("scene_snapshot")
+            or task_payload.get("environment_snapshot")
+            or task_payload.get("scene_snapshot")
+        )
+        if not isinstance(raw_snapshot, dict):
+            if not any(task_payload.get(key) for key in ("url", "title", "page_type", "observed_entities", "affordances")):
+                return None
+            raw_snapshot = task_payload
+
+        source = str(raw_snapshot.get("source") or ("browser" if "browser" in list(task_spec.preferred_capabilities or []) else "runtime"))
+        environment_key = str(
+            raw_snapshot.get("environment_key")
+            or f"{task_spec.domain}:{raw_snapshot.get('page_type') or 'runtime_scene'}"
+        )
+        return EnvironmentSnapshotCreate(
+            task_spec_id=task_spec.id,
+            execution_plan_id=plan.id,
+            execution_episode_id=execution_episode_id,
+            source=source,
+            environment_key=environment_key,
+            status=str(raw_snapshot.get("status") or "captured"),
+            url=raw_snapshot.get("url"),
+            title=raw_snapshot.get("title"),
+            page_type=raw_snapshot.get("page_type"),
+            capability_hints=list(raw_snapshot.get("capability_hints") or list(task_spec.preferred_capabilities or [])),
+            observed_entities=list(raw_snapshot.get("observed_entities") or []),
+            affordances=list(raw_snapshot.get("affordances") or []),
+            runtime_metadata=dict(raw_snapshot.get("runtime_metadata") or {}),
+        )
+
+    def _managed_environment_snapshot_create(
+        self,
+        *,
+        task_spec,
+        plan,
+        episode,
+        task_payload: dict[str, Any],
+        scene_snapshot: dict[str, Any],
+    ) -> EnvironmentSnapshotCreate:
+        source = str(scene_snapshot.get("source") or ("browser" if "browser" in list(task_spec.preferred_capabilities or []) else "runtime"))
+        page_type = str(scene_snapshot.get("page_type") or task_payload.get("page_type") or "runtime_scene")
+        return EnvironmentSnapshotCreate(
+            task_spec_id=task_spec.id,
+            execution_plan_id=plan.id,
+            execution_episode_id=episode.id,
+            source=source,
+            environment_key=str(scene_snapshot.get("environment_key") or f"{task_spec.domain}:{page_type}"),
+            status=str(scene_snapshot.get("status") or "captured"),
+            url=scene_snapshot.get("url") or task_payload.get("url"),
+            title=scene_snapshot.get("title") or task_payload.get("title") or task_spec.title,
+            page_type=page_type,
+            capability_hints=list(scene_snapshot.get("capability_hints") or list(task_spec.preferred_capabilities or [])),
+            observed_entities=list(scene_snapshot.get("observed_entities") or []),
+            affordances=list(scene_snapshot.get("affordances") or []),
+            runtime_metadata=dict(scene_snapshot.get("runtime_metadata") or {}),
+        )
+
+    def _managed_observations(self, *, episode, trace: dict[str, Any], result: AgentResult) -> list[dict[str, Any]]:
+        observations = list(episode.observations or [])
+        observations.extend(list(trace.get("observations") or []))
+        for error in list(trace.get("errors") or []):
+            observations.append(
+                {
+                    "kind": "tool_error",
+                    "summary": error.get("message") or "Tool execution failed.",
+                    "tool_name": error.get("tool_name"),
+                    "step_id": error.get("step_id"),
+                }
+            )
+        control = dict(result.metadata.get("executor_control") or {})
+        if control:
+            observations.append(
+                {
+                    "kind": control.get("kind") or "executor_control",
+                    "summary": control.get("reason") or result.content,
+                }
+            )
+        return observations
+
+    def _managed_actions(self, *, episode, trace: dict[str, Any]) -> list[dict[str, Any]]:
+        actions = list(episode.actions or [])
+        actions.extend(list(trace.get("actions") or []))
+        return actions
+
+    def _managed_metrics(self, *, plan, trace: dict[str, Any], result: AgentResult) -> dict[str, Any]:
+        steps = list((plan.plan_body or {}).get("steps") or [])
+        completed = list(result.metadata.get("completed_step_ids") or [])
+        total_steps = len(steps)
+        return {
+            "step_count": total_steps,
+            "completed_step_count": len(completed),
+            "completion_rate": (len(completed) / total_steps) if total_steps else 1.0,
+            "tool_output_count": len(result.tool_outputs),
+            "observation_count": len(list(trace.get("observations") or [])),
+            "action_count": len(list(trace.get("actions") or [])),
+            "replan_request_count": len(list(trace.get("replan_requests") or [])),
+            "human_checkpoint_count": len(list(trace.get("human_checkpoints") or [])),
+        }
+
+    def _managed_episode_status(self, result: AgentResult, *, requires_confirmation: bool = False) -> str:
+        if result.status == "waiting_human":
+            return "awaiting_review"
+        if result.status == "replan_requested":
+            return "diverged"
+        if result.success and requires_confirmation:
+            return "awaiting_review"
+        if result.success:
+            return "completed"
+        if result.status in {"timeout", "failed"}:
+            return "failed"
+        return result.status or "completed"
+
+    def _runtime_result_summary(self, domain: str, result: AgentResult) -> str:
+        if result.content:
+            return result.content
+        if result.success:
+            return f"Runtime execution completed for {domain}."
+        return f"Runtime execution ended with {result.status} for {domain}."
+
+    def _latest_scene_update(self, trace: dict[str, Any]) -> dict[str, Any] | None:
+        updates = list(trace.get("scene_updates") or [])
+        if not updates:
+            return None
+        latest = updates[-1]
+        return dict(latest) if isinstance(latest, dict) else None
+
+    def _simulate_managed_divergence(
+        self,
+        *,
+        result: AgentResult,
+        episode: ExecutionEpisodeRead,
+        plan: ExecutionPlanRead,
+    ) -> AgentResult:
+        trace = dict(result.metadata.get("executor_trace") or {})
+        reason = "Managed trial simulated a divergence and requested replanning."
+        trace.setdefault("replan_requests", []).append(
+            {
+                "reason": reason,
+                "trigger": "simulated_divergence",
+                "step_id": trace.get("current_step_id"),
+                "preferred_capabilities": [
+                    str(step.get("capability") or "")
+                    for step in list((plan.plan_body or {}).get("steps") or [])
+                    if str(step.get("capability") or "").strip()
+                ],
+            }
+        )
+        return AgentResult(
+            success=False,
+            status="replan_requested",
+            content=reason,
+            data=dict(result.data or {}),
+            skill_draft=result.skill_draft,
+            messages=list(result.messages or []),
+            usage=result.usage,
+            tool_outputs=list(result.tool_outputs or []),
+            metadata={
+                **dict(result.metadata or {}),
+                "executor_trace": trace,
+                "executor_control": {"kind": "replan_requested", "reason": reason},
+            },
+        )
+
     def _default_steps(self, task_spec, template) -> list[dict[str, Any]]:
         if template is not None:
             template_steps = list((template.template_body or {}).get("steps") or [])
@@ -3391,10 +4282,13 @@ class PersistedRuntimeService:
         if skill is None:
             return None
 
-        observed_result = {
-            "status": "pass" if not episode.divergence_detected else "fail",
-            "overall": float((episode.metrics or {}).get("completion_rate") or 0.0),
-        }
+        episode_runtime_metadata = dict(episode.runtime_metadata or {})
+        final_result_data = episode_runtime_metadata.get("final_result_data")
+        observed_result = dict(final_result_data) if isinstance(final_result_data, dict) else {}
+        if "status" not in observed_result:
+            observed_result["status"] = "pass" if not episode.divergence_detected else "fail"
+        if "overall" not in observed_result and "score" not in observed_result:
+            observed_result["overall"] = float((episode.metrics or {}).get("completion_rate") or 0.0)
         result = SkillHealthCheckService().run(skill, observed_result=observed_result)
         self.session.commit()
         self.session.refresh(skill)

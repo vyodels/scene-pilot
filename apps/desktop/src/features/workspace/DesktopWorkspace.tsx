@@ -333,6 +333,24 @@ export function DesktopWorkspace(): JSX.Element {
     }
   };
 
+  const handleLaunchPlan = async (planId: string, taskSpecId: string) => {
+    setBusyPlanId(planId);
+    try {
+      const launched = await apiClient.launchRuntimePlan(planId, taskSpecId, "production");
+      setSelectedEpisodeId(launched.executionEpisode.id);
+      appendEvent({
+        id: `launch-${launched.taskId}`,
+        level: "info",
+        source: "runtime-launch",
+        message: `Queued managed execution ${launched.taskId} for plan ${planId}.`,
+        at: new Date().toISOString(),
+      });
+      await loadWorkspace(`Queued managed execution ${launched.taskId}.`);
+    } finally {
+      setBusyPlanId(undefined);
+    }
+  };
+
   const handleCreateTrial = async (taskSpecId: string, executionPlanId: string) => {
     setTrialTaskId(taskSpecId);
     try {
@@ -537,6 +555,7 @@ export function DesktopWorkspace(): JSX.Element {
             lastAssessment={lastAssessment}
             lastReplan={lastReplan}
             onCompileTask={handleCompile}
+            onLaunchPlan={handleLaunchPlan}
             onCreateTrialRun={handleCreateTrial}
             onExecuteTrialRun={handleExecuteTrial}
             onRefreshLearning={handleLearnTrial}

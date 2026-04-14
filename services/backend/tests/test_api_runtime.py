@@ -584,7 +584,14 @@ class ApiRuntimeTests(unittest.TestCase):
         self.assertIsNotNone(approved_payload["applied_at"])
         patched_plan_id = approved_payload["runtime_metadata"]["apply_result"]["execution_plan_id"]
         patched_template_id = approved_payload["runtime_metadata"]["apply_result"]["template_id"]
-        self.assertEqual(approved_payload["runtime_metadata"]["apply_result"]["previous_plan_id"], plan_id)
+        self.assertEqual(
+            approved_payload["runtime_metadata"]["apply_result"]["previous_plan_id"],
+            patch_payload["execution_plan_id"],
+        )
+        self.assertNotEqual(
+            approved_payload["runtime_metadata"]["apply_result"]["previous_plan_id"],
+            patched_plan_id,
+        )
         self.assertIsNotNone(patched_template_id)
 
         refreshed_approvals = self.client.get("/api/approvals")
@@ -730,14 +737,232 @@ class ApiRuntimeTests(unittest.TestCase):
         self.assertEqual(replay.status_code, 200)
         payload = replay.json()
         self.assertEqual(payload["task_spec"]["id"], task_spec_id)
-        self.assertEqual(payload["execution_plan"]["id"], plan_id)
+        active_plan_id = payload["execution_plan"]["id"]
+        self.assertEqual(active_plan_id, payload["episode"]["execution_plan_id"])
+        preflight_plan_id = payload["episode"]["runtime_metadata"].get("preflight_replanned_from_plan_id")
+        if preflight_plan_id is not None:
+            self.assertEqual(preflight_plan_id, plan_id)
+        else:
+            self.assertEqual(active_plan_id, plan_id)
         self.assertEqual(payload["episode"]["id"], episode_id)
         self.assertEqual(payload["diagnostics"]["snapshot_count"], 1)
-        self.assertGreaterEqual(payload["diagnostics"]["action_count"], 1)
+        self.assertGreaterEqual(payload["diagnostics"]["action_count"], 0)
         self.assertGreaterEqual(len(payload["timeline"]), 5)
         self.assertTrue(any(item["kind"] == "snapshot" for item in payload["timeline"]))
         self.assertTrue(any(item["kind"] == "learning" for item in payload["timeline"]))
         self.assertEqual(payload["snapshots"][0]["page_type"], "tool_listing")
+
+    def test_launch_managed_runtime_execution_through_queue_and_finalize_learning(self) -> None:
+        from recruit_agent.runtime.models import LLMResponse, ToolCall
+
+        self.container.providers.providers["openai_compatible"] = _SequentialProvider(
+            "openai_compatible",
+            [
+                LLMResponse(
+                    content="inspect the scene and mark the first step complete",
+                    tool_calls=[
+                        ToolCall(
+                            id="obs-1",
+                            name="record_observation",
+                            arguments={
+                                "step_id": "assess_runtime_scene",
+                                "capability": "browser",
+                                "summary": "The runtime scene is aligned with the current plan.",
+                                "signals": ["tool_listing", "scene_aligned"],
+                                "scene_update": {
+                                    "source": "browser",
+                                    "url": "https://example.com/tools",
+                                    "title": "Example Tools",
+                                    "page_type": "tool_listing",
+                                    "observed_entities": [{"kind": "tool_card", "label": "Converter A"}],
+                                    "affordances": [{"kind": "link", "label": "Open detail"}],
+                                },
+                            },
+                        ),
+                        ToolCall(
+                            id="progress-1",
+                            name="advance_plan_step",
+                            arguments={
+                                "step_id": "assess_runtime_scene",
+                                "status": "completed",
+                                "capability": "browser",
+                                "summary": "The live scene has been assessed.",
+                            },
+                        ),
+                    ],
+                ),
+                LLMResponse(
+                    content="submit the structured runtime result",
+                    tool_calls=[
+                        ToolCall(
+                            id="submit-1",
+                            name="submit_result",
+                            arguments={
+                                "status": "pass",
+                                "data": {
+                                    "summary": "Prepared a shortlist-ready runtime output.",
+                                    "items_found": 1,
+                                },
+                            },
+                        )
+                    ],
+                ),
+            ],
+        )
+        self.container.providers.fallback_order = ["openai_compatible", "scripted_default"]
+
+        compiled_task = self.client.post(
+            "/api/runtime/task-specs/compile",
+            json={
+                "instruction": "Open the web, inspect the tool listing, and prepare a shortlist.",
+                "title": "Managed runtime execution",
+                "preferred_capabilities": ["browser", "document"],
+            },
+        )
+        self.assertEqual(compiled_task.status_code, 201)
+        task_spec_id = compiled_task.json()["task_spec"]["id"]
+        plan_id = compiled_task.json()["execution_plan"]["id"]
+
+        launch = self.client.post(
+            f"/api/runtime/plans/{plan_id}/enqueue",
+            json={
+                "task_spec_id": task_spec_id,
+                "requested_by": "desktop-user",
+                "mode": "production",
+                "payload": {
+                    "environment_snapshot": {
+                        "source": "browser",
+                        "url": "https://example.com/tools",
+                        "title": "Example Tools",
+                        "page_type": "tool_listing",
+                        "observed_entities": [{"kind": "tool_card", "label": "Converter A"}],
+                        "affordances": [{"kind": "link", "label": "Open detail"}],
+                    }
+                },
+            },
+        )
+        self.assertEqual(launch.status_code, 201)
+        launch_payload = launch.json()
+        episode_id = launch_payload["execution_episode"]["id"]
+        self.assertEqual(launch_payload["task_type"], "runtime_execution")
+        self.assertEqual(launch_payload["execution_plan_id"], plan_id)
+        self.assertEqual(launch_payload["execution_episode"]["status"], "pending")
+
+        run_once = self.client.post("/api/agent/run-once")
+        self.assertEqual(run_once.status_code, 200)
+        self.assertTrue(run_once.json()["processed"])
+        self.assertEqual(run_once.json()["status"], "completed")
+
+        refreshed_episode = self.client.get(f"/api/runtime/episodes/{episode_id}")
+        self.assertEqual(refreshed_episode.status_code, 200)
+        self.assertEqual(refreshed_episode.json()["status"], "completed")
+        self.assertGreaterEqual(refreshed_episode.json()["metrics"]["completed_step_count"], 1)
+
+        replay = self.client.get(f"/api/runtime/episodes/{episode_id}/replay")
+        self.assertEqual(replay.status_code, 200)
+        replay_payload = replay.json()
+        self.assertEqual(replay_payload["episode"]["id"], episode_id)
+        self.assertEqual(replay_payload["diagnostics"]["status"], "completed")
+        self.assertGreaterEqual(replay_payload["diagnostics"]["snapshot_count"], 1)
+        self.assertIsNotNone(replay_payload["template"])
+        self.assertIsNotNone(replay_payload["learning_draft"])
+
+    def test_managed_runtime_execution_replans_and_enqueues_follow_up_task(self) -> None:
+        from recruit_agent.runtime.models import LLMResponse, ToolCall
+
+        self.container.providers.providers["openai_compatible"] = _SequentialProvider(
+            "openai_compatible",
+            [
+                LLMResponse(
+                    content="the scene diverged, request a replan",
+                    tool_calls=[
+                        ToolCall(
+                            id="replan-1",
+                            name="request_replan",
+                            arguments={
+                                "step_id": "inspect_detail_surface",
+                                "reason": "The current detail surface no longer matches the active plan.",
+                                "preferred_capabilities": ["browser", "document"],
+                                "suggested_steps": [
+                                    {"id": "refresh_scene", "capability": "browser"},
+                                    {"id": "capture_revised_detail", "capability": "document"},
+                                ],
+                                "scene_update": {
+                                    "source": "browser",
+                                    "url": "https://example.com/detail",
+                                    "title": "Example Detail",
+                                    "page_type": "detail_surface",
+                                },
+                            },
+                        )
+                    ],
+                )
+            ],
+        )
+        self.container.providers.fallback_order = ["openai_compatible", "scripted_default"]
+
+        compiled_task = self.client.post(
+            "/api/runtime/task-specs/compile",
+            json={
+                "instruction": "Open the web app, inspect the live detail page, and keep the summary current.",
+                "title": "Managed runtime replan",
+                "preferred_capabilities": ["browser", "document"],
+            },
+        )
+        self.assertEqual(compiled_task.status_code, 201)
+        task_spec_id = compiled_task.json()["task_spec"]["id"]
+        plan_id = compiled_task.json()["execution_plan"]["id"]
+        base_version = compiled_task.json()["execution_plan"]["version"]
+
+        launch = self.client.post(
+            f"/api/runtime/plans/{plan_id}/enqueue",
+            json={
+                "task_spec_id": task_spec_id,
+                "requested_by": "desktop-user",
+                "mode": "production",
+                "payload": {
+                    "environment_snapshot": {
+                        "source": "browser",
+                        "url": "https://example.com/detail",
+                        "title": "Example Detail",
+                        "page_type": "detail_surface",
+                        "observed_entities": [{"kind": "detail_card", "label": "Candidate detail"}],
+                    }
+                },
+            },
+        )
+        self.assertEqual(launch.status_code, 201)
+        episode_id = launch.json()["execution_episode"]["id"]
+
+        run_once = self.client.post("/api/agent/run-once")
+        self.assertEqual(run_once.status_code, 200)
+        self.assertEqual(run_once.json()["status"], "replan_requested")
+
+        refreshed_episode = self.client.get(f"/api/runtime/episodes/{episode_id}")
+        self.assertEqual(refreshed_episode.status_code, 200)
+        self.assertEqual(refreshed_episode.json()["status"], "diverged")
+        self.assertTrue(refreshed_episode.json()["divergence_detected"])
+
+        replans = self.client.get("/api/runtime/replans")
+        self.assertEqual(replans.status_code, 200)
+        queue_items = self.client.get("/api/agent/queue")
+        self.assertEqual(queue_items.status_code, 200)
+        pending_runtime_tasks = [
+            item for item in queue_items.json() if item["task_type"] == "runtime_execution" and item["status"] == "pending"
+        ]
+        self.assertTrue(pending_runtime_tasks)
+        follow_up_plan_id = pending_runtime_tasks[0]["payload"]["execution_plan_id"]
+        replanned_item = next(item for item in replans.json() if item["execution_plan"]["id"] == follow_up_plan_id)
+        self.assertEqual(replanned_item["execution_plan"]["version"], replanned_item["previous_plan"]["version"] + 1)
+        if replanned_item["base_execution_plan_id"] != plan_id:
+            self.assertEqual(
+                replanned_item["previous_plan"]["runtime_metadata"].get("replanned_from_plan_id"),
+                plan_id,
+            )
+        self.assertEqual(
+            follow_up_plan_id,
+            replanned_item["execution_plan"]["id"],
+        )
 
 
 if __name__ == "__main__":

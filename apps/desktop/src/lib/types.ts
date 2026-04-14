@@ -359,6 +359,11 @@ export interface RuntimeCapabilityDriver {
   signalLabels: string[];
   supportedDomains?: string[];
   requiresSupervision?: boolean;
+  executorMode?: string;
+  replanOnError?: boolean;
+  sceneRequired?: boolean;
+  preferredTools?: string[];
+  checkpointPolicy?: Record<string, unknown>;
   updatedAt: string;
 }
 
@@ -566,6 +571,16 @@ export interface RuntimePlanReplanResult {
   patch?: RuntimePatch | null;
   auditMetadata?: Record<string, unknown>;
   createdAt: string;
+}
+
+export interface RuntimePlanLaunchResult {
+  taskId: string;
+  taskType: string;
+  priority: number;
+  queueDepth: number;
+  taskSpecId: string;
+  executionPlanId: string;
+  executionEpisode: RuntimeEpisode;
 }
 
 export interface SyncBacklogItem {

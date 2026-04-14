@@ -273,6 +273,23 @@ class ExecutionEpisodeRepository(BaseRepository[ExecutionEpisode]):
         )
         return self.session.scalars(stmt).first()
 
+    def recover_running(self, *, reason: str = "Recovered after local runtime restart.") -> int:
+        stmt = select(ExecutionEpisode).where(ExecutionEpisode.status == "running")
+        recovered = 0
+        for episode in self.session.scalars(stmt).all():
+            episode.status = "interrupted"
+            episode.finished_at = utcnow()
+            episode.last_error = reason
+            runtime_metadata = dict(episode.runtime_metadata or {})
+            recovery_history = list(runtime_metadata.get("recovery_history") or [])
+            recovery_history.append({"at": utcnow().isoformat(), "reason": reason, "status": "interrupted"})
+            runtime_metadata["recovery_history"] = recovery_history[-10:]
+            episode.runtime_metadata = runtime_metadata
+            recovered += 1
+        if recovered:
+            self.session.commit()
+        return recovered
+
 
 class EnvironmentSnapshotRepository(BaseRepository[EnvironmentSnapshot]):
     model = EnvironmentSnapshot

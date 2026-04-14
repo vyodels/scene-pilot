@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Callable
 from uuid import uuid4
 
 from sqlalchemy.orm import Session, sessionmaker
@@ -30,6 +30,7 @@ from recruit_agent.services.events import EventStreamService
 from recruit_agent.services.feature_flags import FeatureFlagService
 from recruit_agent.services.skills import SkillHealthCheckService
 from recruit_agent.services.sync import SyncService
+from recruit_agent.services.runtime import PersistedRuntimeService
 from recruit_agent.workflows.definitions import WorkflowDefinition, WorkflowNode
 from recruit_agent.workflows.engine import WorkflowEngine
 
@@ -44,6 +45,7 @@ class AgentControlService:
     platform_adapter: PlatformAdapter | None = None
     sync_service: SyncService | None = None
     session_factory: sessionmaker[Session] | None = None
+    runtime_service_factory: Callable[[Session], PersistedRuntimeService] | None = None
 
     def enqueue_task(
         self,
@@ -127,6 +129,37 @@ class AgentControlService:
                 skill_context=runtime_skill,
                 platform_context=platform_context,
             )
+            managed_execution = self._prepare_managed_execution(task)
+
+            if managed_execution is not None:
+                result = self._run_managed_execution(
+                    task,
+                    managed_execution=managed_execution,
+                    session_context=runtime_session,
+                    skill_context=runtime_skill,
+                    platform_context=platform_context,
+                )
+                if result.status == "waiting_human":
+                    self._persist_blocked_task_approval(task, result)
+                self._persist_task_artifacts(
+                    task,
+                    result,
+                    workflow=workflow,
+                    workflow_node=workflow_node,
+                    workflow_run_id=workflow_run_id,
+                    session_context={
+                        **runtime_session,
+                        "managed_execution": {
+                            "task_spec_id": managed_execution.task_spec.id,
+                            "execution_plan_id": managed_execution.execution_plan.id,
+                            "execution_episode_id": managed_execution.execution_episode.id,
+                            "scene_type": managed_execution.assessment.scene_type,
+                        },
+                    },
+                    skill_context=runtime_skill,
+                )
+                self._persist_runtime_learning(task, result)
+                return result
 
             if task.task_type == "discover_candidate" and self.platform_adapter is not None:
                 discovered = self.platform_adapter.discover_candidates(task.payload)
@@ -289,6 +322,173 @@ class AgentControlService:
             return result
 
         return _run
+
+    def _prepare_managed_execution(self, task: TaskEnvelope):
+        task_spec_id = str(task.metadata.get("task_spec_id") or task.payload.get("task_spec_id") or "").strip()
+        execution_plan_id = str(task.metadata.get("execution_plan_id") or task.payload.get("execution_plan_id") or "").strip()
+        execution_episode_id = str(task.metadata.get("execution_episode_id") or task.payload.get("execution_episode_id") or "").strip()
+        if not task_spec_id or not execution_plan_id:
+            return None
+        if self.session_factory is None or self.runtime_service_factory is None:
+            raise RuntimeError("Managed runtime execution requires a runtime service factory")
+
+        with self.session_factory() as session:
+            runtime_service = self.runtime_service_factory(session)
+            return runtime_service.start_managed_execution(
+                task_spec_id=task_spec_id,
+                execution_plan_id=execution_plan_id,
+                execution_episode_id=execution_episode_id or None,
+                requested_by=str(task.metadata.get("requested_by") or "runtime"),
+                mode=str(task.metadata.get("mode") or "production"),
+                task_id=task.task_id,
+                task_payload=dict(task.payload or {}),
+                runtime_metadata=dict(task.metadata or {}),
+            )
+
+    def _run_managed_execution(
+        self,
+        task: TaskEnvelope,
+        *,
+        managed_execution,
+        session_context: dict[str, Any],
+        skill_context: dict[str, Any] | None,
+        platform_context: dict[str, Any],
+    ) -> AgentResult:
+        if self.agent_loop is None:
+            result = AgentResult(
+                success=True,
+                status="completed",
+                content="Synthetic runtime execution completed without a live provider.",
+                data={"status": "pass", "task_id": task.task_id, "execution_plan_id": managed_execution.execution_plan.id},
+            )
+        else:
+            runtime_task = SimpleNamespace(
+                task_type="runtime_execution",
+                workflow_node_id=task.workflow_node_id or task.task_type,
+                payload={
+                    **dict(task.payload or {}),
+                    "goal": managed_execution.task_spec.goal,
+                    "domain": managed_execution.task_spec.domain,
+                    "plan_name": managed_execution.execution_plan.name,
+                },
+                max_turns=8,
+                token_budget=6_144,
+            )
+            result = self.agent_loop.run(
+                runtime_task,
+                session=session_context or None,
+                skill=skill_context or None,
+                extra_context={
+                    **platform_context,
+                    "scene_assessment": managed_execution.assessment.model_dump(),
+                    "capability_drivers": [driver.model_dump() for driver in managed_execution.capability_drivers],
+                    "execution_episode": managed_execution.execution_episode.model_dump(),
+                    "execution_contract": managed_execution.execution_contract,
+                },
+            )
+
+        if self.session_factory is None or self.runtime_service_factory is None:
+            return result
+
+        with self.session_factory() as session:
+            runtime_service = self.runtime_service_factory(session)
+            outcome = runtime_service.finalize_managed_execution(
+                execution_episode_id=managed_execution.execution_episode.id,
+                result=result,
+                task_payload=dict(task.payload or {}),
+                runtime_metadata={
+                    "task_id": task.task_id,
+                    "candidate_id": task.candidate_id,
+                    "workflow_id": task.workflow_id,
+                },
+            )
+            result.metadata.update(
+                {
+                    "execution_episode_id": outcome.episode.id,
+                    "execution_plan_id": managed_execution.execution_plan.id,
+                    "task_spec_id": managed_execution.task_spec.id,
+                    "derived_template_id": outcome.template.id if outcome.template is not None else None,
+                    "derived_patch_id": outcome.patch.id if outcome.patch is not None else None,
+                    "derived_learning_id": outcome.learning_draft.id if outcome.learning_draft is not None else None,
+                    "template_approval_id": outcome.template_approval.id if outcome.template_approval is not None else None,
+                    "approval_id": outcome.approval.id if outcome.approval is not None else None,
+                    "skill_health": outcome.skill_health,
+                }
+            )
+            if result.status == "replan_requested":
+                self._handle_managed_replan(
+                    task,
+                    runtime_service=runtime_service,
+                    managed_execution=managed_execution,
+                    episode_id=outcome.episode.id,
+                    result=result,
+                )
+        return result
+
+    def _handle_managed_replan(
+        self,
+        task: TaskEnvelope,
+        *,
+        runtime_service: PersistedRuntimeService,
+        managed_execution,
+        episode_id: str,
+        result: AgentResult,
+    ) -> None:
+        replay = runtime_service.get_episode_replay(episode_id)
+        latest_snapshot_id = replay.snapshots[-1].id if replay.snapshots else None
+        trace = dict(result.metadata.get("executor_trace") or {})
+        latest_request = (trace.get("replan_requests") or [{}])[-1] if trace.get("replan_requests") else {}
+        compiler_payload = {
+            "compiler_notes": [
+                str(latest_request.get("reason") or result.content or "Runtime requested a plan revision."),
+                "Auto-generated replan from managed execution.",
+            ],
+            "preferred_capabilities": list(latest_request.get("preferred_capabilities") or []),
+            "step_outline": list(latest_request.get("suggested_steps") or []),
+            "environment_requirements": {"scene_assessment_required": True},
+            "checkpoints": [{"kind": "planner", "label": "Review auto-replanned execution before retry"}],
+        }
+        replanned = runtime_service.replan_execution(
+            managed_execution.execution_plan.id,
+            payload=SimpleNamespace(
+                name=None,
+                reason=str(latest_request.get("reason") or result.content or "Managed execution replan"),
+                requested_by=str(task.metadata.get("requested_by") or "runtime"),
+                execution_episode_id=episode_id,
+                environment_snapshot_id=latest_snapshot_id,
+                snapshot=None,
+                compiler_payload=compiler_payload,
+                plan_context={"task_payload": dict(task.payload or {}), "runtime_task_id": task.task_id},
+                runtime_metadata={"generated_by": "managed_executor", "source_task_id": task.task_id},
+                checkpoints=[],
+                preserve_active_plan=True,
+            ),
+        )
+        follow_up = self.enqueue_task(
+            "runtime_execution",
+            payload={
+                **dict(task.payload or {}),
+                "task_spec_id": managed_execution.task_spec.id,
+                "execution_plan_id": replanned.execution_plan.id,
+                "execution_episode_id": episode_id,
+            },
+            metadata={
+                **dict(task.metadata or {}),
+                "task_spec_id": managed_execution.task_spec.id,
+                "execution_plan_id": replanned.execution_plan.id,
+                "execution_episode_id": episode_id,
+                "requested_by": str(task.metadata.get("requested_by") or "runtime"),
+                "mode": str(task.metadata.get("mode") or "production"),
+                "replanned_from_task_id": task.task_id,
+                "replanned_from_episode_id": episode_id,
+            },
+            priority=max(task.priority - 1, 1),
+            candidate_id=task.candidate_id,
+            workflow_id=task.workflow_id,
+            workflow_node_id=task.workflow_node_id,
+        )
+        result.metadata["replanned_execution_plan_id"] = replanned.execution_plan.id
+        result.metadata["replanned_task_id"] = follow_up.task_id
 
     def _build_platform_context(self, task: TaskEnvelope) -> dict[str, Any]:
         if self.platform_adapter is None or not task.candidate_id:
@@ -517,7 +717,7 @@ class AgentControlService:
                 if workflow_run_id is not None:
                     run = workflow_run_repo.get(workflow_run_id)
                     if run is not None:
-                        next_tasks = self.workflow_engine.next_tasks(task, result) if result.success else []
+                        next_tasks = self._next_tasks_for_result(task, result) if result.success else []
                         if result.status == "waiting_human":
                             run.status = "blocked"
                             run.finished_at = None
@@ -922,6 +1122,15 @@ class AgentControlService:
                 error=str(exc),
             )
             return False
+
+    def _next_tasks_for_result(self, task: TaskEnvelope, result: AgentResult) -> list[TaskEnvelope]:
+        runtime_managed = bool(task.metadata.get("execution_plan_id") or task.payload.get("execution_plan_id"))
+        if runtime_managed or task.task_type == "runtime_execution":
+            return []
+        try:
+            return self.workflow_engine.next_tasks(task, result)
+        except Exception:
+            return []
 
     def _apply_blocked_session_resolution(
         self,

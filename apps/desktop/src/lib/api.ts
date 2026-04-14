@@ -20,6 +20,7 @@ import type {
   RuntimeEpisodeReplay,
   RuntimeLearningOutcome,
   RuntimePatch,
+  RuntimePlanLaunchResult,
   RuntimePlanReplanRequest,
   RuntimePlanReplanResult,
   RuntimeSnapshot,
@@ -42,6 +43,7 @@ export interface DesktopApiClient {
   listRuntimeTasks(): Promise<RuntimeTaskSpec[]>;
   compileRuntimeTask(payload: CompileTaskRequest): Promise<CompileTaskResponse>;
   listRuntimePlans(): Promise<RuntimeWorkspaceData["plans"]>;
+  launchRuntimePlan(planId: string, taskSpecId: string, mode?: "trial" | "production"): Promise<RuntimePlanLaunchResult>;
   createTrialRun(taskSpecId: string, executionPlanId: string, notes?: string): Promise<RuntimeEpisode>;
   listRuntimeEpisodes(): Promise<RuntimeEpisode[]>;
   executeTrialRun(episodeId: string, notes?: string): Promise<RuntimeLearningOutcome>;
@@ -426,7 +428,35 @@ function normalizeRuntimeCapabilityDriver(raw: unknown): RuntimeCapabilityDriver
     signalLabels: asArray<string>(record.signalLabels ?? record.signal_labels ?? record.auditTags ?? record.audit_tags),
     supportedDomains,
     requiresSupervision,
+    executorMode: record.executorMode ? String(record.executorMode) : record.executor_mode ? String(record.executor_mode) : undefined,
+    replanOnError:
+      record.replanOnError !== undefined
+        ? Boolean(record.replanOnError)
+        : record.replan_on_error !== undefined
+          ? Boolean(record.replan_on_error)
+          : undefined,
+    sceneRequired:
+      record.sceneRequired !== undefined
+        ? Boolean(record.sceneRequired)
+        : record.scene_required !== undefined
+          ? Boolean(record.scene_required)
+          : undefined,
+    preferredTools: asArray<string>(record.preferredTools ?? record.preferred_tools),
+    checkpointPolicy: asRecord(record.checkpointPolicy ?? record.checkpoint_policy),
     updatedAt: String(record.updatedAt ?? record.updated_at ?? new Date().toISOString()),
+  };
+}
+
+function normalizeRuntimePlanLaunchResult(raw: unknown): RuntimePlanLaunchResult {
+  const record = asRecord(raw);
+  return {
+    taskId: String(record.taskId ?? record.task_id ?? ""),
+    taskType: String(record.taskType ?? record.task_type ?? ""),
+    priority: Number(record.priority ?? 0),
+    queueDepth: Number(record.queueDepth ?? record.queue_depth ?? 0),
+    taskSpecId: String(record.taskSpecId ?? record.task_spec_id ?? ""),
+    executionPlanId: String(record.executionPlanId ?? record.execution_plan_id ?? ""),
+    executionEpisode: normalizeRuntimeEpisode(record.executionEpisode ?? record.execution_episode),
   };
 }
 
@@ -1015,6 +1045,18 @@ function createFetchClient(baseUrl: string): DesktopApiClient {
         }),
       ),
     listRuntimePlans: async () => asArray(await requestJson<unknown>(baseUrl, "/api/runtime/plans")).map(normalizeRuntimePlan),
+    launchRuntimePlan: async (planId, taskSpecId, mode = "production") =>
+      normalizeRuntimePlanLaunchResult(
+        await requestJson<unknown>(baseUrl, `/api/runtime/plans/${planId}/enqueue`, {
+          method: "POST",
+          body: JSON.stringify({
+            task_spec_id: taskSpecId,
+            requested_by: "desktop-user",
+            mode,
+            runtime_metadata: { launched_from: "desktop_control_plane" },
+          }),
+        }),
+      ),
     createTrialRun: async (taskSpecId, executionPlanId, notes) =>
       normalizeRuntimeEpisode(
         await requestJson<unknown>(baseUrl, "/api/runtime/trial-runs", {
@@ -1320,6 +1362,23 @@ function createMockClient(): DesktopApiClient {
       executionPlan: desktopRuntimeMock.plans[0],
     }),
     listRuntimePlans: async () => desktopRuntimeMock.plans,
+    launchRuntimePlan: async (planId, taskSpecId, mode = "production") => ({
+      taskId: `mock-runtime-${planId}`,
+      taskType: "runtime_execution",
+      priority: 120,
+      queueDepth: desktopMockSnapshot.agent.queueDepth + 1,
+      taskSpecId,
+      executionPlanId: planId,
+      executionEpisode: {
+        ...desktopRuntimeMock.episodes[0],
+        id: `mock-runtime-episode-${Date.now()}`,
+        taskSpecId,
+        executionPlanId: planId,
+        mode,
+        status: "pending",
+        requiresConfirmation: mode !== "production",
+      },
+    }),
     createTrialRun: async (taskSpecId, executionPlanId, notes) => ({
       ...desktopRuntimeMock.episodes[0],
       id: `mock-episode-${Date.now()}`,
@@ -1484,6 +1543,14 @@ export function createDesktopApiClient(baseUrl?: string): DesktopApiClient {
       return fetchClient.listRuntimePlans().catch(async (error) => {
         if (isOfflineError(error)) {
           return desktopRuntimeMock.plans;
+        }
+        throw error;
+      });
+    },
+    async launchRuntimePlan(planId, taskSpecId, mode = "production") {
+      return fetchClient.launchRuntimePlan(planId, taskSpecId, mode).catch(async (error) => {
+        if (isOfflineError(error) || isMissingEndpointError(error)) {
+          return createMockClient().launchRuntimePlan(planId, taskSpecId, mode);
         }
         throw error;
       });

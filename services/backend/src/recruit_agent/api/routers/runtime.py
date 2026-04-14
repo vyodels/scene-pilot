@@ -20,6 +20,8 @@ from recruit_agent.schemas import (
     ExecutionPlanRead,
     RuntimeEpisodeReplayRead,
     RuntimeLearningOutcomeRead,
+    RuntimePlanEnqueueRead,
+    RuntimePlanEnqueueRequest,
     TaskCompileRequest,
     TaskCompilerContractRead,
     TaskCompileResponse,
@@ -43,7 +45,7 @@ def get_runtime_service(
     container: AppContainer = Depends(get_container),
     session: Session = Depends(get_session),
 ) -> PersistedRuntimeService:
-    return PersistedRuntimeService(session=session, providers=container.providers)
+    return PersistedRuntimeService(session=session, providers=container.providers, tools=container.tools)
 
 
 def _raise_runtime_http_error(exc: ValueError) -> None:
@@ -136,6 +138,64 @@ def compile_execution_plan(
         _raise_runtime_http_error(exc)
 
 
+@router.post("/plans/{plan_id}/enqueue", response_model=RuntimePlanEnqueueRead, status_code=201)
+@router.post("/plans/{plan_id}/launch", response_model=RuntimePlanEnqueueRead, status_code=201)
+def enqueue_execution_plan(
+    plan_id: str,
+    payload: RuntimePlanEnqueueRequest,
+    container: AppContainer = Depends(get_container),
+    service: PersistedRuntimeService = Depends(get_runtime_service),
+) -> RuntimePlanEnqueueRead:
+    try:
+        plan = service.get_plan(plan_id)
+        task_spec_id = payload.task_spec_id or plan.task_spec_id
+        episode = service.create_episode(
+            ExecutionEpisodeCreate(
+                task_spec_id=task_spec_id,
+                execution_plan_id=plan.id,
+                mode=payload.mode,
+                status="pending",
+                requested_by=payload.requested_by,
+                requires_confirmation=payload.mode != "production",
+                runtime_metadata={
+                    **dict(payload.runtime_metadata),
+                    "queued_by": payload.requested_by,
+                    "managed_execution": True,
+                },
+            )
+        )
+        task = container.agent_control.enqueue_task(
+            "runtime_execution",
+            payload={
+                **dict(payload.payload),
+                "task_spec_id": task_spec_id,
+                "execution_plan_id": plan.id,
+                "execution_episode_id": episode.id,
+            },
+            metadata={
+                "task_spec_id": task_spec_id,
+                "execution_plan_id": plan.id,
+                "execution_episode_id": episode.id,
+                "requested_by": payload.requested_by,
+                "mode": payload.mode,
+                **dict(payload.runtime_metadata),
+            },
+            priority=payload.priority,
+            workflow_node_id="runtime_execution",
+        )
+        return RuntimePlanEnqueueRead(
+            task_id=task.task_id,
+            task_type=task.task_type,
+            priority=task.priority,
+            queue_depth=container.scheduler.queue.size(),
+            task_spec_id=task_spec_id,
+            execution_plan_id=plan.id,
+            execution_episode=episode,
+        )
+    except ValueError as exc:
+        _raise_runtime_http_error(exc)
+
+
 @router.post("/plans/{plan_id}/replan", response_model=ExecutionPlanReplanRead, status_code=201)
 def replan_execution_plan(
     plan_id: str,
@@ -146,6 +206,15 @@ def replan_execution_plan(
         return service.replan_execution(plan_id, payload)
     except ValueError as exc:
         _raise_runtime_http_error(exc)
+
+
+@router.get("/replans", response_model=list[ExecutionPlanReplanRead])
+def list_replans(
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    service: PersistedRuntimeService = Depends(get_runtime_service),
+) -> list[ExecutionPlanReplanRead]:
+    return service.list_replans(limit=limit, offset=offset)
 
 
 @router.get("/episodes", response_model=list[ExecutionEpisodeRead])

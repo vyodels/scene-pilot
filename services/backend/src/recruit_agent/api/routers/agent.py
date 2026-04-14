@@ -46,6 +46,13 @@ def enqueue_task(
     task = container.agent_control.enqueue_task(
         payload.task_type,
         payload=payload.payload,
+        metadata={
+            "task_spec_id": payload.task_spec_id,
+            "execution_plan_id": payload.execution_plan_id,
+            "execution_episode_id": payload.execution_episode_id,
+            "requested_by": payload.requested_by,
+            "mode": payload.mode,
+        },
         priority=payload.priority,
         candidate_id=payload.candidate_id,
         workflow_id=payload.workflow_id,
@@ -83,35 +90,7 @@ def list_agent_queue(
     with container.session_factory() as session:
         items = TaskQueueRepository(session).list(status=status, limit=limit, offset=offset)
         return [
-            AgentQueueItemRead(
-                task_id=item.id,
-                task_type=item.task_type,
-                priority=int(item.priority or 0),
-                status=item.status,
-                attempts=int(item.attempts or 0),
-                scheduled_for=item.scheduled_for,
-                locked_at=item.locked_at,
-                locked_by=item.locked_by,
-                candidate_id=_payload_value(item.payload, "candidate_id"),
-                workflow_id=_payload_value(item.payload, "workflow_id"),
-                workflow_node_id=_payload_value(item.payload, "workflow_node_id"),
-                payload=dict(item.payload or {}),
-                queue_audit=[
-                    {
-                        "kind": str(event.get("kind") or "unknown"),
-                        "at": str(event.get("at") or ""),
-                        "status": str(event.get("status")) if event.get("status") is not None else None,
-                        "priority": int(event["priority"]) if event.get("priority") is not None else None,
-                        "attempts": int(event["attempts"]) if event.get("attempts") is not None else None,
-                        "locked_by": str(event.get("locked_by")) if event.get("locked_by") is not None else None,
-                        "error": str(event.get("error")) if event.get("error") is not None else None,
-                    }
-                    for event in list((item.payload or {}).get("queue_audit", {}).get("history") or [])
-                    if isinstance(event, dict)
-                ],
-                created_at=item.created_at,
-                updated_at=item.updated_at,
-            )
+            _build_queue_item_read(item)
             for item in items
         ]
 
@@ -173,3 +152,51 @@ def _payload_value(payload: dict[str, Any] | None, key: str) -> str | None:
     if value is None:
         return None
     return str(value)
+
+
+def _build_queue_item_read(item) -> AgentQueueItemRead:
+    serialized_payload = dict(item.payload or {})
+    task_payload = dict(serialized_payload.get("payload") or {})
+    task_metadata = dict(serialized_payload.get("metadata") or {})
+    display_payload = {
+        **task_payload,
+        **{
+            key: value
+            for key, value in task_metadata.items()
+            if key in {"task_spec_id", "execution_plan_id", "execution_episode_id", "requested_by", "mode"}
+            and value is not None
+            and key not in task_payload
+        },
+    }
+    if task_metadata:
+        display_payload["_metadata"] = task_metadata
+
+    return AgentQueueItemRead(
+        task_id=item.id,
+        task_type=item.task_type,
+        priority=int(item.priority or 0),
+        status=item.status,
+        attempts=int(item.attempts or 0),
+        scheduled_for=item.scheduled_for,
+        locked_at=item.locked_at,
+        locked_by=item.locked_by,
+        candidate_id=_payload_value(serialized_payload, "candidate_id"),
+        workflow_id=_payload_value(serialized_payload, "workflow_id"),
+        workflow_node_id=_payload_value(serialized_payload, "workflow_node_id"),
+        payload=display_payload,
+        queue_audit=[
+            {
+                "kind": str(event.get("kind") or "unknown"),
+                "at": str(event.get("at") or ""),
+                "status": str(event.get("status")) if event.get("status") is not None else None,
+                "priority": int(event["priority"]) if event.get("priority") is not None else None,
+                "attempts": int(event["attempts"]) if event.get("attempts") is not None else None,
+                "locked_by": str(event.get("locked_by")) if event.get("locked_by") is not None else None,
+                "error": str(event.get("error")) if event.get("error") is not None else None,
+            }
+            for event in list(serialized_payload.get("queue_audit", {}).get("history") or [])
+            if isinstance(event, dict)
+        ],
+        created_at=item.created_at,
+        updated_at=item.updated_at,
+    )

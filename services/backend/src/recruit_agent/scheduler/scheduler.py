@@ -50,6 +50,9 @@ class SerialScheduler:
             mark_failed(task_id, error=error)
 
     def run_once(self) -> ScheduledOutcome | None:
+        recover_stale = getattr(self.queue, "recover_stale", None)
+        if callable(recover_stale):
+            recover_stale()
         task = self.queue.get()
         if task is None:
             return None

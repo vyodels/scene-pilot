@@ -52,6 +52,8 @@ from .domain import (
     RuntimeReplayDiagnosticsRead,
     RuntimeReplayEventRead,
     RuntimeLearningOutcomeRead,
+    RuntimePlanEnqueueRequest,
+    RuntimePlanEnqueueRead,
     SceneProfileRead,
     SettingsSnapshotRead,
     SettingsSnapshotUpdate,
