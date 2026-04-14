@@ -23,8 +23,15 @@ extraResources:
       - "**/*"
 mac:
   category: public.app-category.business
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.inherit.plist
+  notarize: true
   target:
     - dir
     - dmg
   artifactName: "${productName}-${version}-${arch}.${ext}"
+dmg:
+  sign: false
 asar: true

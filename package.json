@@ -12,8 +12,10 @@
     "desktop:typecheck": "npm --workspace apps/desktop run typecheck",
     "desktop:release:prepare": "npm --workspace apps/desktop run release:prepare",
     "desktop:release:preflight": "npm --workspace apps/desktop run release:preflight",
+    "desktop:release:preflight:distribution": "npm --workspace apps/desktop run release:preflight:distribution",
     "desktop:package": "npm --workspace apps/desktop run package",
     "desktop:package:dir": "npm --workspace apps/desktop run package:dir",
+    "desktop:package:distribution": "npm --workspace apps/desktop run package:distribution",
     "shared:build": "npm --workspace @recruit-agent/shared run build",
     "backend:test": "python3 -m pytest services/backend/tests"
   }

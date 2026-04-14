@@ -73,7 +73,7 @@ uvicorn recruit_agent.server:create_app --reload --factory
 
 ## Desktop Packaging
 
-The desktop release chain is present but final packaging still depends on Electron runtime binaries being available on the packaging machine.
+The desktop release chain now supports both local verification packages and distribution-grade macOS release preflight.
 
 ```bash
 npm install --ignore-scripts
@@ -85,6 +85,14 @@ npm run desktop:package:dir
 
 Notes:
 
-- `scripts/prepare-desktop-package.mjs` stages backend assets for packaging.
-- `scripts/preflight-desktop-package.mjs` fails early if Electron runtime artifacts are missing.
+- `scripts/prepare-desktop-package.mjs` stages backend assets and the local Electron runtime for packaging.
+- `scripts/preflight-desktop-package.mjs` reports Electron runtime readiness, signing mode, and notarization mode.
 - `.npmrc` keeps `ignore-scripts=true` in this environment to avoid unstable downloads; release machines should install with scripts enabled.
+- For an externally distributed macOS build, use:
+
+```bash
+npm run desktop:release:preflight:distribution
+npm run desktop:package:distribution
+```
+
+- Release-signing details are documented in [docs/macos-release.md](./docs/macos-release.md).

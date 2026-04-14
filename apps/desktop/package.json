@@ -13,9 +13,11 @@
     "electron:build": "tsc -p tsconfig.node.json",
     "release:prepare": "node ../../scripts/prepare-desktop-package.mjs",
     "release:preflight": "node ../../scripts/preflight-desktop-package.mjs --require-build",
+    "release:preflight:distribution": "node ../../scripts/preflight-desktop-package.mjs --require-build --require-distribution",
     "dist": "npm run electron:build && vite build",
     "package": "npm run release:prepare && npm run dist && npm run release:preflight && electron-builder --config ../../electron-builder.yml --publish never",
-    "package:dir": "npm run release:prepare && npm run dist && npm run release:preflight && electron-builder --dir --config ../../electron-builder.yml --publish never"
+    "package:dir": "npm run release:prepare && npm run dist && npm run release:preflight && electron-builder --dir --config ../../electron-builder.yml --publish never",
+    "package:distribution": "npm run release:prepare && npm run dist && npm run release:preflight:distribution && electron-builder --config ../../electron-builder.yml --publish never"
   },
   "dependencies": {
     "@recruit-agent/shared": "0.1.0",
