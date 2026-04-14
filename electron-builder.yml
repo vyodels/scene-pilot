@@ -1,0 +1,28 @@
+appId: com.recruitagent.desktop
+productName: Recruit Agent
+directories:
+  output: dist/packages
+  buildResources: apps/desktop
+files:
+  - from: apps/desktop/dist-renderer
+    to: dist-renderer
+  - from: apps/desktop/dist-electron
+    to: dist-electron
+extraMetadata:
+  main: dist-electron/electron/main.js
+extraResources:
+  - from: .release/backend-src
+    to: backend-src/src
+  - from: .release/backend-pyproject/pyproject.toml
+    to: backend-src/pyproject.toml
+  - from: .release/backend-dist
+    to: backend-dist
+    filter:
+      - "**/*"
+mac:
+  category: public.app-category.business
+  target:
+    - dir
+    - dmg
+  artifactName: "${productName}-${version}-${arch}.${ext}"
+asar: true

@@ -1,0 +1,35 @@
+{
+  "name": "apps-desktop",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Local-first desktop control plane for Recruit Agent",
+  "author": "Codex",
+  "type": "module",
+  "main": "dist-electron/main.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -p tsconfig.node.json && vite build",
+    "typecheck": "tsc --noEmit",
+    "electron:build": "tsc -p tsconfig.node.json",
+    "release:prepare": "node ../../scripts/prepare-desktop-package.mjs",
+    "release:preflight": "node ../../scripts/preflight-desktop-package.mjs --require-build",
+    "dist": "npm run electron:build && vite build",
+    "package": "npm run release:prepare && npm run dist && npm run release:preflight && electron-builder --config ../../electron-builder.yml --publish never",
+    "package:dir": "npm run release:prepare && npm run dist && npm run release:preflight && electron-builder --dir --config ../../electron-builder.yml --publish never"
+  },
+  "dependencies": {
+    "@recruit-agent/shared": "0.1.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.1",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.3",
+    "electron": "33.4.11",
+    "electron-builder": "^25.1.8",
+    "typescript": "^5.7.2",
+    "vite": "^5.4.11"
+  }
+}
