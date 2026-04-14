@@ -203,11 +203,25 @@ export interface DomainPackRecord {
   key: string;
   name: string;
   description: string;
+  version: string;
+  maturity: string;
+  runtimeOnly: boolean;
   defaultCapabilities: string[];
   sampleTasks: string[];
   defaultConstraints: Record<string, unknown>;
   defaultOutputContract: Record<string, unknown>;
   templateKeys: string[];
+}
+
+export interface RuntimeCompilerContract {
+  strategy: string;
+  fallbackStrategy: string;
+  promptAsset: string;
+  requiredFields: string[];
+  optionalFields: string[];
+  invariants: string[];
+  availableDomains: DomainPackRecord[];
+  availableCapabilities: RuntimeCapabilityDriver[];
 }
 
 export interface RuntimeTaskSpec {
@@ -493,6 +507,7 @@ export interface SyncFlushResult {
 }
 
 export interface RuntimeWorkspaceData {
+  compilerContract?: RuntimeCompilerContract | null;
   domainPacks: DomainPackRecord[];
   taskSpecs: RuntimeTaskSpec[];
   plans: RuntimeExecutionPlan[];

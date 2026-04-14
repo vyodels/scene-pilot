@@ -51,6 +51,14 @@ class ApiRuntimeTests(unittest.TestCase):
         domain_packs = self.client.get("/api/runtime/domain-packs")
         self.assertEqual(domain_packs.status_code, 200)
         self.assertTrue(any(item["key"] == "web_research" for item in domain_packs.json()))
+        self.assertTrue(any(item["version"] for item in domain_packs.json()))
+
+        compiler_contract = self.client.get("/api/runtime/compiler-contract")
+        self.assertEqual(compiler_contract.status_code, 200)
+        compiler_payload = compiler_contract.json()
+        self.assertEqual(compiler_payload["strategy"], "llm_first_structured_semantic_compiler")
+        self.assertIn("goal", compiler_payload["required_fields"])
+        self.assertTrue(any(item["key"] == "browser" for item in compiler_payload["available_capabilities"]))
 
         compiled_task = self.client.post(
             "/api/runtime/task-specs/compile",

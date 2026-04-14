@@ -62,6 +62,7 @@ from .domain import (
     SkillUpdate,
     TaskSpecCreate,
     TaskCompileRequest,
+    TaskCompilerContractRead,
     TaskCompileResponse,
     TaskSpecRead,
     TaskSpecUpdate,

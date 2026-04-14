@@ -16,7 +16,13 @@ export function DomainPacksView({ domainPacks }: DomainPacksViewProps): JSX.Elem
           title={pack.name}
           eyebrow={pack.key}
           description={pack.description}
-          actions={<StatusBadge tone="neutral">{pack.templateKeys.length} templates</StatusBadge>}
+          actions={
+            <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+              <StatusBadge tone="neutral">{pack.templateKeys.length} templates</StatusBadge>
+              <StatusBadge tone={pack.maturity === "beta" ? "positive" : "warning"}>{pack.maturity}</StatusBadge>
+              <StatusBadge tone="neutral">v{pack.version}</StatusBadge>
+            </div>
+          }
         >
           <div style={{ display: "grid", gap: "12px" }}>
             <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>

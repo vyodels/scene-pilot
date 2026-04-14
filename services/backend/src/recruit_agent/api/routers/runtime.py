@@ -21,6 +21,7 @@ from recruit_agent.schemas import (
     RuntimeEpisodeReplayRead,
     RuntimeLearningOutcomeRead,
     TaskCompileRequest,
+    TaskCompilerContractRead,
     TaskCompileResponse,
     TaskSpecCreate,
     TaskSpecRead,
@@ -60,6 +61,13 @@ def list_domain_packs(
     service: PersistedRuntimeService = Depends(get_runtime_service),
 ) -> list[DomainPackRead]:
     return service.list_domain_packs()
+
+
+@router.get("/compiler-contract", response_model=TaskCompilerContractRead)
+def get_task_compiler_contract(
+    service: PersistedRuntimeService = Depends(get_runtime_service),
+) -> TaskCompilerContractRead:
+    return service.get_task_compiler_contract()
 
 
 @router.get("/capability-drivers", response_model=list[CapabilityDriverRead])

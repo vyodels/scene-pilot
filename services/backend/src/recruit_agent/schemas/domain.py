@@ -178,11 +178,25 @@ class DomainPackRead(BaseModel):
     key: str
     name: str
     description: str
+    version: str = "1.0.0"
+    maturity: str = "experimental"
+    runtime_only: bool = True
     default_capabilities: list[str] = Field(default_factory=list)
     sample_tasks: list[str] = Field(default_factory=list)
     default_constraints: dict[str, Any] = Field(default_factory=dict)
     default_output_contract: dict[str, Any] = Field(default_factory=dict)
     template_keys: list[str] = Field(default_factory=list)
+
+
+class TaskCompilerContractRead(BaseModel):
+    strategy: str
+    fallback_strategy: str
+    prompt_asset: str
+    required_fields: list[str] = Field(default_factory=list)
+    optional_fields: list[str] = Field(default_factory=list)
+    invariants: list[str] = Field(default_factory=list)
+    available_domains: list[DomainPackRead] = Field(default_factory=list)
+    available_capabilities: list["CapabilityDriverRead"] = Field(default_factory=list)
 
 
 class CapabilityDriverRead(BaseModel):

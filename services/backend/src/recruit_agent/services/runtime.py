@@ -45,6 +45,7 @@ from recruit_agent.schemas import (
     RuntimeReplayEventRead,
     RuntimeLearningOutcomeRead,
     TaskCompileRequest,
+    TaskCompilerContractRead,
     TaskCompileResponse,
     TaskSpecCreate,
     TaskSpecRead,
@@ -67,6 +68,9 @@ DOMAIN_PACKS: dict[str, dict[str, Any]] = {
     "general": {
         "name": "General Automation",
         "description": "A generic supervised automation pack for exploratory browser or desktop tasks.",
+        "version": "1.2.0",
+        "maturity": "beta",
+        "runtime_only": True,
         "default_capabilities": ["analyze", "browser", "llm", "document"],
         "sample_tasks": [
             "Open a site, inspect the page, and summarize the useful information.",
@@ -79,6 +83,9 @@ DOMAIN_PACKS: dict[str, dict[str, Any]] = {
     "recruiting": {
         "name": "Recruiting",
         "description": "Source candidates, capture profile context, screen resumes, and prepare approved handoffs.",
+        "version": "1.1.0",
+        "maturity": "beta",
+        "runtime_only": True,
         "default_capabilities": ["browser", "search", "document", "llm", "api"],
         "sample_tasks": [
             "Find matching candidates, extract resumes, and score them before upload.",
@@ -91,6 +98,9 @@ DOMAIN_PACKS: dict[str, dict[str, Any]] = {
     "market_news": {
         "name": "Market News",
         "description": "Collect the newest market news, compare sources, and generate a concise daily digest.",
+        "version": "0.4.0",
+        "maturity": "experimental",
+        "runtime_only": True,
         "default_capabilities": ["search", "http", "browser", "llm", "document"],
         "sample_tasks": [
             "Find the latest stock market news and prepare a digest with sources.",
@@ -103,6 +113,9 @@ DOMAIN_PACKS: dict[str, dict[str, Any]] = {
     "web_research": {
         "name": "Web Research",
         "description": "Search the web, evaluate options, and produce shortlists with reasons and links.",
+        "version": "0.4.0",
+        "maturity": "experimental",
+        "runtime_only": True,
         "default_capabilities": ["search", "browser", "http", "llm", "document"],
         "sample_tasks": [
             "Find useful PDF converters, compare them, and return the shortlist.",
@@ -115,6 +128,9 @@ DOMAIN_PACKS: dict[str, dict[str, Any]] = {
     "github_trends": {
         "name": "GitHub Trends",
         "description": "Inspect GitHub activity, identify trending repositories, and summarize why they matter.",
+        "version": "0.4.0",
+        "maturity": "experimental",
+        "runtime_only": True,
         "default_capabilities": ["http", "search", "browser", "llm", "document"],
         "sample_tasks": [
             "List today's hot GitHub repositories with links and one-line summaries.",
@@ -327,6 +343,38 @@ class PersistedRuntimeService:
 
     def list_domain_packs(self) -> list[DomainPackRead]:
         return [self._domain_pack_read(key, config) for key, config in DOMAIN_PACKS.items()]
+
+    def get_task_compiler_contract(self) -> TaskCompilerContractRead:
+        return TaskCompilerContractRead(
+            strategy="llm_first_structured_semantic_compiler",
+            fallback_strategy="heuristic_domain_and_capability_inference",
+            prompt_asset="tasks/runtime_task_compiler.md",
+            required_fields=[
+                "goal",
+                "domain",
+                "constraints",
+                "success_criteria",
+                "approval_policy",
+                "output_contract",
+            ],
+            optional_fields=[
+                "inputs",
+                "preferred_capabilities",
+                "preferred_domains",
+                "environment_requirements",
+                "checkpoints",
+                "step_outline",
+                "compiler_notes",
+            ],
+            invariants=[
+                "The compiler must not assume any fixed site integration during development time.",
+                "The compiler must emit a structured task contract before execution begins.",
+                "If LLM compilation fails or produces invalid JSON, the runtime records explicit fallback notes.",
+                "Write-oriented actions must remain approval-aware even when inferred at compile time.",
+            ],
+            available_domains=self.list_domain_packs(),
+            available_capabilities=self.list_capability_drivers(),
+        )
 
     def list_capability_drivers(self, *, domain: str | None = None) -> list[CapabilityDriverRead]:
         normalized_domain = self._normalize_domain(domain)
@@ -2729,6 +2777,9 @@ class PersistedRuntimeService:
             key=key,
             name=str(config["name"]),
             description=str(config["description"]),
+            version=str(config.get("version") or "1.0.0"),
+            maturity=str(config.get("maturity") or "experimental"),
+            runtime_only=bool(config.get("runtime_only", True)),
             default_capabilities=list(config.get("default_capabilities") or []),
             sample_tasks=list(config.get("sample_tasks") or []),
             default_constraints=dict(config.get("default_constraints") or {}),

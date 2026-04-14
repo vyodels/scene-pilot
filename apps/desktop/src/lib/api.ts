@@ -12,6 +12,7 @@ import type {
   DashboardSummary,
   DomainPackRecord,
   RuntimeCapabilityDriver,
+  RuntimeCompilerContract,
   RuntimeEnvironmentAssessment,
   RuntimeEnvironmentAssessmentRequest,
   RuntimeEpisode,
@@ -35,6 +36,7 @@ import type {
 export interface DesktopApiClient {
   getDashboardSummary(): Promise<DashboardSummary>;
   getRuntimeWorkspaceData(): Promise<RuntimeWorkspaceData>;
+  getTaskCompilerContract(): Promise<RuntimeCompilerContract>;
   listDomainPacks(): Promise<DomainPackRecord[]>;
   listRuntimeTasks(): Promise<RuntimeTaskSpec[]>;
   compileRuntimeTask(payload: CompileTaskRequest): Promise<CompileTaskResponse>;
@@ -234,11 +236,28 @@ function normalizeDomainPack(raw: unknown): DomainPackRecord {
     key: String(record.key ?? "general"),
     name: String(record.name ?? "General Automation"),
     description: String(record.description ?? ""),
+    version: String(record.version ?? "1.0.0"),
+    maturity: String(record.maturity ?? "experimental"),
+    runtimeOnly: Boolean(record.runtimeOnly ?? record.runtime_only ?? true),
     defaultCapabilities: asArray<string>(record.defaultCapabilities ?? record.default_capabilities),
     sampleTasks: asArray<string>(record.sampleTasks ?? record.sample_tasks),
     defaultConstraints: asRecord(record.defaultConstraints ?? record.default_constraints),
     defaultOutputContract: asRecord(record.defaultOutputContract ?? record.default_output_contract),
     templateKeys: asArray<string>(record.templateKeys ?? record.template_keys),
+  };
+}
+
+function normalizeRuntimeCompilerContract(raw: unknown): RuntimeCompilerContract {
+  const record = asRecord(raw);
+  return {
+    strategy: String(record.strategy ?? "llm_first_structured_semantic_compiler"),
+    fallbackStrategy: String(record.fallbackStrategy ?? record.fallback_strategy ?? "heuristic"),
+    promptAsset: String(record.promptAsset ?? record.prompt_asset ?? "tasks/runtime_task_compiler.md"),
+    requiredFields: asArray<string>(record.requiredFields ?? record.required_fields),
+    optionalFields: asArray<string>(record.optionalFields ?? record.optional_fields),
+    invariants: asArray<string>(record.invariants),
+    availableDomains: asArray(record.availableDomains ?? record.available_domains).map(normalizeDomainPack),
+    availableCapabilities: asArray(record.availableCapabilities ?? record.available_capabilities).map(normalizeRuntimeCapabilityDriver),
   };
 }
 
@@ -812,8 +831,9 @@ function createFetchClient(baseUrl: string): DesktopApiClient {
   return {
     getDashboardSummary: async () => normalizeDashboard(await requestJson<unknown>(baseUrl, "/api/dashboard")),
     getRuntimeWorkspaceData: async () => {
-      const [domainPacks, taskSpecs, plans, episodes, snapshots, capabilityDrivers, environmentAssessments, templates, patches, replans] =
+      const [compilerContract, domainPacks, taskSpecs, plans, episodes, snapshots, capabilityDrivers, environmentAssessments, templates, patches, replans] =
         await Promise.all([
+        requestJson<unknown>(baseUrl, "/api/runtime/compiler-contract"),
         requestJson<unknown>(baseUrl, "/api/runtime/domain-packs"),
         requestJson<unknown>(baseUrl, "/api/runtime/task-specs"),
         requestJson<unknown>(baseUrl, "/api/runtime/plans"),
@@ -826,6 +846,7 @@ function createFetchClient(baseUrl: string): DesktopApiClient {
         requestOptionalJson<unknown>(baseUrl, "/api/runtime/replans"),
       ]);
       return {
+        compilerContract: normalizeRuntimeCompilerContract(compilerContract),
         domainPacks: asArray(domainPacks).map(normalizeDomainPack),
         taskSpecs: asArray(taskSpecs).map(normalizeRuntimeTask),
         plans: asArray(plans).map(normalizeRuntimePlan),
@@ -838,6 +859,8 @@ function createFetchClient(baseUrl: string): DesktopApiClient {
         replans: replans ? asArray(replans).map(normalizeRuntimeReplanResult) : [],
       };
     },
+    getTaskCompilerContract: async () =>
+      normalizeRuntimeCompilerContract(await requestJson<unknown>(baseUrl, "/api/runtime/compiler-contract")),
     listDomainPacks: async () => asArray(await requestJson<unknown>(baseUrl, "/api/runtime/domain-packs")).map(normalizeDomainPack),
     listRuntimeTasks: async () => asArray(await requestJson<unknown>(baseUrl, "/api/runtime/task-specs")).map(normalizeRuntimeTask),
     compileRuntimeTask: async (payload) =>
@@ -1149,6 +1172,8 @@ function createMockClient(): DesktopApiClient {
   return {
     getDashboardSummary: async () => snapshot,
     getRuntimeWorkspaceData: async () => desktopRuntimeMock,
+    getTaskCompilerContract: async () =>
+      desktopRuntimeMock.compilerContract ?? normalizeRuntimeCompilerContract({}),
     listDomainPacks: async () => desktopRuntimeMock.domainPacks,
     listRuntimeTasks: async () => desktopRuntimeMock.taskSpecs,
     compileRuntimeTask: async (payload) => ({
@@ -1279,6 +1304,16 @@ export function createDesktopApiClient(baseUrl?: string): DesktopApiClient {
       } catch (error) {
         if (isOfflineError(error)) {
           return desktopRuntimeMock;
+        }
+        throw error;
+      }
+    },
+    async getTaskCompilerContract() {
+      try {
+        return await fetchClient.getTaskCompilerContract();
+      } catch (error) {
+        if (isOfflineError(error)) {
+          return desktopRuntimeMock.compilerContract ?? normalizeRuntimeCompilerContract({});
         }
         throw error;
       }

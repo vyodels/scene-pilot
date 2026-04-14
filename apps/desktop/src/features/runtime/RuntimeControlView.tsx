@@ -810,6 +810,30 @@ export function RuntimeControlView({
             placeholder="Optional domain hint, e.g. recruiting / market_news"
             style={inputShell}
           />
+          {data.compilerContract ? (
+            <div
+              style={{
+                borderRadius: "16px",
+                border: "1px solid rgba(255,255,255,0.08)",
+                background: "rgba(255,255,255,0.03)",
+                padding: "14px",
+                display: "grid",
+                gap: "10px",
+              }}
+            >
+              <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                <StatusBadge tone="positive">{data.compilerContract.strategy}</StatusBadge>
+                <StatusBadge tone="warning">fallback: {data.compilerContract.fallbackStrategy}</StatusBadge>
+                <StatusBadge tone="neutral">{data.compilerContract.promptAsset}</StatusBadge>
+              </div>
+              <div style={{ color: theme.colors.muted, fontSize: "13px", lineHeight: 1.6 }}>
+                Required fields: {data.compilerContract.requiredFields.join(", ")}
+              </div>
+              <div style={{ color: theme.colors.muted, fontSize: "13px", lineHeight: 1.6 }}>
+                Invariants: {data.compilerContract.invariants.join(" ")}
+              </div>
+            </div>
+          ) : null}
         </div>
       </Panel>
 
