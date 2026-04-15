@@ -181,23 +181,33 @@ class AgentResult:
 
 
 def _compact_tool_output_for_model(tool_name: str, output: Any) -> Any:
-    if tool_name == "boss_discover_candidates" and isinstance(output, list):
-        items = [_compact_candidate_output(item, detail=False) for item in output[:4] if isinstance(item, dict)]
+    if isinstance(output, list) and output and all(isinstance(item, dict) for item in output):
+        candidate_like = [item for item in output if isinstance(item, dict) and ("candidate_id" in item or "platform_candidate_id" in item)]
+        if candidate_like:
+            items = [_compact_candidate_output(item, detail=False) for item in candidate_like[:4]]
+            return {
+                "candidate_count": len(candidate_like),
+                "candidates": items,
+                "truncated": len(candidate_like) > len(items),
+            }
+    if tool_name == "browser_list_tabs" and isinstance(output, list):
         return {
-            "candidate_count": len(output),
-            "candidates": items,
-            "truncated": len(output) > len(items),
+            "tab_count": len(output),
+            "tabs": [
+                {
+                    "id": item.get("id"),
+                    "title": _truncate_text(item.get("title"), 120),
+                    "url": _truncate_text(item.get("url"), 200),
+                    "active": bool(item.get("active")),
+                }
+                for item in output[:6]
+                if isinstance(item, dict)
+            ],
+            "truncated": len(output) > 6,
         }
-    if tool_name == "boss_inspect_candidate" and isinstance(output, dict):
-        return _compact_candidate_output(output, detail=True)
-    if tool_name == "browser_capture_scene" and isinstance(output, dict):
+    if tool_name == "browser_snapshot" and isinstance(output, dict):
         observed_entities = [item for item in list(output.get("observed_entities") or []) if isinstance(item, dict)]
         affordances = [item for item in list(output.get("affordances") or []) if isinstance(item, dict)]
-        candidate_names = [
-            str(item.get("label") or "").strip()
-            for item in observed_entities
-            if str(item.get("kind") or "") == "candidate_card" and str(item.get("label") or "").strip()
-        ]
         return {
             "source": output.get("source"),
             "environment_key": output.get("environment_key"),
@@ -206,9 +216,18 @@ def _compact_tool_output_for_model(tool_name: str, output: Any) -> Any:
             "page_type": output.get("page_type"),
             "observed_entity_count": len(observed_entities),
             "affordance_count": len(affordances),
-            "candidate_names": candidate_names[:6],
             "runtime_metadata": _compact_generic_value(output.get("runtime_metadata"), depth=0),
         }
+    if tool_name == "browser_execute_script" and isinstance(output, dict):
+        return _compact_generic_value(
+            {
+                "success": output.get("success", True),
+                "result": output.get("result"),
+            },
+            depth=0,
+        )
+    if isinstance(output, dict) and ("candidate_id" in output or "platform_candidate_id" in output):
+        return _compact_candidate_output(output, detail=True)
     if tool_name == "record_observation" and isinstance(output, dict):
         payload = output.get("payload") if isinstance(output.get("payload"), dict) else {}
         return {

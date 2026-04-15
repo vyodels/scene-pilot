@@ -69,7 +69,6 @@ from scene_pilot.runtime.providers import ProviderError, ProviderRegistry, Scrip
 from scene_pilot.runtime.prompts import PromptBuilder
 from scene_pilot.runtime.result_semantics import extract_business_status
 from scene_pilot.runtime.tools import ToolRegistry
-from scene_pilot.services.browser_mcp import BrowserMcpClient, BrowserMcpError, capture_boss_scene
 from scene_pilot.services.skills import SkillHealthCheckService
 
 
@@ -276,9 +275,6 @@ CAPABILITY_DRIVERS: dict[str, dict[str, Any]] = {
         "replan_on_error": True,
         "scene_required": True,
         "preferred_tools": [
-            "browser_capture_scene",
-            "boss_discover_candidates",
-            "boss_inspect_candidate",
             "record_observation",
             "advance_plan_step",
             "request_replan",
@@ -299,9 +295,6 @@ CAPABILITY_DRIVERS: dict[str, dict[str, Any]] = {
         "replan_on_error": False,
         "scene_required": False,
         "preferred_tools": [
-            "browser_capture_scene",
-            "boss_discover_candidates",
-            "boss_inspect_candidate",
             "record_observation",
             "advance_plan_step",
             "submit_result",
@@ -545,7 +538,6 @@ class PersistedRuntimeService:
     providers: ProviderRegistry | None = None
     tools: ToolRegistry | None = None
     prompt_builder: PromptBuilder = field(default_factory=PromptBuilder)
-    browser_client: BrowserMcpClient | None = field(default_factory=BrowserMcpClient)
     allow_heuristic_fallback: bool = False
 
     def list_domain_packs(self) -> list[DomainPackRead]:
@@ -2461,52 +2453,7 @@ class PersistedRuntimeService:
         return self.derive_learning_from_episode(updated_episode.id)
 
     def _hydrate_trial_payload_with_live_scene(self, *, task_spec, payload: TrialRunExecuteRequest) -> TrialRunExecuteRequest:
-        requires_browser = bool((task_spec.compiled_payload or {}).get("environment_requirements", {}).get("browser_required")) or (
-            "browser" in list(task_spec.preferred_capabilities or [])
-        )
-        if not requires_browser:
-            return payload
-
-        already_has_scene = bool(
-            payload.url
-            or payload.title
-            or payload.page_type
-            or list(payload.observed_entities or [])
-            or list(payload.affordances or [])
-        )
-        if payload.source == "browser" and already_has_scene:
-            return payload
-        if self.browser_client is None:
-            return payload
-
-        try:
-            scene = capture_boss_scene(self.browser_client, limit=8)
-        except BrowserMcpError:
-            return payload
-        if not isinstance(scene, dict):
-            return payload
-
-        scene_metadata = dict(scene.get("runtime_metadata") or {})
-        payload_metadata = dict(payload.runtime_metadata or {})
-        merged_metadata = {
-            **scene_metadata,
-            **payload_metadata,
-            "auto_captured_browser_scene": True,
-            "auto_capture_source": "browser_mcp",
-        }
-        return payload.model_copy(
-            update={
-                "source": "browser",
-                "environment_key": payload.environment_key or scene.get("environment_key"),
-                "url": payload.url or scene.get("url"),
-                "title": payload.title or scene.get("title"),
-                "page_type": payload.page_type or scene.get("page_type"),
-                "observed_entities": list(payload.observed_entities or list(scene.get("observed_entities") or [])),
-                "affordances": list(payload.affordances or list(scene.get("affordances") or [])),
-                "capability_hints": list(payload.capability_hints or list(scene.get("capability_hints") or [])),
-                "runtime_metadata": merged_metadata,
-            }
-        )
+        return payload
 
     def derive_learning_from_episode(self, episode_id: str) -> RuntimeLearningOutcomeRead:
         episode_repo = ExecutionEpisodeRepository(self.session)

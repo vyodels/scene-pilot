@@ -27,6 +27,8 @@ from .domain import (
     ExecutionEpisodeRepository,
     ExecutionPlanRepository,
     JobMemoryRepository,
+    McpServerRepository,
+    McpToolRepository,
     MetricsRepository,
     RecruitAgentProfileRepository,
     ResumeArtifactRepository,

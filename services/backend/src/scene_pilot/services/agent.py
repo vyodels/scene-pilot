@@ -34,7 +34,6 @@ from scene_pilot.runtime.models import AgentResult
 from scene_pilot.runtime.result_semantics import extract_business_status
 from scene_pilot.scheduler.queue import TaskEnvelope
 from scene_pilot.scheduler.scheduler import ScheduledOutcome, SerialScheduler
-from scene_pilot.platforms import PlatformAdapter
 from scene_pilot.services.context_assembler import ContextAssemblerService
 from scene_pilot.services.events import EventStreamService
 from scene_pilot.services.feature_flags import FeatureFlagService
@@ -54,7 +53,6 @@ class AgentControlService:
     agent_loop: AgentLoop | None = None
     events: EventStreamService = field(default_factory=EventStreamService)
     flags: FeatureFlagService = field(default_factory=FeatureFlagService)
-    platform_adapter: PlatformAdapter | None = None
     sync_service: SyncService | None = None
     session_factory: sessionmaker[Session] | None = None
     runtime_service_factory: Callable[[Session], PersistedRuntimeService] | None = None
@@ -293,79 +291,26 @@ class AgentControlService:
                         workflow_run_id=workflow_run_id,
                     )
 
-                if task.task_type == "discover_candidate" and self.platform_adapter is not None:
-                    discovered = self.platform_adapter.discover_candidates(task.payload)
-                    result = AgentResult(
-                        success=True,
-                        status="completed",
-                        content=f"已在当前运行时场景中发现 {len(discovered)} 位候选人。",
-                        data={
-                            "status": "pass",
-                            "discovered_count": len(discovered),
-                            "candidates": [candidate.raw for candidate in discovered],
-                        },
-                        metadata={"platform_action": "discover_candidates"},
-                    )
-                    return _complete(result, workflow_run_id=workflow_run_id)
-
-                if task.task_type == "request_resume" and self.platform_adapter is not None and task.candidate_id:
-                    platform_result = self.platform_adapter.request_resume(task.candidate_id)
-                    self._enqueue_sync("resume_request", task.candidate_id, platform_result)
-                    result = AgentResult(
-                        success=True,
-                        status="completed",
-                        content="已在当前运行时场景中提交简历请求。",
-                        data={"status": "pass", "platform_result": platform_result},
-                        metadata={"platform_action": "request_resume"},
-                    )
-                    return _complete(result, workflow_run_id=workflow_run_id)
-
-                if (
-                    task.task_type == "initiate_communication"
-                    and self.platform_adapter is not None
-                    and task.candidate_id
-                    and self.flags.is_enabled("feature.outbound_messaging")
-                ):
-                    platform_result = self.platform_adapter.send_message(
-                        task.candidate_id,
-                        str(task.payload.get("message") or "Hello, we would like to continue the recruiting process."),
-                    )
-                    self._enqueue_sync("communication", task.candidate_id, platform_result)
-                    result = AgentResult(
-                        success=True,
-                        status="completed",
-                        content="已在当前运行时场景中提交外联消息。",
-                        data={"status": "pass", "platform_result": platform_result},
-                        metadata={"platform_action": "send_message"},
-                    )
-                    return _complete(result, workflow_run_id=workflow_run_id)
-
-                if task.task_type == "archive_candidate" and self.platform_adapter is not None and task.candidate_id:
-                    platform_result = self.platform_adapter.archive_candidate(
-                        task.candidate_id,
-                        str(task.payload.get("reason") or "Archived by workflow."),
-                    )
-                    self._enqueue_sync("candidate_archive", task.candidate_id, platform_result)
-                    result = AgentResult(
-                        success=True,
-                        status="completed",
-                        content="已在当前运行时场景中归档候选人。",
-                        data={"status": "pass", "platform_result": platform_result},
-                        metadata={"platform_action": "archive_candidate"},
-                    )
-                    return _complete(result, workflow_run_id=workflow_run_id)
-
                 if self.agent_loop is None:
                     result = AgentResult(
-                        success=True,
-                        status="completed",
-                        content="在没有实时 provider 的情况下完成了一次模拟运行。",
-                        data={
-                            "status": "pass",
-                            "task_id": task.task_id,
-                            "candidate_id": task.candidate_id,
+                        success=False,
+                        status="blocked",
+                        content="未配置可用模型 provider，无法执行真实运行。",
+                        metadata={"blocked_reason": "provider_unavailable", "requires_real_environment": True},
+                    )
+                    return _complete(result, workflow_run_id=workflow_run_id)
+
+                missing_capabilities = self._missing_external_capabilities(task)
+                if missing_capabilities:
+                    result = AgentResult(
+                        success=False,
+                        status="blocked",
+                        content=f"缺少真实外部能力：{', '.join(missing_capabilities)}。",
+                        metadata={
+                            "blocked_reason": "missing_external_capabilities",
+                            "missing_capabilities": list(missing_capabilities),
+                            "requires_real_environment": True,
                         },
-                        metadata={"synthetic": True},
                     )
                     return _complete(result, workflow_run_id=workflow_run_id)
 
@@ -382,17 +327,6 @@ class AgentControlService:
                     skill=runtime_skill or None,
                     extra_context=platform_context or None,
                 )
-
-                if (
-                    task.task_type == "candidate_scoring"
-                    and self.platform_adapter is not None
-                    and task.candidate_id
-                    and result.success
-                    and result.data
-                ):
-                    platform_result = self.platform_adapter.score_candidate(task.candidate_id, result.data)
-                    result.metadata["platform_result"] = platform_result
-                    self._enqueue_sync("candidate_score", task.candidate_id, platform_result)
 
                 return _complete(result, persist_learning=True, workflow_run_id=workflow_run_id)
             except Exception as exc:
@@ -641,17 +575,10 @@ class AgentControlService:
         result.metadata["replanned_task_id"] = follow_up.task_id
 
     def _build_platform_context(self, task: TaskEnvelope) -> dict[str, Any]:
-        if self.platform_adapter is None or not task.candidate_id:
-            return {}
-
-        try:
-            snapshot = self.platform_adapter.inspect_candidate(task.candidate_id)
-        except KeyError:
-            return {}
-
         return {
-            "platform_candidate": snapshot.raw,
-            "cooldown_active": self.platform_adapter.check_cooldown(task.candidate_id),
+            "platform": task.platform,
+            "candidate_id": task.candidate_id,
+            "requires_real_environment": True,
         }
 
     def _build_runtime_session(
@@ -893,6 +820,8 @@ class AgentControlService:
                         }
 
                 if candidate is not None:
+                    if task.task_type == "candidate_scoring" and isinstance(result.data, dict) and result.success:
+                        candidate.ai_scores = dict(result.data)
                     if task.task_type == "initiate_communication":
                         communication_repo.create(
                             {
@@ -963,6 +892,21 @@ class AgentControlService:
         if self.sync_service is None or not self.sync_service.intranet_enabled:
             return
         self.sync_service.enqueue(item_type, item_id, payload)
+
+    def _missing_external_capabilities(self, task: TaskEnvelope) -> list[str]:
+        if self.agent_loop is None:
+            return ["llm"]
+        required: set[str] = set()
+        if task.task_type in {"discover_candidate", "initiate_communication", "request_resume", "archive_candidate"}:
+            required.add("browser")
+        if task.task_type in {"initiate_communication", "request_resume", "archive_candidate"}:
+            required.add("approval")
+        missing = [
+            capability
+            for capability in sorted(required)
+            if not self.agent_loop.tools.capability_tool_names(capability)
+        ]
+        return missing
 
     def _update_skill_health(
         self,

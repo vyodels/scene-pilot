@@ -22,6 +22,7 @@ PLAYBOOKS_API_BASE = "/api/recruit-agent/playbooks"
 @unittest.skipIf(TestClient is None, "FastAPI test dependencies are not installed")
 class ApiWorkflowTests(unittest.TestCase):
     def setUp(self) -> None:
+        from scene_pilot.models import ApprovalItem
         from scene_pilot.core.settings import load_settings
         from scene_pilot.runtime.models import LLMResponse
         from scene_pilot.runtime.providers import ScriptedProvider
@@ -43,6 +44,30 @@ class ApiWorkflowTests(unittest.TestCase):
             ]
             * 64,
         )
+        created_candidate = self.client.post(
+            "/api/candidates",
+            json={
+                "name": "Baseline Candidate",
+                "platform": "site",
+                "status": "discovered",
+                "jd_id": "jd-baseline",
+            },
+        )
+        if created_candidate.status_code != 201:
+            raise RuntimeError(f"failed to bootstrap baseline candidate: {created_candidate.text}")
+        self.default_candidate_id = created_candidate.json()["id"]
+        with container.session_factory() as session:
+            session.add(
+                ApprovalItem(
+                    target_type="runtime_checkpoint",
+                    target_id="baseline-approval",
+                    title="Baseline approval for workflow tests",
+                    status="pending",
+                    requested_by="test-suite",
+                    payload={"source": "test"},
+                )
+            )
+            session.commit()
         self._load_settings = load_settings
 
     def tearDown(self) -> None:
@@ -311,7 +336,7 @@ class ApiWorkflowTests(unittest.TestCase):
 
         second_run = self.client.post("/api/agent/run-once")
         self.assertEqual(second_run.status_code, 200)
-        self.assertEqual(second_run.json()["status"], "completed")
+        self.assertEqual(second_run.json()["status"], "failed")
 
         with container.session_factory() as session:
             workflow_runs = session.query(WorkflowRun).filter(WorkflowRun.workflow_id == workflow_id).all()
@@ -689,13 +714,13 @@ class ApiWorkflowTests(unittest.TestCase):
         self.assertEqual(second_run.status_code, 200)
         self.assertEqual(second_run.json()["status"], "completed")
 
-    def test_runtime_concurrency_limit_defers_boss_runs(self) -> None:
+    def test_runtime_concurrency_limit_defers_candidate_runs(self) -> None:
         from scene_pilot.repositories import AgentRunRepository, AgentSessionRepository
         from scene_pilot.services.recruit_agent import ensure_primary_recruit_agent_profile
 
         settings_response = self.client.patch(
             "/api/settings",
-            json={"platform": {"maxConcurrentRuns": 1, "bossMaxConcurrentRuns": 1}},
+            json={"platform": {"maxConcurrentRuns": 1}},
         )
         self.assertEqual(settings_response.status_code, 200)
 
@@ -703,7 +728,7 @@ class ApiWorkflowTests(unittest.TestCase):
             "/api/candidates",
             json={
                 "name": "Blocking Candidate",
-                "platform": "boss",
+                "platform": "site",
                 "status": "screening",
                 "jd_id": "jd-runtime",
             },
@@ -712,7 +737,7 @@ class ApiWorkflowTests(unittest.TestCase):
             "/api/candidates",
             json={
                 "name": "Queued Candidate",
-                "platform": "boss",
+                "platform": "site",
                 "status": "discovered",
                 "jd_id": "jd-runtime",
             },
@@ -737,12 +762,12 @@ class ApiWorkflowTests(unittest.TestCase):
                     "session_id": runtime_session.id,
                     "candidate_id": blocker_candidate["id"],
                     "jd_id": blocker_candidate["jd_id"],
-                    "platform": "boss",
+                    "platform": "site",
                     "lane": "candidate",
                     "run_type": "initial_screening",
                     "status": "running",
                     "priority": 300,
-                    "queue_task_id": "existing-boss-run",
+                    "queue_task_id": "existing-runtime-run",
                     "runtime_metadata": {"seeded": True},
                 }
             )
@@ -753,7 +778,7 @@ class ApiWorkflowTests(unittest.TestCase):
                 "task_type": "initial_screening",
                 "priority": 180,
                 "candidate_id": target_candidate["id"],
-                "payload": {"jd_criteria": "Boss limit"},
+                "payload": {"jd_criteria": "Global limit"},
             },
         )
         self.assertEqual(queued.status_code, 200)

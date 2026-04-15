@@ -2,12 +2,12 @@ import React, { startTransition, useEffect, useMemo, useState } from "react";
 import { Sidebar, TopBar } from "../../components";
 import { apiClient } from "../../lib/api";
 import { useI18n } from "../../lib/i18n";
-import { desktopAgentQueueMock, desktopMockSnapshot, desktopReplayMockByEpisode, desktopRuntimeMock, desktopSyncBacklogMock, desktopSyncStatusMock } from "../../lib/mockData";
 import { theme } from "../../lib/theme";
 import { translateUiToken } from "../../lib/uiText";
 import type {
   AgentEvent,
   AgentGlobalMemoryRecord,
+  AgentSnapshot,
   AgentQueueItem,
   CandidateMemoryRecord,
   CandidateThreadRecord,
@@ -17,6 +17,8 @@ import type {
   EvolutionArtifactRecord,
   GoalSpecRecord,
   JobMemoryRecord,
+  McpPresetTemplateRecord,
+  McpServerRecord,
   OperatorInteractionRecord,
   RecruitAgentProfileRecord,
   RuntimeEpisodeReplay,
@@ -36,11 +38,78 @@ import { RecruitAgentView } from "../recruit-agent/RecruitAgentView";
 import { SettingsView } from "../settings/SettingsView";
 import { WorkbenchView } from "../workbench/WorkbenchView";
 
+const emptySettings: SettingsSnapshot = {
+  locale: "en-US",
+  timezone: "Asia/Shanghai",
+  intranetEnabled: false,
+  desktopApprovalsOnly: true,
+  skillHealthAutonomyEnabled: false,
+  skillHealthAutonomyIntervalSeconds: 300,
+  providers: [],
+  intranetSync: {
+    enabled: false,
+    apiPath: "/api/recruit-agent/sync",
+    timeoutSeconds: 10,
+  },
+  platform: {
+    name: "本地执行配置",
+    account: "未连接",
+    cooldownDays: 30,
+    allowOutboundMessaging: false,
+    maxConcurrentRuns: 1,
+  },
+};
+
+const emptyAgent: AgentSnapshot = {
+  status: "idle",
+  activeTask: "waiting_for_backend",
+  browserLock: "free",
+  uptime: "00:00:00",
+  queueDepth: 0,
+  tokenBudgetUsed: 0,
+  health: "warning",
+};
+
+const emptySummary: DashboardSummary = {
+  metrics: [],
+  pipeline: [],
+  timeline: [],
+  alerts: [],
+  candidates: [],
+  workflows: [],
+  skills: [],
+  approvals: [],
+  agent: emptyAgent,
+  settings: emptySettings,
+};
+
+const emptyRuntime: RuntimeWorkspaceData = {
+  compilerContract: null,
+  domainPacks: [],
+  taskSpecs: [],
+  plans: [],
+  episodes: [],
+  snapshots: [],
+  capabilityDrivers: [],
+  environmentAssessments: [],
+  templates: [],
+  patches: [],
+  replans: [],
+};
+
+const emptySyncStatus: SyncStatusSnapshot = {
+  enabled: false,
+  mode: "local_only",
+  remoteAvailable: false,
+  pendingCount: 0,
+  recentErrors: [],
+};
+
 export function DesktopWorkspace(): JSX.Element {
   const { copy } = useI18n();
   const [tab, setTab] = useState<WorkspaceTab>("dashboard");
-  const [summary, setSummary] = useState<DashboardSummary>(desktopMockSnapshot);
-  const [runtimeData, setRuntimeData] = useState<RuntimeWorkspaceData>(desktopRuntimeMock);
+  const [summary, setSummary] = useState<DashboardSummary>(emptySummary);
+  const [runtimeData, setRuntimeData] = useState<RuntimeWorkspaceData>(emptyRuntime);
   const [events, setEvents] = useState<AgentEvent[]>([
     {
       id: "stream-001",
@@ -56,9 +125,9 @@ export function DesktopWorkspace(): JSX.Element {
   const [approvalActionId, setApprovalActionId] = useState<string>();
   const [selectedEpisodeId, setSelectedEpisodeId] = useState<string>();
   const [selectedReplay, setSelectedReplay] = useState<RuntimeEpisodeReplay | null>(null);
-  const [syncStatus, setSyncStatus] = useState<SyncStatusSnapshot>(desktopSyncStatusMock);
-  const [syncBacklog, setSyncBacklog] = useState<SyncBacklogItem[]>(desktopSyncBacklogMock);
-  const [queueItems, setQueueItems] = useState<AgentQueueItem[]>(desktopAgentQueueMock);
+  const [syncStatus, setSyncStatus] = useState<SyncStatusSnapshot>(emptySyncStatus);
+  const [syncBacklog, setSyncBacklog] = useState<SyncBacklogItem[]>([]);
+  const [queueItems, setQueueItems] = useState<AgentQueueItem[]>([]);
   const [syncingBacklog, setSyncingBacklog] = useState(false);
   const [transport, setTransport] = useState(apiClient.describe().transport);
   const [errorMessage, setErrorMessage] = useState<string>();
@@ -73,6 +142,8 @@ export function DesktopWorkspace(): JSX.Element {
   const [executionGraphs, setExecutionGraphs] = useState<ExecutionGraphProjectionRecord[]>([]);
   const [strategyFragments, setStrategyFragments] = useState<StrategyFragmentRecord[]>([]);
   const [operatorInteractions, setOperatorInteractions] = useState<OperatorInteractionRecord[]>([]);
+  const [mcpPresets, setMcpPresets] = useState<McpPresetTemplateRecord[]>([]);
+  const [mcpServers, setMcpServers] = useState<McpServerRecord[]>([]);
   const [communicationsFocus, setCommunicationsFocus] = useState<{ candidateId?: string; statusFilter?: string }>({});
   const [agentInboxFocus, setAgentInboxFocus] = useState<{ filter?: string; itemId?: string }>({});
   const [evolutionFocus, setEvolutionFocus] = useState<{ section?: string; itemId?: string }>({});
@@ -104,6 +175,8 @@ export function DesktopWorkspace(): JSX.Element {
         nextGlobalMemory,
         nextCandidateThreads,
         nextEvolutionArtifacts,
+        nextMcpPresets,
+        nextMcpServers,
       ] = await Promise.all([
         apiClient.getDashboardSummary(),
         apiClient.getRuntimeWorkspaceData(),
@@ -124,6 +197,8 @@ export function DesktopWorkspace(): JSX.Element {
         apiClient.getAgentGlobalMemory(),
         apiClient.listCandidateThreads(),
         apiClient.listEvolutionArtifacts(),
+        apiClient.listMcpPresets(),
+        apiClient.listMcpServers(),
       ]);
 
       startTransition(() => {
@@ -148,6 +223,8 @@ export function DesktopWorkspace(): JSX.Element {
         setGlobalMemory(nextGlobalMemory);
         setCandidateThreads(nextCandidateThreads);
         setEvolutionArtifacts(nextEvolutionArtifacts);
+        setMcpPresets(nextMcpPresets);
+        setMcpServers(nextMcpServers);
       });
       setSelectedEpisodeId((current) => current ?? nextRuntime.episodes[0]?.id);
       setTransport("http");
@@ -162,24 +239,13 @@ export function DesktopWorkspace(): JSX.Element {
         });
       }
     } catch (error) {
-      setTransport("mock");
-      setSummary(desktopMockSnapshot);
-      setRuntimeData(desktopRuntimeMock);
-      setSyncStatus(desktopSyncStatusMock);
-      setSyncBacklog(desktopSyncBacklogMock);
-      setQueueItems(desktopAgentQueueMock);
-      setGoals([]);
-      setExecutionTraces([]);
-      setExecutionGraphs([]);
-      setStrategyFragments([]);
-      setOperatorInteractions([]);
-      setSelectedReplay(desktopReplayMockByEpisode[selectedEpisodeId ?? "episode-001"] ?? desktopReplayMockByEpisode["episode-001"]);
+      setTransport("offline");
       setErrorMessage(error instanceof Error ? error.message : copy("Failed to refresh workspace.", "刷新工作区失败。"));
       appendEvent({
         id: `local-error-${Date.now()}`,
         level: "warning",
         source: "desktop",
-        message: copy("Backend unavailable. Falling back to the local Recruit Agent mock state.", "本地后端不可用，已切换到本地 Recruit Agent mock 状态。"),
+        message: copy("Backend unavailable. Waiting for a real backend connection.", "本地后端不可用，等待真实后端连接。"),
         at: new Date().toISOString(),
       });
     } finally {
@@ -233,7 +299,7 @@ export function DesktopWorkspace(): JSX.Element {
         }
       } catch {
         if (active) {
-          setSelectedReplay(desktopReplayMockByEpisode[episodeId] ?? desktopReplayMockByEpisode["episode-001"] ?? null);
+          setSelectedReplay(null);
         }
       }
     })();
@@ -336,6 +402,71 @@ export function DesktopWorkspace(): JSX.Element {
     } finally {
       setSettingsSaving(false);
     }
+  };
+
+  const handleInstallMcpPreset = async (
+    presetKey: string,
+    payload?: { serverKey?: string; name?: string; endpoint?: string },
+  ) => {
+    await apiClient.installMcpPreset(presetKey, payload);
+    await loadWorkspace(copy("MCP preset installed.", "MCP 预置模板已安装。"));
+  };
+
+  const handleCreateMcpServer = async (payload: {
+    serverKey: string;
+    name: string;
+    transportKind: string;
+    protocol: string;
+    endpoint: string;
+    enabled?: boolean;
+    tools?: Array<{
+      name: string;
+      description: string;
+      parameters?: Record<string, unknown>;
+      capabilities?: string[];
+      enabled?: boolean;
+      riskLevel?: string;
+      remoteName?: string | null;
+      toolMetadata?: Record<string, unknown>;
+    }>;
+  }) => {
+    await apiClient.createMcpServer(payload);
+    await loadWorkspace(copy("MCP server created.", "MCP 服务已创建。"));
+  };
+
+  const handleUpdateMcpServer = async (
+    serverId: string,
+    payload: Partial<{
+      serverKey: string;
+      name: string;
+      transportKind: string;
+      protocol: string;
+      endpoint: string;
+      enabled: boolean;
+      tools: Array<{
+        name: string;
+        description: string;
+        parameters?: Record<string, unknown>;
+        capabilities?: string[];
+        enabled?: boolean;
+        riskLevel?: string;
+        remoteName?: string | null;
+        toolMetadata?: Record<string, unknown>;
+      }>;
+    }>,
+  ) => {
+    await apiClient.updateMcpServer(serverId, payload);
+    await loadWorkspace(copy("MCP server updated.", "MCP 服务已更新。"));
+  };
+
+  const handleDeleteMcpServer = async (serverId: string) => {
+    await apiClient.deleteMcpServer(serverId);
+    await loadWorkspace(copy("MCP server deleted.", "MCP 服务已删除。"));
+  };
+
+  const handleHealthcheckMcpServer = async (serverId: string) => {
+    await apiClient.healthcheckMcpServer(serverId);
+    await loadWorkspace(copy("MCP health check finished.", "MCP 健康检查已完成。"));
   };
 
   const handleRunOnce = async () => {
@@ -635,7 +766,20 @@ export function DesktopWorkspace(): JSX.Element {
           />
         );
       case "settings":
-        return <SettingsView settings={summary.settings} saving={settingsSaving} onSave={handleSaveSettings} />;
+        return (
+          <SettingsView
+            settings={summary.settings}
+            mcpPresets={mcpPresets}
+            mcpServers={mcpServers}
+            saving={settingsSaving}
+            onSave={handleSaveSettings}
+            onInstallMcpPreset={handleInstallMcpPreset}
+            onCreateMcpServer={handleCreateMcpServer}
+            onUpdateMcpServer={handleUpdateMcpServer}
+            onDeleteMcpServer={handleDeleteMcpServer}
+            onHealthcheckMcpServer={handleHealthcheckMcpServer}
+          />
+        );
       default:
         return <DashboardView summary={summary} />;
     }

@@ -153,18 +153,15 @@ def test_settings_platform_concurrency_limits_are_persisted(tmp_path):
             json={
                 "platform": {
                     "maxConcurrentRuns": 2,
-                    "bossMaxConcurrentRuns": 1,
                 }
             },
         )
         assert update_response.status_code == 200
         payload = update_response.json()
         assert payload["platform"]["maxConcurrentRuns"] == 2
-        assert payload["platform"]["bossMaxConcurrentRuns"] == 1
 
     with make_client(tmp_path) as restarted_client:
         settings_response = restarted_client.get("/api/settings")
         assert settings_response.status_code == 200
         payload = settings_response.json()
         assert payload["platform"]["maxConcurrentRuns"] == 2
-        assert payload["platform"]["bossMaxConcurrentRuns"] == 1

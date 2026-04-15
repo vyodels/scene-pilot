@@ -404,7 +404,7 @@ class CandidateAssignmentRead(CandidateAssignmentBase):
 
 class ResumeArtifactBase(BaseModel):
     candidate_id: str
-    source: str = "boss"
+    source: str = "site"
     artifact_type: str = "resume"
     file_name: str | None = None
     file_path: str | None = None
@@ -1407,7 +1407,6 @@ class PlatformSettingsRead(BaseModel):
     cooldownDays: int
     allowOutboundMessaging: bool
     maxConcurrentRuns: int = 1
-    bossMaxConcurrentRuns: int | None = None
 
 
 class PlatformSettingsUpdate(BaseModel):
@@ -1416,7 +1415,6 @@ class PlatformSettingsUpdate(BaseModel):
     cooldownDays: int | None = None
     allowOutboundMessaging: bool | None = None
     maxConcurrentRuns: int | None = None
-    bossMaxConcurrentRuns: int | None = None
 
 
 class SettingsSnapshotRead(BaseModel):
@@ -1445,6 +1443,98 @@ class SettingsSnapshotUpdate(BaseModel):
     providers: list[ProviderConfigUpdate] | None = None
     intranetSync: IntranetSyncConfigUpdate | None = None
     platform: PlatformSettingsUpdate | None = None
+
+
+class McpToolBase(BaseModel):
+    name: str
+    description: str
+    parameters: dict[str, Any] = Field(default_factory=dict)
+    capabilities: list[str] = Field(default_factory=list)
+    enabled: bool = True
+    risk_level: str = "medium"
+    remote_name: str | None = None
+    tool_metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class McpToolCreate(McpToolBase):
+    pass
+
+
+class McpToolUpdate(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    parameters: dict[str, Any] | None = None
+    capabilities: list[str] | None = None
+    enabled: bool | None = None
+    risk_level: str | None = None
+    remote_name: str | None = None
+    tool_metadata: dict[str, Any] | None = None
+
+
+class McpToolRead(McpToolBase):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    server_id: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class McpServerBase(BaseModel):
+    server_key: str
+    name: str
+    transport_kind: str = "unix_socket"
+    protocol: str = "json_socket_tool_call"
+    endpoint: str
+    enabled: bool = True
+    preset_key: str | None = None
+    auth_config: dict[str, Any] = Field(default_factory=dict)
+    server_metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class McpServerCreate(McpServerBase):
+    tools: list[McpToolCreate] = Field(default_factory=list)
+
+
+class McpServerUpdate(BaseModel):
+    server_key: str | None = None
+    name: str | None = None
+    transport_kind: str | None = None
+    protocol: str | None = None
+    endpoint: str | None = None
+    enabled: bool | None = None
+    preset_key: str | None = None
+    auth_config: dict[str, Any] | None = None
+    server_metadata: dict[str, Any] | None = None
+    tools: list[McpToolCreate] | None = None
+
+
+class McpServerRead(McpServerBase):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    health_status: str
+    health_error: str | None = None
+    last_health_at: datetime | None = None
+    tools: list[McpToolRead] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: datetime
+
+
+class McpPresetTemplateRead(BaseModel):
+    key: str
+    name: str
+    description: str
+    transport_kind: str
+    protocol: str
+    endpoint_example: str
+    tools: list[McpToolCreate] = Field(default_factory=list)
+
+
+class McpPresetInstallRequest(BaseModel):
+    server_key: str | None = None
+    name: str | None = None
+    endpoint: str | None = None
 
 
 class MetricCardRead(BaseModel):

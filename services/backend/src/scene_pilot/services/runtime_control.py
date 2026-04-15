@@ -154,7 +154,7 @@ class RuntimeControlService:
                 raise TaskDeferred(f"Candidate {candidate_id} already has an active run.")
 
         max_concurrent = self._resolve_concurrent_limit(platform=run.platform)
-        running_count = run_repo.running_count(session_id=session_id, platform=run.platform if run.platform == "boss" else None)
+        running_count = run_repo.running_count(session_id=session_id, platform=None)
         if running_count >= max_concurrent and run.status != "running":
             raise TaskDeferred(f"Concurrent run limit reached for {run.platform}.")
 
@@ -477,10 +477,8 @@ class RuntimeControlService:
 
     def _resolve_concurrent_limit(self, *, platform: str) -> int:
         config = self.settings.provider_config or {}
-        base = int(config.get("max_concurrent_runs", 1) or 1)
-        if platform.strip().lower() == "boss":
-            return max(1, int(config.get("boss_max_concurrent_runs", base) or base))
-        return max(1, base)
+        _ = platform
+        return max(1, int(config.get("max_concurrent_runs", 1) or 1))
 
     def _work_item_dedupe_key(self, *, task: TaskEnvelope, candidate_id: str | None, lane: str) -> str:
         parts = [lane, task.task_type, task.workflow_node_id or "", candidate_id or ""]

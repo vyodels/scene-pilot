@@ -38,6 +38,8 @@ from scene_pilot.models import (
     ExecutionEpisode,
     ExecutionPlan,
     JobMemory,
+    McpServer,
+    McpTool,
     RecruitAgentProfile,
     ResumeArtifact,
     Skill,
@@ -286,6 +288,29 @@ class CandidateReviewDecisionRepository(BaseRepository[CandidateReviewDecision])
             .offset(offset)
             .limit(limit)
         )
+        return list(self.session.scalars(stmt).all())
+
+
+class McpServerRepository(BaseRepository[McpServer]):
+    model = McpServer
+
+    def enabled(self) -> list[McpServer]:
+        stmt = select(McpServer).where(McpServer.enabled.is_(True)).order_by(McpServer.name.asc(), McpServer.id.asc())
+        return list(self.session.scalars(stmt).all())
+
+    def by_key(self, server_key: str) -> McpServer | None:
+        stmt = select(McpServer).where(McpServer.server_key == server_key)
+        return self.session.scalars(stmt).first()
+
+
+class McpToolRepository(BaseRepository[McpTool]):
+    model = McpTool
+
+    def by_server(self, server_id: str, *, enabled_only: bool = False) -> list[McpTool]:
+        stmt = select(McpTool).where(McpTool.server_id == server_id)
+        if enabled_only:
+            stmt = stmt.where(McpTool.enabled.is_(True))
+        stmt = stmt.order_by(McpTool.name.asc(), McpTool.id.asc())
         return list(self.session.scalars(stmt).all())
 
 
@@ -943,8 +968,10 @@ class SkillRepository(BaseRepository[Skill]):
             Skill.status == "active",
             Skill.bound_to_workflow_node == workflow_node_id,
         )
-        if platform:
-            stmt = stmt.where(Skill.platform.in_((platform, platform.lower(), platform.upper(), "site", "boss", "Boss直聘")))
+        normalized_platform = str(platform or "").strip()
+        if normalized_platform and normalized_platform.lower() != "site":
+            variants = {normalized_platform, normalized_platform.lower(), normalized_platform.upper(), "site"}
+            stmt = stmt.where(Skill.platform.in_(tuple(variants)))
         stmt = stmt.order_by(Skill.updated_at.desc(), Skill.id.asc())
         return list(self.session.scalars(stmt).all())
 

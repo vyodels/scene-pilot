@@ -1,17 +1,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 from typing import Any
 
 from sqlalchemy.orm import Session, sessionmaker
 
 from scene_pilot.core.settings import AppSettings, load_settings
 from scene_pilot.db.session import create_engine_from_settings, create_session_factory, initialize_database
-from scene_pilot.models import ApprovalItem, Candidate, Skill, Workflow
-from scene_pilot.platforms import BossPlatformAdapter, PlatformAdapter
+from scene_pilot.repositories import SettingsRepository, SkillRepository
 from scene_pilot.runtime.agent_loop import AgentLoop
-from scene_pilot.runtime.models import Message
+from scene_pilot.runtime.models import LLMResponse, Message
 from scene_pilot.runtime.prompts import PromptBuilder
 from scene_pilot.runtime.providers import AnthropicProvider, LLMProvider, OpenAICompatibleProvider, ProviderRegistry
 from scene_pilot.runtime.tools import ToolDefinition, ToolRegistry
@@ -21,18 +20,13 @@ from scene_pilot.services.agent import AgentControlService
 from scene_pilot.services.dashboard import DashboardService
 from scene_pilot.services.events import EventStreamService
 from scene_pilot.services.feature_flags import FeatureFlagService
-from scene_pilot.services.browser_mcp import BrowserMcpClient, BrowserMcpError, capture_boss_scene, discover_boss_candidates, inspect_boss_candidate
-from scene_pilot.repositories import SettingsRepository, SkillRepository
+from scene_pilot.services.mcp_registry import McpRegistryService
 from scene_pilot.services.runtime import PersistedRuntimeService
 from scene_pilot.services.runtime_control import RuntimeControlService
 from scene_pilot.services.skills import SkillHealthSweepService, SkillLifecycleService, SkillSafetyService
 from scene_pilot.services.sync import SyncService
 from scene_pilot.services.system_commands import SystemCommandService
 from scene_pilot.workflows.engine import WorkflowEngine
-
-
-def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
 
 
 @dataclass(slots=True)
@@ -77,13 +71,6 @@ def _build_provider_registry(settings: AppSettings) -> tuple[ProviderRegistry, L
     return registry, RegistryBackedProvider(registry=registry, preferred_provider=preferred_provider)
 
 
-def _register_execution_control_tools(tools: ToolRegistry) -> None:
-    tools.register(tools.build_observation_tool())
-    tools.register(tools.build_plan_progress_tool())
-    tools.register(tools.build_replan_request_tool())
-    tools.register(tools.build_human_checkpoint_tool())
-
-
 def _build_sync_target(settings: AppSettings) -> dict[str, Any]:
     sync_settings = settings.intranet_sync
     provider_config = settings.provider_config or {}
@@ -95,286 +82,32 @@ def _build_sync_target(settings: AppSettings) -> dict[str, Any]:
     }
 
 
-def _register_browser_scene_tools(tools: ToolRegistry, browser_client: BrowserMcpClient) -> None:
-    def _capture_scene(arguments: dict[str, Any]) -> dict[str, Any]:
-        scene = capture_boss_scene(browser_client, limit=int(arguments.get("limit") or 8))
-        if scene is None:
-            raise BrowserMcpError("No active Boss browser scene was found in Chrome.")
-        return scene
-
+def _build_runtime_tools(system_commands: SystemCommandService, mcp_registry: McpRegistryService) -> ToolRegistry:
+    tools = ToolRegistry()
+    tools.register(tools.build_result_submission_tool())
+    tools.register(tools.build_observation_tool())
+    tools.register(tools.build_step_completion_tool())
+    tools.register(tools.build_replan_request_tool())
+    tools.register(tools.build_human_checkpoint_tool())
     tools.register(
         ToolDefinition(
-            name="browser_capture_scene",
-            description="Capture the current live browser scene and return a structured runtime snapshot.",
+            name="record_note",
+            description="Store an audit note for the current candidate.",
             parameters={
                 "type": "object",
-                "properties": {
-                    "limit": {"type": "integer"},
-                },
-                "additionalProperties": True,
+                "properties": {"note": {"type": "string"}},
+                "required": ["note"],
             },
-            handler=_capture_scene,
+            handler=lambda args: {"recorded": True, "note": args.get("note", "")},
             metadata={
-                "capabilities": ["browser"],
-                "scene_runtime": True,
-                "preferred_scene_types": ["listing_surface", "detail_surface"],
+                "capabilities": ["document", "analyze"],
+                "produces_artifact": True,
             },
         )
     )
-
-
-def _candidate_payload(candidate: Candidate) -> dict[str, Any]:
-    candidate_key = candidate.platform_candidate_id or candidate.id
-    return {
-        "candidate_id": candidate_key,
-        "platform_candidate_id": candidate.platform_candidate_id or candidate_key,
-        "name": candidate.name,
-        "platform": candidate.platform or "site",
-        "status": candidate.status,
-        "contact_info": dict(candidate.contact_info or {}),
-        "ai_scores": dict(candidate.ai_scores or {}),
-        "ai_reasoning": candidate.ai_reasoning,
-        "resume_path": candidate.resume_path,
-        "online_resume_text": candidate.online_resume_text,
-        "cooldown_until": candidate.cooldown_until.isoformat() if candidate.cooldown_until else None,
-        "last_contacted_at": candidate.last_contacted_at.isoformat() if candidate.last_contacted_at else None,
-    }
-
-
-def _resolve_candidate(session: Session, candidate_id: str) -> Candidate:
-    candidate = session.query(Candidate).filter(Candidate.id == candidate_id).first()
-    if candidate is not None:
-        return candidate
-    candidate = session.query(Candidate).filter(Candidate.platform_candidate_id == candidate_id).first()
-    if candidate is not None:
-        return candidate
-    raise KeyError(f"Unknown runtime-scene candidate: {candidate_id}")
-
-
-def _build_recruiting_site_adapter(session_factory: sessionmaker[Session], settings: AppSettings) -> PlatformAdapter:
-    cooldown_days = settings.provider_runtime_settings().cooldown_days
-    browser_client = BrowserMcpClient()
-
-    def _discover(query: dict[str, Any]) -> list[dict[str, Any]]:
-        try:
-            live_candidates = discover_boss_candidates(browser_client, query)
-        except BrowserMcpError:
-            live_candidates = []
-        if live_candidates:
-            return live_candidates
-        with session_factory() as session:
-            store = {
-                candidate.platform_candidate_id or candidate.id: _candidate_payload(candidate)
-                for candidate in session.query(Candidate).all()
-            }
-        adapter = BossPlatformAdapter(browser_context={"cooldown_days": cooldown_days}, candidate_store=store)
-        return [snapshot.raw for snapshot in adapter.discover_candidates(query)]
-
-    def _inspect(candidate_id: str) -> dict[str, Any]:
-        try:
-            return inspect_boss_candidate(browser_client, candidate_id)
-        except (BrowserMcpError, KeyError):
-            pass
-        with session_factory() as session:
-            return _candidate_payload(_resolve_candidate(session, candidate_id))
-
-    def _send_message(candidate_id: str, message: str) -> dict[str, Any]:
-        with session_factory() as session:
-            candidate = _resolve_candidate(session, candidate_id)
-            candidate.status = "pending_reply"
-            candidate.last_contacted_at = _utcnow()
-            contact_info = dict(candidate.contact_info or {})
-            contact_info["last_outbound_message"] = message
-            candidate.contact_info = contact_info
-            session.commit()
-            return {
-                "candidate_id": candidate.platform_candidate_id or candidate.id,
-                "message": message,
-                "status": "sent",
-                "sent_at": candidate.last_contacted_at.isoformat(),
-            }
-
-    def _request_resume(candidate_id: str) -> dict[str, Any]:
-        with session_factory() as session:
-            candidate = _resolve_candidate(session, candidate_id)
-            candidate.status = "awaiting_resume"
-            contact_info = dict(candidate.contact_info or {})
-            contact_info["resume_requested_at"] = _utcnow().isoformat()
-            candidate.contact_info = contact_info
-            session.commit()
-            return {
-                "candidate_id": candidate.platform_candidate_id or candidate.id,
-                "status": "requested",
-                "requested_at": contact_info["resume_requested_at"],
-            }
-
-    def _score(candidate_id: str, scores: dict[str, Any]) -> dict[str, Any]:
-        with session_factory() as session:
-            candidate = _resolve_candidate(session, candidate_id)
-            merged_scores = dict(candidate.ai_scores or {})
-            merged_scores.update(scores)
-            candidate.ai_scores = merged_scores
-            overall = merged_scores.get("overall")
-            if isinstance(overall, (int, float)) and overall >= 70:
-                candidate.status = "screening"
-            else:
-                candidate.status = "candidate_scoring"
-            session.commit()
-            return {
-                "candidate_id": candidate.platform_candidate_id or candidate.id,
-                "status": candidate.status,
-                "overall_score": overall,
-                "scores": merged_scores,
-            }
-
-    def _archive(candidate_id: str, reason: str) -> dict[str, Any]:
-        with session_factory() as session:
-            candidate = _resolve_candidate(session, candidate_id)
-            candidate.status = "archived"
-            candidate.ai_reasoning = reason
-            session.commit()
-            return {
-                "candidate_id": candidate.platform_candidate_id or candidate.id,
-                "status": "archived",
-                "reason": reason,
-            }
-
-    def _cooldown(candidate_id: str) -> bool:
-        with session_factory() as session:
-            candidate = _resolve_candidate(session, candidate_id)
-            adapter = BossPlatformAdapter(
-                browser_context={"cooldown_days": cooldown_days},
-                candidate_store={candidate.platform_candidate_id or candidate.id: _candidate_payload(candidate)},
-            )
-            return adapter.check_cooldown(candidate.platform_candidate_id or candidate.id)
-
-    return BossPlatformAdapter(
-        browser_context={"cooldown_days": cooldown_days},
-        action_handlers={
-            "healthcheck": lambda: True,
-            "discover_candidates": _discover,
-            "inspect_candidate": _inspect,
-            "send_message": _send_message,
-            "request_resume": _request_resume,
-            "score_candidate": _score,
-            "archive_candidate": _archive,
-            "check_cooldown": _cooldown,
-        },
-    )
-
-
-def _register_recruiting_site_tools(tools: ToolRegistry, adapter: PlatformAdapter) -> None:
-    tools.register(
-        ToolDefinition(
-            name="boss_discover_candidates",
-            description="Compatibility alias: discover candidates in the current runtime scene.",
-            parameters={
-                "type": "object",
-                "properties": {},
-                "additionalProperties": True,
-            },
-            handler=lambda args: [candidate.raw for candidate in adapter.discover_candidates(args)],
-            metadata={
-                "capabilities": ["browser", "search"],
-                "scene_runtime": True,
-                "preferred_scene_types": ["listing_surface", "detail_surface"],
-            },
-        )
-    )
-    tools.register(
-        ToolDefinition(
-            name="boss_inspect_candidate",
-            description="Compatibility alias: inspect a candidate profile in the current runtime scene.",
-            parameters={
-                "type": "object",
-                "properties": {"candidate_id": {"type": "string"}},
-                "required": ["candidate_id"],
-            },
-            handler=lambda args: adapter.inspect_candidate(str(args["candidate_id"])).raw,
-            metadata={
-                "capabilities": ["browser", "document"],
-                "scene_runtime": True,
-                "preferred_scene_types": ["detail_surface"],
-            },
-        )
-    )
-    tools.register(
-        ToolDefinition(
-            name="boss_send_message",
-            description="Compatibility alias: send a message to a candidate in the current runtime scene.",
-            parameters={
-                "type": "object",
-                "properties": {
-                    "candidate_id": {"type": "string"},
-                    "message": {"type": "string"},
-                },
-                "required": ["candidate_id", "message"],
-            },
-            handler=lambda args: adapter.send_message(str(args["candidate_id"]), str(args["message"])),
-            metadata={
-                "capabilities": ["browser", "api", "approval"],
-                "writes_state": True,
-                "scene_runtime": True,
-            },
-        )
-    )
-    tools.register(
-        ToolDefinition(
-            name="boss_request_resume",
-            description="Compatibility alias: request a resume from a candidate in the current runtime scene.",
-            parameters={
-                "type": "object",
-                "properties": {"candidate_id": {"type": "string"}},
-                "required": ["candidate_id"],
-            },
-            handler=lambda args: adapter.request_resume(str(args["candidate_id"])),
-            metadata={
-                "capabilities": ["browser", "api", "approval"],
-                "writes_state": True,
-                "scene_runtime": True,
-            },
-        )
-    )
-    tools.register(
-        ToolDefinition(
-            name="boss_score_candidate",
-            description="Compatibility alias: record structured scoring for a candidate in the current runtime scene.",
-            parameters={
-                "type": "object",
-                "properties": {
-                    "candidate_id": {"type": "string"},
-                    "scores": {"type": "object"},
-                },
-                "required": ["candidate_id", "scores"],
-            },
-            handler=lambda args: adapter.score_candidate(str(args["candidate_id"]), dict(args["scores"])),
-            metadata={
-                "capabilities": ["api", "document"],
-                "writes_state": True,
-                "scene_runtime": True,
-            },
-        )
-    )
-    tools.register(
-        ToolDefinition(
-            name="boss_archive_candidate",
-            description="Compatibility alias: archive a candidate in the current runtime scene with a reason.",
-            parameters={
-                "type": "object",
-                "properties": {
-                    "candidate_id": {"type": "string"},
-                    "reason": {"type": "string"},
-                },
-                "required": ["candidate_id", "reason"],
-            },
-            handler=lambda args: adapter.archive_candidate(str(args["candidate_id"]), str(args["reason"])),
-            metadata={
-                "capabilities": ["browser", "api", "approval"],
-                "writes_state": True,
-                "scene_runtime": True,
-            },
-        )
-    )
+    tools.register(tools.build_system_command_tool(system_commands.request_tool_command))
+    mcp_registry.register_enabled_runtime_tools(tools)
+    return tools
 
 
 @dataclass(slots=True)
@@ -393,36 +126,7 @@ class AppContainer:
     skill_lifecycle: SkillLifecycleService
     skill_safety: SkillSafetyService
     system_commands: SystemCommandService
-
-    def _build_runtime_tools(self, settings: AppSettings) -> tuple[ToolRegistry, PlatformAdapter]:
-        tools = ToolRegistry()
-        tools.register(tools.build_result_submission_tool())
-        tools.register(tools.build_observation_tool())
-        tools.register(tools.build_step_completion_tool())
-        tools.register(tools.build_replan_request_tool())
-        tools.register(tools.build_human_checkpoint_tool())
-        _register_browser_scene_tools(tools, BrowserMcpClient())
-        tools.register(
-            ToolDefinition(
-                name="record_note",
-                description="Store an audit note for the current candidate.",
-                parameters={
-                    "type": "object",
-                    "properties": {"note": {"type": "string"}},
-                    "required": ["note"],
-                },
-                handler=lambda args: {"recorded": True, "note": args.get("note", "")},
-                metadata={
-                    "capabilities": ["document", "analyze"],
-                    "produces_artifact": True,
-                },
-            )
-        )
-        tools.register(tools.build_system_command_tool(self.system_commands.request_tool_command))
-
-        site_adapter = _build_recruiting_site_adapter(self.session_factory, settings)
-        _register_recruiting_site_tools(tools, site_adapter)
-        return tools, site_adapter
+    mcp_registry: McpRegistryService
 
     def reload_settings(self, settings: AppSettings) -> None:
         self.settings = settings
@@ -443,9 +147,8 @@ class AppContainer:
         providers, runtime_provider = _build_provider_registry(settings)
         self.providers = providers
 
-        tools, site_adapter = self._build_runtime_tools(settings)
+        tools = _build_runtime_tools(self.system_commands, self.mcp_registry)
         self.tools = tools
-        self.agent_control.platform_adapter = site_adapter
         self.agent_control.runtime_service_factory = lambda session: PersistedRuntimeService(
             session=session,
             providers=providers,
@@ -457,7 +160,7 @@ class AppContainer:
             self.agent_control.agent_loop.tools = tools
 
     @classmethod
-    def build(cls, settings: AppSettings | None = None, *, seed_demo: bool | None = None) -> "AppContainer":
+    def build(cls, settings: AppSettings | None = None) -> "AppContainer":
         resolved_settings = settings or load_settings()
         engine = create_engine_from_settings(resolved_settings)
         initialize_database(engine)
@@ -483,32 +186,9 @@ class AppContainer:
             flags=flags,
             events=events,
         )
-        tools = ToolRegistry()
-        tools.register(tools.build_result_submission_tool())
-        tools.register(tools.build_observation_tool())
-        tools.register(tools.build_step_completion_tool())
-        tools.register(tools.build_replan_request_tool())
-        tools.register(tools.build_human_checkpoint_tool())
-        tools.register(
-            ToolDefinition(
-                name="record_note",
-                description="Store an audit note for the current candidate.",
-                parameters={
-                    "type": "object",
-                    "properties": {"note": {"type": "string"}},
-                    "required": ["note"],
-                },
-                handler=lambda args: {"recorded": True, "note": args.get("note", "")},
-                metadata={
-                    "capabilities": ["document", "analyze"],
-                    "produces_artifact": True,
-                },
-            )
-        )
-        tools.register(tools.build_system_command_tool(system_commands.request_tool_command))
+        mcp_registry = McpRegistryService(session_factory=session_factory)
+        tools = _build_runtime_tools(system_commands, mcp_registry)
         workflow_engine = WorkflowEngine(session_factory=session_factory)
-        site_adapter = _build_recruiting_site_adapter(session_factory, resolved_settings)
-        _register_recruiting_site_tools(tools, site_adapter)
         agent_loop = AgentLoop(provider=runtime_provider, tools=tools, prompt_builder=PromptBuilder())
         scheduler = SerialScheduler(queue=SqlAlchemyQueue(session_factory), follow_up_factory=workflow_engine.build_follow_up_factory())
         sync = SyncService(
@@ -523,7 +203,6 @@ class AppContainer:
             agent_loop=agent_loop,
             events=events,
             flags=flags,
-            platform_adapter=site_adapter,
             sync_service=sync,
             session_factory=session_factory,
             runtime_service_factory=lambda session: PersistedRuntimeService(
@@ -552,6 +231,7 @@ class AppContainer:
             skill_lifecycle=skill_lifecycle,
             skill_safety=skill_safety,
             system_commands=system_commands,
+            mcp_registry=mcp_registry,
         )
         recovered_tasks = 0
         recover_stale = getattr(container.scheduler.queue, "recover_stale", None)
@@ -561,9 +241,6 @@ class AppContainer:
             recovered_episodes = PersistedRuntimeService(session=session, providers=container.providers).recover_running_episodes()
         with container.session_factory() as session:
             recovered_runs = RuntimeControlService(session, settings=resolved_settings, live_events=events).recover_running_runs()
-        should_seed = seed_demo if seed_demo is not None else settings is None
-        if should_seed:
-            container.seed()
         if recovered_tasks:
             events.publish(
                 "warning",
@@ -634,217 +311,3 @@ class AppContainer:
                 "degraded_skill_ids": degraded_skill_ids,
                 "healthy_skill_ids": healthy_skill_ids,
             }
-
-    def seed(self) -> None:
-        with self.session_factory() as session:
-            if session.query(Candidate).first() is not None:
-                return
-
-            screening_nodes: list[dict[str, Any]] = [
-                {
-                    "id": "discover_candidate",
-                    "name": "发现候选人",
-                    "task_type": "discover_candidate",
-                    "kind": "discover",
-                    "status": "approved",
-                    "owner": "Scheduler",
-                    "description": "搜索并接入候选人档案。",
-                    "transitions": [{"condition": "default", "target": "initial_screening"}],
-                },
-                {
-                    "id": "initial_screening",
-                    "name": "初筛",
-                    "task_type": "initial_screening",
-                    "kind": "screen",
-                    "status": "running",
-                    "owner": "Agent",
-                    "description": "阅读简历并按岗位要求做判断。",
-                    "requires_skill": True,
-                    "skill_id": "resume_screening",
-                    "transitions": [
-                        {"condition": "pass", "target": "request_resume"},
-                        {"condition": "fail", "target": "cooldown"},
-                        {"condition": "default", "target": "request_resume"},
-                    ],
-                },
-                {
-                    "id": "request_resume",
-                    "name": "获取简历",
-                    "task_type": "request_resume",
-                    "kind": "resume",
-                    "status": "idle",
-                    "owner": "Agent",
-                    "description": "收集结构化简历材料。",
-                    "transitions": [{"condition": "default", "target": "candidate_scoring"}],
-                },
-                {
-                    "id": "candidate_scoring",
-                    "name": "候选人评分",
-                    "task_type": "candidate_scoring",
-                    "kind": "score",
-                    "status": "idle",
-                    "owner": "Agent",
-                    "description": "生成评分和判断依据。",
-                    "transitions": [
-                        {"condition": "pass", "target": "hr_review"},
-                        {"condition": "fail", "target": "cooldown"},
-                        {"condition": "default", "target": "hr_review"},
-                    ],
-                },
-                {
-                    "id": "hr_review",
-                    "name": "HR 审查",
-                    "task_type": "hr_review",
-                    "kind": "review",
-                    "status": "blocked",
-                    "owner": "Human",
-                    "description": "在同步人才库前等待桌面端批准。",
-                    "transitions": [],
-                },
-                {
-                    "id": "cooldown",
-                    "name": "冷却期",
-                    "task_type": "cooldown",
-                    "kind": "cooldown",
-                    "status": "idle",
-                    "owner": "System",
-                    "description": "在冷却窗口结束前暂停后续联系尝试。",
-                    "transitions": [],
-                },
-            ]
-
-            session.add_all(
-                [
-                    Candidate(
-                        name="Mia Chen",
-                        platform="Recruit Agent",
-                        platform_candidate_id="site_001",
-                        status="screening",
-                        current_workflow_node="initial_screening",
-                        jd_id="前端平台工程师",
-                        contact_info={
-                            "title": "高级前端工程师",
-                            "location": "上海",
-                            "experience_years": 8,
-                            "next_action": "确认系统设计深度和 React 性能案例是否足够扎实。",
-                            "tags": ["React", "设计系统", "性能优化"],
-                        },
-                        ai_scores={"overall": 92},
-                        ai_reasoning="产品感觉好，owner 意识清晰，工程深度也比较稳。",
-                        resume_path="/tmp/mia-chen.pdf",
-                        last_contacted_at=_utcnow() - timedelta(hours=2),
-                    ),
-                    Candidate(
-                        name="Jason Li",
-                        platform="Recruit Agent",
-                        platform_candidate_id="site_002",
-                        status="pending_communication",
-                        current_workflow_node="initiate_communication",
-                        jd_id="平台工程师",
-                        contact_info={
-                            "title": "后端工程师",
-                            "location": "杭州",
-                            "experience_years": 6,
-                            "next_action": "发送外联消息，并说明薪资范围和团队职责范围。",
-                            "tags": ["Go", "PostgreSQL", "接口"],
-                        },
-                        ai_scores={"overall": 84},
-                        ai_reasoning="服务设计经验可靠，对交付有较强 owner 意识。",
-                    ),
-                    Candidate(
-                        name="Luna Wang",
-                        platform="Recruit Agent",
-                        platform_candidate_id="site_003",
-                        status="cooldown",
-                        current_workflow_node="cooldown",
-                        jd_id="产品负责人",
-                        contact_info={
-                            "title": "产品经理",
-                            "location": "北京",
-                            "experience_years": 7,
-                            "next_action": "尊重冷却期，等下一个联系窗口再评估是否继续。",
-                            "tags": ["用户洞察", "路线图", "数据分析"],
-                        },
-                        ai_scores={"overall": 73},
-                        ai_reasoning="沟通后已拒绝，先保留在暂停池中。",
-                        cooldown_until=_utcnow() + timedelta(days=18),
-                        last_contacted_at=_utcnow() - timedelta(days=1),
-                    ),
-                    Workflow(
-                        name="发现到初筛",
-                        jd_id="前端平台工程师",
-                        status="active",
-                        version=3,
-                        config={"start_node_id": "discover_candidate", "nodes": screening_nodes},
-                    ),
-                    Workflow(
-                        name="人才库交接",
-                        jd_id="平台工程师",
-                        status="draft",
-                        version=1,
-                        config={
-                            "start_node_id": "screen",
-                            "nodes": [
-                                {
-                                    "id": "screen",
-                                    "name": "初筛评分",
-                                    "task_type": "initial_screening",
-                                    "kind": "screen",
-                                    "status": "approved",
-                                    "owner": "Agent",
-                                    "description": "按标准完成评分。",
-                                    "transitions": [{"condition": "default", "target": "talent_pool_upload"}],
-                                },
-                                {
-                                    "id": "talent_pool_upload",
-                                    "name": "上传人才库",
-                                    "task_type": "talent_pool_upload",
-                                    "kind": "review",
-                                    "status": "idle",
-                                    "owner": "Human",
-                                    "description": "把合格候选人推送到内部系统。",
-                                },
-                            ]
-                        },
-                    ),
-                    Skill(
-                        skill_id="site_scene_outreach_drafting",
-                        name="招聘外联撰写",
-                        version=1,
-                        status="active",
-                        bound_to_workflow_node="initiate_communication",
-                        platform="Recruit Agent",
-                        strategy={"summary": "生成简短、克制、带岗位上下文的外联内容。"},
-                        last_health_status="healthy",
-                        last_health_check=_utcnow(),
-                    ),
-                    Skill(
-                        skill_id="resume_screening",
-                        name="Resume Screening",
-                        version=1,
-                        status="pending_review",
-                        bound_to_workflow_node="initial_screening",
-                        platform="Recruit Agent",
-                        strategy={"summary": "由近期候选人案例沉淀而来，当前等待批准。"},
-                        last_health_status="warning",
-                        last_health_check=_utcnow(),
-                    ),
-                    ApprovalItem(
-                        target_type="skill",
-                        target_id="resume_screening",
-                        title="批准 Resume Screening Skill",
-                        status="pending",
-                        requested_by="agent",
-                        payload={"summary": "在启用前先审查新的初筛策略。"},
-                    ),
-                    ApprovalItem(
-                        target_type="workflow",
-                        target_id="workflow_change_001",
-                        title="激活人才库交接",
-                        status="pending",
-                        requested_by="ops",
-                        payload={"summary": "启用从评分到人工审查的候选人交接路径。"},
-                    ),
-                ]
-            )
-            session.commit()

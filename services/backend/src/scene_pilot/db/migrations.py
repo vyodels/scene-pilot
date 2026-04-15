@@ -225,7 +225,7 @@ def _extend_candidate_fact_tables(connection: Connection) -> None:
                 CREATE TABLE resume_artifacts (
                     id TEXT PRIMARY KEY,
                     candidate_id TEXT NOT NULL REFERENCES candidates(id) ON DELETE CASCADE,
-                    source TEXT NOT NULL DEFAULT 'boss',
+                    source TEXT NOT NULL DEFAULT 'site',
                     artifact_type TEXT NOT NULL DEFAULT 'resume',
                     file_name TEXT,
                     file_path TEXT,
@@ -666,6 +666,71 @@ def _create_goal_runtime_tables(connection: Connection) -> None:
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_operator_interactions_approval_status ON operator_interactions (approval_id, status)"))
 
 
+def _create_mcp_registry_tables(connection: Connection) -> None:
+    tables = {
+        row[0]
+        for row in connection.execute(text("SELECT name FROM sqlite_master WHERE type='table'")).fetchall()
+    }
+    if "mcp_servers" not in tables:
+        connection.execute(
+            text(
+                """
+                CREATE TABLE mcp_servers (
+                    id TEXT PRIMARY KEY,
+                    server_key TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    transport_kind TEXT NOT NULL DEFAULT 'unix_socket',
+                    protocol TEXT NOT NULL DEFAULT 'json_socket_tool_call',
+                    endpoint TEXT NOT NULL,
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    preset_key TEXT,
+                    auth_config TEXT NOT NULL DEFAULT '{}',
+                    server_metadata TEXT NOT NULL DEFAULT '{}',
+                    health_status TEXT NOT NULL DEFAULT 'unknown',
+                    health_error TEXT,
+                    last_health_at TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+        )
+        connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_mcp_servers_server_key ON mcp_servers (server_key)"))
+    if "mcp_tools" not in tables:
+        connection.execute(
+            text(
+                """
+                CREATE TABLE mcp_tools (
+                    id TEXT PRIMARY KEY,
+                    server_id TEXT NOT NULL REFERENCES mcp_servers(id) ON DELETE CASCADE,
+                    name TEXT NOT NULL,
+                    description TEXT NOT NULL,
+                    parameters TEXT NOT NULL DEFAULT '{}',
+                    capabilities TEXT NOT NULL DEFAULT '[]',
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    risk_level TEXT NOT NULL DEFAULT 'medium',
+                    remote_name TEXT,
+                    tool_metadata TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+        )
+        connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_mcp_tools_server_name ON mcp_tools (server_id, name)"))
+    indexed_tables = {
+        row[0]
+        for row in connection.execute(text("SELECT name FROM sqlite_master WHERE type='table'")).fetchall()
+    }
+    if "mcp_servers" in indexed_tables:
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_mcp_servers_enabled ON mcp_servers (enabled)"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_mcp_servers_protocol ON mcp_servers (protocol)"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_mcp_servers_health_status ON mcp_servers (health_status)"))
+    if "mcp_tools" in indexed_tables:
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_mcp_tools_server_enabled ON mcp_tools (server_id, enabled)"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_mcp_tools_risk_level ON mcp_tools (risk_level)"))
+
+
 MIGRATIONS: tuple[SchemaMigration, ...] = (
     SchemaMigration(
         version=1,
@@ -711,6 +776,11 @@ MIGRATIONS: tuple[SchemaMigration, ...] = (
         version=9,
         name="create_goal_runtime_tables",
         apply=_create_goal_runtime_tables,
+    ),
+    SchemaMigration(
+        version=10,
+        name="create_mcp_registry_tables",
+        apply=_create_mcp_registry_tables,
     ),
 )
 

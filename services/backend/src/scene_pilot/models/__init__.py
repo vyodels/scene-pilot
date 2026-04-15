@@ -28,6 +28,8 @@ from .domain import (
     ExecutionPlan,
     JobMemory,
     RecruitAgentProfile,
+    McpServer,
+    McpTool,
     ResumeArtifact,
     Skill,
     StrategyFragment,

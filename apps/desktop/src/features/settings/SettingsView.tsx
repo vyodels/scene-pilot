@@ -2,12 +2,59 @@ import React, { useEffect, useState } from "react";
 import { Panel, StatusBadge } from "../../components";
 import { useI18n } from "../../lib/i18n";
 import { translateUiToken } from "../../lib/uiText";
-import type { ProviderConfig, SettingsSnapshot } from "../../lib/types";
+import type { McpPresetTemplateRecord, McpServerRecord, ProviderConfig, SettingsSnapshot } from "../../lib/types";
 
 interface SettingsViewProps {
   settings: SettingsSnapshot;
+  mcpPresets: McpPresetTemplateRecord[];
+  mcpServers: McpServerRecord[];
   saving?: boolean;
   onSave(settings: Partial<SettingsSnapshot>): Promise<void> | void;
+  onInstallMcpPreset(
+    presetKey: string,
+    payload?: { serverKey?: string; name?: string; endpoint?: string },
+  ): Promise<void> | void;
+  onCreateMcpServer(payload: {
+    serverKey: string;
+    name: string;
+    transportKind: string;
+    protocol: string;
+    endpoint: string;
+    enabled?: boolean;
+    tools?: Array<{
+      name: string;
+      description: string;
+      parameters?: Record<string, unknown>;
+      capabilities?: string[];
+      enabled?: boolean;
+      riskLevel?: string;
+      remoteName?: string | null;
+      toolMetadata?: Record<string, unknown>;
+    }>;
+  }): Promise<void> | void;
+  onUpdateMcpServer(
+    serverId: string,
+    payload: Partial<{
+      serverKey: string;
+      name: string;
+      transportKind: string;
+      protocol: string;
+      endpoint: string;
+      enabled: boolean;
+      tools: Array<{
+        name: string;
+        description: string;
+        parameters?: Record<string, unknown>;
+        capabilities?: string[];
+        enabled?: boolean;
+        riskLevel?: string;
+        remoteName?: string | null;
+        toolMetadata?: Record<string, unknown>;
+      }>;
+    }>,
+  ): Promise<void> | void;
+  onDeleteMcpServer(serverId: string): Promise<void> | void;
+  onHealthcheckMcpServer(serverId: string): Promise<void> | void;
 }
 
 function translateSettingLabel(value: string): string {
@@ -50,13 +97,48 @@ function providerHostExample(kind: ProviderConfig["kind"]): { example: string; n
   };
 }
 
-export function SettingsView({ settings, saving, onSave }: SettingsViewProps): JSX.Element {
+export function SettingsView({
+  settings,
+  mcpPresets,
+  mcpServers,
+  saving,
+  onSave,
+  onInstallMcpPreset,
+  onCreateMcpServer,
+  onUpdateMcpServer,
+  onDeleteMcpServer,
+  onHealthcheckMcpServer,
+}: SettingsViewProps): JSX.Element {
   const { copy } = useI18n();
   const [draft, setDraft] = useState(settings);
+  const [serverDrafts, setServerDrafts] = useState<Record<string, { name: string; endpoint: string; enabled: boolean }>>({});
+  const [mcpError, setMcpError] = useState<string>();
+  const [customServer, setCustomServer] = useState({
+    serverKey: "",
+    name: "",
+    endpoint: "",
+    protocol: "json_socket_tool_call",
+    toolsJson: "[]",
+  });
 
   useEffect(() => {
     setDraft(settings);
   }, [settings]);
+
+  useEffect(() => {
+    setServerDrafts(
+      Object.fromEntries(
+        mcpServers.map((server) => [
+          server.id,
+          {
+            name: server.name,
+            endpoint: server.endpoint,
+            enabled: server.enabled,
+          },
+        ]),
+      ),
+    );
+  }, [mcpServers]);
 
   const updateProvider = (index: number, patch: Partial<ProviderConfig>) => {
     setDraft((current) => ({
@@ -66,6 +148,13 @@ export function SettingsView({ settings, saving, onSave }: SettingsViewProps): J
       ),
     }));
   };
+
+  const compactRowStyle = {
+    display: "grid",
+    gridTemplateColumns: "minmax(0, 1.1fr) minmax(0, 1.4fr) auto auto auto",
+    gap: "10px",
+    alignItems: "center",
+  } as const;
 
   return (
     <div style={{ display: "grid", gap: "18px", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))" }}>
@@ -179,33 +268,6 @@ export function SettingsView({ settings, saving, onSave }: SettingsViewProps): J
               style={inputStyle}
             />
           </label>
-          <label style={{ display: "grid", gap: "6px", fontSize: "13px", color: "rgba(233,239,255,0.72)" }}>
-            {copy("Boss max concurrent AgentRuns", "Boss 最大并发 AgentRun")}
-            <input
-              type="number"
-              min={1}
-              value={draft.platform.bossMaxConcurrentRuns ?? draft.platform.maxConcurrentRuns}
-              onChange={(event) =>
-                setDraft((current) => ({
-                  ...current,
-                  platform: {
-                    ...current.platform,
-                    bossMaxConcurrentRuns: Math.max(
-                      1,
-                      Number(event.target.value || current.platform.bossMaxConcurrentRuns || current.platform.maxConcurrentRuns || 1),
-                    ),
-                  },
-                }))
-              }
-              style={inputStyle}
-            />
-            <span style={providerHintStyle}>
-              {copy(
-                "Use this to cap concurrent runs on Boss separately when the site has stricter bot risk controls.",
-                "如果 Boss 的风控更严格，可以单独限制 Boss 平台的并发 run 数量。",
-              )}
-            </span>
-          </label>
           <StatusBadge tone={draft.platform.allowOutboundMessaging ? "positive" : "warning"}>
             {draft.platform.allowOutboundMessaging ? copy("outbound messaging on", "允许外发消息") : copy("outbound messaging gated", "外发消息受控")}
           </StatusBadge>
@@ -288,6 +350,210 @@ export function SettingsView({ settings, saving, onSave }: SettingsViewProps): J
               </article>
             );
           })}
+        </div>
+      </Panel>
+      <Panel
+        title={copy("MCP registry", "MCP 注册中心")}
+        eyebrow={copy("External capabilities", "外部能力")}
+        description={copy(
+          "Register real MCP servers, install presets, and expose external tools to the Recruit Agent runtime.",
+          "注册真实 MCP 服务、安装预置模板，并把外部工具暴露给 Recruit Agent runtime。",
+        )}
+      >
+        <div style={{ display: "grid", gap: "14px" }}>
+          <div style={{ display: "grid", gap: "8px" }}>
+            <strong style={{ fontSize: "13px" }}>{copy("Preset templates", "预置模板")}</strong>
+            {mcpPresets.map((preset) => (
+              <div key={preset.key} style={{ ...compactRowStyle, gridTemplateColumns: "minmax(0, 1.1fr) minmax(0, 1.4fr) auto" }}>
+                <div>
+                  <div style={{ fontWeight: 600 }}>{preset.name}</div>
+                  <div style={providerHintStyle}>{preset.description}</div>
+                </div>
+                <div style={providerHintStyle}>
+                  {copy("Endpoint example", "示例地址")} {preset.endpointExample}
+                </div>
+                <button
+                  type="button"
+                  onClick={() =>
+                    onInstallMcpPreset(preset.key, {
+                      serverKey: preset.key,
+                      name: preset.name,
+                      endpoint: preset.endpointExample,
+                    })
+                  }
+                  style={{ ...inputStyle, cursor: "pointer", padding: "8px 12px", width: "auto" }}
+                >
+                  {copy("Install", "安装")}
+                </button>
+              </div>
+            ))}
+          </div>
+          <div style={{ display: "grid", gap: "8px" }}>
+            <strong style={{ fontSize: "13px" }}>{copy("Registered servers", "已注册服务")}</strong>
+            {mcpServers.length ? (
+              mcpServers.map((server) => {
+                const serverDraft = serverDrafts[server.id] ?? {
+                  name: server.name,
+                  endpoint: server.endpoint,
+                  enabled: server.enabled,
+                };
+                return (
+                  <div key={server.id} style={{ display: "grid", gap: "8px", padding: "10px 12px", border: "1px solid rgba(255,255,255,0.08)", borderRadius: "14px" }}>
+                    <div style={compactRowStyle}>
+                      <input
+                        type="text"
+                        value={serverDraft.name}
+                        onChange={(event) =>
+                          setServerDrafts((current) => ({
+                            ...current,
+                            [server.id]: { ...serverDraft, name: event.target.value },
+                          }))
+                        }
+                        style={inputStyle}
+                      />
+                      <input
+                        type="text"
+                        value={serverDraft.endpoint}
+                        onChange={(event) =>
+                          setServerDrafts((current) => ({
+                            ...current,
+                            [server.id]: { ...serverDraft, endpoint: event.target.value },
+                          }))
+                        }
+                        style={inputStyle}
+                      />
+                      <label style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12px" }}>
+                        <input
+                          type="checkbox"
+                          checked={serverDraft.enabled}
+                          onChange={(event) =>
+                            setServerDrafts((current) => ({
+                              ...current,
+                              [server.id]: { ...serverDraft, enabled: event.target.checked },
+                            }))
+                          }
+                        />
+                        {copy("enabled", "启用")}
+                      </label>
+                      <StatusBadge tone={server.healthStatus === "healthy" ? "positive" : server.healthStatus === "unhealthy" ? "critical" : "warning"}>
+                        {server.healthStatus}
+                      </StatusBadge>
+                      <div style={{ display: "flex", gap: "8px", justifyContent: "flex-end" }}>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            onUpdateMcpServer(server.id, {
+                              name: serverDraft.name,
+                              endpoint: serverDraft.endpoint,
+                              enabled: serverDraft.enabled,
+                            })
+                          }
+                          style={{ ...inputStyle, cursor: "pointer", padding: "8px 12px", width: "auto" }}
+                        >
+                          {copy("Save", "保存")}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onHealthcheckMcpServer(server.id)}
+                          style={{ ...inputStyle, cursor: "pointer", padding: "8px 12px", width: "auto" }}
+                        >
+                          {copy("Health check", "健康检查")}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onDeleteMcpServer(server.id)}
+                          style={{ ...inputStyle, cursor: "pointer", padding: "8px 12px", width: "auto", color: "#ffb4b4" }}
+                        >
+                          {copy("Delete", "删除")}
+                        </button>
+                      </div>
+                    </div>
+                    <div style={providerHintStyle}>
+                      {server.serverKey} · {server.transportKind} · {server.protocol} · {copy("tools", "工具")} {server.tools.length}
+                      {server.healthError ? ` · ${server.healthError}` : ""}
+                    </div>
+                  </div>
+                );
+              })
+            ) : (
+              <div style={providerHintStyle}>{copy("No MCP servers registered yet.", "当前还没有注册任何 MCP 服务。")}</div>
+            )}
+          </div>
+          <div style={{ display: "grid", gap: "8px" }}>
+            <strong style={{ fontSize: "13px" }}>{copy("Custom MCP server", "新增自定义 MCP")}</strong>
+            <div style={{ display: "grid", gap: "8px", gridTemplateColumns: "repeat(2, minmax(0, 1fr))" }}>
+              <input
+                type="text"
+                placeholder={copy("Server key", "服务 key")}
+                value={customServer.serverKey}
+                onChange={(event) => setCustomServer((current) => ({ ...current, serverKey: event.target.value }))}
+                style={inputStyle}
+              />
+              <input
+                type="text"
+                placeholder={copy("Display name", "显示名称")}
+                value={customServer.name}
+                onChange={(event) => setCustomServer((current) => ({ ...current, name: event.target.value }))}
+                style={inputStyle}
+              />
+              <input
+                type="text"
+                placeholder={copy("Endpoint", "连接地址")}
+                value={customServer.endpoint}
+                onChange={(event) => setCustomServer((current) => ({ ...current, endpoint: event.target.value }))}
+                style={inputStyle}
+              />
+              <select
+                value={customServer.protocol}
+                onChange={(event) => setCustomServer((current) => ({ ...current, protocol: event.target.value }))}
+                style={inputStyle}
+              >
+                <option value="json_socket_tool_call">json_socket_tool_call</option>
+                <option value="json_socket_browser_command">json_socket_browser_command</option>
+              </select>
+            </div>
+            <textarea
+              value={customServer.toolsJson}
+              onChange={(event) => setCustomServer((current) => ({ ...current, toolsJson: event.target.value }))}
+              style={{ ...inputStyle, minHeight: "120px", fontFamily: "monospace" }}
+              placeholder='[{"name":"browser_click","description":"...","parameters":{"type":"object"},"capabilities":["browser"]}]'
+            />
+            {mcpError ? <div style={{ ...providerHintStyle, color: "#ffb4b4" }}>{mcpError}</div> : null}
+            <div style={{ display: "flex", justifyContent: "flex-end" }}>
+              <button
+                type="button"
+                onClick={() => {
+                  try {
+                    const tools = JSON.parse(customServer.toolsJson || "[]") as Array<{
+                      name: string;
+                      description: string;
+                      parameters?: Record<string, unknown>;
+                      capabilities?: string[];
+                      enabled?: boolean;
+                      riskLevel?: string;
+                      remoteName?: string | null;
+                      toolMetadata?: Record<string, unknown>;
+                    }>;
+                    setMcpError(undefined);
+                    void onCreateMcpServer({
+                      serverKey: customServer.serverKey.trim(),
+                      name: customServer.name.trim(),
+                      transportKind: "unix_socket",
+                      protocol: customServer.protocol,
+                      endpoint: customServer.endpoint.trim(),
+                      enabled: true,
+                      tools,
+                    });
+                  } catch (error) {
+                    setMcpError(error instanceof Error ? error.message : copy("Invalid tools JSON.", "工具 JSON 无效。"));
+                  }
+                }}
+                style={{ ...inputStyle, cursor: "pointer", padding: "8px 12px", width: "auto" }}
+              >
+                {copy("Create MCP server", "创建 MCP 服务")}
+              </button>
+            </div>
+          </div>
         </div>
         <div style={{ marginTop: "14px", display: "flex", justifyContent: "flex-end" }}>
           <button

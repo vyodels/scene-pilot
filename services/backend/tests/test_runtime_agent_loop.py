@@ -541,7 +541,7 @@ class AgentLoopTests(unittest.TestCase):
                 LLMResponse(
                     content="complete current step",
                     tool_calls=[
-                        ToolCall(id="discover-1", name="boss_discover_candidates", arguments={}),
+                        ToolCall(id="discover-1", name="browser_snapshot", arguments={}),
                         ToolCall(
                             id="obs-1",
                             name="record_observation",
@@ -568,8 +568,8 @@ class AgentLoopTests(unittest.TestCase):
         registry = ToolRegistry()
         registry.register(
             ToolDefinition(
-                name="boss_discover_candidates",
-                description="Discover candidates",
+                name="browser_snapshot",
+                description="Read browser snapshot",
                 parameters={"type": "object"},
                 handler=lambda args: [
                     {

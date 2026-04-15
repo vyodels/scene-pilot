@@ -9,6 +9,7 @@ from .routers.candidates import router as candidates_router
 from .routers.dashboard import router as dashboard_router
 from .routers.health import router as health_router
 from .routers.metrics import router as metrics_router
+from .routers.mcp import router as mcp_router
 from .routers.recruit_agent import router as recruit_agent_router
 from .routers.runtime import router as runtime_router
 from .routers.settings import router as settings_router
@@ -21,6 +22,7 @@ ALL_ROUTERS = [
     workflows_router,
     candidates_router,
     skills_router,
+    mcp_router,
     settings_router,
     approvals_router,
     metrics_router,

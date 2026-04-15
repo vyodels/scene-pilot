@@ -8,7 +8,7 @@ import { StatusBadge } from "./StatusBadge";
 interface TopBarProps {
   agent: AgentSnapshot;
   settings: SettingsSnapshot;
-  transport: "mock" | "http";
+  transport: "http" | "offline";
   sectionEyebrow: string;
   sectionTitle: string;
   sectionDescription: string;
@@ -89,8 +89,8 @@ export function TopBar({
             );
           })}
         </div>
-        <StatusBadge tone={transport === "http" ? "positive" : "warning"}>
-          {transport === "http" ? copy("backend connected", "后端已连接") : copy("mock fallback", "降级为本地 mock")}
+        <StatusBadge tone={transport === "http" ? "positive" : "critical"}>
+          {transport === "http" ? copy("backend connected", "后端已连接") : copy("backend unavailable", "后端不可用")}
         </StatusBadge>
         <StatusBadge tone="neutral">{settings.platform.account}</StatusBadge>
         <StatusBadge tone={settings.intranetEnabled ? "positive" : "neutral"}>

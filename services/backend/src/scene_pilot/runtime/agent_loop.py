@@ -634,13 +634,16 @@ class AgentLoop:
 
     def _latest_candidate_from_tool_outputs(self, tool_outputs: list[Any]) -> dict[str, Any] | None:
         for item in reversed(list(tool_outputs or [])):
-            tool_name = getattr(item, "tool_name", None)
             output = getattr(item, "output", None)
-            if tool_name == "boss_inspect_candidate" and isinstance(output, Mapping):
+            if isinstance(output, Mapping) and (
+                "candidate_id" in output or "platform_candidate_id" in output
+            ):
                 return dict(output)
-            if tool_name == "boss_discover_candidates" and isinstance(output, list):
+            if isinstance(output, list):
                 for candidate in output:
-                    if isinstance(candidate, Mapping):
+                    if isinstance(candidate, Mapping) and (
+                        "candidate_id" in candidate or "platform_candidate_id" in candidate
+                    ):
                         return dict(candidate)
         return None
 

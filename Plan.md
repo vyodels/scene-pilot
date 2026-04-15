@@ -504,6 +504,121 @@ UI 形态：
   - 在现有 skill 治理和健康检查之上，继续补充 skill 的运行时装载、按需披露、版本化启停、作用域选择与组合执行能力
   - 让 skill 不只是“可治理对象”，也成为“可动态装配的执行资产”
 
+## 下一轮专项计划：MCP Registry 与真实环境执行
+
+这一轮的目标不是继续加 Boss 专用逻辑，而是把当前 runtime 从“硬编码平台动作 + 本地 fallback”重构到“动态 MCP 工具接入 + 真实环境执行”。
+
+### 2026-04-15 实施进度
+
+这一轮的第一版已经完成：
+
+- `BossPlatformAdapter`、Boss 专用 browser 桥和 `boss_*` runtime 工具已移除
+- Browser MCP 已改为通过 `McpPresetTemplate + McpServer + McpTool` 注册，不再在容器初始化时写死为唯一网页桥
+- runtime 工具注册已收敛为：
+  - 执行控制工具
+  - 系统命令工具
+  - 已注册 MCP 的动态工具
+- 外部能力缺失时会直接阻塞或失败，不再退回本地候选人库或桌面 mock 继续“伪执行”
+- 桌面端已新增 MCP 管理面板，放在 `Settings` 内部，支持：
+  - 查看预置模板
+  - 安装模板
+  - 查看/编辑/删除已注册 MCP 服务
+  - 创建自定义 MCP 服务
+  - 手动触发健康检查
+- 桌面端 mock 数据、mock transport 和本地 fallback 逻辑已全部删除
+- 当前校验已通过：
+  - `npm run desktop:typecheck`
+  - `python3 -m pytest services/backend/tests -q`
+
+### 背景调整
+
+当前实现里还保留了几类不符合目标方向的能力：
+
+- `BossPlatformAdapter` 这种预制平台动作
+- 把 `browser-mcp` 写死在代码里作为唯一网页桥
+- Browser MCP 不可用时退回本地候选人数据继续执行
+- 桌面端在后端不可用时退回本地 mock client / mock data
+
+这些都会导致系统看起来像在“自主执行”，但实际已经脱离真实外部环境，容易产生误导。
+
+因此这一轮明确调整为：
+
+- 不再 hardcode 任何 Boss 平台动作
+- 不再 hardcode Browser MCP 为唯一网页桥
+- 引入 MCP 注册与管理机制
+- runtime 工具来自已注册 MCP 的动态桥接
+- 页面读写只允许通过真实外部能力完成
+- MCP 缺失时直接 fail fast，不再退回本地伪执行
+- 招聘场景依赖 `skill / strategy / memory`
+- Boss 作为默认环境预置与 skill bundle 的来源，而不是执行底层
+- 完全删除桌面 mock 数据逻辑，避免错误心智
+
+### 本轮核心对象
+
+- `McpServer`
+  - 一个已注册的 MCP 服务实例
+  - 保存名称、传输方式、连接地址、启用状态、认证与元信息
+- `McpTool`
+  - 某个 MCP 暴露给 runtime 的工具定义
+  - 保存 schema、capabilities、风险标签、启用状态、远端调用映射
+- `McpPresetTemplate`
+  - 预置模板
+  - 例如浏览器类 MCP、通用 HTTP 工具桥等
+  - 作用是帮助初始化，不参与底层执行决策
+- `McpHealthSnapshot`
+  - 最近一次连通性与工具发现结果
+
+### 运行原则
+
+1. runtime 不再直接注册 `boss_*` 工具
+2. runtime 只注册：
+   - 执行控制工具
+   - 系统命令工具
+   - 已注册 MCP 的动态工具
+3. LLM 通过动态工具集合完成页面观察与动作执行
+4. 招聘环境知识下沉到：
+   - skill
+   - strategy fragment
+   - memory
+5. 真实外部能力缺失时，run 必须进入：
+   - `blocked`
+   - `needs_intervention`
+   - 或明确失败
+6. 不允许用本地候选人库或前端 mock 数据“补演”真实网页执行
+
+### 前端与产品面调整
+
+- 新增 MCP 注册与管理页面
+  - 放在合适的系统配置区，不作为随意散落的新入口
+- 页面需要支持：
+  - 注册 MCP server
+  - 配置连接参数
+  - 查看已发现工具
+  - 启用 / 停用工具
+  - 查看健康状态
+  - 从预置模板快速创建
+- 删除桌面端 mock fallback
+  - 后端不可用时直接显示真实错误与阻塞状态
+  - 不再切到本地 mock 工作区
+
+### 后端替换范围
+
+- 删除 `BossPlatformAdapter` 及其配套硬编码动作桥
+- 删除 browser-mcp 的 Boss 专用读写封装
+- 删除“真实浏览器失败 -> 本地候选人存储 fallback”逻辑
+- 新增 MCP registry、tool bridge 与健康检查
+- 调整 `AgentLoop` 的工具压缩与候选人提取逻辑，不再写死 `boss_*` 工具名
+- 调整 runtime 能力驱动，不再预设 `boss_discover_candidates` / `boss_inspect_candidate`
+
+### 验收标准
+
+- 后端不存在 `BossPlatformAdapter`
+- runtime 不再注册任何 `boss_*` 硬编码工具
+- browser-mcp 通过注册模板接入，而不是在容器初始化时写死
+- 外部能力缺失时，系统直接阻塞，不再退回本地伪执行
+- 桌面端不再存在 mock transport / mock data fallback
+- 已注册 MCP 的工具能被 runtime 动态暴露给模型使用
+
 ## 下一轮专项计划：Runtime 与 Context
 
 这一轮不再继续扩散产品范围，而是围绕 `Recruit Agent` 的长期运行能力，补齐 `runtime` 和 `context` 两条底层主线。
@@ -513,7 +628,7 @@ UI 形态：
 已完成当前最小可用闭环：
 
 - `AgentSession / AgentRun / WorkItem / Checkpoint / RuntimeEvent` 已落库并接入执行主链
-- 调度器已接入 `AgentRun` 并发上限控制，支持 `max_concurrent_runs` 和 `boss_max_concurrent_runs`
+- 调度器已接入 `AgentRun` 并发上限控制，当前支持全局 `max_concurrent_runs`
 - `waiting_human` 已生成 checkpoint，审批后会回到原 run 恢复，不再只是逻辑层面的“重新排队”
 - 每次执行前都会生成 `context_manifest`，并写入 `AgentRun.context_manifest`
 - `Context Assembler Policy` 已支持“代码硬边界 + 用户可配权重/预算 + 可选 LLM rerank”的三层模型
@@ -574,7 +689,7 @@ UI 形态：
 - 同一候选人同一时刻只允许一个 active run，避免状态竞争和记忆串扰
 - 引入 `AgentRun` 并发上限控制，避免在 Boss 等外部站点上同时处理过多候选人而触发风控
   - 支持配置全局 `max_concurrent_runs`
-  - 支持按渠道/平台配置更细粒度限制，例如 `boss_max_concurrent_runs`
+  - 后续可扩展为按环境配置更细粒度限制，例如 `environment_concurrency_limits`
   - 调度器达到上限时只能排队，不允许继续拉起新 run
   - 后续可扩展为按动作类型限流，例如“浏览/查看简历”和“主动沟通”分别限流
 - `waiting_human`、候选人待回复、skill 失效、权限待确认等场景必须生成 checkpoint，而不是只能整段重跑

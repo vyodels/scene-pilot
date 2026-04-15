@@ -124,7 +124,7 @@ class ResumeArtifact(Base, TimestampMixin):
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=generate_id)
     candidate_id: Mapped[str] = mapped_column(ForeignKey("candidates.id", ondelete="CASCADE"), nullable=False, index=True)
-    source: Mapped[str] = mapped_column(String(64), nullable=False, default="boss", index=True)
+    source: Mapped[str] = mapped_column(String(64), nullable=False, default="site", index=True)
     artifact_type: Mapped[str] = mapped_column(String(64), nullable=False, default="resume", index=True)
     file_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     file_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
@@ -225,6 +225,45 @@ class EvolutionArtifact(Base, TimestampMixin):
     applied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     artifact_body: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     artifact_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+
+
+class McpServer(Base, TimestampMixin):
+    __tablename__ = "mcp_servers"
+    __table_args__ = (
+        UniqueConstraint("server_key", name="uq_mcp_servers_server_key"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=generate_id)
+    server_key: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    transport_kind: Mapped[str] = mapped_column(String(64), nullable=False, default="unix_socket", index=True)
+    protocol: Mapped[str] = mapped_column(String(64), nullable=False, default="json_socket_tool_call", index=True)
+    endpoint: Mapped[str] = mapped_column(String(1024), nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)
+    preset_key: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    auth_config: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    server_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    health_status: Mapped[str] = mapped_column(String(32), nullable=False, default="unknown", index=True)
+    health_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_health_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+
+
+class McpTool(Base, TimestampMixin):
+    __tablename__ = "mcp_tools"
+    __table_args__ = (
+        UniqueConstraint("server_id", "name", name="uq_mcp_tools_server_name"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=generate_id)
+    server_id: Mapped[str] = mapped_column(ForeignKey("mcp_servers.id", ondelete="CASCADE"), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    parameters: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    capabilities: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)
+    risk_level: Mapped[str] = mapped_column(String(32), nullable=False, default="medium", index=True)
+    remote_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    tool_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
 
 
 class Workflow(Base, TimestampMixin):

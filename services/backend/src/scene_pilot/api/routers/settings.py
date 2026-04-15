@@ -14,7 +14,7 @@ router = APIRouter(prefix="/api/settings", tags=["settings"])
 
 def _runtime_scene_account(settings: AppSettings) -> str:
     provider_config = settings.provider_config or {}
-    return str(provider_config.get("site_account") or provider_config.get("boss_account") or "本机场景 01")
+    return str(provider_config.get("site_account") or "本机场景 01")
 
 
 def _normalize_optional_string(value: str | None) -> str | None:
@@ -67,7 +67,6 @@ def _to_desktop_settings(settings: AppSettings) -> SettingsSnapshotRead:
                 "cooldownDays": settings.provider_config.get("cooldown_days", 30),
                 "allowOutboundMessaging": settings.feature_flags.enable_outbound_messaging,
                 "maxConcurrentRuns": settings.provider_config.get("max_concurrent_runs", 1),
-                "bossMaxConcurrentRuns": settings.provider_config.get("boss_max_concurrent_runs"),
             },
         }
     )
@@ -119,9 +118,6 @@ def update_settings(
             data["feature_flags"]["enable_outbound_messaging"] = platform_data["allowOutboundMessaging"]
         if "maxConcurrentRuns" in platform_data:
             provider_config["max_concurrent_runs"] = max(int(platform_data["maxConcurrentRuns"]), 1)
-        if "bossMaxConcurrentRuns" in platform_data:
-            boss_limit = platform_data["bossMaxConcurrentRuns"]
-            provider_config["boss_max_concurrent_runs"] = max(int(boss_limit), 1) if boss_limit is not None else None
     if payload.providers is not None:
         provider_config = data.setdefault("provider_config", {})
         for provider in payload.providers:

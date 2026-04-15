@@ -36,7 +36,7 @@ async def lifespan(app: FastAPI):
 
 
 def create_app(settings: AppSettings | None = None) -> FastAPI:
-    container = AppContainer.build(settings, seed_demo=settings is None)
+    container = AppContainer.build(settings)
     app = FastAPI(title="Recruit Agent", version="0.1.0", lifespan=lifespan)
     app.state.bootstrap_container = container
     app.add_middleware(

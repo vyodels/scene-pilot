@@ -8,7 +8,7 @@ export type WorkspaceTab =
   | "settings";
 
 export type ProviderKind = "openai-compatible" | "anthropic";
-export type ApiTransport = "mock" | "http";
+export type ApiTransport = "http" | "offline";
 export type HealthStatus = "healthy" | "warning" | "critical";
 export type ApprovalStatus = "pending" | "approved" | "rejected";
 export type CandidateStatus = string;
@@ -546,6 +546,59 @@ export interface ProviderConfig {
   temperature: number;
 }
 
+export interface McpToolRecord {
+  id: string;
+  serverId: string;
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>;
+  capabilities: string[];
+  enabled: boolean;
+  riskLevel: string;
+  remoteName?: string | null;
+  toolMetadata: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface McpServerRecord {
+  id: string;
+  serverKey: string;
+  name: string;
+  transportKind: string;
+  protocol: string;
+  endpoint: string;
+  enabled: boolean;
+  presetKey?: string | null;
+  authConfig: Record<string, unknown>;
+  serverMetadata: Record<string, unknown>;
+  healthStatus: string;
+  healthError?: string | null;
+  lastHealthAt?: string | null;
+  tools: McpToolRecord[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface McpPresetTemplateRecord {
+  key: string;
+  name: string;
+  description: string;
+  transportKind: string;
+  protocol: string;
+  endpointExample: string;
+  tools: Array<{
+    name: string;
+    description: string;
+    parameters: Record<string, unknown>;
+    capabilities: string[];
+    enabled: boolean;
+    riskLevel: string;
+    remoteName?: string | null;
+    toolMetadata: Record<string, unknown>;
+  }>;
+}
+
 export interface SettingsSnapshot {
   locale: string;
   timezone: string;
@@ -566,7 +619,6 @@ export interface SettingsSnapshot {
     cooldownDays: number;
     allowOutboundMessaging: boolean;
     maxConcurrentRuns: number;
-    bossMaxConcurrentRuns?: number | null;
   };
 }
 

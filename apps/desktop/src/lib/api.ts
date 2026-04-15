@@ -1,12 +1,3 @@
-import {
-  desktopAgentQueueMock,
-  desktopEvolutionArtifactsMock,
-  desktopMockSnapshot,
-  desktopReplayMockByEpisode,
-  desktopRuntimeMock,
-  desktopSyncBacklogMock,
-  desktopSyncStatusMock,
-} from "./mockData";
 import type {
   AgentGlobalMemoryRecord,
   ApprovalItem,
@@ -35,6 +26,9 @@ import type {
   EvolutionArtifactRecord,
   GoalSpecRecord,
   JobMemoryRecord,
+  McpPresetTemplateRecord,
+  McpServerRecord,
+  McpToolRecord,
   OperatorInteractionRecord,
   RecruitAgentProfileRecord,
   ResumeArtifactRecord,
@@ -139,6 +133,59 @@ export interface DesktopApiClient {
   updateSkill(skillId: string, payload: Partial<SkillRecord>): Promise<SkillRecord>;
   deleteSkill(skillId: string): Promise<void>;
   listApprovals(): Promise<ApprovalItem[]>;
+  listMcpPresets(): Promise<McpPresetTemplateRecord[]>;
+  listMcpServers(): Promise<McpServerRecord[]>;
+  installMcpPreset(
+    presetKey: string,
+    payload?: { serverKey?: string; name?: string; endpoint?: string },
+  ): Promise<McpServerRecord>;
+  createMcpServer(payload: {
+    serverKey: string;
+    name: string;
+    transportKind: string;
+    protocol: string;
+    endpoint: string;
+    enabled?: boolean;
+    presetKey?: string | null;
+    authConfig?: Record<string, unknown>;
+    serverMetadata?: Record<string, unknown>;
+    tools?: Array<{
+      name: string;
+      description: string;
+      parameters?: Record<string, unknown>;
+      capabilities?: string[];
+      enabled?: boolean;
+      riskLevel?: string;
+      remoteName?: string | null;
+      toolMetadata?: Record<string, unknown>;
+    }>;
+  }): Promise<McpServerRecord>;
+  updateMcpServer(
+    serverId: string,
+    payload: Partial<{
+      serverKey: string;
+      name: string;
+      transportKind: string;
+      protocol: string;
+      endpoint: string;
+      enabled: boolean;
+      presetKey: string | null;
+      authConfig: Record<string, unknown>;
+      serverMetadata: Record<string, unknown>;
+      tools: Array<{
+        name: string;
+        description: string;
+        parameters?: Record<string, unknown>;
+        capabilities?: string[];
+        enabled?: boolean;
+        riskLevel?: string;
+        remoteName?: string | null;
+        toolMetadata?: Record<string, unknown>;
+      }>;
+    }>,
+  ): Promise<McpServerRecord>;
+  deleteMcpServer(serverId: string): Promise<void>;
+  healthcheckMcpServer(serverId: string): Promise<McpServerRecord>;
   getSettings(): Promise<SettingsSnapshot>;
   getAgentSnapshot(): Promise<AgentSnapshot>;
   listAgentQueue(): Promise<AgentQueueItem[]>;
@@ -152,7 +199,7 @@ export interface DesktopApiClient {
 
 export interface ApiDescription {
   baseUrl: string;
-  transport: "mock" | "http";
+  transport: "http" | "offline";
 }
 
 type JsonRecord = Record<string, unknown>;
@@ -312,13 +359,72 @@ function normalizeSettings(raw: unknown): SettingsSnapshot {
       cooldownDays: Number(platform.cooldownDays ?? platform.cooldown_days ?? 30),
       allowOutboundMessaging: Boolean(platform.allowOutboundMessaging ?? platform.allow_outbound_messaging ?? false),
       maxConcurrentRuns: Number(platform.maxConcurrentRuns ?? platform.max_concurrent_runs ?? 1),
-      bossMaxConcurrentRuns:
-        platform.bossMaxConcurrentRuns != null
-          ? Number(platform.bossMaxConcurrentRuns)
-          : platform.boss_max_concurrent_runs != null
-            ? Number(platform.boss_max_concurrent_runs)
-            : null,
     },
+  };
+}
+
+function normalizeMcpTool(raw: unknown): McpToolRecord {
+  const record = asRecord(raw);
+  return {
+    id: String(record.id ?? ""),
+    serverId: String(record.serverId ?? record.server_id ?? ""),
+    name: String(record.name ?? ""),
+    description: String(record.description ?? ""),
+    parameters: asRecord(record.parameters),
+    capabilities: asArray<string>(record.capabilities),
+    enabled: Boolean(record.enabled ?? true),
+    riskLevel: String(record.riskLevel ?? record.risk_level ?? "medium"),
+    remoteName: record.remoteName ? String(record.remoteName) : record.remote_name ? String(record.remote_name) : null,
+    toolMetadata: asRecord(record.toolMetadata ?? record.tool_metadata),
+    createdAt: String(record.createdAt ?? record.created_at ?? new Date().toISOString()),
+    updatedAt: String(record.updatedAt ?? record.updated_at ?? new Date().toISOString()),
+  };
+}
+
+function normalizeMcpServer(raw: unknown): McpServerRecord {
+  const record = asRecord(raw);
+  return {
+    id: String(record.id ?? ""),
+    serverKey: String(record.serverKey ?? record.server_key ?? ""),
+    name: String(record.name ?? ""),
+    transportKind: String(record.transportKind ?? record.transport_kind ?? "unix_socket"),
+    protocol: String(record.protocol ?? "json_socket_tool_call"),
+    endpoint: String(record.endpoint ?? ""),
+    enabled: Boolean(record.enabled ?? true),
+    presetKey: record.presetKey ? String(record.presetKey) : record.preset_key ? String(record.preset_key) : null,
+    authConfig: asRecord(record.authConfig ?? record.auth_config),
+    serverMetadata: asRecord(record.serverMetadata ?? record.server_metadata),
+    healthStatus: String(record.healthStatus ?? record.health_status ?? "unknown"),
+    healthError: record.healthError ? String(record.healthError) : record.health_error ? String(record.health_error) : null,
+    lastHealthAt: record.lastHealthAt ? String(record.lastHealthAt) : record.last_health_at ? String(record.last_health_at) : null,
+    tools: asArray(record.tools).map(normalizeMcpTool),
+    createdAt: String(record.createdAt ?? record.created_at ?? new Date().toISOString()),
+    updatedAt: String(record.updatedAt ?? record.updated_at ?? new Date().toISOString()),
+  };
+}
+
+function normalizeMcpPreset(raw: unknown): McpPresetTemplateRecord {
+  const record = asRecord(raw);
+  return {
+    key: String(record.key ?? ""),
+    name: String(record.name ?? ""),
+    description: String(record.description ?? ""),
+    transportKind: String(record.transportKind ?? record.transport_kind ?? "unix_socket"),
+    protocol: String(record.protocol ?? "json_socket_tool_call"),
+    endpointExample: String(record.endpointExample ?? record.endpoint_example ?? ""),
+    tools: asArray(record.tools).map((tool) => {
+      const normalized = normalizeMcpTool({ ...asRecord(tool), id: "", server_id: "" });
+      return {
+        name: normalized.name,
+        description: normalized.description,
+        parameters: normalized.parameters,
+        capabilities: normalized.capabilities,
+        enabled: normalized.enabled,
+        riskLevel: normalized.riskLevel,
+        remoteName: normalized.remoteName,
+        toolMetadata: normalized.toolMetadata,
+      };
+    }),
   };
 }
 
@@ -824,7 +930,7 @@ function normalizeResumeArtifact(raw: unknown): ResumeArtifactRecord {
   return {
     id: String(record.id ?? ""),
     candidateId: String(record.candidateId ?? record.candidate_id ?? ""),
-    source: String(record.source ?? "boss"),
+    source: String(record.source ?? "site"),
     artifactType: String(record.artifactType ?? record.artifact_type ?? "resume"),
     fileName: record.fileName ? String(record.fileName) : record.file_name ? String(record.file_name) : null,
     filePath: record.filePath ? String(record.filePath) : record.file_path ? String(record.file_path) : null,
@@ -2147,6 +2253,82 @@ function createFetchClient(baseUrl: string): DesktopApiClient {
       await requestVoid(baseUrl, `/api/skills/${skillId}`, { method: "DELETE" });
     },
     listApprovals: async () => asArray(await requestJson<unknown>(baseUrl, "/api/approvals")).map(normalizeApprovalItem),
+    listMcpPresets: async () => asArray(await requestJson<unknown>(baseUrl, "/api/mcp/presets")).map(normalizeMcpPreset),
+    listMcpServers: async () => asArray(await requestJson<unknown>(baseUrl, "/api/mcp/servers")).map(normalizeMcpServer),
+    installMcpPreset: async (presetKey, payload) =>
+      normalizeMcpServer(
+        await requestJson<unknown>(baseUrl, `/api/mcp/presets/${encodeURIComponent(presetKey)}/install`, {
+          method: "POST",
+          body: JSON.stringify({
+            server_key: payload?.serverKey,
+            name: payload?.name,
+            endpoint: payload?.endpoint,
+          }),
+        }),
+      ),
+    createMcpServer: async (payload) =>
+      normalizeMcpServer(
+        await requestJson<unknown>(baseUrl, "/api/mcp/servers", {
+          method: "POST",
+          body: JSON.stringify({
+            server_key: payload.serverKey,
+            name: payload.name,
+            transport_kind: payload.transportKind,
+            protocol: payload.protocol,
+            endpoint: payload.endpoint,
+            enabled: payload.enabled ?? true,
+            preset_key: payload.presetKey,
+            auth_config: payload.authConfig ?? {},
+            server_metadata: payload.serverMetadata ?? {},
+            tools: (payload.tools ?? []).map((tool) => ({
+              name: tool.name,
+              description: tool.description,
+              parameters: tool.parameters ?? {},
+              capabilities: tool.capabilities ?? [],
+              enabled: tool.enabled ?? true,
+              risk_level: tool.riskLevel ?? "medium",
+              remote_name: tool.remoteName,
+              tool_metadata: tool.toolMetadata ?? {},
+            })),
+          }),
+        }),
+      ),
+    updateMcpServer: async (serverId, payload) =>
+      normalizeMcpServer(
+        await requestJson<unknown>(baseUrl, `/api/mcp/servers/${serverId}`, {
+          method: "PATCH",
+          body: JSON.stringify({
+            server_key: payload.serverKey,
+            name: payload.name,
+            transport_kind: payload.transportKind,
+            protocol: payload.protocol,
+            endpoint: payload.endpoint,
+            enabled: payload.enabled,
+            preset_key: payload.presetKey,
+            auth_config: payload.authConfig,
+            server_metadata: payload.serverMetadata,
+            tools: payload.tools?.map((tool) => ({
+              name: tool.name,
+              description: tool.description,
+              parameters: tool.parameters ?? {},
+              capabilities: tool.capabilities ?? [],
+              enabled: tool.enabled ?? true,
+              risk_level: tool.riskLevel ?? "medium",
+              remote_name: tool.remoteName,
+              tool_metadata: tool.toolMetadata ?? {},
+            })),
+          }),
+        }),
+      ),
+    deleteMcpServer: async (serverId) => {
+      await requestVoid(baseUrl, `/api/mcp/servers/${serverId}`, { method: "DELETE" });
+    },
+    healthcheckMcpServer: async (serverId) =>
+      normalizeMcpServer(
+        await requestJson<unknown>(baseUrl, `/api/mcp/servers/${serverId}/healthcheck`, {
+          method: "POST",
+        }),
+      ),
     getSettings: async () => normalizeSettings(await requestJson<unknown>(baseUrl, "/api/settings")),
     getAgentSnapshot: async () => normalizeAgentSnapshot(await requestJson<unknown>(baseUrl, "/api/agent")),
     listAgentQueue: async () => asArray(await requestJson<unknown>(baseUrl, "/api/agent/queue")).map(normalizeAgentQueueItem),
@@ -2241,1505 +2423,8 @@ function createFetchClient(baseUrl: string): DesktopApiClient {
   };
 }
 
-function createMockClient(): DesktopApiClient {
-  const baseSnapshot = desktopMockSnapshot;
-  let mockApprovals: ApprovalItem[] = baseSnapshot.approvals.map((item) => ({ ...item }));
-  let mockSkills: SkillRecord[] = baseSnapshot.skills.map((item) => ({ ...item }));
-  let mockEvolutionArtifacts: EvolutionArtifactRecord[] = desktopEvolutionArtifactsMock.map((item) => ({ ...item }));
-  let mockGoals: GoalSpecRecord[] = [];
-  let mockExecutionTraces: ExecutionTraceRecord[] = [];
-  let mockExecutionGraphs: ExecutionGraphProjectionRecord[] = [];
-  let mockStrategyFragments: StrategyFragmentRecord[] = [];
-  let mockOperatorInteractions: OperatorInteractionRecord[] = [];
-  let mockProfile = normalizeRecruitAgentProfile({
-    id: "agent-profile-recruit",
-    agent_key: "recruit-agent",
-    name: "Recruit Agent",
-    status: "active",
-    description: "聚焦招聘场景的内置智能助理，负责候选人推进、沟通、评分与长期记忆沉淀。",
-    is_primary: true,
-    role_definition: {
-      identity: "招聘智能助理",
-      positioning: "在人工监督下推进招聘流程的本地 agent。",
-      duties: ["发现候选人", "整理证据", "草拟沟通", "维护 memory 与 skill"],
-      tone: "professional, concise, evidence-driven",
-      boundaries: ["不得跨候选人混用 memory", "不得跨 JD 混用岗位结论", "高风险动作必须确认"],
-      success_criteria: ["状态准确", "证据充分", "沟通合规", "演进可追踪"],
-      forbidden_actions: ["擅自发送高风险消息", "覆盖历史事实", "串用候选人记忆"],
-    },
-    prompt_config: {
-      system_prompt: "你是 Recruit Agent。你只在招聘场景内工作，并严格维护候选人和 JD 的隔离记忆。",
-      context_slots: ["candidate_memory", "job_memory", "agent_global_memory", "candidate_thread", "candidate_progress"],
-      response_policy: { prefer_structured_output: true, require_evidence_refs: true, separate_fact_from_inference: true },
-    },
-    workflow_definition: {
-      name: "招聘 Agent 默认执行编排",
-      start_node_id: "discover_candidate",
-      stage_groups: [
-        { id: "discovery_and_screening", name: "发现与初筛" },
-        { id: "contact_and_resume", name: "联系方式与简历" },
-        { id: "assessment", name: "评估" },
-        { id: "interviews", name: "面试" },
-        { id: "outcome", name: "结果" },
-      ],
-      nodes: [
-        { id: "discover_candidate", name: "发现候选人", task_type: "discover_candidate" },
-        { id: "initial_screening", name: "初筛", task_type: "initial_screening" },
-        { id: "initiate_communication", name: "发起沟通", task_type: "initiate_communication" },
-        { id: "request_resume", name: "获取简历", task_type: "request_resume" },
-        { id: "candidate_scoring", name: "候选人评分", task_type: "candidate_scoring" },
-        { id: "human_review", name: "人工复核", task_type: "human_review" },
-      ],
-    },
-    memory_policy: {
-      candidate_memory: { isolation: "strict_by_candidate", auto_compact: true, compact_threshold: 1_000_000, disclosure: ["preview", "operator_summary", "model_context"] },
-      job_memory: { isolation: "strict_by_jd", auto_compact: true, compact_threshold: 1_000_000, disclosure: ["preview", "operator_summary", "model_context"] },
-      agent_global_memory: { scope: "agent_global", auto_compact: true, compact_threshold: 1_000_000, disclosure: ["preview", "operator_summary", "model_context"] },
-    },
-    dashboard_config: { layout: ["candidate_progress", "candidate_inbox", "agent_activity", "skill_health", "evolution_queue"] },
-    channel_config: {
-      candidate_messaging: { enabled: true, requires_confirmation: true },
-      resume_request: { enabled: true, requires_confirmation: true },
-      talent_pool_upload: { enabled: false, mode: "future_integration" },
-    },
-    agent_metadata: { product_mode: "recruit_agent", supports_builtin_agents: true },
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  });
-  const buildCandidateMemory = (candidate: CandidateRecord): CandidateMemoryRecord =>
-    normalizeCandidateMemory({
-      id: `candidate-memory-${candidate.id}`,
-      agent_profile_id: mockProfile.id,
-      candidate_id: candidate.id,
-      status: "active",
-      memory_schema_version: "candidate-memory-v1",
-      summary: `${candidate.name} 的候选人长期记忆，严格按候选人隔离。`,
-      raw_content: {
-        identity_summary: candidate.summary,
-        facts: [{ kind: "status", value: candidate.status }, { kind: "match_score", value: candidate.matchScore }],
-        interaction_summary: candidate.lastContactedAt ? [{ at: candidate.lastContactedAt, note: candidate.nextAction }] : [],
-        risk_flags: candidate.status === "cooldown" ? ["candidate_in_cooldown"] : [],
-        open_questions: [candidate.nextAction],
-        recommended_next_actions: [candidate.nextAction],
-        evidence_refs: candidate.tags,
-        confidence: candidate.matchScore >= 85 ? "high" : "medium",
-      },
-      content: {
-        facts: [{ kind: "status", value: candidate.status }, { kind: "match_score", value: candidate.matchScore }],
-        decisions: [],
-        open_questions: [candidate.nextAction],
-        next_actions: [candidate.nextAction],
-        risk_flags: candidate.status === "cooldown" ? ["candidate_in_cooldown"] : [],
-        evidence_refs: candidate.tags,
-        confidence: candidate.matchScore >= 85 ? "high" : "medium",
-      },
-      disclosure: {
-        preview: `${candidate.name} 候选人记忆摘要`,
-        operator_summary: `${candidate.name} 当前状态 ${candidate.status}，下一步：${candidate.nextAction}`,
-        model_context: candidate.summary,
-        tiers: [{ level: "preview" }, { level: "operator" }, { level: "model" }],
-      },
-      token_estimate: 1200,
-      source_count: 4,
-      memory_metadata: { scope: "candidate", isolation_key: candidate.id },
-    });
-  const jobIds = Array.from(new Set(baseSnapshot.candidates.map((candidate) => candidate.jdTitle)));
-  const buildJobMemory = (jdId: string): JobMemoryRecord =>
-    normalizeJobMemory({
-      id: `job-memory-${jdId}`,
-      agent_profile_id: mockProfile.id,
-      jd_id: jdId,
-      status: "active",
-      memory_schema_version: "job-memory-v1",
-      summary: `${jdId} 的岗位长期记忆，严格按 JD 隔离。`,
-      raw_content: {
-        screening_preferences: ["优先工程深度", "要求证据充分"],
-        strong_positive_signals: ["owner 意识", "系统设计", "高质量沟通"],
-        common_reject_reasons: ["技能深度不足", "岗位匹配度偏低"],
-        communication_notes: ["首次沟通保持简短克制"],
-        quality_thresholds: [{ score: 80, meaning: "可以继续推进" }],
-        historical_patterns: ["React 和平台工程经验明显加分"],
-      },
-      content: {
-        facts: ["优先工程深度", "要求证据充分"],
-        decisions: [],
-        open_questions: [],
-        next_actions: [],
-        risk_flags: [],
-        evidence_refs: [],
-        confidence: "medium",
-      },
-      disclosure: {
-        preview: `${jdId} JD 记忆摘要`,
-        operator_summary: `${jdId} 偏好工程深度、owner 意识和系统设计能力。`,
-        model_context: `${jdId} JD 记忆已压缩为模型可用摘要。`,
-        tiers: [{ level: "preview" }, { level: "operator" }, { level: "model" }],
-      },
-      token_estimate: 800,
-      source_count: 3,
-      memory_metadata: { scope: "job", isolation_key: jdId },
-    });
-  let mockCandidateMemories = new Map(baseSnapshot.candidates.map((candidate) => [candidate.id, buildCandidateMemory(candidate)]));
-  let mockJobMemories = new Map(jobIds.map((jdId) => [jdId, buildJobMemory(jdId)]));
-  let mockGlobalMemory = normalizeAgentGlobalMemory({
-    id: "agent-global-memory-recruit",
-    agent_profile_id: mockProfile.id,
-    status: "active",
-    memory_schema_version: "agent-global-memory-v1",
-    summary: "招聘 Agent 的全局经验总结。",
-    raw_content: {
-      global_strategies: ["先固化事实，再给判断", "高风险动作总是显式确认"],
-      common_failures: ["跨候选人串用记忆", "消息语气过度积极"],
-      effective_patterns: ["先发简短消息，再视回复深度追加说明"],
-      prompt_lessons: ["输出优先 JSON 和证据引用"],
-      workflow_lessons: ["初筛后立即更新候选人进度，避免上下文滞后"],
-    },
-    content: {
-      facts: ["先固化事实，再给判断", "高风险动作总是显式确认"],
-      decisions: [],
-      open_questions: [],
-      next_actions: [],
-      risk_flags: ["跨候选人串用记忆", "消息语气过度积极"],
-      evidence_refs: [],
-      confidence: "medium",
-    },
-    disclosure: {
-      preview: "招聘 Agent 全局经验摘要",
-      operator_summary: "先固化事实，再输出判断；高风险动作保留确认。",
-      model_context: "全局经验已压缩为可注入模型的摘要层。",
-      tiers: [{ level: "preview" }, { level: "operator" }, { level: "model" }],
-    },
-    token_estimate: 900,
-    source_count: 6,
-    memory_metadata: { scope: "agent_global" },
-  });
-  const runtimeApprovalsForCandidate = (candidateId: string) =>
-    mockApprovals.filter((item) => item.surface === "runtime" && item.relatedCandidateId === candidateId);
-  const runtimeInteractionsForCandidate = (candidateId: string) =>
-    mockOperatorInteractions.filter((item) => item.candidateId === candidateId);
-  let mockThreads = new Map(
-    baseSnapshot.candidates.map((candidate) => [
-      candidate.id,
-      normalizeCandidateThread({
-        candidate,
-        session_status: candidate.status === "waiting_reply" ? "waiting_reply" : "active",
-        context_summary: `${candidate.name} 当前处于 ${candidate.status}，下一步是：${candidate.nextAction}`,
-        facts: {
-          jd_title: candidate.jdTitle,
-          workflow_node: candidate.workflowNode,
-          match_score: candidate.matchScore,
-          resume_available: candidate.resumeAvailable,
-        },
-        state_snapshot: {
-          current_stage_key: candidate.status,
-          current_stage_label: candidate.status,
-          contact_status: asRecord(candidate.contactInfo).phone || asRecord(candidate.contactInfo).wechat ? "acquired" : "missing",
-          contact_channels: [
-            ...(asRecord(candidate.contactInfo).phone ? ["phone"] : []),
-            ...(asRecord(candidate.contactInfo).wechat ? ["wechat"] : []),
-          ],
-          contact_acquired: Boolean(asRecord(candidate.contactInfo).phone || asRecord(candidate.contactInfo).wechat),
-          resume_status: candidate.resumeAvailable ? "received" : "not_requested",
-          ai_assessment_status: candidate.matchScore ? "completed" : "pending",
-          human_assessment_status: "pending",
-          operator_flags: [],
-          next_recommended_stages: ["resume_requested"],
-          interview_plan: { active_round: 0, rounds: [{ round: 1, label: "一面", status: "not_started" }, { round: 2, label: "二面", status: "not_started" }] },
-          snapshot_metadata: { source: "mock" },
-        },
-        stage_events: [
-          {
-            id: `evt-${candidate.id}-1`,
-            candidate_id: candidate.id,
-            event_type: "stage_transition",
-            from_status: "discovered",
-            to_status: candidate.status,
-            stage_key: candidate.workflowNode,
-            stage_label: candidate.workflowNode,
-            source: "mock",
-            note: candidate.summary,
-            payload: {},
-            occurred_at: candidate.lastContactedAt ?? new Date().toISOString(),
-            created_at: candidate.lastContactedAt ?? new Date().toISOString(),
-            updated_at: candidate.lastContactedAt ?? new Date().toISOString(),
-          },
-        ],
-        assessments: [
-          {
-            id: `assessment-${candidate.id}-ai`,
-            candidate_id: candidate.id,
-            assessment_type: "ai",
-            stage_key: candidate.workflowNode,
-            status: "completed",
-            decision: candidate.matchScore >= 80 ? "pass" : "review",
-            score: candidate.matchScore,
-            summary: candidate.summary,
-            evidence_refs: candidate.tags,
-            metadata: { source: "mock" },
-            created_by: "agent",
-            created_at: candidate.lastContactedAt ?? new Date().toISOString(),
-            updated_at: candidate.lastContactedAt ?? new Date().toISOString(),
-          },
-        ],
-        available_statuses: ["discovered", "profile_reviewed", "screening_passed", "screening_rejected", "contact_required", "contact_acquired", "pending_communication", "waiting_reply", "resume_requested", "resume_received", "human_assessment_completed", "waiting_schedule_round_1", "interview_round_1_scheduled", "waiting_schedule_round_2", "interview_round_2_scheduled", "offer_review", "passed_to_talent_pool", "rejected", "cooldown"],
-        recent_messages: candidate.lastContactedAt
-          ? [{ direction: "outbound", content: "已发送首轮沟通消息，等待对方回复。", timestamp: candidate.lastContactedAt }]
-          : [],
-        communication_logs: candidate.lastContactedAt
-          ? [
-              {
-                id: `log-${candidate.id}-1`,
-                direction: "outbound",
-                content: `你好 ${candidate.name}，我们正在招聘 ${candidate.jdTitle}，想和你进一步沟通。`,
-                message_type: "text",
-                platform: candidate.platform,
-                timestamp: candidate.lastContactedAt,
-              },
-            ]
-          : [],
-        runtime_approvals: runtimeApprovalsForCandidate(candidate.id),
-        runtime_interactions: runtimeInteractionsForCandidate(candidate.id),
-      }),
-    ]),
-  );
-  const ensureMockCandidateMemory = (candidateId: string): CandidateMemoryRecord => {
-    const existing = mockCandidateMemories.get(candidateId);
-    if (existing) {
-      return existing;
-    }
-    const candidate = baseSnapshot.candidates.find((item) => item.id === candidateId);
-    const created = buildCandidateMemory(candidate ?? normalizeCandidateRecord({ id: candidateId, name: candidateId }));
-    mockCandidateMemories.set(candidateId, created);
-    return created;
-  };
-  const ensureMockThread = (candidateId: string): CandidateThreadRecord => {
-    const existing = mockThreads.get(candidateId);
-    if (existing) {
-      return existing;
-    }
-    const candidate =
-      baseSnapshot.candidates.find((item) => item.id === candidateId) ?? normalizeCandidateRecord({ id: candidateId, name: candidateId });
-    const created = normalizeCandidateThread({
-      candidate,
-      runtime_approvals: runtimeApprovalsForCandidate(candidateId),
-      runtime_interactions: runtimeInteractionsForCandidate(candidateId),
-    });
-    mockThreads.set(candidateId, created);
-    return created;
-  };
-  mockOperatorInteractions = mockApprovals
-    .filter((item) => item.surface === "runtime" && item.status === "pending")
-    .map((item, index) =>
-      normalizeOperatorInteraction({
-        id: `operator-interaction-${index + 1}`,
-        session_id: "runtime-session-primary",
-        run_id: `run-${index + 1}`,
-        approval_id: item.id,
-        candidate_id: item.relatedCandidateId,
-        lane: item.relatedCandidateId ? "candidate" : "agent",
-        interaction_type: "confirm",
-        status: "pending",
-        title: item.title,
-        agent_prompt: item.detail,
-        suggested_options: [
-          { id: "confirm", label: "继续执行", action: "confirm" },
-          { id: "retry", label: "重试一次", action: "retry" },
-          { id: item.relatedCandidateId ? "handoff" : "stop", label: item.relatedCandidateId ? "我来接管" : "停止路径", action: item.relatedCandidateId ? "handoff" : "stop" },
-        ],
-        operator_response: {},
-        effect_summary: null,
-        scope: "run_only",
-        interaction_metadata: {},
-        surfaced_at: item.updatedAt ?? item.createdAt,
-        created_at: item.createdAt,
-        updated_at: item.updatedAt ?? item.createdAt,
-      }),
-    );
-  const buildSnapshot = (): DashboardSummary => ({
-    ...baseSnapshot,
-    candidates: baseSnapshot.candidates.map((candidate) => mockThreads.get(candidate.id)?.candidate ?? candidate),
-    skills: mockSkills,
-    approvals: mockApprovals,
-  });
-  const touchCompactMetadata = <T extends CandidateMemoryRecord | JobMemoryRecord | AgentGlobalMemoryRecord>(
-    record: T,
-    reason = "manual_compact",
-  ): T => ({
-    ...record,
-    summary: `${record.summary ?? ""} 已执行 compact。`.trim(),
-    tokenEstimate: Math.max(200, Math.floor(record.tokenEstimate * 0.6)),
-    compactedAt: new Date().toISOString(),
-    compactedReason: reason,
-    disclosure: {
-      ...record.disclosure,
-      preview: `${record.disclosure.preview ?? record.summary ?? ""} · compact`,
-      operatorSummary: `${record.disclosure.operatorSummary ?? record.summary ?? ""} 已执行 compact。`,
-      modelContext: (record.disclosure.modelContext ?? JSON.stringify(record.content)).slice(0, 800),
-    },
-    memoryMetadata: {
-      ...record.memoryMetadata,
-      last_compaction_reason: reason,
-    },
-  });
-  const buildMockReplan = (payload: RuntimePlanReplanRequest): RuntimePlanReplanResult => {
-    const basePlan = desktopRuntimeMock.plans.find((item) => item.id === payload.executionPlanId) ?? desktopRuntimeMock.plans[0];
-    const trigger = payload.trigger ?? "scene_drift";
-    const assessment =
-      desktopRuntimeMock.environmentAssessments.find((item) => item.executionPlanId === payload.executionPlanId) ??
-      desktopRuntimeMock.environmentAssessments[0] ??
-      null;
-    const patch =
-      desktopRuntimeMock.patches.find((item) => item.executionPlanId === payload.executionPlanId) ?? desktopRuntimeMock.patches[0] ?? null;
-    const capabilitySet = new Set<string>([
-      ...((payload.preferredCapabilityKeys ?? []).filter(Boolean)),
-      ...(assessment?.capabilityKeys ?? []),
-      ...desktopRuntimeMock.capabilityDrivers.slice(0, 3).map((driver) => driver.key),
-    ]);
-    const timestamp = new Date().toISOString();
-    return {
-      id: `replan-${payload.executionPlanId}-${Date.now()}`,
-      taskSpecId: payload.taskSpecId ?? basePlan?.taskSpecId ?? null,
-      baseExecutionPlanId: payload.executionPlanId,
-      executionPlan: {
-        ...(basePlan ?? desktopRuntimeMock.plans[0]),
-        id: `${payload.executionPlanId}-replan`,
-        name: `${basePlan?.name ?? "Runtime plan"} Replanned`,
-        status: "proposed",
-        version: (basePlan?.version ?? 0) + 1,
-        approvalState: "pending_review",
-        checkpoints: [
-          ...(basePlan?.checkpoints ?? []),
-          {
-            kind: "scene_assessment",
-            label: "Validate live environment before applying updated execution steps",
-          },
-        ],
-        runtimeMetadata: {
-          ...(basePlan?.runtimeMetadata ?? {}),
-          replanned_at: timestamp,
-          replanned_trigger: trigger,
-          replanned_notes: payload.notes ?? "",
-        },
-        updatedAt: timestamp,
-      },
-      status: "proposed",
-      trigger,
-      summary: payload.notes
-        ? `Mock replanning inserted a fresh scene assessment checkpoint. Operator notes: ${payload.notes}`
-        : "Mock replanning inserted a fresh scene assessment checkpoint and proposed a safer execution order.",
-      compilerNotes: [
-        "Backend replanning endpoint is unavailable, so the desktop control plane generated a local proposal.",
-        "Capability priority was refreshed from the current assessment and selected driver hints.",
-      ],
-      recommendedCapabilityKeys: Array.from(capabilitySet).slice(0, 4),
-      environmentAssessment: assessment,
-      patch: patch
-        ? {
-            ...patch,
-            id: `${patch.id}-replan`,
-            status: "pending_review",
-            updatedAt: timestamp,
-          }
-        : null,
-      createdAt: timestamp,
-    };
-  };
-
-  return {
-    getDashboardSummary: async () => buildSnapshot(),
-    getRuntimeWorkspaceData: async () => desktopRuntimeMock,
-    getTaskCompilerContract: async () =>
-      desktopRuntimeMock.compilerContract ?? normalizeRuntimeCompilerContract({}),
-    listDomainPacks: async () => desktopRuntimeMock.domainPacks,
-    listRuntimeTasks: async () => desktopRuntimeMock.taskSpecs,
-    compileRuntimeTask: async (payload) => ({
-      domainPack: desktopRuntimeMock.domainPacks.find((item) => item.key === payload.domainHint) ?? desktopRuntimeMock.domainPacks[0],
-      compilerNotes: ["Backend unavailable. Returning mock runtime compilation."],
-      taskSpec: desktopRuntimeMock.taskSpecs[0],
-      executionPlan: desktopRuntimeMock.plans[0],
-    }),
-    listRuntimePlans: async () => desktopRuntimeMock.plans,
-    launchRuntimePlan: async (planId, taskSpecId, mode = "production") => ({
-      taskId: `mock-runtime-${planId}`,
-      taskType: "runtime_execution",
-      priority: 120,
-      queueDepth: desktopMockSnapshot.agent.queueDepth + 1,
-      taskSpecId,
-      executionPlanId: planId,
-      executionEpisode: {
-        ...desktopRuntimeMock.episodes[0],
-        id: `mock-runtime-episode-${Date.now()}`,
-        taskSpecId,
-        executionPlanId: planId,
-        mode,
-        status: "pending",
-        requiresConfirmation: mode !== "production",
-      },
-    }),
-    createTrialRun: async (taskSpecId, executionPlanId, notes) => ({
-      ...desktopRuntimeMock.episodes[0],
-      id: `mock-episode-${Date.now()}`,
-      taskSpecId,
-      executionPlanId,
-      resultSummary: notes ? `Mock trial created. Notes: ${notes}` : "Mock trial created.",
-    }),
-    listRuntimeEpisodes: async () => desktopRuntimeMock.episodes,
-    executeTrialRun: async (episodeId, notes) => ({
-      episode: {
-        ...desktopRuntimeMock.episodes[0],
-        id: episodeId,
-        resultSummary: notes ? `Mock execution completed. Notes: ${notes}` : "Mock execution completed.",
-      },
-      template: desktopRuntimeMock.templates[0],
-      patch: desktopRuntimeMock.patches[0] ?? null,
-      learningDraft: null,
-      approval: null,
-      skillHealth: null,
-    }),
-    refreshRuntimeLearning: async (episodeId) => ({
-      episode: { ...desktopRuntimeMock.episodes[0], id: episodeId },
-      template: desktopRuntimeMock.templates[0],
-      patch: desktopRuntimeMock.patches[0] ?? null,
-      learningDraft: null,
-      approval: null,
-      skillHealth: null,
-    }),
-    confirmTrialRun: async (episodeId, reason) => ({
-      episode: {
-        ...desktopRuntimeMock.episodes[0],
-        id: episodeId,
-        status: "confirmed",
-        requiresConfirmation: false,
-        resultSummary: reason ? `Mock confirmation recorded. ${reason}` : desktopRuntimeMock.episodes[0].resultSummary,
-      },
-      template: { ...desktopRuntimeMock.templates[0], status: "active" },
-      patch: null,
-      learningDraft: null,
-      approval: null,
-      skillHealth: null,
-      }),
-    getRuntimeReplay: async (episodeId) => desktopReplayMockByEpisode[episodeId] ?? desktopReplayMockByEpisode["episode-001"],
-    listRuntimeSnapshots: async () => desktopRuntimeMock.snapshots,
-    listCapabilityDrivers: async () => desktopRuntimeMock.capabilityDrivers,
-    listRuntimeEnvironmentAssessments: async () => desktopRuntimeMock.environmentAssessments,
-    assessRuntimeEnvironment: async (payload) =>
-      desktopRuntimeMock.environmentAssessments.find(
-        (item) =>
-          item.executionEpisodeId === payload.executionEpisodeId ||
-          item.executionPlanId === payload.executionPlanId ||
-          item.taskSpecId === payload.taskSpecId,
-      ) ?? desktopRuntimeMock.environmentAssessments[0],
-    listRuntimeTemplates: async () => desktopRuntimeMock.templates,
-    listRuntimePatches: async () => desktopRuntimeMock.patches,
-    listRuntimeReplans: async () => desktopRuntimeMock.replans,
-    replanRuntimePlan: async (payload) => buildMockReplan(payload),
-    approveRuntimePatch: async (id, reason) => ({
-      ...desktopRuntimeMock.patches[0],
-      id,
-      status: "applied",
-      rationale: reason ?? desktopRuntimeMock.patches[0]?.rationale ?? null,
-    }),
-    rejectRuntimePatch: async (id, reason) => ({
-      ...desktopRuntimeMock.patches[0],
-      id,
-      status: "rejected",
-      rationale: reason ?? desktopRuntimeMock.patches[0]?.rationale ?? null,
-    }),
-    getRecruitAgentProfile: async () => ({ ...mockProfile }),
-    updateRecruitAgentProfile: async (payload) => {
-      mockProfile = {
-        ...mockProfile,
-        ...payload,
-        updatedAt: new Date().toISOString(),
-      };
-      return { ...mockProfile };
-    },
-    listGoals: async () => mockGoals,
-    createGoal: async (payload) => {
-      const created = normalizeGoalSpec({
-        id: `goal-${Date.now()}`,
-        agent_profile_id: mockProfile.id,
-        title: payload.title,
-        goal_text: payload.goalText,
-        goal_kind: payload.goalKind ?? "recruiting",
-        status: "queued",
-        source: "operator",
-        source_text: payload.goalText,
-        requested_by: payload.requestedBy ?? "desktop-user",
-        constraints: payload.constraints ?? {},
-        success_criteria: payload.successCriteria ?? {},
-        context_hints: payload.contextHints ?? {},
-        trial_budget: payload.trialBudget ?? {},
-        run_preferences: payload.runPreferences ?? {},
-        summary: payload.summary ?? `围绕目标“${payload.title}”启动自适应招聘探索。`,
-        goal_metadata: { created_from: "mock" },
-        last_activity_at: new Date().toISOString(),
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      });
-      mockGoals = [created, ...mockGoals];
-      mockExecutionTraces = [
-        normalizeExecutionTrace({
-          id: `trace-${created.id}`,
-          session_id: "runtime-session-primary",
-          goal_spec_id: created.id,
-          lane: "agent",
-          trace_kind: "adaptive_run",
-          status: "queued",
-          title: created.title,
-          summary: created.summary,
-          raw_trace: {},
-          distilled_trace: { goal: created.goalText },
-          outcome: { status: "queued", success: false },
-          trace_metadata: {},
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        }),
-        ...mockExecutionTraces,
-      ];
-      mockExecutionGraphs = [
-        normalizeExecutionGraph({
-          id: `graph-${created.id}`,
-          goal_spec_id: created.id,
-          graph_kind: "execution_projection",
-          title: created.title,
-          summary: "Mock 自适应执行图。",
-          nodes: [
-            { id: "goal", label: "目标" },
-            { id: "explore", label: "探索路径" },
-            { id: "execute", label: "开始执行" },
-          ],
-          edges: [
-            { from: "goal", to: "explore" },
-            { from: "explore", to: "execute" },
-          ],
-          rendered_text: "graph TD\n  goal[目标] --> explore[探索路径]\n  explore --> execute[开始执行]",
-          graph_metadata: {},
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        }),
-        ...mockExecutionGraphs,
-      ];
-      return created;
-    },
-    listExecutionTraces: async (goalId) =>
-      goalId ? mockExecutionTraces.filter((item) => item.goalSpecId === goalId) : mockExecutionTraces,
-    listExecutionGraphs: async (goalId) =>
-      goalId ? mockExecutionGraphs.filter((item) => item.goalSpecId === goalId) : mockExecutionGraphs,
-    listStrategyFragments: async () => mockStrategyFragments,
-    listOperatorInteractions: async (candidateId) =>
-      candidateId
-        ? mockOperatorInteractions.filter((item) => item.candidateId === candidateId)
-        : mockOperatorInteractions,
-    resolveOperatorInteraction: async (interactionId, payload) => {
-      const now = new Date().toISOString();
-      mockOperatorInteractions = mockOperatorInteractions.map((item) =>
-        item.id === interactionId
-          ? {
-              ...item,
-              status: "resolved",
-              operatorResponse: {
-                action: payload.action,
-                comment: payload.comment ?? null,
-              },
-              effectSummary:
-                payload.action === "confirm" || payload.action === "retry"
-                  ? "已按操作员确认继续执行。"
-                  : "已按操作员指示停止或接管当前路径。",
-              resolvedAt: now,
-              resolvedBy: payload.operator ?? "desktop-user",
-              updatedAt: now,
-            }
-          : item,
-      );
-      const updated = mockOperatorInteractions.find((item) => item.id === interactionId);
-      if (!updated) {
-        throw new Error(`Unknown interaction ${interactionId}`);
-      }
-      if (updated.approvalId) {
-        mockApprovals = mockApprovals.map((item) =>
-          item.id === updated.approvalId
-            ? {
-                ...item,
-                status: payload.action === "confirm" || payload.action === "retry" ? "approved" : "rejected",
-                reviewedAt: now,
-                updatedAt: now,
-              }
-            : item,
-        );
-      }
-      return updated;
-    },
-    listCandidateMemories: async () => Array.from(mockCandidateMemories.values()),
-    getCandidateMemory: async (candidateId) => ensureMockCandidateMemory(candidateId),
-    updateCandidateMemory: async (candidateId, payload) => {
-      const current = ensureMockCandidateMemory(candidateId);
-      const updated = {
-        ...current,
-        ...payload,
-        updatedAt: new Date().toISOString(),
-      };
-      mockCandidateMemories.set(candidateId, updated);
-      return updated;
-    },
-    compactCandidateMemory: async (candidateId, reason) => {
-      const current = ensureMockCandidateMemory(candidateId);
-      const updated = touchCompactMetadata(current, reason);
-      mockCandidateMemories.set(candidateId, updated);
-      return updated;
-    },
-    listJobMemories: async () => Array.from(mockJobMemories.values()),
-    getJobMemory: async (jdId) => {
-      const existing = mockJobMemories.get(jdId);
-      if (existing) {
-        return existing;
-      }
-      const created = buildJobMemory(jdId);
-      mockJobMemories.set(jdId, created);
-      return created;
-    },
-    updateJobMemory: async (jdId, payload) => {
-      const current = mockJobMemories.get(jdId) ?? buildJobMemory(jdId);
-      const updated = {
-        ...current,
-        ...payload,
-        updatedAt: new Date().toISOString(),
-      };
-      mockJobMemories.set(jdId, updated);
-      return updated;
-    },
-    compactJobMemory: async (jdId, reason) => {
-      const current = mockJobMemories.get(jdId) ?? buildJobMemory(jdId);
-      const updated = touchCompactMetadata(current, reason);
-      mockJobMemories.set(jdId, updated);
-      return updated;
-    },
-    getAgentGlobalMemory: async () => ({ ...mockGlobalMemory }),
-    updateAgentGlobalMemory: async (payload) => {
-      mockGlobalMemory = {
-        ...mockGlobalMemory,
-        ...payload,
-        updatedAt: new Date().toISOString(),
-      };
-      return { ...mockGlobalMemory };
-    },
-    compactAgentGlobalMemory: async (reason) => {
-      mockGlobalMemory = touchCompactMetadata(mockGlobalMemory, reason);
-      return { ...mockGlobalMemory };
-    },
-    listCandidateThreads: async () =>
-      baseSnapshot.candidates.map((candidate) => ({
-        ...(mockThreads.get(candidate.id) ?? normalizeCandidateThread({ candidate })),
-        runtimeApprovals: runtimeApprovalsForCandidate(candidate.id),
-      })),
-    getCandidateThread: async (candidateId) => {
-      const thread = ensureMockThread(candidateId);
-      return { ...thread, runtimeApprovals: runtimeApprovalsForCandidate(candidateId) };
-    },
-    createCandidateThreadEntry: async (candidateId, payload) => {
-      const timestamp = new Date().toISOString();
-      const entry = normalizeConversationEntry({
-        id: `msg-${candidateId}-${Date.now()}`,
-        direction: payload.direction,
-        content: payload.content,
-        message_type: payload.messageType ?? "text",
-        platform: payload.platform ?? "site",
-        metadata: {},
-        timestamp,
-      });
-      const thread = ensureMockThread(candidateId);
-      const updatedThread = {
-        ...thread,
-        communicationLogs: [...thread.communicationLogs, entry],
-        recentMessages: [
-          ...thread.recentMessages,
-          { direction: entry.direction, content: entry.content, timestamp: entry.timestamp, message_type: entry.messageType },
-        ].slice(-20),
-      };
-      mockThreads.set(candidateId, updatedThread);
-      return entry;
-    },
-    transitionCandidateState: async (candidateId, payload) => {
-      const thread = ensureMockThread(candidateId);
-      const timestamp = new Date().toISOString();
-      const nextState = {
-        ...thread.stateSnapshot,
-        currentStageKey: payload.stageKey ?? payload.toStatus,
-        currentStageLabel: payload.stageLabel ?? (payload.stageKey ?? payload.toStatus),
-        currentPhaseKey: payload.phaseKey ?? thread.stateSnapshot.currentPhaseKey,
-        currentPhaseLabel: payload.phaseLabel ?? thread.stateSnapshot.currentPhaseLabel,
-        latestNote: payload.note ?? thread.stateSnapshot.latestNote,
-        latestTransitionAt: timestamp,
-        latestTransitionSource: payload.source ?? "operator",
-        contactChannels: payload.contactChannels ?? thread.stateSnapshot.contactChannels,
-        contactAcquired: payload.contactChannels ? payload.contactChannels.length > 0 : thread.stateSnapshot.contactAcquired,
-        contactStatus: payload.contactChannels ? (payload.contactChannels.length > 0 ? "acquired" : "missing") : thread.stateSnapshot.contactStatus,
-        nextRecommendedStages: [],
-      };
-      const event = normalizeCandidateStageEvent({
-        id: `evt-${candidateId}-${Date.now()}`,
-        candidate_id: candidateId,
-        event_type: "stage_transition",
-        from_status: thread.candidate.status,
-        to_status: payload.toStatus,
-        phase_key: payload.phaseKey,
-        phase_label: payload.phaseLabel,
-        stage_key: payload.stageKey ?? payload.toStatus,
-        stage_label: payload.stageLabel ?? payload.toStatus,
-        actor: payload.actor ?? "desktop-user",
-        source: payload.source ?? "operator",
-        note: payload.note,
-        payload: payload.metadata ?? {},
-        occurred_at: timestamp,
-        created_at: timestamp,
-        updated_at: timestamp,
-      });
-      const updatedThread = {
-        ...thread,
-        candidate: { ...thread.candidate, status: payload.toStatus, workflowNode: payload.stageKey ?? payload.toStatus },
-        stateSnapshot: nextState,
-        stageEvents: [...thread.stageEvents, event],
-      };
-      mockThreads.set(candidateId, updatedThread);
-      return updatedThread;
-    },
-    createCandidateAssessment: async (candidateId, payload) => {
-      const thread = ensureMockThread(candidateId);
-      const assessment = normalizeCandidateAssessment({
-        id: `assessment-${candidateId}-${Date.now()}`,
-        candidate_id: candidateId,
-        assessment_type: payload.assessmentType,
-        stage_key: payload.stageKey,
-        status: payload.status ?? "completed",
-        decision: payload.decision,
-        score: payload.score,
-        summary: payload.summary,
-        evidence_refs: payload.evidenceRefs ?? [],
-        metadata: payload.metadata ?? {},
-        created_by: payload.createdBy ?? "desktop-user",
-        reviewed_by: payload.reviewedBy,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      });
-      const scorecard = normalizeCandidateScorecard({
-        id: `scorecard-${candidateId}-${Date.now()}`,
-        candidate_id: candidateId,
-        stage_key: payload.stageKey,
-        source: payload.assessmentType,
-        rubric_version: "recruit-scorecard-v1",
-        score_total: payload.score,
-        verdict: payload.decision,
-        summary: payload.summary,
-        dimension_scores: {},
-        evidence_refs: payload.evidenceRefs ?? [],
-        scorecard_metadata: { assessment_type: payload.assessmentType },
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      });
-      const reviewDecision =
-        payload.assessmentType === "manual" || payload.decision
-          ? normalizeCandidateReviewDecision({
-              id: `review-${candidateId}-${Date.now()}`,
-              candidate_id: candidateId,
-              stage_key: payload.stageKey,
-              decision: payload.decision ?? "review",
-              rationale: payload.summary,
-              decision_source: payload.assessmentType,
-              decided_by: payload.createdBy ?? "desktop-user",
-              scorecard_id: scorecard.id,
-              review_metadata: {},
-              decided_at: new Date().toISOString(),
-              created_at: new Date().toISOString(),
-              updated_at: new Date().toISOString(),
-            })
-          : null;
-      mockThreads.set(candidateId, {
-        ...thread,
-        stateSnapshot: {
-          ...thread.stateSnapshot,
-          aiAssessmentStatus: payload.assessmentType === "ai" ? (payload.status ?? "completed") : thread.stateSnapshot.aiAssessmentStatus,
-          humanAssessmentStatus: payload.assessmentType === "manual" ? (payload.status ?? "completed") : thread.stateSnapshot.humanAssessmentStatus,
-          latestNote: payload.summary ?? thread.stateSnapshot.latestNote,
-        },
-        assessments: [assessment, ...thread.assessments],
-        scorecards: [scorecard, ...thread.scorecards],
-        reviewDecisions: reviewDecision ? [reviewDecision, ...thread.reviewDecisions] : thread.reviewDecisions,
-      });
-      return assessment;
-    },
-    listEvolutionArtifacts: async () => mockEvolutionArtifacts,
-    updateEvolutionArtifact: async (artifactId, payload) => {
-      mockEvolutionArtifacts = mockEvolutionArtifacts.map((artifact) =>
-        artifact.id === artifactId
-          ? {
-              ...artifact,
-              ...payload,
-              summary: payload.summary ?? artifact.summary,
-              status: payload.status ?? artifact.status,
-              reviewedBy: payload.reviewedBy ?? artifact.reviewedBy,
-              reviewedAt:
-                payload.reviewedAt ??
-                (payload.status && payload.status !== artifact.status ? new Date().toISOString() : artifact.reviewedAt),
-              appliedAt:
-                payload.appliedAt ??
-                (payload.status === "applied" && artifact.appliedAt == null ? new Date().toISOString() : artifact.appliedAt),
-              artifactBody: payload.artifactBody ?? artifact.artifactBody,
-              artifactMetadata: payload.artifactMetadata ?? artifact.artifactMetadata,
-              updatedAt: new Date().toISOString(),
-            }
-          : artifact,
-      );
-      const updated = mockEvolutionArtifacts.find((artifact) => artifact.id === artifactId);
-      if (!updated) {
-        throw new Error(`Mock evolution artifact ${artifactId} not found`);
-      }
-      return updated;
-    },
-    getSyncStatus: async () => desktopSyncStatusMock,
-    listSyncBacklog: async () => desktopSyncBacklogMock,
-    flushSyncBacklog: async () => ({
-      attempted: desktopSyncBacklogMock.length,
-      synced: 0,
-      failed: desktopSyncBacklogMock.length,
-      remoteAvailable: false,
-      message: "模拟重试未真正投递，因为内网同步未启用，积压内容仍保留在本地。",
-    }),
-    listCandidates: async () => baseSnapshot.candidates,
-    listWorkflows: async () => baseSnapshot.workflows,
-    listSkills: async () => mockSkills,
-    updateSkill: async (skillId, payload) => {
-      mockSkills = mockSkills.map((skill) =>
-        skill.id === skillId
-          ? {
-              ...skill,
-              ...payload,
-              description: payload.description ?? skill.description,
-              inputSchema: payload.inputSchema ?? skill.inputSchema,
-              outputSchema: payload.outputSchema ?? skill.outputSchema,
-              strategy: payload.strategy ?? skill.strategy,
-              executionHints: payload.executionHints ?? skill.executionHints,
-              healthCheckConfig: payload.healthCheckConfig ?? skill.healthCheckConfig,
-              skillMetadata: payload.skillMetadata ?? skill.skillMetadata,
-            }
-          : skill,
-      );
-      const updated = mockSkills.find((skill) => skill.id === skillId);
-      if (!updated) {
-        throw new Error(`Mock skill ${skillId} not found`);
-      }
-      return updated;
-    },
-    deleteSkill: async (skillId) => {
-      mockSkills = mockSkills.filter((skill) => skill.id !== skillId);
-    },
-    listApprovals: async () => mockApprovals,
-    getSettings: async () => baseSnapshot.settings,
-    getAgentSnapshot: async () => baseSnapshot.agent,
-    listAgentQueue: async () => desktopAgentQueueMock,
-    approveItem: async (id) => {
-      mockApprovals = mockApprovals.map((item) => (item.id === id ? { ...item, status: "approved", reviewedAt: new Date().toISOString() } : item));
-      mockThreads = new Map(
-        Array.from(mockThreads.entries()).map(([candidateId, thread]) => [
-          candidateId,
-          { ...thread, runtimeApprovals: runtimeApprovalsForCandidate(candidateId) },
-        ]),
-      );
-    },
-    rejectItem: async (id) => {
-      mockApprovals = mockApprovals.map((item) => (item.id === id ? { ...item, status: "rejected", reviewedAt: new Date().toISOString() } : item));
-      mockThreads = new Map(
-        Array.from(mockThreads.entries()).map(([candidateId, thread]) => [
-          candidateId,
-          { ...thread, runtimeApprovals: runtimeApprovalsForCandidate(candidateId) },
-        ]),
-      );
-    },
-    updateSettings: async (settings) => ({ ...baseSnapshot.settings, ...settings }),
-    runAgentOnce: async () => ({ processed: false, status: "mock" }),
-    queueTask: async (task) => ({
-      taskId: `mock-${task.taskType}`,
-      taskType: task.taskType,
-      priority: task.priority ?? 100,
-      queueDepth: baseSnapshot.agent.queueDepth + 1,
-    }),
-    subscribeToAgentStream: () => () => undefined,
-  };
-}
-
 export function createDesktopApiClient(baseUrl?: string): DesktopApiClient {
-  if (!baseUrl) {
-    return createMockClient();
-  }
-
-  const fetchClient = createFetchClient(baseUrl);
-  const fallbackClient = createMockClient();
-  return {
-    async getDashboardSummary() {
-      try {
-        return await fetchClient.getDashboardSummary();
-      } catch (error) {
-        if (isOfflineError(error)) {
-          return desktopMockSnapshot;
-        }
-        throw error;
-      }
-    },
-    async getRuntimeWorkspaceData() {
-      try {
-        return await fetchClient.getRuntimeWorkspaceData();
-      } catch (error) {
-        if (isOfflineError(error)) {
-          return desktopRuntimeMock;
-        }
-        throw error;
-      }
-    },
-    async getTaskCompilerContract() {
-      try {
-        return await fetchClient.getTaskCompilerContract();
-      } catch (error) {
-        if (isOfflineError(error)) {
-          return desktopRuntimeMock.compilerContract ?? normalizeRuntimeCompilerContract({});
-        }
-        throw error;
-      }
-    },
-    async listDomainPacks() {
-      return fetchClient.listDomainPacks().catch(async (error) => {
-        if (isOfflineError(error)) {
-          return desktopRuntimeMock.domainPacks;
-        }
-        throw error;
-      });
-    },
-    async listRuntimeTasks() {
-      return fetchClient.listRuntimeTasks().catch(async (error) => {
-        if (isOfflineError(error)) {
-          return desktopRuntimeMock.taskSpecs;
-        }
-        throw error;
-      });
-    },
-    async compileRuntimeTask(payload) {
-      return fetchClient.compileRuntimeTask(payload);
-    },
-    async listRuntimePlans() {
-      return fetchClient.listRuntimePlans().catch(async (error) => {
-        if (isOfflineError(error)) {
-          return desktopRuntimeMock.plans;
-        }
-        throw error;
-      });
-    },
-    async launchRuntimePlan(planId, taskSpecId, mode = "production") {
-      return fetchClient.launchRuntimePlan(planId, taskSpecId, mode).catch(async (error) => {
-        if (isOfflineError(error) || isMissingEndpointError(error)) {
-          return createMockClient().launchRuntimePlan(planId, taskSpecId, mode);
-        }
-        throw error;
-      });
-    },
-    async createTrialRun(taskSpecId, executionPlanId, notes) {
-      return fetchClient.createTrialRun(taskSpecId, executionPlanId, notes).catch(async (error) => {
-        if (isOfflineError(error)) {
-          return createMockClient().createTrialRun(taskSpecId, executionPlanId, notes);
-        }
-        throw error;
-      });
-    },
-    async listRuntimeEpisodes() {
-      return fetchClient.listRuntimeEpisodes().catch(async (error) => {
-        if (isOfflineError(error)) {
-          return desktopRuntimeMock.episodes;
-        }
-        throw error;
-      });
-    },
-    async executeTrialRun(episodeId, notes) {
-      return fetchClient.executeTrialRun(episodeId, notes).catch(async (error) => {
-        if (isOfflineError(error)) {
-          return createMockClient().executeTrialRun(episodeId, notes);
-        }
-        throw error;
-      });
-    },
-    async refreshRuntimeLearning(episodeId) {
-      return fetchClient.refreshRuntimeLearning(episodeId).catch(async (error) => {
-        if (isOfflineError(error)) {
-          return createMockClient().refreshRuntimeLearning(episodeId);
-        }
-        throw error;
-      });
-    },
-    async confirmTrialRun(episodeId, reason) {
-      return fetchClient.confirmTrialRun(episodeId, reason).catch(async (error) => {
-        if (isOfflineError(error)) {
-          return createMockClient().confirmTrialRun(episodeId, reason);
-        }
-        throw error;
-      });
-    },
-    async getRuntimeReplay(episodeId) {
-      return fetchClient.getRuntimeReplay(episodeId).catch(async (error) => {
-        if (isOfflineError(error)) {
-          return createMockClient().getRuntimeReplay(episodeId);
-        }
-        throw error;
-      });
-    },
-    async listRuntimeSnapshots() {
-      return fetchClient.listRuntimeSnapshots().catch(async (error) => {
-        if (isOfflineError(error)) {
-          return desktopRuntimeMock.snapshots;
-        }
-        throw error;
-      });
-    },
-    async listCapabilityDrivers() {
-      return fetchClient.listCapabilityDrivers().catch(async (error) => {
-        if (isOfflineError(error) || isMissingEndpointError(error)) {
-          return desktopRuntimeMock.capabilityDrivers;
-        }
-        throw error;
-      });
-    },
-    async listRuntimeEnvironmentAssessments() {
-      return fetchClient.listRuntimeEnvironmentAssessments().catch(async (error) => {
-        if (isOfflineError(error) || isMissingEndpointError(error)) {
-          return desktopRuntimeMock.environmentAssessments;
-        }
-        throw error;
-      });
-    },
-    async assessRuntimeEnvironment(payload) {
-      return fetchClient.assessRuntimeEnvironment(payload).catch(async (error) => {
-        if (isOfflineError(error) || isMissingEndpointError(error)) {
-          return createMockClient().assessRuntimeEnvironment(payload);
-        }
-        throw error;
-      });
-    },
-    async listRuntimeTemplates() {
-      return fetchClient.listRuntimeTemplates().catch(async (error) => {
-        if (isOfflineError(error)) {
-          return desktopRuntimeMock.templates;
-        }
-        throw error;
-      });
-    },
-    async listRuntimePatches() {
-      return fetchClient.listRuntimePatches().catch(async (error) => {
-        if (isOfflineError(error)) {
-          return desktopRuntimeMock.patches;
-        }
-        throw error;
-      });
-    },
-    async listRuntimeReplans() {
-      return fetchClient.listRuntimeReplans().catch(async (error) => {
-        if (isOfflineError(error) || isMissingEndpointError(error)) {
-          return desktopRuntimeMock.replans;
-        }
-        throw error;
-      });
-    },
-    async replanRuntimePlan(payload) {
-      return fetchClient.replanRuntimePlan(payload).catch(async (error) => {
-        if (isOfflineError(error) || isMissingEndpointError(error)) {
-          return createMockClient().replanRuntimePlan(payload);
-        }
-        throw error;
-      });
-    },
-    async approveRuntimePatch(id, reason) {
-      return fetchClient.approveRuntimePatch(id, reason).catch(async (error) => {
-        if (isOfflineError(error)) {
-          return createMockClient().approveRuntimePatch(id, reason);
-        }
-        throw error;
-      });
-    },
-    async rejectRuntimePatch(id, reason) {
-      return fetchClient.rejectRuntimePatch(id, reason).catch(async (error) => {
-        if (isOfflineError(error)) {
-          return fallbackClient.rejectRuntimePatch(id, reason);
-        }
-        throw error;
-      });
-    },
-    async getRecruitAgentProfile() {
-      return fetchClient.getRecruitAgentProfile().catch(async (error) => {
-        if (isOfflineError(error) || isMissingEndpointError(error)) {
-          return fallbackClient.getRecruitAgentProfile();
-        }
-        throw error;
-      });
-    },
-    async updateRecruitAgentProfile(payload) {
-      return fetchClient.updateRecruitAgentProfile(payload).catch(async (error) => {
-        if (isOfflineError(error) || isMissingEndpointError(error)) {
-          return fallbackClient.updateRecruitAgentProfile(payload);
-        }
-        throw error;
-      });
-    },
-    async listGoals() {
-      return fetchClient.listGoals().catch(async (error) => {
-        if (isOfflineError(error) || isMissingEndpointError(error)) {
-          return fallbackClient.listGoals();
-        }
-        throw error;
-      });
-    },
-    async createGoal(payload) {
-      return fetchClient.createGoal(payload).catch(async (error) => {
-        if (isOfflineError(error) || isMissingEndpointError(error)) {
-          return fallbackClient.createGoal(payload);
-        }
-        throw error;
-      });
-    },
-    async listExecutionTraces(goalId) {
-      return fetchClient.listExecutionTraces(goalId).catch(async (error) => {
-        if (isOfflineError(error) || isMissingEndpointError(error)) {
-          return fallbackClient.listExecutionTraces(goalId);
-        }
-        throw error;
-      });
-    },
-    async listExecutionGraphs(goalId) {
-      return fetchClient.listExecutionGraphs(goalId).catch(async (error) => {
-        if (isOfflineError(error) || isMissingEndpointError(error)) {
-          return fallbackClient.listExecutionGraphs(goalId);
-        }
-        throw error;
-      });
-    },
-    async listStrategyFragments() {
-      return fetchClient.listStrategyFragments().catch(async (error) => {
-        if (isOfflineError(error) || isMissingEndpointError(error)) {
-          return fallbackClient.listStrategyFragments();
-        }
-        throw error;
-      });
-    },
-    async listOperatorInteractions(candidateId) {
-      return fetchClient.listOperatorInteractions(candidateId).catch(async (error) => {
-        if (isOfflineError(error) || isMissingEndpointError(error)) {
-          return fallbackClient.listOperatorInteractions(candidateId);
-        }
-        throw error;
-      });
-    },
-    async resolveOperatorInteraction(interactionId, payload) {
-      return fetchClient.resolveOperatorInteraction(interactionId, payload).catch(async (error) => {
-        if (isOfflineError(error) || isMissingEndpointError(error)) {
-          return fallbackClient.resolveOperatorInteraction(interactionId, payload);
-        }
-        throw error;
-      });
-    },
-    async listCandidateMemories() {
-      return fetchClient.listCandidateMemories().catch(async (error) => {
-        if (isOfflineError(error) || isMissingEndpointError(error)) {
-          return fallbackClient.listCandidateMemories();
-        }
-        throw error;
-      });
-    },
-    async getCandidateMemory(candidateId) {
-      return fetchClient.getCandidateMemory(candidateId).catch(async (error) => {
-        if (isOfflineError(error) || isMissingEndpointError(error)) {
-          return fallbackClient.getCandidateMemory(candidateId);
-        }
-        throw error;
-      });
-    },
-    async updateCandidateMemory(candidateId, payload) {
-      return fetchClient.updateCandidateMemory(candidateId, payload).catch(async (error) => {
-        if (isOfflineError(error) || isMissingEndpointError(error)) {
-          return fallbackClient.updateCandidateMemory(candidateId, payload);
-        }
-        throw error;
-      });
-    },
-    async compactCandidateMemory(candidateId, reason, force) {
-      return fetchClient.compactCandidateMemory(candidateId, reason, force).catch(async (error) => {
-        if (isOfflineError(error) || isMissingEndpointError(error)) {
-          return fallbackClient.compactCandidateMemory(candidateId, reason, force);
-        }
-        throw error;
-      });
-    },
-    async listJobMemories() {
-      return fetchClient.listJobMemories().catch(async (error) => {
-        if (isOfflineError(error) || isMissingEndpointError(error)) {
-          return fallbackClient.listJobMemories();
-        }
-        throw error;
-      });
-    },
-    async getJobMemory(jdId) {
-      return fetchClient.getJobMemory(jdId).catch(async (error) => {
-        if (isOfflineError(error) || isMissingEndpointError(error)) {
-          return fallbackClient.getJobMemory(jdId);
-        }
-        throw error;
-      });
-    },
-    async updateJobMemory(jdId, payload) {
-      return fetchClient.updateJobMemory(jdId, payload).catch(async (error) => {
-        if (isOfflineError(error) || isMissingEndpointError(error)) {
-          return fallbackClient.updateJobMemory(jdId, payload);
-        }
-        throw error;
-      });
-    },
-    async compactJobMemory(jdId, reason, force) {
-      return fetchClient.compactJobMemory(jdId, reason, force).catch(async (error) => {
-        if (isOfflineError(error) || isMissingEndpointError(error)) {
-          return fallbackClient.compactJobMemory(jdId, reason, force);
-        }
-        throw error;
-      });
-    },
-    async getAgentGlobalMemory() {
-      return fetchClient.getAgentGlobalMemory().catch(async (error) => {
-        if (isOfflineError(error) || isMissingEndpointError(error)) {
-          return fallbackClient.getAgentGlobalMemory();
-        }
-        throw error;
-      });
-    },
-    async updateAgentGlobalMemory(payload) {
-      return fetchClient.updateAgentGlobalMemory(payload).catch(async (error) => {
-        if (isOfflineError(error) || isMissingEndpointError(error)) {
-          return fallbackClient.updateAgentGlobalMemory(payload);
-        }
-        throw error;
-      });
-    },
-    async compactAgentGlobalMemory(reason, force) {
-      return fetchClient.compactAgentGlobalMemory(reason, force).catch(async (error) => {
-        if (isOfflineError(error) || isMissingEndpointError(error)) {
-          return fallbackClient.compactAgentGlobalMemory(reason, force);
-        }
-        throw error;
-      });
-    },
-    async listCandidateThreads() {
-      return fetchClient.listCandidateThreads().catch(async (error) => {
-        if (isOfflineError(error) || isMissingEndpointError(error)) {
-          return fallbackClient.listCandidateThreads();
-        }
-        throw error;
-      });
-    },
-    async getCandidateThread(candidateId) {
-      return fetchClient.getCandidateThread(candidateId).catch(async (error) => {
-        if (isOfflineError(error) || isMissingEndpointError(error)) {
-          return fallbackClient.getCandidateThread(candidateId);
-        }
-        throw error;
-      });
-    },
-    async createCandidateThreadEntry(candidateId, payload) {
-      return fetchClient.createCandidateThreadEntry(candidateId, payload).catch(async (error) => {
-        if (isOfflineError(error) || isMissingEndpointError(error)) {
-          return fallbackClient.createCandidateThreadEntry(candidateId, payload);
-        }
-        throw error;
-      });
-    },
-    async transitionCandidateState(candidateId, payload) {
-      return fetchClient.transitionCandidateState(candidateId, payload).catch(async (error) => {
-        if (isOfflineError(error) || isMissingEndpointError(error)) {
-          return fallbackClient.transitionCandidateState(candidateId, payload);
-        }
-        throw error;
-      });
-    },
-    async createCandidateAssessment(candidateId, payload) {
-      return fetchClient.createCandidateAssessment(candidateId, payload).catch(async (error) => {
-        if (isOfflineError(error) || isMissingEndpointError(error)) {
-          return fallbackClient.createCandidateAssessment(candidateId, payload);
-        }
-        throw error;
-      });
-    },
-    async listEvolutionArtifacts() {
-      return fetchClient.listEvolutionArtifacts().catch(async (error) => {
-        if (isOfflineError(error) || isMissingEndpointError(error)) {
-          return fallbackClient.listEvolutionArtifacts();
-        }
-        throw error;
-      });
-    },
-    async updateEvolutionArtifact(artifactId, payload) {
-      return fetchClient.updateEvolutionArtifact(artifactId, payload).catch(async (error) => {
-        if (isOfflineError(error) || isMissingEndpointError(error)) {
-          return fallbackClient.updateEvolutionArtifact(artifactId, payload);
-        }
-        throw error;
-      });
-    },
-    async getSyncStatus() {
-      return fetchClient.getSyncStatus().catch(async (error) => {
-        if (isOfflineError(error)) {
-          return desktopSyncStatusMock;
-        }
-        throw error;
-      });
-    },
-    async listSyncBacklog() {
-      return fetchClient.listSyncBacklog().catch(async (error) => {
-        if (isOfflineError(error)) {
-          return desktopSyncBacklogMock;
-        }
-        throw error;
-      });
-    },
-    async flushSyncBacklog() {
-      return fetchClient.flushSyncBacklog().catch(async (error) => {
-        if (isOfflineError(error)) {
-          return createMockClient().flushSyncBacklog();
-        }
-        throw error;
-      });
-    },
-    async listCandidates() {
-      return fetchClient.listCandidates().catch(async (error) => {
-        if (isOfflineError(error)) {
-          return desktopMockSnapshot.candidates;
-        }
-        throw error;
-      });
-    },
-    async listWorkflows() {
-      return fetchClient.listWorkflows().catch(async (error) => {
-        if (isOfflineError(error)) {
-          return desktopMockSnapshot.workflows;
-        }
-        throw error;
-      });
-    },
-    async listSkills() {
-      return fetchClient.listSkills().catch(async (error) => {
-        if (isOfflineError(error) || isMissingEndpointError(error)) {
-          return fallbackClient.listSkills();
-        }
-        throw error;
-      });
-    },
-    async updateSkill(skillId, payload) {
-      return fetchClient.updateSkill(skillId, payload).catch(async (error) => {
-        if (isOfflineError(error) || isMissingEndpointError(error)) {
-          return fallbackClient.updateSkill(skillId, payload);
-        }
-        throw error;
-      });
-    },
-    async deleteSkill(skillId) {
-      return fetchClient.deleteSkill(skillId).catch(async (error) => {
-        if (isOfflineError(error) || isMissingEndpointError(error)) {
-          return fallbackClient.deleteSkill(skillId);
-        }
-        throw error;
-      });
-    },
-    async listApprovals() {
-      return fetchClient.listApprovals().catch(async (error) => {
-        if (isOfflineError(error) || isMissingEndpointError(error)) {
-          return fallbackClient.listApprovals();
-        }
-        throw error;
-      });
-    },
-    async getSettings() {
-      return fetchClient.getSettings().catch(async (error) => {
-        if (isOfflineError(error)) {
-          return desktopMockSnapshot.settings;
-        }
-        throw error;
-      });
-    },
-    async getAgentSnapshot() {
-      return fetchClient.getAgentSnapshot().catch(async (error) => {
-        if (isOfflineError(error)) {
-          return desktopMockSnapshot.agent;
-        }
-        throw error;
-      });
-    },
-    async listAgentQueue() {
-      return fetchClient.listAgentQueue().catch(async (error) => {
-        if (isOfflineError(error) || isMissingEndpointError(error)) {
-          return desktopAgentQueueMock;
-        }
-        throw error;
-      });
-    },
-    async approveItem(id) {
-      try {
-        await fetchClient.approveItem(id);
-      } catch (error) {
-        if (!isOfflineError(error)) {
-          throw error;
-        }
-      }
-    },
-    async rejectItem(id, reason) {
-      try {
-        await fetchClient.rejectItem(id, reason);
-      } catch (error) {
-        if (!isOfflineError(error)) {
-          throw error;
-        }
-      }
-    },
-    async updateSettings(settings) {
-      try {
-        return await fetchClient.updateSettings(settings);
-      } catch (error) {
-        if (isOfflineError(error)) {
-          return { ...desktopMockSnapshot.settings, ...settings };
-        }
-        throw error;
-      }
-    },
-    async runAgentOnce() {
-      try {
-        return await fetchClient.runAgentOnce();
-      } catch (error) {
-        if (isOfflineError(error)) {
-          return { processed: false, status: "mock-offline" };
-        }
-        throw error;
-      }
-    },
-    async queueTask(task) {
-      try {
-        return await fetchClient.queueTask(task);
-      } catch (error) {
-        if (isOfflineError(error)) {
-          return {
-            taskId: `mock-${task.taskType}`,
-            taskType: task.taskType,
-            priority: task.priority ?? 100,
-            queueDepth: desktopMockSnapshot.agent.queueDepth + 1,
-          };
-        }
-        throw error;
-      }
-    },
-    subscribeToAgentStream(onEvent) {
-      try {
-        return fetchClient.subscribeToAgentStream(onEvent);
-      } catch {
-        return () => undefined;
-      }
-    },
-  };
+  return createFetchClient(baseUrl ?? "http://127.0.0.1:8741");
 }
 
 const runtimeBaseUrl = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "http://127.0.0.1:8741";
@@ -3747,8 +2432,8 @@ const runtimeBaseUrl = (import.meta.env.VITE_API_BASE_URL as string | undefined)
 export const apiClient = Object.assign(createDesktopApiClient(runtimeBaseUrl), {
   describe(): ApiDescription {
     return {
-      baseUrl: runtimeBaseUrl || "mock://desktop",
-      transport: runtimeBaseUrl ? "http" : "mock",
+      baseUrl: runtimeBaseUrl,
+      transport: "http",
     };
   },
 });

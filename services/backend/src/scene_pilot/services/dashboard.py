@@ -33,7 +33,7 @@ def _sync_setting(settings: AppSettings, key: str, default: Any = None) -> Any:
 
 def _runtime_scene_account(settings: AppSettings) -> str:
     provider_config = settings.provider_config or {}
-    return str(provider_config.get("site_account") or provider_config.get("boss_account") or "本机场景 01")
+    return str(provider_config.get("site_account") or "本机场景 01")
 
 
 def _workflow_nodes_for_dashboard(config: dict[str, Any]) -> list[dict[str, Any]]:

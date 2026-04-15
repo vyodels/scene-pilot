@@ -64,15 +64,15 @@ class ToolRegistryTests(unittest.TestCase):
         self.assertEqual(result.output["status"], "pending_approval")
         self.assertTrue(registry.tools["request_system_command"].metadata["requires_approval"])
 
-    def test_boss_discover_candidates_tool_message_is_compacted(self) -> None:
+    def test_candidate_like_tool_message_is_compacted(self) -> None:
         result = ToolExecutionResult(
-            tool_name="boss_discover_candidates",
+            tool_name="browser_snapshot",
             output=[
                 {
                     "candidate_id": "cand-1",
                     "platform_candidate_id": "cand-1",
                     "name": "王利霖",
-                    "platform": "boss",
+                    "platform": "site",
                     "status": "discovered",
                     "contact_info": {
                         "summary": "20-30K | 王利霖 | 刚刚活跃 | 北京 售前技术支持",
@@ -98,9 +98,9 @@ class ToolRegistryTests(unittest.TestCase):
         self.assertNotIn("A" * 1000, message)
         self.assertNotIn("B" * 1000, message)
 
-    def test_browser_capture_scene_tool_message_omits_large_raw_lists(self) -> None:
+    def test_browser_snapshot_tool_message_omits_large_raw_lists(self) -> None:
         result = ToolExecutionResult(
-            tool_name="browser_capture_scene",
+            tool_name="browser_snapshot",
             output={
                 "source": "browser",
                 "environment_key": "recruiting:boss_recommend_candidates",
@@ -120,7 +120,7 @@ class ToolRegistryTests(unittest.TestCase):
 
         self.assertIn('"observed_entity_count": 10', message)
         self.assertIn('"affordance_count": 8', message)
-        self.assertIn('"candidate_names": [', message)
+        self.assertIn('"candidate_cards_count": 5', message)
         self.assertNotIn('"candidate_cards"', message)
         self.assertNotIn("X" * 1000, message)
         self.assertNotIn("Y" * 1000, message)
