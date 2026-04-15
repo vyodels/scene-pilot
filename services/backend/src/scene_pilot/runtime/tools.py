@@ -298,9 +298,12 @@ class ToolRegistry:
             return candidates
 
         preferred = {str(item).strip() for item in preferred_tool_names if str(item).strip()}
-        selected = [
+        prioritized = [
             tool
             for tool in candidates
-            if tool.name in preferred or tool.metadata.get("terminal_result_submission")
+            if tool.name in preferred
         ]
-        return selected or candidates
+        if not prioritized:
+            return candidates
+        remaining = [tool for tool in candidates if tool.name not in preferred]
+        return [*prioritized, *remaining]

@@ -44,6 +44,7 @@ def _to_desktop_settings(settings: AppSettings) -> SettingsSnapshotRead:
                     "temperature": 0.2,
                     "baseUrl": settings.provider_config.get("openai_base_url", "https://api.openai.com/v1"),
                     "apiKey": settings.provider_config.get("openai_api_key"),
+                    "timeoutSeconds": int(settings.provider_config.get("openai_timeout_seconds", 180) or 180),
                 },
                 {
                     "kind": "anthropic",
@@ -53,6 +54,7 @@ def _to_desktop_settings(settings: AppSettings) -> SettingsSnapshotRead:
                     "temperature": 0.2,
                     "baseUrl": settings.provider_config.get("anthropic_base_url", "https://api.anthropic.com"),
                     "apiKey": settings.provider_config.get("anthropic_api_key"),
+                    "timeoutSeconds": int(settings.provider_config.get("anthropic_timeout_seconds", 180) or 180),
                 },
             ],
             "intranetSync": {
@@ -130,6 +132,8 @@ def update_settings(
                     provider_config["openai_base_url"] = normalized_base_url
                 provider_config["openai_api_key"] = _normalize_optional_string(provider.apiKey)
                 provider_config["openai_enabled"] = provider.enabled
+                if provider.timeoutSeconds is not None:
+                    provider_config["openai_timeout_seconds"] = max(int(provider.timeoutSeconds), 1)
             elif provider.kind == "anthropic":
                 provider_config["anthropic_model"] = provider.model
                 normalized_base_url = _normalize_optional_string(provider.baseUrl)
@@ -139,6 +143,8 @@ def update_settings(
                     provider_config["anthropic_base_url"] = normalized_base_url
                 provider_config["anthropic_api_key"] = _normalize_optional_string(provider.apiKey)
                 provider_config["anthropic_enabled"] = provider.enabled
+                if provider.timeoutSeconds is not None:
+                    provider_config["anthropic_timeout_seconds"] = max(int(provider.timeoutSeconds), 1)
     if payload.approval_source is not None:
         data["approval_source"] = payload.approval_source
     if payload.feature_flags is not None:

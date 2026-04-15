@@ -1,0 +1,110 @@
+/*
+ * Design Tokens — Desktop UI 唯一事实来源
+ * ------------------------------------------------------------
+ * 本文件是 apps/desktop/DESIGN_GUIDELINES.md 第 2 节的代码落地版。
+ * 所有组件的颜色 / 间距 / 圆角 / 字体都必须通过这里暴露的 CSS 变量引用。
+ *
+ * 约束（Codex / Claude 必读）:
+ *   1. 禁止在组件里硬编码 hex 颜色或 px 数值；如需新增，先更新本文件与规范文档。
+ *   2. 修改本文件的 PR 必须同时更新 DESIGN_GUIDELINES.md 的第 2 节。
+ *   3. 本文件只定义 token，不放组件样式；组件样式请放到对应组件目录下。
+ *   4. token 命名保持语义化（brand / text / bg / border / space / radius / shadow / font），
+ *      不要用 --blue-500 这种纯物理命名。
+ *
+ * 引入方式：在 src/styles.css 顶部 `@import "./styles/tokens.css";`。
+ */
+
+:root {
+  /* —— 品牌主色 —— */
+  --brand-primary:         #00BEBD;
+  --brand-primary-hover:   #13D0CF;
+  --brand-primary-pressed: #009E9D;
+  --brand-primary-soft:    #E6F9F9;
+
+  /* —— 文字 —— */
+  --text-primary:     #222933;
+  --text-regular:     #495266;
+  --text-secondary:   #7A8499;
+  --text-placeholder: #AAB2BF;
+  --text-inverse:     #FFFFFF;
+  --text-link:        var(--brand-primary);
+
+  /* —— 背景 —— */
+  --bg-page:         #F5F6F8;
+  --bg-card:         #FFFFFF;
+  --bg-hover:        #F2F7F8;
+  --bg-subtle:       #FAFBFC;
+  --bg-sider:        #2B2F3A;
+  --bg-sider-hover:  rgba(255, 255, 255, 0.06);
+  --bg-sider-active: #00BEBD;
+
+  /* —— 边 / 线 —— */
+  --border-line:  #EBEDF0;
+  --border-input: #D9DCE1;
+  --border-focus: #00BEBD;
+
+  /* —— 语义色 —— */
+  --success:      #00B86B;
+  --success-soft: rgba(0, 184, 107, 0.10);
+  --warning:      #FFA940;
+  --warning-soft: rgba(255, 169, 64, 0.10);
+  --danger:       #FF4D4F;
+  --danger-soft:  rgba(255, 77, 79, 0.10);
+  --info:         #4B8BF5;
+  --info-soft:    rgba(75, 139, 245, 0.10);
+
+  /* —— 间距（4 的倍数） —— */
+  --space-1:  4px;
+  --space-2:  8px;
+  --space-3:  12px;
+  --space-4:  16px;
+  --space-5:  20px;
+  --space-6:  24px;
+  --space-8:  32px;
+  --space-10: 40px;
+  --space-12: 48px;
+
+  /* —— 圆角 —— */
+  --radius-xs:   4px;
+  --radius-sm:   6px;
+  --radius-md:   8px;
+  --radius-lg:   10px;
+  --radius-full: 9999px;
+
+  /* —— 阴影（仅浮层使用） —— */
+  --shadow-pop: 0 4px 16px rgba(31, 35, 41, 0.08);
+
+  /* —— 字体 —— */
+  --font-sans: "PingFang SC", "Microsoft YaHei", "HarmonyOS Sans SC",
+               "Source Han Sans CN", system-ui, -apple-system,
+               "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+
+  /* —— 字号阶梯（见规范第 3 节） —— */
+  --font-size-xs:     12px;
+  --font-size-sm:     13px;
+  --font-size-base:   14px;
+  --font-size-md:     16px;
+  --font-size-lg:     18px;
+
+  --font-weight-regular: 400;
+  --font-weight-medium:  500;
+  --font-weight-bold:    600;
+
+  --line-height-tight: 1.4;
+  --line-height-base:  1.6;
+
+  /* —— 骨架尺寸（见规范第 5 节） —— */
+  --layout-sider-width:       72px;
+  --layout-topnav-height:     56px;
+  --layout-left-list-width:   280px;
+  --layout-right-panel-width: 320px;
+
+  /* —— 动效 —— */
+  --motion-fast:   120ms ease-out;
+  --motion-base:   150ms ease-out;
+  --motion-pop:    200ms ease-out;
+
+  /* —— 焦点环 —— */
+  --focus-ring: 0 0 0 3px rgba(0, 190, 189, 0.15);
+}

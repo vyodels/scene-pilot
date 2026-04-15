@@ -38,11 +38,21 @@ class PromptBuilder:
             data.update(values)
         return template.format_map(data)
 
-    def build_system_prompt(self, task_type: str, context: Mapping[str, Any] | None = None) -> str:
+    def build_system_prompt(
+        self,
+        task_type: str | list[str] | tuple[str, ...],
+        context: Mapping[str, Any] | None = None,
+    ) -> str:
         parts = [self.loader.load_text(path).strip() for path in self.base_prompts]
-        task_path = f"tasks/{task_type}.md"
-        if self.loader.has_prompt(task_path):
-            parts.append(self.render(self.loader.load_text(task_path), context or {}).strip())
+        task_types = [task_type] if isinstance(task_type, str) else [item for item in task_type if str(item).strip()]
+        seen_task_paths: set[str] = set()
+        for item in task_types:
+            task_path = f"tasks/{str(item).strip()}.md"
+            if task_path in seen_task_paths:
+                continue
+            seen_task_paths.add(task_path)
+            if self.loader.has_prompt(task_path):
+                parts.append(self.render(self.loader.load_text(task_path), context or {}).strip())
         return "\n\n---\n\n".join(part for part in parts if part)
 
     def build_user_prompt(
@@ -84,7 +94,13 @@ class PromptBuilder:
             if skill:
                 payload_context["skill"] = skill
             payload_context["runtime_context"] = self._managed_execution_payload_context(extra_context, execution_contract, active_step)
-            system_prompt = self.build_system_prompt(task_type, payload_context)
+            prompt_task_types: list[str] = [task_type]
+            actual_task_type = str(getattr(task, "task_type", None) or "").strip()
+            actual_adaptive_stage = str(getattr(task, "adaptive_stage", None) or "").strip()
+            for item in (actual_task_type, actual_adaptive_stage):
+                if item and item not in prompt_task_types:
+                    prompt_task_types.append(item)
+            system_prompt = self.build_system_prompt(prompt_task_types, payload_context)
             extra_sections: dict[str, Any] = {
                 "Task Brief": self._runtime_task_brief(task_payload),
                 "Execution Contract Summary": self._execution_contract_summary(execution_contract, active_step),
@@ -166,6 +182,7 @@ class PromptBuilder:
         active_step: Mapping[str, Any] | None,
     ) -> dict[str, Any]:
         steps = list(execution_contract.get("steps") or [])
+        task_payload = execution_contract.get("task_payload") if isinstance(execution_contract.get("task_payload"), Mapping) else {}
         return {
             "plan_name": execution_contract.get("plan_name"),
             "domain": execution_contract.get("domain"),
@@ -174,6 +191,8 @@ class PromptBuilder:
             "planner_posture": execution_contract.get("planner_posture"),
             "approval_policy": self._compact_approval_policy(execution_contract.get("approval_policy")),
             "output_contract": self._compact_output_contract(execution_contract.get("output_contract")),
+            "constraints": dict(task_payload.get("constraints") or {}),
+            "success_criteria": dict(task_payload.get("success_criteria") or {}),
             "recommended_capabilities": list(execution_contract.get("recommended_capabilities") or []),
             "blockers": list(execution_contract.get("blockers") or []),
             "current_step_id": execution_contract.get("current_step_id"),
@@ -232,6 +251,8 @@ class PromptBuilder:
             "domain": task_payload.get("domain"),
             "plan_name": task_payload.get("plan_name"),
             "operator_notes": task_payload.get("notes"),
+            "constraints": task_payload.get("constraints"),
+            "success_criteria": task_payload.get("success_criteria"),
             "environment_snapshot": self._compact_snapshot(snapshot),
         }
 

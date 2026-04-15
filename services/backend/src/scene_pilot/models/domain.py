@@ -237,7 +237,7 @@ class McpServer(Base, TimestampMixin):
     server_key: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     transport_kind: Mapped[str] = mapped_column(String(64), nullable=False, default="unix_socket", index=True)
-    protocol: Mapped[str] = mapped_column(String(64), nullable=False, default="json_socket_tool_call", index=True)
+    protocol: Mapped[str] = mapped_column(String(64), nullable=False, default="mcp_jsonrpc", index=True)
     endpoint: Mapped[str] = mapped_column(String(1024), nullable=False)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)
     preset_key: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)

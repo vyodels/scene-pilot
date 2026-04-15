@@ -26,8 +26,9 @@ from scene_pilot.runtime.providers import (
 
 
 class FakeHTTPResponse:
-    def __init__(self, payload: dict[str, object]) -> None:
+    def __init__(self, payload: dict[str, object], *, content_type: str = "application/json") -> None:
         self._body = json.dumps(payload).encode("utf-8")
+        self.headers = {"Content-Type": content_type}
 
     def __enter__(self) -> "FakeHTTPResponse":
         return self
@@ -37,6 +38,32 @@ class FakeHTTPResponse:
 
     def read(self) -> bytes:
         return self._body
+
+    def getheader(self, name: str, default=None):
+        return self.headers.get(name, default)
+
+
+class FakeStreamHTTPResponse:
+    def __init__(self, events: list[str]) -> None:
+        self._lines = [line.encode("utf-8") for line in events]
+        self._cursor = 0
+        self.headers = {"Content-Type": "text/event-stream"}
+
+    def __enter__(self) -> "FakeStreamHTTPResponse":
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> bool:
+        return False
+
+    def readline(self) -> bytes:
+        if self._cursor >= len(self._lines):
+            return b""
+        line = self._lines[self._cursor]
+        self._cursor += 1
+        return line
+
+    def getheader(self, name: str, default=None):
+        return self.headers.get(name, default)
 
 
 class FakeOpener:
@@ -170,10 +197,51 @@ class ProviderTests(unittest.TestCase):
         payload = json.loads(request.data.decode("utf-8"))
         self.assertEqual(payload["model"], "gpt-4.1-mini")
         self.assertEqual(payload["messages"][1]["content"], "hello")
+        self.assertTrue(payload["stream"])
+        self.assertTrue(payload["stream_options"]["include_usage"])
         self.assertEqual(payload["max_tokens"], 256)
         self.assertEqual(payload["temperature"], 0.3)
         self.assertEqual(response.content, "done")
         self.assertEqual(response.usage.total_tokens, 12)
+
+    def test_openai_streaming_transport_aggregates_content_and_tool_calls(self) -> None:
+        provider = OpenAICompatibleProvider(
+            ProviderConfig(
+                provider_name="openai_compatible",
+                model="gpt-5.4",
+                base_url="https://api.openai.com/v1",
+                api_key="test-openai-key",
+                timeout_seconds=29,
+            )
+        )
+
+        def fake_urlopen(request, timeout=None):
+            self.assertEqual(timeout, 29)
+            payload = json.loads(request.data.decode("utf-8"))
+            self.assertTrue(payload["stream"])
+            return FakeStreamHTTPResponse(
+                [
+                    "data: {\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"hello \"},\"finish_reason\":null}]}\n",
+                    "\n",
+                    "data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"browser_snapshot\",\"arguments\":\"{\\\"tab\\\":\"}}]},\"finish_reason\":null}]}\n",
+                    "\n",
+                    "data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"1}\"}}],\"content\":\"world\"},\"finish_reason\":null}]}\n",
+                    "\n",
+                    "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"tool_calls\"}],\"usage\":{\"prompt_tokens\":12,\"completion_tokens\":5,\"total_tokens\":17}}\n",
+                    "\n",
+                    "data: [DONE]\n",
+                    "\n",
+                ]
+            )
+
+        with mock.patch("scene_pilot.runtime.providers.urlopen", side_effect=fake_urlopen):
+            response = provider.generate([Message(role="user", content="inspect the active tab")])
+
+        self.assertEqual(response.content, "hello world")
+        self.assertEqual(response.finish_reason, "tool_calls")
+        self.assertEqual(response.tool_calls[0].name, "browser_snapshot")
+        self.assertEqual(response.tool_calls[0].arguments, {"tab": 1})
+        self.assertEqual(response.usage.total_tokens, 17)
 
     def test_anthropic_default_transport_posts_expected_payload(self) -> None:
         provider = AnthropicProvider(

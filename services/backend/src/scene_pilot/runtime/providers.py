@@ -132,11 +132,22 @@ class OpenAICompatibleProvider:
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
-            "Accept": "application/json",
+            "Accept": "application/json, text/event-stream",
         }
 
         def _transport(payload: dict[str, Any]) -> dict[str, Any]:
-            return _post_json(url, payload, headers=headers, timeout_seconds=self.config.resolved_timeout_seconds())
+            stream_payload = dict(payload)
+            stream_payload["stream"] = True
+            stream_options = dict(stream_payload.get("stream_options") or {})
+            stream_options.setdefault("include_usage", True)
+            stream_payload["stream_options"] = stream_options
+            return _post_json(
+                url,
+                stream_payload,
+                headers=headers,
+                timeout_seconds=self.config.resolved_timeout_seconds(),
+                stream_mode="openai_chat_completions",
+            )
 
         return _transport
 
@@ -263,12 +274,19 @@ class ProviderRegistry:
         raise ProviderError("All providers failed") from last_error
 
 
-def _post_json(url: str, payload: dict[str, Any], *, headers: dict[str, str], timeout_seconds: int) -> dict[str, Any]:
+def _post_json(
+    url: str,
+    payload: dict[str, Any],
+    *,
+    headers: dict[str, str],
+    timeout_seconds: int,
+    stream_mode: str | None = None,
+) -> dict[str, Any]:
     body = json.dumps(payload).encode("utf-8")
     request = Request(url, data=body, headers=headers, method="POST")
     try:
         with _open_url(request, url=url, timeout_seconds=timeout_seconds) as response:  # type: ignore[arg-type]
-            return _read_json_response(response)
+            return _read_provider_response(response, stream_mode=stream_mode)
     except HTTPError as exc:
         error_body = exc.read().decode("utf-8", errors="replace")
         message = error_body.strip() or exc.reason or f"HTTP {exc.code}"
@@ -309,3 +327,187 @@ def _read_json_response(response: Any) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ProviderError("Provider response must be a JSON object")
     return payload
+
+
+def _read_provider_response(response: Any, *, stream_mode: str | None = None) -> dict[str, Any]:
+    if stream_mode == "openai_chat_completions" and "text/event-stream" in _response_content_type(response):
+        return _read_openai_chat_completion_stream(response)
+    return _read_json_response(response)
+
+
+def _response_content_type(response: Any) -> str:
+    headers = getattr(response, "headers", None)
+    if headers is not None:
+        get_content_type = getattr(headers, "get_content_type", None)
+        if callable(get_content_type):
+            try:
+                return str(get_content_type() or "").strip().lower()
+            except Exception:  # pragma: no cover - defensive fallback
+                pass
+        get_header = getattr(headers, "get", None)
+        if callable(get_header):
+            value = get_header("Content-Type", "")
+            if value:
+                return str(value).strip().lower()
+
+    getheader = getattr(response, "getheader", None)
+    if callable(getheader):
+        value = getheader("Content-Type")
+        if value:
+            return str(value).strip().lower()
+    return ""
+
+
+def _read_openai_chat_completion_stream(response: Any) -> dict[str, Any]:
+    usage_payload: dict[str, Any] = {}
+    choices: dict[int, dict[str, Any]] = {}
+
+    for event_data in _iter_sse_data_events(response):
+        if event_data == "[DONE]":
+            break
+        try:
+            payload = json.loads(event_data)
+        except json.JSONDecodeError as exc:
+            raise ProviderError("Invalid JSON event in provider stream response") from exc
+        if not isinstance(payload, dict):
+            raise ProviderError("Provider stream event must be a JSON object")
+        error_payload = payload.get("error")
+        if isinstance(error_payload, dict):
+            message = error_payload.get("message") or error_payload.get("type") or "Unknown provider stream error"
+            raise ProviderError(str(message))
+        if isinstance(payload.get("usage"), dict):
+            usage_payload = dict(payload["usage"])
+        for raw_choice in list(payload.get("choices") or []):
+            if not isinstance(raw_choice, dict):
+                continue
+            choice_index = int(raw_choice.get("index", 0) or 0)
+            state = choices.setdefault(
+                choice_index,
+                {
+                    "index": choice_index,
+                    "finish_reason": "stop",
+                    "message_role": "assistant",
+                    "content_parts": [],
+                    "tool_calls": {},
+                },
+            )
+            delta = raw_choice.get("delta") or raw_choice.get("message") or {}
+            if not isinstance(delta, dict):
+                delta = {}
+            role = delta.get("role")
+            if isinstance(role, str) and role:
+                state["message_role"] = role
+            content = delta.get("content")
+            if isinstance(content, str):
+                state["content_parts"].append(content)
+            elif content is not None:
+                state["content_parts"].append(json.dumps(content, ensure_ascii=False))
+            raw_tool_calls = delta.get("tool_calls")
+            if isinstance(raw_tool_calls, list):
+                _merge_openai_stream_tool_calls(state["tool_calls"], raw_tool_calls)
+            finish_reason = raw_choice.get("finish_reason")
+            if finish_reason is not None:
+                state["finish_reason"] = str(finish_reason)
+
+    if not choices:
+        raise ProviderError("Provider stream ended without any completion choices")
+
+    aggregated_choices: list[dict[str, Any]] = []
+    for choice_index in sorted(choices):
+        state = choices[choice_index]
+        message: dict[str, Any] = {
+            "role": state["message_role"],
+            "content": "".join(state["content_parts"]),
+        }
+        tool_calls = _finalize_openai_stream_tool_calls(state["tool_calls"])
+        if tool_calls:
+            message["tool_calls"] = tool_calls
+        aggregated_choices.append(
+            {
+                "index": choice_index,
+                "finish_reason": state["finish_reason"],
+                "message": message,
+            }
+        )
+
+    return {
+        "choices": aggregated_choices,
+        "usage": usage_payload,
+    }
+
+
+def _iter_sse_data_events(response: Any) -> list[str]:
+    events: list[str] = []
+    buffer: list[str] = []
+
+    while True:
+        line = response.readline()
+        if not line:
+            break
+        if isinstance(line, bytes):
+            text = line.decode("utf-8", errors="replace")
+        else:
+            text = str(line)
+        stripped = text.strip()
+        if not stripped:
+            if buffer:
+                events.append("\n".join(buffer))
+                buffer = []
+            continue
+        if stripped.startswith(":"):
+            continue
+        if stripped.startswith("data:"):
+            buffer.append(stripped[5:].lstrip())
+
+    if buffer:
+        events.append("\n".join(buffer))
+    return events
+
+
+def _merge_openai_stream_tool_calls(target: dict[int, dict[str, Any]], raw_tool_calls: list[Any]) -> None:
+    for position, raw_tool_call in enumerate(raw_tool_calls):
+        if not isinstance(raw_tool_call, dict):
+            continue
+        tool_call_index = int(raw_tool_call.get("index", position) or 0)
+        state = target.setdefault(
+            tool_call_index,
+            {
+                "id": "",
+                "type": "function",
+                "function_name": "",
+                "arguments_parts": [],
+            },
+        )
+        tool_call_id = raw_tool_call.get("id")
+        if isinstance(tool_call_id, str) and tool_call_id:
+            state["id"] = tool_call_id
+        tool_call_type = raw_tool_call.get("type")
+        if isinstance(tool_call_type, str) and tool_call_type:
+            state["type"] = tool_call_type
+        function_payload = raw_tool_call.get("function")
+        if isinstance(function_payload, dict):
+            function_name = function_payload.get("name")
+            if isinstance(function_name, str) and function_name:
+                state["function_name"] = function_name
+            arguments = function_payload.get("arguments")
+            if isinstance(arguments, str):
+                state["arguments_parts"].append(arguments)
+            elif arguments is not None:
+                state["arguments_parts"].append(json.dumps(arguments, ensure_ascii=False))
+
+
+def _finalize_openai_stream_tool_calls(tool_call_states: dict[int, dict[str, Any]]) -> list[dict[str, Any]]:
+    payloads: list[dict[str, Any]] = []
+    for tool_call_index in sorted(tool_call_states):
+        state = tool_call_states[tool_call_index]
+        payloads.append(
+            {
+                "id": state["id"],
+                "type": state["type"],
+                "function": {
+                    "name": state["function_name"],
+                    "arguments": "".join(state["arguments_parts"]),
+                },
+            }
+        )
+    return payloads

@@ -149,7 +149,7 @@ def default_context_policy() -> dict[str, Any]:
     return {
         "version": "context-policy-v1",
         "global": {
-            "token_budget_default": 4096,
+            "token_budget_default": 1_000_000,
             "llm_rerank_enabled": False,
             "llm_rerank_top_k": 6,
             "llm_rerank_max_boost": 8,

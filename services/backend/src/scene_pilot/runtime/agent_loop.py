@@ -14,7 +14,7 @@ from .tools import ToolRegistry
 @dataclass(slots=True)
 class AgentLoopConfig:
     max_turns: int = 8
-    token_budget: int = 8_192
+    token_budget: int = 1_000_000
     preferred_provider: str | None = None
     max_tool_errors_before_replan: int = 2
 
@@ -59,20 +59,21 @@ class AgentLoop:
             trace["turn_count"] = turn + 1
             active_capability = self._current_capability(trace)
             preferred_tools = self._current_step_preferred_tools(trace)
+            step_tool_names = self._current_step_tool_names(trace)
             response = self.provider.generate(
                 messages,
                 tools=self.tools.describe(
                     capabilities=[active_capability] if active_capability else None,
                     preferred_tool_names=preferred_tools,
                 ),
-                task=self._provider_task_payload(
-                    task=task,
-                    execution_contract=execution_contract,
-                    active_capability=active_capability,
-                    preferred_tools=preferred_tools,
-                    trace=trace,
-                ),
-            )
+                    task=self._provider_task_payload(
+                        task=task,
+                        execution_contract=execution_contract,
+                        active_capability=active_capability,
+                        preferred_tools=step_tool_names,
+                        trace=trace,
+                    ),
+                )
             usage.prompt_tokens += response.usage.prompt_tokens
             usage.completion_tokens += response.usage.completion_tokens
             usage.total_tokens += response.usage.total_tokens
@@ -463,6 +464,18 @@ class AgentLoop:
                 return [str(tool_name) for tool_name in list(item.get("preferred_tools") or []) if str(tool_name).strip()]
         return []
 
+    def _current_step_tool_names(self, trace: dict[str, Any]) -> list[str]:
+        preferred = self._current_step_preferred_tools(trace)
+        capability = self._current_capability(trace)
+        if capability is None:
+            return preferred
+        merged: list[str] = []
+        for tool_name in [*preferred, *self.tools.capability_tool_names(capability)]:
+            normalized = str(tool_name).strip()
+            if normalized and normalized not in merged:
+                merged.append(normalized)
+        return merged
+
     def _executor_turn_prompt(
         self,
         trace: dict[str, Any],
@@ -482,17 +495,7 @@ class AgentLoop:
         scene_type = str(execution_contract.get("scene_type") or execution_contract.get("page_type") or "runtime_scene")
         posture = str(execution_contract.get("planner_posture") or "verify")
         capability = str(current_step.get("capability") or "").strip() if isinstance(current_step, dict) else ""
-        tool_names = [
-            str(tool_name)
-            for tool_name in list(current_step.get("preferred_tools") or [])
-            if str(tool_name).strip()
-        ] if isinstance(current_step, dict) else []
-        if capability:
-            registry_tools = self.tools.capability_tool_names(capability)
-            if tool_names:
-                tool_names = [tool_name for tool_name in tool_names if tool_name in registry_tools] or registry_tools
-            else:
-                tool_names = registry_tools
+        tool_names = self._current_step_tool_names(trace)
         parts = [
             f"Execute the active runtime plan `{plan_name}` one step at a time.",
             f"Current scene: `{scene_type}`. Planner posture: `{posture}`.",

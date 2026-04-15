@@ -82,6 +82,7 @@ def test_settings_reload_runtime_provider_config(tmp_path):
                     "openai_model": "gpt-5.4",
                     "openai_base_url": "http://127.0.0.1:8317/v1",
                     "openai_api_key": "test-openai-compatible-key",
+                    "openai_timeout_seconds": 240,
                     "intranet_base_url": "http://intranet.example/api",
                 }
             },
@@ -93,6 +94,7 @@ def test_settings_reload_runtime_provider_config(tmp_path):
         assert "openai_compatible" in container.providers.providers
         assert container.providers.providers["openai_compatible"].config.base_url == "http://127.0.0.1:8317/v1"
         assert container.providers.providers["openai_compatible"].config.api_key == "test-openai-compatible-key"
+        assert container.providers.providers["openai_compatible"].config.timeout_seconds == 240
         assert container.sync.target["base_url"] == "http://intranet.example/api"
 
     with make_client(tmp_path) as restarted_client:
@@ -103,6 +105,7 @@ def test_settings_reload_runtime_provider_config(tmp_path):
         assert "openai_compatible" in restarted_container.providers.providers
         assert restarted_container.providers.providers["openai_compatible"].config.base_url == "http://127.0.0.1:8317/v1"
         assert restarted_container.providers.providers["openai_compatible"].config.api_key == "test-openai-compatible-key"
+        assert restarted_container.providers.providers["openai_compatible"].config.timeout_seconds == 240
 
 
 def test_settings_provider_credentials_are_persisted_and_exposed(tmp_path):
@@ -119,6 +122,7 @@ def test_settings_provider_credentials_are_persisted_and_exposed(tmp_path):
                         "temperature": 0.2,
                         "baseUrl": "https://openrouter.ai/api/v1",
                         "apiKey": "sk-openrouter-example",
+                        "timeoutSeconds": 210,
                     },
                     {
                         "kind": "anthropic",
@@ -128,6 +132,7 @@ def test_settings_provider_credentials_are_persisted_and_exposed(tmp_path):
                         "temperature": 0.2,
                         "baseUrl": "https://api.anthropic.com",
                         "apiKey": "sk-ant-example",
+                        "timeoutSeconds": 260,
                     },
                 ]
             },
@@ -136,7 +141,9 @@ def test_settings_provider_credentials_are_persisted_and_exposed(tmp_path):
         payload = update_response.json()
         assert payload["providers"][0]["baseUrl"] == "https://openrouter.ai/api/v1"
         assert payload["providers"][0]["apiKey"] == "sk-openrouter-example"
+        assert payload["providers"][0]["timeoutSeconds"] == 210
         assert payload["providers"][1]["apiKey"] == "sk-ant-example"
+        assert payload["providers"][1]["timeoutSeconds"] == 260
 
     with make_client(tmp_path) as restarted_client:
         settings_response = restarted_client.get("/api/settings")
@@ -144,6 +151,7 @@ def test_settings_provider_credentials_are_persisted_and_exposed(tmp_path):
         payload = settings_response.json()
         assert payload["providers"][0]["apiKey"] == "sk-openrouter-example"
         assert payload["providers"][1]["baseUrl"] == "https://api.anthropic.com"
+        assert payload["providers"][0]["timeoutSeconds"] == 210
 
 
 def test_settings_platform_concurrency_limits_are_persisted(tmp_path):

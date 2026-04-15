@@ -117,7 +117,7 @@ export function SettingsView({
     serverKey: "",
     name: "",
     endpoint: "",
-    protocol: "json_socket_tool_call",
+    protocol: "mcp_jsonrpc",
     toolsJson: "[]",
   });
 
@@ -330,6 +330,27 @@ export function SettingsView({
                     <span style={providerHintStyle}>{copy(hint.noteEn, hint.noteZh)}</span>
                   </label>
                   <label style={{ display: "grid", gap: "6px", fontSize: "13px", color: "rgba(233,239,255,0.72)" }}>
+                    {copy("Request timeout (seconds)", "请求超时（秒）")}
+                    <input
+                      type="number"
+                      min={1}
+                      step={1}
+                      value={provider.timeoutSeconds}
+                      onChange={(event) =>
+                        updateProvider(index, {
+                          timeoutSeconds: Math.max(1, Number(event.target.value || provider.timeoutSeconds || 180)),
+                        })
+                      }
+                      style={inputStyle}
+                    />
+                    <span style={providerHintStyle}>
+                      {copy(
+                        "Long-running compile and tool-planning calls should have more headroom. Streamed providers keep the connection alive while tokens arrive.",
+                        "长耗时的编译与工具规划调用需要更大的等待预算；支持流式的 provider 会在 token 到达时持续保持连接。",
+                      )}
+                    </span>
+                  </label>
+                  <label style={{ display: "grid", gap: "6px", fontSize: "13px", color: "rgba(233,239,255,0.72)" }}>
                     {copy("API key", "API Key")}
                     <input
                       type="password"
@@ -508,6 +529,7 @@ export function SettingsView({
                 onChange={(event) => setCustomServer((current) => ({ ...current, protocol: event.target.value }))}
                 style={inputStyle}
               >
+                <option value="mcp_jsonrpc">mcp_jsonrpc</option>
                 <option value="json_socket_tool_call">json_socket_tool_call</option>
                 <option value="json_socket_browser_command">json_socket_browser_command</option>
               </select>
@@ -516,7 +538,7 @@ export function SettingsView({
               value={customServer.toolsJson}
               onChange={(event) => setCustomServer((current) => ({ ...current, toolsJson: event.target.value }))}
               style={{ ...inputStyle, minHeight: "120px", fontFamily: "monospace" }}
-              placeholder='[{"name":"browser_click","description":"...","parameters":{"type":"object"},"capabilities":["browser"]}]'
+              placeholder='[{"name":"custom_tool","description":"...","parameters":{"type":"object"},"capabilities":["browser"]}]'
             />
             {mcpError ? <div style={{ ...providerHintStyle, color: "#ffb4b4" }}>{mcpError}</div> : null}
             <div style={{ display: "flex", justifyContent: "flex-end" }}>

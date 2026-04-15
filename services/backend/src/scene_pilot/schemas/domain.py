@@ -1385,6 +1385,7 @@ class ProviderConfigRead(BaseModel):
     temperature: float = 0.2
     baseUrl: str | None = None
     apiKey: str | None = None
+    timeoutSeconds: int = 180
 
 
 class ProviderConfigUpdate(BaseModel):
@@ -1395,6 +1396,7 @@ class ProviderConfigUpdate(BaseModel):
     temperature: float = 0.2
     baseUrl: str | None = None
     apiKey: str | None = None
+    timeoutSeconds: int | None = None
 
 
 class IntranetSyncConfigRead(BaseModel):
@@ -1494,7 +1496,7 @@ class McpServerBase(BaseModel):
     server_key: str
     name: str
     transport_kind: str = "unix_socket"
-    protocol: str = "json_socket_tool_call"
+    protocol: str = "mcp_jsonrpc"
     endpoint: str
     enabled: bool = True
     preset_key: str | None = None

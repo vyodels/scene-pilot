@@ -343,6 +343,7 @@ function normalizeSettings(raw: unknown): SettingsSnapshot {
       model: String(provider.model ?? "unknown"),
       baseUrl: provider.baseUrl ? String(provider.baseUrl) : undefined,
       apiKey: provider.apiKey ? String(provider.apiKey) : provider.api_key ? String(provider.api_key) : undefined,
+      timeoutSeconds: Number(provider.timeoutSeconds ?? provider.timeout_seconds ?? 180),
       enabled: Boolean(provider.enabled ?? false),
       temperature: Number(provider.temperature ?? 0.2),
     })),
@@ -387,7 +388,7 @@ function normalizeMcpServer(raw: unknown): McpServerRecord {
     serverKey: String(record.serverKey ?? record.server_key ?? ""),
     name: String(record.name ?? ""),
     transportKind: String(record.transportKind ?? record.transport_kind ?? "unix_socket"),
-    protocol: String(record.protocol ?? "json_socket_tool_call"),
+    protocol: String(record.protocol ?? "mcp_jsonrpc"),
     endpoint: String(record.endpoint ?? ""),
     enabled: Boolean(record.enabled ?? true),
     presetKey: record.presetKey ? String(record.presetKey) : record.preset_key ? String(record.preset_key) : null,
@@ -409,7 +410,7 @@ function normalizeMcpPreset(raw: unknown): McpPresetTemplateRecord {
     name: String(record.name ?? ""),
     description: String(record.description ?? ""),
     transportKind: String(record.transportKind ?? record.transport_kind ?? "unix_socket"),
-    protocol: String(record.protocol ?? "json_socket_tool_call"),
+    protocol: String(record.protocol ?? "mcp_jsonrpc"),
     endpointExample: String(record.endpointExample ?? record.endpoint_example ?? ""),
     tools: asArray(record.tools).map((tool) => {
       const normalized = normalizeMcpTool({ ...asRecord(tool), id: "", server_id: "" });

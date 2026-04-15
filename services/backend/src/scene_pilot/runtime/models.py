@@ -190,21 +190,41 @@ def _compact_tool_output_for_model(tool_name: str, output: Any) -> Any:
                 "candidates": items,
                 "truncated": len(candidate_like) > len(items),
             }
-    if tool_name == "browser_list_tabs" and isinstance(output, list):
-        return {
-            "tab_count": len(output),
-            "tabs": [
-                {
-                    "id": item.get("id"),
-                    "title": _truncate_text(item.get("title"), 120),
-                    "url": _truncate_text(item.get("url"), 200),
-                    "active": bool(item.get("active")),
-                }
-                for item in output[:6]
-                if isinstance(item, dict)
-            ],
-            "truncated": len(output) > 6,
-        }
+    if isinstance(output, dict):
+        tabs_payload = output.get("tabs")
+        if isinstance(tabs_payload, list) and tabs_payload and all(isinstance(item, dict) for item in tabs_payload):
+            ordered_tabs = [
+                item
+                for item in sorted(
+                    tabs_payload,
+                    key=lambda item: (
+                        0 if item.get("active") else 1,
+                        0 if str(item.get("url") or "").startswith(("http://", "https://")) else 1,
+                        str(item.get("title") or ""),
+                    ),
+                )
+            ]
+            return {
+                "tab_count": len(tabs_payload),
+                "tabs": [
+                    {
+                        "id": item.get("id"),
+                        "title": _truncate_text(item.get("title"), 120),
+                        "url": _truncate_text(item.get("url"), 200),
+                        "active": bool(item.get("active")),
+                    }
+                    for item in ordered_tabs[:12]
+                ],
+                "truncated": len(ordered_tabs) > 12,
+            }
+        tab_payload = output.get("tab")
+        if isinstance(tab_payload, dict) and {"id", "url"} & set(tab_payload.keys()):
+            return {
+                "id": tab_payload.get("id"),
+                "title": _truncate_text(tab_payload.get("title"), 120),
+                "url": _truncate_text(tab_payload.get("url"), 200),
+                "active": bool(tab_payload.get("active", True)),
+            }
     if tool_name == "browser_snapshot" and isinstance(output, dict):
         observed_entities = [item for item in list(output.get("observed_entities") or []) if isinstance(item, dict)]
         affordances = [item for item in list(output.get("affordances") or []) if isinstance(item, dict)]

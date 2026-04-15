@@ -22,11 +22,11 @@ class ProviderRuntimeSettings(BaseModel):
     openai_model: str = "gpt-5.4"
     openai_base_url: str = "https://api.openai.com/v1"
     openai_api_key: str | None = None
-    openai_timeout_seconds: int = 30
+    openai_timeout_seconds: int = 180
     anthropic_model: str = "claude-sonnet-4"
     anthropic_base_url: str = "https://api.anthropic.com"
     anthropic_api_key: str | None = None
-    anthropic_timeout_seconds: int = 30
+    anthropic_timeout_seconds: int = 180
     site_account: str = Field(default="本机场景 01", validation_alias=AliasChoices("site_account", "boss_account"))
     cooldown_days: int = 30
 

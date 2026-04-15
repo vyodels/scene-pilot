@@ -681,7 +681,7 @@ def _create_mcp_registry_tables(connection: Connection) -> None:
                     server_key TEXT NOT NULL,
                     name TEXT NOT NULL,
                     transport_kind TEXT NOT NULL DEFAULT 'unix_socket',
-                    protocol TEXT NOT NULL DEFAULT 'json_socket_tool_call',
+                    protocol TEXT NOT NULL DEFAULT 'mcp_jsonrpc',
                     endpoint TEXT NOT NULL,
                     enabled INTEGER NOT NULL DEFAULT 1,
                     preset_key TEXT,

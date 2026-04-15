@@ -543,6 +543,7 @@ export interface ProviderConfig {
   model: string;
   baseUrl?: string;
   apiKey?: string;
+  timeoutSeconds: number;
   enabled: boolean;
   temperature: number;
 }

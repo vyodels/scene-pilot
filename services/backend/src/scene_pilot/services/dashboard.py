@@ -301,6 +301,7 @@ class DashboardService:
                         "enabled": True,
                         "temperature": 0.2,
                         "baseUrl": settings.provider_config.get("openai_base_url", "https://api.openai.com/v1"),
+                        "timeoutSeconds": int(settings.provider_config.get("openai_timeout_seconds", 180) or 180),
                     },
                     {
                         "kind": "anthropic",
@@ -309,6 +310,7 @@ class DashboardService:
                         "enabled": False,
                         "temperature": 0.2,
                         "baseUrl": settings.provider_config.get("anthropic_base_url", "https://api.anthropic.com"),
+                        "timeoutSeconds": int(settings.provider_config.get("anthropic_timeout_seconds", 180) or 180),
                     },
                 ],
                 "intranetSync": {

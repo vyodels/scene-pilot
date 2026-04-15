@@ -56,7 +56,7 @@ class ContextAssemblerService:
             or task.metadata.get("token_budget")
             or run_override.get("token_budget")
             or (context_policy.get("global") or {}).get("token_budget_default")
-            or 4096
+            or 1_000_000
         )
         lane_policy = dict((context_policy.get("lanes") or {}).get(lane) or {})
         default_weights = dict(lane_policy.get("default_weights") or {})

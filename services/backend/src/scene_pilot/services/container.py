@@ -17,6 +17,7 @@ from scene_pilot.runtime.tools import ToolDefinition, ToolRegistry
 from scene_pilot.scheduler.queue import SqlAlchemyQueue
 from scene_pilot.scheduler.scheduler import SerialScheduler
 from scene_pilot.services.agent import AgentControlService
+from scene_pilot.services.browser_mcp_bridge import BrowserMcpBridgeManager
 from scene_pilot.services.dashboard import DashboardService
 from scene_pilot.services.events import EventStreamService
 from scene_pilot.services.feature_flags import FeatureFlagService
@@ -145,6 +146,7 @@ class AppContainer:
         providers, runtime_provider = _build_provider_registry(settings)
         self.providers = providers
 
+        self.mcp_registry.reconcile_servers()
         tools = _build_runtime_tools(self.system_commands, self.mcp_registry)
         self.tools = tools
         self.agent_control.runtime_service_factory = lambda session: PersistedRuntimeService(
@@ -184,7 +186,9 @@ class AppContainer:
             flags=flags,
             events=events,
         )
-        mcp_registry = McpRegistryService(session_factory=session_factory)
+        browser_bridge_manager = BrowserMcpBridgeManager()
+        mcp_registry = McpRegistryService(session_factory=session_factory, bridge_manager=browser_bridge_manager)
+        mcp_registry.reconcile_servers()
         tools = _build_runtime_tools(system_commands, mcp_registry)
         agent_loop = AgentLoop(provider=runtime_provider, tools=tools, prompt_builder=PromptBuilder())
         scheduler = SerialScheduler(queue=SqlAlchemyQueue(session_factory))

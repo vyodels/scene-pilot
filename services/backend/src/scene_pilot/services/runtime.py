@@ -2329,13 +2329,13 @@ class PersistedRuntimeService:
                     "plan_name": managed.execution_plan.name,
                 },
                 max_turns=8,
-                token_budget=16_384,
+                token_budget=1_000_000,
             )
             loop = AgentLoop(
                 provider=self.providers,
                 tools=self.tools,
                 prompt_builder=self.prompt_builder,
-                config=AgentLoopConfig(max_turns=8, token_budget=16_384),
+                config=AgentLoopConfig(max_turns=8, token_budget=1_000_000),
             )
             result = loop.run(
                 runtime_task,

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import re
+import traceback
 from dataclasses import asdict, dataclass, field
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Callable
 from uuid import uuid4
@@ -23,24 +26,39 @@ from scene_pilot.repositories import (
     ApprovalRepository,
     CandidateRepository,
     CandidateSessionRepository,
+    CandidateStageEventRepository,
     CommunicationLogRepository,
     DecisionLogRepository,
     SkillRepository,
+    ResumeArtifactRepository,
     StrategyFragmentRepository,
 )
 from scene_pilot.runtime.agent_loop import AgentLoop
-from scene_pilot.runtime.models import AgentResult
+from scene_pilot.runtime.models import AgentResult, ToolExecutionResult
 from scene_pilot.runtime.result_semantics import extract_business_status
 from scene_pilot.scheduler.queue import TaskEnvelope
 from scene_pilot.scheduler.scheduler import ScheduledOutcome, SerialScheduler
+from scene_pilot.schemas import TaskCompileRequest
 from scene_pilot.services.context_assembler import ContextAssemblerService
 from scene_pilot.services.events import EventStreamService
 from scene_pilot.services.feature_flags import FeatureFlagService
 from scene_pilot.services.adaptive_runtime import resolve_adaptive_stage
+from scene_pilot.services.recruit_agent import default_candidate_state_snapshot, ensure_primary_recruit_agent_profile
 from scene_pilot.services.runtime_control import RuntimeControlService
 from scene_pilot.services.skills import SkillHealthCheckService
 from scene_pilot.services.sync import SyncService
 from scene_pilot.services.runtime import PersistedRuntimeService
+
+
+def _json_default(value: Any) -> Any:
+    isoformat = getattr(value, "isoformat", None)
+    if callable(isoformat):
+        return isoformat()
+    return str(value)
+
+
+def _json_ready(value: Any) -> Any:
+    return json.loads(json.dumps(value, ensure_ascii=False, default=_json_default))
 
 
 @dataclass(slots=True)
@@ -268,6 +286,10 @@ class AgentControlService:
                     }
                     task.metadata["context_manifest"] = context_manifest
 
+                goal_intake_result = self._run_goal_intake(task)
+                if goal_intake_result is not None:
+                    return _complete(goal_intake_result)
+
                 managed_execution = self._prepare_managed_execution(task)
 
                 if managed_execution is not None:
@@ -319,7 +341,7 @@ class AgentControlService:
                     task_type=task.task_type,
                     payload=task.payload,
                     max_turns=6,
-                    token_budget=4096,
+                    token_budget=1_000_000,
                 )
                 result = self.agent_loop.run(
                     runtime_task,
@@ -334,6 +356,389 @@ class AgentControlService:
                 raise
 
         return _run
+
+    def _run_goal_intake(self, task: TaskEnvelope) -> AgentResult | None:
+        if self._adaptive_stage_for_task(task) != "goal_intake":
+            return None
+        if self.session_factory is None or self.runtime_service_factory is None:
+            return AgentResult(
+                success=False,
+                status="blocked",
+                content="Goal intake requires a configured runtime service.",
+                metadata={"blocked_reason": "runtime_service_unavailable"},
+            )
+
+        follow_up_stage = self._goal_intake_follow_up_stage(task)
+        scene_snapshot, scene_metadata, tool_outputs = self._capture_goal_scene(task)
+
+        try:
+            with self.session_factory() as session:
+                runtime_service = self.runtime_service_factory(session)
+                compile_request = TaskCompileRequest(
+                    instruction=str(task.payload.get("goal_text") or "").strip(),
+                    title=str(task.payload.get("goal_title") or task.payload.get("title") or "").strip() or None,
+                    description=f"Adaptive goal intake for stage {follow_up_stage}.",
+                    domain_hint=str(task.payload.get("goal_kind") or "recruiting"),
+                    inputs={
+                        "goal_id": str(task.payload.get("goal_id") or "").strip() or None,
+                        "context_hints": dict(task.payload.get("context_hints") or {}),
+                        "run_preferences": dict(task.payload.get("run_preferences") or {}),
+                        "trial_budget": dict(task.payload.get("trial_budget") or {}),
+                    },
+                    constraints=self._goal_intake_constraints(task, follow_up_stage=follow_up_stage),
+                    success_criteria=self._goal_intake_success_criteria(task, follow_up_stage=follow_up_stage),
+                    approval_policy={
+                        "mode": "desktop_review",
+                        "trial_required": True,
+                        "requires_confirmation_before_production": True,
+                        "requires_environment_snapshot": True,
+                        "approval_actions": [],
+                    },
+                    output_contract=self._goal_intake_output_contract(follow_up_stage=follow_up_stage),
+                    preferred_capabilities=self._goal_intake_capabilities(follow_up_stage=follow_up_stage),
+                    preferred_domains=["recruiting", "general"],
+                    auto_plan=False,
+                    requested_by=str(task.metadata.get("requested_by") or "runtime"),
+                )
+                compiled = self._compile_goal_intake_task(
+                    runtime_service,
+                    compile_request=compile_request,
+                )
+                plan = runtime_service.compile_plan(
+                    SimpleNamespace(
+                        task_spec_id=compiled.task_spec.id,
+                        playbook_version_id=None,
+                        name=f"{compiled.task_spec.title} 试跑计划",
+                        mode="trial",
+                        status="planned",
+                        compiled_from_instruction=compile_request.instruction,
+                        environment_requirements={},
+                        checkpoints=[],
+                        runtime_metadata={
+                            "compiler": getattr(compiled, "compiler_name", None) or "goal_intake",
+                            "requested_by": compile_request.requested_by,
+                            "follow_up_stage": follow_up_stage,
+                            "goal_spec_id": str(task.metadata.get("goal_spec_id") or task.payload.get("goal_id") or "").strip() or None,
+                            "scene_capture": scene_metadata,
+                        },
+                        steps=[],
+                    )
+                )
+        except Exception as exc:
+            return AgentResult(
+                success=False,
+                status="failed",
+                content=f"Goal intake failed to compile an executable plan: {exc}",
+                tool_outputs=tool_outputs,
+                metadata={
+                    "blocked_reason": "goal_compile_failed",
+                    "follow_up_stage": follow_up_stage,
+                    "scene_capture": scene_metadata,
+                },
+            )
+
+        summary_bits = [f"已将目标编译为 {follow_up_stage} 的受管执行计划。"]
+        if scene_metadata.get("url"):
+            summary_bits.append(f"场景来自 {scene_metadata['url']}。")
+
+        return AgentResult(
+            success=True,
+            status="completed",
+            content=" ".join(summary_bits),
+            data={
+                "status": "managed_execution_ready",
+                "follow_up_stage": follow_up_stage,
+                "task_spec_id": compiled.task_spec.id,
+                "execution_plan_id": plan.id,
+                "scene_snapshot": scene_snapshot,
+                "compiler_notes": list(compiled.compiler_notes or []),
+            },
+            tool_outputs=tool_outputs,
+            metadata={
+                "task_spec_id": compiled.task_spec.id,
+                "execution_plan_id": plan.id,
+                "follow_up_stage": follow_up_stage,
+                "scene_capture": scene_metadata,
+                "executor_trace": {
+                    "plan_id": plan.id,
+                    "task_spec_id": compiled.task_spec.id,
+                    "turn_count": 0,
+                    "goal_intake": {
+                        "follow_up_stage": follow_up_stage,
+                        "scene_capture": scene_metadata,
+                        "compiler_notes": list(compiled.compiler_notes or []),
+                    },
+                },
+            },
+        )
+
+    def _compile_goal_intake_task(
+        self,
+        runtime_service: PersistedRuntimeService,
+        *,
+        compile_request: TaskCompileRequest,
+    ):
+        compiled = runtime_service.compile_task(compile_request)
+        return SimpleNamespace(
+            task_spec=compiled.task_spec,
+            compiler_notes=list(compiled.compiler_notes or []),
+            compiler_name=str((compiled.task_spec.compiled_payload or {}).get("compiler") or "").strip() or "unknown",
+        )
+
+    def _goal_intake_follow_up_stage(self, task: TaskEnvelope) -> str:
+        run_preferences = dict(task.payload.get("run_preferences") or {})
+        context_hints = dict(task.payload.get("context_hints") or {})
+        preferred = str(
+            run_preferences.get("initial_stage")
+            or context_hints.get("adaptive_stage")
+            or "exploration_trial"
+        ).strip()
+        return preferred or "exploration_trial"
+
+    def _goal_intake_capabilities(self, *, follow_up_stage: str) -> list[str]:
+        stage_to_capabilities = {
+            "exploration_trial": ["browser", "search", "document"],
+            "candidate_discovery": ["browser", "document"],
+            "candidate_probe": ["browser", "llm", "document"],
+            "candidate_outreach": ["browser", "approval", "document"],
+            "resume_collection": ["browser", "document"],
+            "candidate_scoring": ["llm", "document"],
+            "candidate_archive": ["browser", "approval", "document"],
+            "scale_execution": ["browser", "document"],
+        }
+        return list(stage_to_capabilities.get(follow_up_stage, ["browser", "document"]))
+
+    def _goal_intake_constraints(self, task: TaskEnvelope, *, follow_up_stage: str) -> dict[str, Any]:
+        return {
+            **dict(task.payload.get("constraints") or {}),
+            "follow_up_stage": follow_up_stage,
+            "read_only_browser": True,
+            "do_not_send_messages": True,
+            "do_not_mutate_source_site": True,
+            "respect_registered_mcp_only": True,
+        }
+
+    def _goal_intake_success_criteria(self, task: TaskEnvelope, *, follow_up_stage: str) -> dict[str, Any]:
+        criteria = {
+            **dict(task.payload.get("success_criteria") or {}),
+            "requires_resume_or_profile": True,
+            "requires_score": False,
+            "minimum_candidates": 1,
+        }
+        if follow_up_stage not in {"candidate_discovery", "exploration_trial"}:
+            criteria.setdefault("task_completed", True)
+        return criteria
+
+    def _goal_intake_output_contract(self, *, follow_up_stage: str) -> dict[str, Any]:
+        if follow_up_stage in {"candidate_discovery", "exploration_trial"}:
+            return {
+                "kind": "candidate_discovery",
+                "fields": ["candidates", "summary", "evidence"],
+                "minimum_candidates": 1,
+            }
+        return {"kind": "summary", "fields": ["summary", "evidence"]}
+
+    def _capture_goal_scene(
+        self,
+        task: TaskEnvelope,
+    ) -> tuple[dict[str, Any] | None, dict[str, Any], list[ToolExecutionResult]]:
+        if self.agent_loop is None:
+            return None, {}, []
+
+        tool_outputs: list[ToolExecutionResult] = []
+        active_tab = None
+        if self.agent_loop.tools.has("browser_get_active_tab"):
+            result = self.agent_loop.tools.execute("browser_get_active_tab", {})
+            tool_outputs.append(result)
+            if not result.is_error:
+                active_tab = self._extract_browser_tab(result.output)
+
+        if active_tab is None and self.agent_loop.tools.has("browser_list_tabs"):
+            result = self.agent_loop.tools.execute("browser_list_tabs", {})
+            tool_outputs.append(result)
+            if not result.is_error:
+                active_tab = self._select_browser_tab(self._extract_browser_tabs(result.output))
+
+        if active_tab is None:
+            return None, {"capture_status": "no_browser_tab"}, tool_outputs
+
+        tab_id = active_tab.get("id")
+        snapshot_payload: dict[str, Any] | None = None
+        if self.agent_loop.tools.has("browser_snapshot") and isinstance(tab_id, int):
+            result = self.agent_loop.tools.execute(
+                "browser_snapshot",
+                {
+                    "tabId": tab_id,
+                    "maxTextLength": 12000,
+                    "interactiveLimit": 40,
+                },
+            )
+            tool_outputs.append(result)
+            if not result.is_error:
+                snapshot_payload = self._extract_browser_snapshot(result.output)
+
+        scene_snapshot = self._build_scene_snapshot(active_tab, snapshot_payload)
+        return (
+            scene_snapshot,
+            {
+                "capture_status": "captured" if scene_snapshot is not None else "no_snapshot",
+                "tab_id": active_tab.get("id"),
+                "title": active_tab.get("title"),
+                "url": active_tab.get("url"),
+            },
+            tool_outputs,
+        )
+
+    def _extract_browser_tab(self, payload: Any) -> dict[str, Any] | None:
+        raw = payload.get("tab") if isinstance(payload, dict) and isinstance(payload.get("tab"), dict) else payload
+        if not isinstance(raw, dict):
+            return None
+        tab_id = raw.get("id", raw.get("tabId"))
+        try:
+            normalized_id = int(tab_id)
+        except (TypeError, ValueError):
+            normalized_id = None
+        url = str(raw.get("url") or "").strip()
+        title = str(raw.get("title") or "").strip()
+        if normalized_id is None and not url and not title:
+            return None
+        return {
+            "id": normalized_id,
+            "title": title,
+            "url": url,
+            "active": bool(raw.get("active", True)),
+        }
+
+    def _extract_browser_tabs(self, payload: Any) -> list[dict[str, Any]]:
+        raw_tabs = payload.get("tabs") if isinstance(payload, dict) else payload
+        if not isinstance(raw_tabs, list):
+            return []
+        tabs: list[dict[str, Any]] = []
+        for item in raw_tabs:
+            tab = self._extract_browser_tab(item)
+            if tab is not None:
+                tabs.append(tab)
+        return tabs
+
+    def _select_browser_tab(self, tabs: list[dict[str, Any]]) -> dict[str, Any] | None:
+        if not tabs:
+            return None
+
+        def _sort_key(item: dict[str, Any]) -> tuple[int, int, int, str]:
+            url = str(item.get("url") or "")
+            return (
+                0 if item.get("active") else 1,
+                0 if url.startswith(("http://", "https://")) else 1,
+                0 if url else 1,
+                str(item.get("title") or ""),
+            )
+
+        return sorted(tabs, key=_sort_key)[0]
+
+    def _extract_browser_snapshot(self, payload: Any) -> dict[str, Any] | None:
+        raw = payload.get("snapshot") if isinstance(payload, dict) and isinstance(payload.get("snapshot"), dict) else payload
+        return dict(raw) if isinstance(raw, dict) else None
+
+    def _build_scene_snapshot(
+        self,
+        tab: dict[str, Any],
+        snapshot_payload: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        if not tab and not snapshot_payload:
+            return None
+
+        snapshot = dict(snapshot_payload or {})
+        runtime_metadata = dict(snapshot.get("runtime_metadata") or {})
+        if tab:
+            runtime_metadata["active_tab"] = dict(tab)
+        page_text = str(snapshot.get("text") or snapshot.get("page_text") or "").strip()
+        if page_text:
+            runtime_metadata["page_text_excerpt"] = page_text[:4000]
+            runtime_metadata["page_text_length"] = len(page_text)
+
+        observed_entities = list(snapshot.get("observed_entities") or [])
+        if not observed_entities:
+            observed_entities = self._infer_snapshot_observed_entities(tab=tab, snapshot=snapshot, page_text=page_text)
+        affordances = list(snapshot.get("affordances") or [])
+        if not affordances:
+            affordances = self._snapshot_affordances_from_interactive_elements(snapshot)
+        if affordances:
+            runtime_metadata["interactive_element_count"] = len(affordances)
+        url = str(snapshot.get("url") or tab.get("url") or "").strip()
+        page_type = str(snapshot.get("page_type") or "").strip() or ("web_scene" if url else "browser_scene")
+        environment_key = str(snapshot.get("environment_key") or "").strip() or f"browser:{page_type}"
+
+        return {
+            "source": "browser",
+            "environment_key": environment_key,
+            "status": str(snapshot.get("status") or "captured"),
+            "url": url or None,
+            "title": str(snapshot.get("title") or tab.get("title") or "").strip() or None,
+            "page_type": page_type,
+            "capability_hints": list(snapshot.get("capability_hints") or ["browser", "document"]),
+            "observed_entities": observed_entities,
+            "affordances": affordances,
+            "runtime_metadata": runtime_metadata,
+        }
+
+    def _snapshot_affordances_from_interactive_elements(self, snapshot: dict[str, Any]) -> list[dict[str, Any]]:
+        affordances: list[dict[str, Any]] = []
+        for raw in list(snapshot.get("interactiveElements") or []):
+            if not isinstance(raw, dict):
+                continue
+            label = str(raw.get("text") or raw.get("label") or raw.get("name") or "").strip()
+            href = str(raw.get("href") or raw.get("target") or "").strip()
+            ref = str(raw.get("ref") or "").strip()
+            if not label and not href and not ref:
+                continue
+            action = "navigate" if href.startswith(("http://", "https://")) else "click"
+            affordances.append(
+                {
+                    "kind": str(raw.get("tag") or raw.get("type") or "element"),
+                    "label": label or href or ref,
+                    "action": action,
+                    "target": href or None,
+                    "requires_confirmation": self._snapshot_affordance_requires_confirmation(label),
+                    "signals": ["browser_snapshot"],
+                    "locator": {"ref": ref} if ref else {},
+                    "rect": dict(raw.get("rect") or {}) if isinstance(raw.get("rect"), dict) else {},
+                }
+            )
+        return affordances
+
+    def _snapshot_affordance_requires_confirmation(self, label: str) -> bool:
+        normalized = label.strip().lower()
+        if not normalized:
+            return False
+        return any(
+            token in normalized
+            for token in (
+                "发送",
+                "投递",
+                "约面试",
+                "交换",
+                "简历请求",
+                "求简历",
+                "换电话",
+                "查看微信",
+                "send",
+                "submit",
+                "upload",
+                "request",
+            )
+        )
+
+    def _infer_snapshot_observed_entities(
+        self,
+        *,
+        tab: dict[str, Any],
+        snapshot: dict[str, Any],
+        page_text: str,
+    ) -> list[dict[str, Any]]:
+        title = str(snapshot.get("title") or tab.get("title") or "").strip()
+        if not title:
+            return []
+        return [{"kind": "detail_panel", "label": title, "signals": []}]
 
     def _prepare_managed_execution(self, task: TaskEnvelope):
         task_spec_id = str(task.metadata.get("task_spec_id") or task.payload.get("task_spec_id") or "").strip()
@@ -391,7 +796,7 @@ class AgentControlService:
                     "plan_name": managed_execution.execution_plan.name,
                 },
                 max_turns=8,
-                token_budget=6_144,
+                token_budget=1_000_000,
             )
             result = self.agent_loop.run(
                 runtime_task,
@@ -713,6 +1118,16 @@ class AgentControlService:
                 candidate_session = None
                 adaptive_stage = self._adaptive_stage_for_task(task)
                 learning_stage = adaptive_stage == "strategy_distill"
+                persisted_candidate_ids = self._upsert_discovered_candidates(
+                    session,
+                    task=task,
+                    result=result,
+                    adaptive_stage=adaptive_stage,
+                )
+                if persisted_candidate_ids:
+                    result.metadata["persisted_candidate_ids"] = list(persisted_candidate_ids)
+                    if isinstance(result.data, dict):
+                        result.data.setdefault("persisted_candidate_ids", list(persisted_candidate_ids))
                 if candidate is not None:
                     candidate_session = session_repo.get_or_create(
                         candidate.id,
@@ -785,23 +1200,25 @@ class AgentControlService:
                             metadata={"task_id": task.task_id, "task_type": task.task_type},
                         )
                     elif task.task_type == "resume_collection":
-                        communication_repo.create(
-                            {
-                                "candidate_id": candidate.id,
-                                "direction": "outbound",
-                                "content": "Requested resume submission.",
-                                "message_type": "resume_request",
-                                "platform": task.platform,
-                                "timestamp": utcnow(),
-                            }
-                        )
-                        session_repo.append_recent_message(
-                            candidate_session,
-                            direction="outbound",
-                            content="Requested resume submission.",
-                            message_type="resume_request",
-                            metadata={"task_id": task.task_id, "task_type": task.task_type},
-                        )
+                        resume_request_message = self._resume_collection_outbound_message(task=task, result=result)
+                        if resume_request_message:
+                            communication_repo.create(
+                                {
+                                    "candidate_id": candidate.id,
+                                    "direction": "outbound",
+                                    "content": resume_request_message,
+                                    "message_type": "resume_request",
+                                    "platform": task.platform,
+                                    "timestamp": utcnow(),
+                                }
+                            )
+                            session_repo.append_recent_message(
+                                candidate_session,
+                                direction="outbound",
+                                content=resume_request_message,
+                                message_type="resume_request",
+                                metadata={"task_id": task.task_id, "task_type": task.task_type},
+                            )
 
                     decision_value = str(extract_business_status(result.data) or result.status or "completed")
                     if decision_value and not learning_stage:
@@ -825,18 +1242,615 @@ class AgentControlService:
                 self._update_skill_health(session, skill_context, result, task=task)
                 session.commit()
         except Exception as exc:  # pragma: no cover - defensive guard
+            result.metadata["artifact_persist_error"] = str(exc)
             self.events.publish(
                 "error",
                 "runtime",
                 "Failed to persist runtime execution artifacts.",
                 task_id=task.task_id,
                 error=str(exc),
+                traceback=traceback.format_exc(),
             )
 
     def _enqueue_sync(self, item_type: str, item_id: str, payload: dict[str, Any]) -> None:
         if self.sync_service is None or not self.sync_service.intranet_enabled:
             return
         self.sync_service.enqueue(item_type, item_id, payload)
+
+    def _upsert_discovered_candidates(
+        self,
+        session: Session,
+        *,
+        task: TaskEnvelope,
+        result: AgentResult,
+        adaptive_stage: str,
+    ) -> list[str]:
+        if not result.success or not isinstance(result.data, dict):
+            return []
+
+        payloads = self._candidate_payloads_from_result(result.data)
+        if not payloads:
+            return []
+
+        candidate_repo = CandidateRepository(session)
+        session_repo = CandidateSessionRepository(session)
+        stage_repo = CandidateStageEventRepository(session)
+        resume_repo = ResumeArtifactRepository(session)
+        persisted_ids: list[str] = []
+        goal_spec_id = str(task.metadata.get("goal_spec_id") or task.payload.get("goal_id") or "").strip() or None
+
+        for payload in payloads:
+            normalized = self._normalize_discovered_candidate_payload(
+                payload,
+                default_platform=task.platform,
+                adaptive_stage=adaptive_stage,
+                task=task,
+            )
+            existing = None
+            candidate_ref = normalized.get("candidate_id")
+            if isinstance(candidate_ref, str) and candidate_ref.strip():
+                existing = candidate_repo.resolve(candidate_ref.strip())
+            if existing is None and normalized.get("platform_candidate_id"):
+                existing = candidate_repo.by_platform_candidate_id(
+                    normalized["platform"],
+                    normalized["platform_candidate_id"],
+                )
+            if existing is None and normalized.get("name"):
+                for item in candidate_repo.list(limit=200, offset=0):
+                    if item.platform == normalized["platform"] and item.name == normalized["name"]:
+                        existing = item
+                        break
+
+            created = False
+            previous_status = existing.status if existing is not None else None
+            previous_stage = existing.current_stage_key if existing is not None else None
+            if existing is None:
+                existing = candidate_repo.create(
+                    {
+                        "name": normalized["name"],
+                        "platform": normalized["platform"],
+                        "platform_candidate_id": normalized.get("platform_candidate_id"),
+                        "status": normalized["status"],
+                        "current_stage_key": normalized["current_stage_key"],
+                        "jd_id": normalized.get("jd_id"),
+                        "contact_info": normalized["contact_info"],
+                        "state_snapshot": normalized["state_snapshot"],
+                        "resume_path": normalized.get("resume_path"),
+                        "online_resume_text": normalized.get("online_resume_text"),
+                        "ai_scores": normalized.get("ai_scores", {}),
+                        "ai_reasoning": normalized.get("ai_reasoning"),
+                    }
+                )
+                created = True
+            else:
+                merged_contact = dict(existing.contact_info or {})
+                merged_contact.update(normalized["contact_info"])
+                existing.name = normalized["name"] or existing.name
+                existing.platform = normalized["platform"] or existing.platform
+                existing.platform_candidate_id = normalized.get("platform_candidate_id") or existing.platform_candidate_id
+                existing.status = normalized["status"] or existing.status
+                existing.current_stage_key = normalized["current_stage_key"] or existing.current_stage_key
+                existing.jd_id = normalized.get("jd_id") or existing.jd_id
+                existing.contact_info = merged_contact
+                existing.state_snapshot = normalized["state_snapshot"] or existing.state_snapshot
+                existing.resume_path = normalized.get("resume_path") or existing.resume_path
+                existing.online_resume_text = normalized.get("online_resume_text") or existing.online_resume_text
+                existing.ai_scores = normalized.get("ai_scores") or existing.ai_scores
+                existing.ai_reasoning = normalized.get("ai_reasoning") or existing.ai_reasoning
+                session.flush()
+
+            candidate_session = session_repo.get_or_create(
+                existing.id,
+                defaults={
+                    "status": "active",
+                    "context_summary": normalized.get("ai_reasoning"),
+                    "facts": {},
+                    "recent_messages": [],
+                    "last_active_at": utcnow(),
+                },
+            )
+            candidate_session.context_summary = normalized.get("ai_reasoning") or candidate_session.context_summary
+            candidate_session.status = "active"
+            candidate_session.suspend_reason = None
+            candidate_session.last_active_at = utcnow()
+            candidate_session.facts = {
+                **dict(candidate_session.facts or {}),
+                "last_task_id": task.task_id,
+                "last_task_type": task.task_type,
+                "last_result_status": result.status,
+                "last_result_success": result.success,
+                "goal_spec_id": goal_spec_id,
+                "adaptive_stage": adaptive_stage,
+                "source_platform": normalized["platform"],
+            }
+            self._persist_resume_artifact(
+                session,
+                resume_repo=resume_repo,
+                candidate=existing,
+                normalized=normalized,
+                task=task,
+                adaptive_stage=adaptive_stage,
+            )
+
+            if created or previous_status != existing.status or previous_stage != existing.current_stage_key:
+                stage_repo.create(
+                    {
+                        "candidate_id": existing.id,
+                        "event_type": "stage_transition" if not created else "candidate_discovered",
+                        "from_status": previous_status,
+                        "to_status": existing.status,
+                        "phase_key": str((existing.state_snapshot or {}).get("current_phase_key") or "discovery_and_screening"),
+                        "phase_label": str((existing.state_snapshot or {}).get("current_phase_label") or "发现与初筛"),
+                        "stage_key": existing.current_stage_key or adaptive_stage,
+                        "stage_label": str((existing.state_snapshot or {}).get("current_stage_label") or existing.current_stage_key or adaptive_stage),
+                        "actor": "agent",
+                        "source": "runtime",
+                        "note": normalized.get("ai_reasoning"),
+                        "payload": {
+                            "task_id": task.task_id,
+                            "task_type": task.task_type,
+                            "goal_spec_id": goal_spec_id,
+                            "source_scene": normalized["state_snapshot"].get("snapshot_metadata", {}).get("source_scene"),
+                        },
+                        "occurred_at": utcnow(),
+                    }
+                )
+
+            if existing.id not in persisted_ids:
+                persisted_ids.append(existing.id)
+
+        session.commit()
+        return persisted_ids
+
+    def _persist_resume_artifact(
+        self,
+        session: Session,
+        *,
+        resume_repo: ResumeArtifactRepository,
+        candidate,
+        normalized: dict[str, Any],
+        task: TaskEnvelope,
+        adaptive_stage: str,
+    ) -> None:
+        resume_text = str(normalized.get("online_resume_text") or "").strip()
+        source_resume_path = str(normalized.get("resume_path") or "").strip()
+        evidence = dict(normalized.get("profile_or_resume_evidence") or {})
+        evidence_excerpt = str(evidence.get("text_excerpt") or evidence.get("summary") or "").strip()
+        attachment_name = str(evidence.get("attachment_name") or "").strip() or None
+        synthesized_resume_text = resume_text
+        if not synthesized_resume_text and evidence_excerpt:
+            summary = str((normalized.get("contact_info") or {}).get("summary") or normalized.get("ai_reasoning") or "").strip()
+            synthesized_resume_text = "\n\n".join(part for part in [summary, evidence_excerpt] if part).strip()
+        if not synthesized_resume_text and not source_resume_path:
+            return
+
+        local_resume_path: str | None = None
+        file_name: str | None = None
+        if synthesized_resume_text:
+            artifacts_dir = self.settings.resolved_data_dir() / "resume_artifacts"
+            artifacts_dir.mkdir(parents=True, exist_ok=True)
+            file_name = attachment_name or f"{candidate.id}_{self._resume_file_stem(candidate.name)}_resume.txt"
+            if not file_name.lower().endswith(".txt"):
+                file_name = f"{Path(file_name).stem or self._resume_file_stem(candidate.name)}.txt"
+            artifact_path = artifacts_dir / file_name
+            artifact_path.write_text(
+                self._render_resume_artifact_text(candidate_name=candidate.name, normalized=normalized),
+                encoding="utf-8",
+            )
+            local_resume_path = str(artifact_path.resolve())
+        elif source_resume_path:
+            file_name = Path(source_resume_path).name or None
+            local_resume_path = source_resume_path
+
+        existing_artifacts = resume_repo.by_candidate(candidate.id, limit=20, offset=0)
+        for existing in existing_artifacts:
+            existing_path = str(existing.file_path or "").strip()
+            existing_text = str(existing.extracted_text or "").strip()
+            if local_resume_path and existing_path == local_resume_path:
+                if not candidate.resume_path:
+                    candidate.resume_path = local_resume_path
+                    session.flush()
+                return
+            if synthesized_resume_text and existing_text == synthesized_resume_text:
+                if local_resume_path and not candidate.resume_path:
+                    candidate.resume_path = local_resume_path
+                    session.flush()
+                return
+
+        if local_resume_path:
+            candidate.resume_path = local_resume_path
+        elif source_resume_path and not candidate.resume_path:
+            candidate.resume_path = source_resume_path
+        session.flush()
+
+        resume_repo.create(
+            {
+                "candidate_id": candidate.id,
+                "source": normalized.get("platform") or candidate.platform or task.platform,
+                "artifact_type": "resume",
+                "file_name": file_name,
+                "file_path": local_resume_path or source_resume_path or None,
+                "extracted_text": synthesized_resume_text or None,
+                "contact_snapshot": dict(normalized.get("contact_info") or {}),
+                "artifact_metadata": {
+                    "created_by": "agent_runtime",
+                    "source_task_id": task.task_id,
+                    "source_task_type": task.task_type,
+                    "adaptive_stage": adaptive_stage,
+                    "platform_candidate_id": normalized.get("platform_candidate_id"),
+                    "source_resume_path": source_resume_path or None,
+                    "attachment_name": attachment_name,
+                },
+                "captured_at": utcnow(),
+            }
+        )
+
+    def _resume_file_stem(self, candidate_name: str) -> str:
+        base = re.sub(r"[^0-9A-Za-z]+", "_", candidate_name.strip()).strip("_")
+        return base or "candidate"
+
+    def _render_resume_artifact_text(self, *, candidate_name: str, normalized: dict[str, Any]) -> str:
+        lines = [
+            f"Candidate: {candidate_name}",
+            f"Platform: {normalized.get('platform') or 'site'}",
+        ]
+        platform_candidate_id = str(normalized.get("platform_candidate_id") or "").strip()
+        if platform_candidate_id:
+            lines.append(f"PlatformCandidateId: {platform_candidate_id}")
+        title = str((normalized.get("contact_info") or {}).get("title") or "").strip()
+        if title:
+            lines.append(f"TargetRole: {title}")
+        location = str((normalized.get("contact_info") or {}).get("location") or "").strip()
+        if location:
+            lines.append(f"Location: {location}")
+        summary = str((normalized.get("contact_info") or {}).get("summary") or "").strip()
+        if summary:
+            lines.extend(["", "Summary", summary])
+        evidence = dict(normalized.get("profile_or_resume_evidence") or {})
+        attachment_name = str(evidence.get("attachment_name") or "").strip()
+        if attachment_name:
+            lines.append(f"AttachmentName: {attachment_name}")
+        resume_text = str(normalized.get("online_resume_text") or "").strip()
+        if resume_text:
+            lines.extend(["", "ResumeText", resume_text])
+        evidence_excerpt = str(evidence.get("text_excerpt") or evidence.get("summary") or "").strip()
+        if evidence_excerpt:
+            lines.extend(["", "VisibleResumeEvidence", evidence_excerpt])
+        return "\n".join(lines).strip() + "\n"
+
+    def _candidate_payloads_from_result(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
+        candidates: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        top_level_summary = str(payload.get("summary") or "").strip()
+        top_level_evidence = payload.get("evidence")
+
+        def _append(item: Any) -> None:
+            if not isinstance(item, dict):
+                return
+            candidate_payload = dict(item)
+            if (
+                top_level_summary
+                and not str(candidate_payload.get("summary") or "").strip()
+                and not self._candidate_has_structured_details(candidate_payload)
+            ):
+                candidate_payload["summary"] = top_level_summary
+            if not candidate_payload.get("profile_or_resume_evidence"):
+                evidence_source: Any = top_level_evidence
+                if isinstance(candidate_payload.get("resume"), dict):
+                    evidence_source = {
+                        **(dict(top_level_evidence) if isinstance(top_level_evidence, dict) else {}),
+                        "resume": dict(candidate_payload.get("resume") or {}),
+                    }
+                merged_evidence = self._coerce_profile_or_resume_evidence(evidence_source)
+                if merged_evidence:
+                    candidate_payload["profile_or_resume_evidence"] = merged_evidence
+            if not candidate_payload.get("source_scene") and isinstance(top_level_evidence, dict):
+                page = top_level_evidence.get("page")
+                if isinstance(page, dict):
+                    candidate_payload["source_scene"] = dict(page)
+            if not self._looks_like_candidate_payload(candidate_payload):
+                return
+            marker = json.dumps(candidate_payload, ensure_ascii=False, sort_keys=True, default=str)
+            if marker in seen:
+                return
+            seen.add(marker)
+            candidates.append(candidate_payload)
+
+        for key in ("candidates", "candidate_cards", "profiles", "results"):
+            raw_items = payload.get(key)
+            if isinstance(raw_items, list):
+                for item in raw_items:
+                    _append(item)
+
+        for key in ("candidate", "profile"):
+            _append(payload.get(key))
+
+        has_direct_candidate_fields = any(
+            self._candidate_signal_present(payload.get(key))
+            for key in ("candidate_id", "platform_candidate_id", "name", "contact_info", "raw_scene_locator")
+        )
+        if not candidates or has_direct_candidate_fields:
+            _append(payload)
+        return candidates
+
+    def _looks_like_candidate_payload(self, payload: dict[str, Any]) -> bool:
+        candidate_signals = (
+            payload.get("name"),
+            payload.get("platform_candidate_id"),
+            payload.get("profile_or_resume_evidence"),
+            payload.get("contact_info"),
+            payload.get("raw_scene_locator"),
+        )
+        return any(self._candidate_signal_present(signal) for signal in candidate_signals)
+
+    def _candidate_signal_present(self, signal: Any) -> bool:
+        if signal is None:
+            return False
+        if isinstance(signal, str):
+            return bool(signal.strip())
+        if isinstance(signal, (list, tuple, set, dict)):
+            return bool(signal)
+        return True
+
+    def _candidate_has_structured_details(self, payload: dict[str, Any]) -> bool:
+        detail_keys = (
+            "age",
+            "experience",
+            "education",
+            "current_company",
+            "current_title",
+            "previous_company",
+            "previous_title",
+            "education_history",
+            "education_detail",
+            "job_search_reason",
+            "preferred_direction",
+            "interview_availability",
+            "location",
+            "target_position",
+            "target_role",
+            "communication_role",
+            "recent_interest",
+            "resume",
+        )
+        return any(self._candidate_signal_present(payload.get(key)) for key in detail_keys)
+
+    def _coerce_profile_or_resume_evidence(self, evidence: Any) -> dict[str, Any]:
+        if isinstance(evidence, dict):
+            page = dict(evidence.get("page") or {}) if isinstance(evidence.get("page"), dict) else {}
+            resume = dict(evidence.get("resume") or {}) if isinstance(evidence.get("resume"), dict) else dict(evidence)
+            visible_strings = [
+                str(item).strip()
+                for item in (
+                    list(resume.get("visible_strings") or [])
+                    + list(resume.get("visible_text") or [])
+                    + list(evidence.get("visible_profile_sections") or [])
+                    + list(evidence.get("verbatim_markers") or [])
+                )
+                if str(item).strip()
+            ]
+            attachment_name = str(
+                resume.get("attachment_name")
+                or resume.get("file_name")
+                or resume.get("attachment")
+                or evidence.get("visible_resume_artifact")
+                or ""
+            ).strip()
+            source_url = str(
+                page.get("url")
+                or evidence.get("source_url")
+                or evidence.get("page")
+                or ""
+            ).strip()
+            summary_parts: list[str] = []
+            if attachment_name:
+                summary_parts.append(f"附件简历：{attachment_name}")
+            if visible_strings:
+                summary_parts.append("；".join(visible_strings[:8]))
+            if source_url:
+                summary_parts.append(f"页面：{source_url}")
+            note = str(evidence.get("note") or "").strip()
+            if note:
+                summary_parts.append(note)
+            merged = {
+                "kind": "resume_visibility",
+                "summary": " | ".join(part for part in summary_parts if part).strip() or None,
+                "text_excerpt": "\n".join(visible_strings[:20]).strip() or None,
+                "attachment_name": attachment_name or None,
+                "page": page or ({"url": source_url} if source_url else None),
+            }
+            return {
+                key: value
+                for key, value in merged.items()
+                if value is not None and value != "" and value != [] and value != {}
+            }
+
+        if isinstance(evidence, list):
+            text_parts: list[str] = []
+            attachment_name: str | None = None
+            for item in evidence:
+                if not isinstance(item, dict):
+                    continue
+                visible_text = [str(value).strip() for value in list(item.get("visible_text") or []) if str(value).strip()]
+                if visible_text:
+                    text_parts.extend(visible_text[:10])
+                if attachment_name is None:
+                    candidate_attachment = str(item.get("attachment_name") or "").strip()
+                    if candidate_attachment:
+                        attachment_name = candidate_attachment
+            if not text_parts and not attachment_name:
+                return {}
+            merged = {
+                "kind": "resume_visibility",
+                "summary": f"附件简历：{attachment_name}" if attachment_name else "可见简历证据",
+                "text_excerpt": "\n".join(text_parts[:20]).strip() or None,
+                "attachment_name": attachment_name,
+            }
+            return {
+                key: value
+                for key, value in merged.items()
+                if value is not None and value != "" and value != [] and value != {}
+            }
+
+        return {}
+
+    def _normalize_discovered_candidate_payload(
+        self,
+        payload: dict[str, Any],
+        *,
+        default_platform: str,
+        adaptive_stage: str,
+        task: TaskEnvelope,
+    ) -> dict[str, Any]:
+        contact_info = dict(payload.get("contact_info") or {})
+        evidence = dict(payload.get("profile_or_resume_evidence") or {})
+        source_scene = dict(payload.get("source_scene") or {})
+        raw_locator = dict(payload.get("raw_scene_locator") or {})
+        platform = str(payload.get("platform") or default_platform or "site").strip() or "site"
+        platform_candidate_id = (
+            str(
+                payload.get("platform_candidate_id")
+                or raw_locator.get("candidate_id")
+                or raw_locator.get("id")
+                or source_scene.get("candidate_id")
+                or ""
+            ).strip()
+            or None
+        )
+        name = str(payload.get("name") or contact_info.get("name") or raw_locator.get("name") or "未命名候选人").strip()
+        title = str(
+            payload.get("title")
+            or payload.get("target_position")
+            or payload.get("target_role")
+            or payload.get("communication_role")
+            or payload.get("job_title")
+            or payload.get("current_title")
+            or contact_info.get("title")
+            or raw_locator.get("title")
+            or ""
+        ).strip()
+        location = str(
+            payload.get("location")
+            or contact_info.get("location")
+            or raw_locator.get("location")
+            or self._infer_candidate_location(payload)
+            or ""
+        ).strip()
+        summary = str(
+            payload.get("summary")
+            or contact_info.get("summary")
+            or self._compose_candidate_summary(payload)
+            or evidence.get("summary")
+            or evidence.get("text_excerpt")
+            or ""
+        ).strip()
+        online_resume_text = str(payload.get("online_resume_text") or evidence.get("text_excerpt") or "").strip() or None
+        status = str(extract_business_status(payload, fallback="discovered") or "discovered")
+        if status in {"completed", "default", "success", "ok", "done"}:
+            status = "discovered"
+        current_stage_key = str(payload.get("current_stage_key") or adaptive_stage or status).strip() or status
+        current_stage_label = str(payload.get("current_stage_label") or current_stage_key.replace("_", " ")).strip()
+        state_snapshot = default_candidate_state_snapshot(
+            status=status,
+            stage_key=current_stage_key,
+            stage_label=current_stage_label,
+        )
+        state_snapshot["latest_note"] = summary or None
+        state_snapshot["latest_transition_at"] = utcnow().isoformat()
+        state_snapshot["latest_transition_source"] = "runtime"
+        snapshot_metadata = dict(state_snapshot.get("snapshot_metadata") or {})
+        snapshot_metadata.update(
+            {
+                "source_task_id": task.task_id,
+                "source_task_type": task.task_type,
+                "source_goal_id": str(task.payload.get("goal_id") or task.metadata.get("goal_spec_id") or "").strip() or None,
+                "source_scene": source_scene,
+                "raw_scene_locator": raw_locator,
+            }
+        )
+        state_snapshot["snapshot_metadata"] = snapshot_metadata
+
+        normalized_contact = {
+            **contact_info,
+            **({"title": title} if title else {}),
+            **({"location": location} if location else {}),
+            **({"summary": summary} if summary else {}),
+        }
+
+        return {
+            "candidate_id": payload.get("candidate_id"),
+            "name": name,
+            "platform": platform,
+            "platform_candidate_id": platform_candidate_id,
+            "status": status,
+            "current_stage_key": current_stage_key,
+            "jd_id": payload.get("jd_id") or task.payload.get("jd_id"),
+            "contact_info": normalized_contact,
+            "state_snapshot": state_snapshot,
+            "resume_path": payload.get("resume_path"),
+            "online_resume_text": online_resume_text,
+            "ai_scores": dict(payload.get("ai_scores") or {}),
+            "ai_reasoning": summary or online_resume_text,
+            "profile_or_resume_evidence": evidence,
+        }
+
+    def _infer_candidate_location(self, payload: dict[str, Any]) -> str | None:
+        for value in (
+            payload.get("recent_interest"),
+            payload.get("recent_activity"),
+            payload.get("current_location"),
+        ):
+            text = str(value or "").strip()
+            if not text:
+                continue
+            if "·" in text:
+                candidate = text.split("·", 1)[0].strip()
+                if candidate:
+                    return candidate
+        return None
+
+    def _compose_candidate_summary(self, payload: dict[str, Any]) -> str | None:
+        parts: list[str] = []
+        age = str(payload.get("age") or "").strip()
+        experience = str(payload.get("experience") or "").strip()
+        education = str(payload.get("education") or "").strip()
+        headline = "，".join(part for part in (age, education, experience) if part)
+        if headline:
+            parts.append(headline)
+
+        for company_key, title_key in (
+            ("current_company", "current_title"),
+            ("previous_company", "previous_title"),
+        ):
+            company = str(payload.get(company_key) or "").strip()
+            title = str(payload.get(title_key) or "").strip()
+            if company or title:
+                parts.append(" / ".join(part for part in (company, title) if part))
+
+        for entry in list(payload.get("current_or_recent_companies") or []):
+            if not isinstance(entry, dict):
+                continue
+            company = str(entry.get("company") or "").strip()
+            title = str(entry.get("title") or "").strip()
+            period = str(entry.get("period") or "").strip()
+            text = " / ".join(part for part in (company, title, period) if part)
+            if text:
+                parts.append(text)
+
+        for key in (
+            "employment_status",
+            "current_status",
+            "job_search_reason",
+            "motivation",
+            "preferred_direction",
+            "interview_availability",
+        ):
+            value = str(payload.get(key) or "").strip()
+            if value:
+                parts.append(value)
+
+        summary = "；".join(part for part in parts if part).strip()
+        return summary or None
 
     def _missing_external_capabilities(self, task: TaskEnvelope) -> list[str]:
         if self.agent_loop is None:
@@ -1214,7 +2228,14 @@ class AgentControlService:
                 goal = GoalSpecRepository(session).get(goal_spec_id) if goal_spec_id else None
 
                 title = goal.title if goal is not None else self._humanize_task_label(self._adaptive_stage_for_task(task))
-                summary = result.content or f"{title} 当前状态为 {result.status}。"
+                goal_evaluation = None
+                if goal is not None and self._adaptive_stage_for_task(task) != "goal_intake":
+                    goal_evaluation = self._evaluate_goal_success_criteria(session, task=task, goal=goal, result=result)
+                summary = self._goal_summary_from_result(
+                    title=title,
+                    result=result,
+                    goal_evaluation=goal_evaluation,
+                )
                 raw_trace = {
                     "task_snapshot": self._task_snapshot(task),
                     "result": {
@@ -1230,6 +2251,7 @@ class AgentControlService:
                         "runtime": dict((session_context or {}).get("runtime") or {}),
                     },
                 }
+                raw_trace = _json_ready(raw_trace)
                 distilled_trace = {
                     "goal": goal.goal_text if goal is not None else str(task.payload.get("goal_text") or self._adaptive_stage_for_task(task)),
                     "attempt": {
@@ -1241,12 +2263,14 @@ class AgentControlService:
                     "blocked": result.status in {"waiting_human", "waiting_candidate", "blocked"},
                     "next_step_hint": self._next_step_hint(result.status),
                 }
+                distilled_trace = _json_ready(distilled_trace)
                 outcome = {
                     "status": result.status,
                     "success": result.success,
                     "blocked_reason": result.content if result.status in {"waiting_human", "blocked"} else None,
                     "selected_token_estimate": int((context_manifest or {}).get("selected_token_estimate") or 0),
                 }
+                outcome = _json_ready(outcome)
 
                 trace_repo = ExecutionTraceRepository(session)
                 existing_trace = trace_repo.by_run(run_id) if run_id else None
@@ -1278,6 +2302,7 @@ class AgentControlService:
                 graph_repo = ExecutionGraphProjectionRepository(session)
                 existing_graph = graph_repo.by_run(run_id) if run_id else None
                 graph_payload = self._build_graph_projection_payload(task=task, goal=goal, result=result)
+                graph_payload = _json_ready(graph_payload)
                 if existing_graph is not None:
                     graph_repo.update(existing_graph, graph_payload)
                 else:
@@ -1332,9 +2357,22 @@ class AgentControlService:
                             "goal_metadata": {
                                 **dict(goal.goal_metadata or {}),
                                 "last_result_status": result.status,
+                                "last_success_criteria_satisfied": None
+                                if goal_evaluation is None
+                                else bool(goal_evaluation.get("satisfied")),
+                                "last_missing_success_criteria": []
+                                if goal_evaluation is None
+                                else list(goal_evaluation.get("missing") or []),
+                                "last_verified_local_resume_paths": []
+                                if goal_evaluation is None
+                                else list(goal_evaluation.get("matching_resume_paths") or []),
+                                "last_required_resume_extensions": []
+                                if goal_evaluation is None
+                                else list(goal_evaluation.get("required_resume_extensions") or []),
                             },
                         },
                     )
+                session.commit()
         except Exception as exc:  # pragma: no cover - defensive guard
             self.events.publish(
                 "error",
@@ -1382,6 +2420,7 @@ class AgentControlService:
                     "outcome": {"status": "failed", "success": False},
                     "trace_metadata": {"task_id": task.task_id, "task_type": task.task_type},
                 }
+                payload = _json_ready(payload)
                 if existing is not None:
                     trace_repo.update(existing, payload)
                 else:
@@ -1396,6 +2435,7 @@ class AgentControlService:
                             "last_activity_at": utcnow(),
                         },
                     )
+                session.commit()
         except Exception:
             return
 
@@ -1504,6 +2544,165 @@ class AgentControlService:
             return "failed"
         return result.status or "active"
 
+    def _goal_summary_from_result(
+        self,
+        *,
+        title: str,
+        result: AgentResult,
+        goal_evaluation: dict[str, Any] | None,
+    ) -> str:
+        if goal_evaluation is not None and result.success and not bool(goal_evaluation.get("satisfied")):
+            missing = "、".join(
+                self._goal_requirement_label(
+                    key,
+                    required_resume_extensions=list(goal_evaluation.get("required_resume_extensions") or []),
+                )
+                for key in list(goal_evaluation.get("missing") or [])
+            )
+            detail = f"未满足 success criteria：{missing}。" if missing else "未满足 success criteria。"
+            return f"{title} 本轮执行已完成，但{detail}"
+        return result.content or f"{title} 当前状态为 {result.status}。"
+
+    def _goal_requirement_label(
+        self,
+        key: str,
+        *,
+        required_resume_extensions: list[str],
+    ) -> str:
+        if key == "minimum_candidates":
+            return "候选人数不足"
+        if key == "resume_or_profile":
+            return "缺少简历或资料证据"
+        if key == "local_resume_file":
+            return "缺少本地简历文件"
+        if key == "resume_extension":
+            if required_resume_extensions:
+                return f"缺少符合格式的本地简历文件（{', '.join(required_resume_extensions)}）"
+            return "本地简历文件格式不匹配"
+        return key
+
+    def _evaluate_goal_success_criteria(
+        self,
+        session: Session,
+        *,
+        task: TaskEnvelope,
+        goal,
+        result: AgentResult,
+    ) -> dict[str, Any]:
+        criteria = dict(goal.success_criteria or task.payload.get("success_criteria") or {})
+        required_resume_extensions = sorted(
+            {
+                f".{text.lstrip('.')}" if not text.startswith(".") else text
+                for text in (
+                    str(item).strip().lower()
+                    for item in list(criteria.get("required_resume_extensions") or [])
+                )
+                if text
+            }
+        )
+        candidate_ids = self._goal_candidate_ids_for_evaluation(task=task, result=result)
+        candidate_repo = CandidateRepository(session)
+        resume_repo = ResumeArtifactRepository(session)
+        candidate_records = [
+            item
+            for item in (
+                candidate_repo.resolve(candidate_id)
+                for candidate_id in candidate_ids
+            )
+            if item is not None
+        ]
+        local_resume_paths: list[str] = []
+        matching_resume_paths: list[str] = []
+        has_resume_or_profile = False
+
+        def _remember_local_path(raw_path: str | None) -> None:
+            text = str(raw_path or "").strip()
+            if not text:
+                return
+            if not Path(text).expanduser().exists():
+                return
+            if text not in local_resume_paths:
+                local_resume_paths.append(text)
+            suffix = Path(text).suffix.lower()
+            if required_resume_extensions and suffix in required_resume_extensions and text not in matching_resume_paths:
+                matching_resume_paths.append(text)
+
+        for candidate in candidate_records:
+            if str(candidate.resume_path or "").strip() or str(candidate.online_resume_text or "").strip():
+                has_resume_or_profile = True
+            _remember_local_path(candidate.resume_path)
+            for artifact in resume_repo.by_candidate(candidate.id, limit=50, offset=0):
+                if str(artifact.file_path or "").strip() or str(artifact.extracted_text or "").strip():
+                    has_resume_or_profile = True
+                _remember_local_path(artifact.file_path)
+
+        if not has_resume_or_profile and isinstance(result.data, dict):
+            payload_candidates = self._candidate_payloads_from_result(result.data)
+            has_resume_or_profile = any(
+                bool(str(dict(item.get("profile_or_resume_evidence") or {}).get("text_excerpt") or "").strip())
+                or bool(str(item.get("online_resume_text") or "").strip())
+                or bool(str(item.get("resume_path") or "").strip())
+                for item in payload_candidates
+                if isinstance(item, dict)
+            )
+
+        observed_candidate_count = max(
+            len(candidate_records),
+            len(self._candidate_payloads_from_result(result.data)) if isinstance(result.data, dict) else 0,
+        )
+        missing: list[str] = []
+        minimum_candidates = int(criteria.get("minimum_candidates") or 0)
+        if minimum_candidates and observed_candidate_count < minimum_candidates:
+            missing.append("minimum_candidates")
+        if bool(criteria.get("requires_resume_or_profile")) and not has_resume_or_profile:
+            missing.append("resume_or_profile")
+        if bool(criteria.get("requires_local_resume_file")) and not local_resume_paths:
+            missing.append("local_resume_file")
+        if required_resume_extensions and not matching_resume_paths:
+            missing.append("resume_extension")
+
+        return {
+            "satisfied": not missing,
+            "missing": missing,
+            "candidate_ids": candidate_ids,
+            "observed_candidate_count": observed_candidate_count,
+            "local_resume_paths": local_resume_paths,
+            "matching_resume_paths": matching_resume_paths,
+            "required_resume_extensions": required_resume_extensions,
+        }
+
+    def _goal_candidate_ids_for_evaluation(self, *, task: TaskEnvelope, result: AgentResult) -> list[str]:
+        candidate_ids: list[str] = []
+        for value in list(result.metadata.get("persisted_candidate_ids") or []):
+            text = str(value or "").strip()
+            if text and text not in candidate_ids:
+                candidate_ids.append(text)
+        task_candidate_id = str(task.candidate_id or "").strip()
+        if task_candidate_id and task_candidate_id not in candidate_ids:
+            candidate_ids.append(task_candidate_id)
+        return candidate_ids
+
+    def _resume_collection_outbound_message(self, *, task: TaskEnvelope, result: AgentResult) -> str | None:
+        platform_result = dict(result.metadata.get("platform_result") or {})
+        result_data = dict(result.data or {}) if isinstance(result.data, dict) else {}
+        action_tokens = {
+            str(platform_result.get("action") or "").strip().lower(),
+            str(result_data.get("action") or "").strip().lower(),
+            str(result_data.get("resume_action") or "").strip().lower(),
+            str(result_data.get("collection_mode") or "").strip().lower(),
+        }
+        resume_request_explicit = bool(result_data.get("resume_request_sent")) or any(
+            token in {"resume_request", "request_resume", "resume_requested"}
+            for token in action_tokens
+            if token
+        )
+        if not resume_request_explicit:
+            return None
+        return (
+            str(platform_result.get("message") or result_data.get("message") or task.payload.get("message") or "").strip()
+            or "Requested resume submission."
+        )
+
     def _strategy_fragment_summary(self, *, task: TaskEnvelope, result: AgentResult) -> str:
         base = result.content or self._next_step_hint(result.status)
         return f"{self._humanize_task_label(self._adaptive_stage_for_task(task))}：{base}"
@@ -1600,7 +2799,7 @@ class AgentControlService:
     def _next_tasks_for_result(self, task: TaskEnvelope, result: AgentResult) -> list[TaskEnvelope]:
         if result.status in {"waiting_human", "waiting_candidate", "blocked"}:
             return []
-        follow_up_stage = self._next_adaptive_stage(task, result)
+        follow_up_stage = str((result.data or {}).get("follow_up_stage") or "").strip() or self._next_adaptive_stage(task, result)
         if not follow_up_stage:
             return []
         payload = {
@@ -1624,6 +2823,22 @@ class AgentControlService:
             "approval_id",
         ):
             metadata.pop(transient_key, None)
+        if self._adaptive_stage_for_task(task) == "goal_intake":
+            task_spec_id = str((result.data or {}).get("task_spec_id") or result.metadata.get("task_spec_id") or "").strip()
+            execution_plan_id = str((result.data or {}).get("execution_plan_id") or result.metadata.get("execution_plan_id") or "").strip()
+            execution_episode_id = str((result.data or {}).get("execution_episode_id") or result.metadata.get("execution_episode_id") or "").strip()
+            scene_snapshot = (result.data or {}).get("scene_snapshot")
+            if task_spec_id and execution_plan_id:
+                payload["task_spec_id"] = task_spec_id
+                payload["execution_plan_id"] = execution_plan_id
+                metadata["task_spec_id"] = task_spec_id
+                metadata["execution_plan_id"] = execution_plan_id
+            if execution_episode_id:
+                payload["execution_episode_id"] = execution_episode_id
+                metadata["execution_episode_id"] = execution_episode_id
+            if isinstance(scene_snapshot, dict):
+                payload["scene_snapshot"] = dict(scene_snapshot)
+                metadata["scene_snapshot"] = dict(scene_snapshot)
         if follow_up_stage == "strategy_distill":
             payload["strategy_distill"] = {
                 "from_task_type": task.task_type,
