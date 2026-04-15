@@ -68,14 +68,14 @@ class PromptBuilder:
         skill: Mapping[str, Any] | None = None,
         extra_context: Mapping[str, Any] | None = None,
     ) -> list[Message]:
-        runtime_execution = isinstance(extra_context, Mapping) and isinstance(extra_context.get("execution_contract"), Mapping)
+        managed_execution = isinstance(extra_context, Mapping) and isinstance(extra_context.get("execution_contract"), Mapping)
         task_type = (
-            "runtime_execution"
-            if runtime_execution
-            else getattr(task, "task_type", None) or getattr(task, "workflow_node_id", None) or "initial_screening"
+            "scale_execution"
+            if managed_execution
+            else getattr(task, "task_type", None) or "candidate_probe"
         )
         task_payload = dict(getattr(task, "payload", {}) or {})
-        if runtime_execution:
+        if managed_execution:
             execution_contract = dict(extra_context.get("execution_contract") or {})
             active_step = self._active_runtime_step(execution_contract)
             payload_context: dict[str, Any] = {}
@@ -83,7 +83,7 @@ class PromptBuilder:
                 payload_context["session"] = session
             if skill:
                 payload_context["skill"] = skill
-            payload_context["runtime_context"] = self._runtime_execution_payload_context(extra_context, execution_contract, active_step)
+            payload_context["runtime_context"] = self._managed_execution_payload_context(extra_context, execution_contract, active_step)
             system_prompt = self.build_system_prompt(task_type, payload_context)
             extra_sections: dict[str, Any] = {
                 "Task Brief": self._runtime_task_brief(task_payload),
@@ -120,7 +120,7 @@ class PromptBuilder:
             return value
         return json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True, default=str)
 
-    def _runtime_execution_payload_context(
+    def _managed_execution_payload_context(
         self,
         extra_context: Mapping[str, Any],
         execution_contract: Mapping[str, Any],

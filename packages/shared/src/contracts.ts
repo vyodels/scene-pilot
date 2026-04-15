@@ -35,7 +35,7 @@ export type CandidateRecord = {
   platform: string;
   jdId: string;
   status: CandidateStatus;
-  currentWorkflowNode: string;
+  currentStageKey: string;
   lastContactedAt?: string;
   updatedAt: string;
   aiDecision?: "pass" | "reject" | "review";
@@ -57,7 +57,7 @@ export type SkillRecord = {
   version: string;
   status: SkillStatus;
   platform: string;
-  boundToWorkflowNode: string;
+  boundToStage: string;
   lastHealthStatus: "healthy" | "warning" | "failed" | "unknown";
   updatedAt: string;
 };
@@ -94,4 +94,3 @@ export type SettingsRecord = {
   enableOutboundMessaging: boolean;
   enableSystemCommands: boolean;
 };
-

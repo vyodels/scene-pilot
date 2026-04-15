@@ -1126,7 +1126,7 @@ class ApiRuntimeTests(unittest.TestCase):
         self.assertEqual(launch.status_code, 201)
         launch_payload = launch.json()
         episode_id = launch_payload["execution_episode"]["id"]
-        self.assertEqual(launch_payload["task_type"], "runtime_execution")
+        self.assertEqual(launch_payload["task_type"], "scale_execution")
         self.assertEqual(launch_payload["execution_plan_id"], plan_id)
         self.assertEqual(launch_payload["execution_episode"]["status"], "pending")
 
@@ -1230,7 +1230,7 @@ class ApiRuntimeTests(unittest.TestCase):
         queue_items = self.client.get("/api/agent/queue")
         self.assertEqual(queue_items.status_code, 200)
         pending_runtime_tasks = [
-            item for item in queue_items.json() if item["task_type"] == "runtime_execution" and item["status"] == "pending"
+            item for item in queue_items.json() if item["task_type"] == "scale_execution" and item["status"] == "pending"
         ]
         self.assertTrue(pending_runtime_tasks)
         follow_up_plan_id = pending_runtime_tasks[0]["payload"]["execution_plan_id"]

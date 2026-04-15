@@ -58,7 +58,7 @@ class AgentLoopTests(unittest.TestCase):
         )
         registry.register(registry.build_result_submission_tool())
         loop = AgentLoop(provider=_InspectingProvider(), tools=registry)
-        task = SimpleNamespace(task_type="runtime_execution", payload={"goal": "Inspect the browser scene"})
+        task = SimpleNamespace(task_type="scale_execution", payload={"goal": "Inspect the browser scene"})
 
         result = loop.run(
             task,
@@ -101,7 +101,7 @@ class AgentLoopTests(unittest.TestCase):
             )
         )
         loop = AgentLoop(provider=provider, tools=registry, config=AgentLoopConfig(max_turns=4, token_budget=100))
-        task = SimpleNamespace(task_type="initial_screening", payload={"jd_criteria": "Python"})
+        task = SimpleNamespace(task_type="candidate_probe", payload={"jd_criteria": "Python"})
 
         result = loop.run(task)
 
@@ -118,7 +118,7 @@ class AgentLoopTests(unittest.TestCase):
         )
         registry = ToolRegistry()
         loop = AgentLoop(provider=provider, tools=registry)
-        task = SimpleNamespace(task_type="initial_screening", payload={"jd_criteria": "Python"})
+        task = SimpleNamespace(task_type="candidate_probe", payload={"jd_criteria": "Python"})
 
         result = loop.run(task)
         self.assertFalse(result.success)
@@ -146,7 +146,7 @@ class AgentLoopTests(unittest.TestCase):
         registry = ToolRegistry()
         registry.register(registry.build_result_submission_tool())
         loop = AgentLoop(provider=provider, tools=registry)
-        task = SimpleNamespace(task_type="initial_screening", payload={"jd_criteria": "Python"})
+        task = SimpleNamespace(task_type="candidate_probe", payload={"jd_criteria": "Python"})
 
         result = loop.run(task)
 
@@ -180,7 +180,7 @@ class AgentLoopTests(unittest.TestCase):
             )
         )
         loop = AgentLoop(provider=provider, tools=registry, config=AgentLoopConfig(max_turns=4, token_budget=100))
-        task = SimpleNamespace(task_type="initial_screening", payload={"jd_criteria": "Python"})
+        task = SimpleNamespace(task_type="candidate_probe", payload={"jd_criteria": "Python"})
 
         result = loop.run(task)
 
@@ -214,7 +214,7 @@ class AgentLoopTests(unittest.TestCase):
         registry = ToolRegistry()
         registry.register(registry.build_result_submission_tool())
         loop = AgentLoop(provider=provider, tools=registry)
-        task = SimpleNamespace(task_type="initial_screening", payload={"jd_criteria": "Python"})
+        task = SimpleNamespace(task_type="candidate_probe", payload={"jd_criteria": "Python"})
 
         result = loop.run(task)
 
@@ -248,7 +248,7 @@ class AgentLoopTests(unittest.TestCase):
         registry = ToolRegistry()
         registry.register(registry.build_result_submission_tool())
         loop = AgentLoop(provider=provider, tools=registry)
-        task = SimpleNamespace(task_type="initial_screening", payload={"jd_criteria": "Python"})
+        task = SimpleNamespace(task_type="candidate_probe", payload={"jd_criteria": "Python"})
 
         result = loop.run(task)
 
@@ -283,7 +283,7 @@ class AgentLoopTests(unittest.TestCase):
         registry = ToolRegistry()
         registry.register(registry.build_result_submission_tool())
         loop = AgentLoop(provider=provider, tools=registry)
-        task = SimpleNamespace(task_type="initial_screening", payload={"jd_criteria": "Python"})
+        task = SimpleNamespace(task_type="candidate_probe", payload={"jd_criteria": "Python"})
 
         result = loop.run(task)
 
@@ -316,7 +316,7 @@ class AgentLoopTests(unittest.TestCase):
         registry = ToolRegistry()
         registry.register(registry.build_result_submission_tool())
         loop = AgentLoop(provider=provider, tools=registry)
-        task = SimpleNamespace(task_type="initial_screening", payload={"jd_criteria": "Python"})
+        task = SimpleNamespace(task_type="candidate_probe", payload={"jd_criteria": "Python"})
 
         result = loop.run(task)
 
@@ -350,7 +350,7 @@ class AgentLoopTests(unittest.TestCase):
         registry = ToolRegistry()
         registry.register(registry.build_result_submission_tool())
         loop = AgentLoop(provider=provider, tools=registry)
-        task = SimpleNamespace(task_type="initial_screening", payload={"jd_criteria": "Python"})
+        task = SimpleNamespace(task_type="candidate_probe", payload={"jd_criteria": "Python"})
 
         result = loop.run(task)
 
@@ -375,7 +375,7 @@ class AgentLoopTests(unittest.TestCase):
             ],
         )
         loop = AgentLoop(provider=provider, tools=ToolRegistry())
-        task = SimpleNamespace(task_type="initial_screening", payload={"jd_criteria": "Python"})
+        task = SimpleNamespace(task_type="candidate_probe", payload={"jd_criteria": "Python"})
 
         result = loop.run(task)
 
@@ -442,7 +442,7 @@ class AgentLoopTests(unittest.TestCase):
         registry.register(registry.build_human_checkpoint_tool())
         registry.register(registry.build_result_submission_tool())
         loop = AgentLoop(provider=provider, tools=registry)
-        task = SimpleNamespace(task_type="runtime_execution", payload={"goal": "Inspect and adapt to the live browser scene."})
+        task = SimpleNamespace(task_type="scale_execution", payload={"goal": "Inspect and adapt to the live browser scene."})
 
         result = loop.run(
             task,
@@ -508,7 +508,7 @@ class AgentLoopTests(unittest.TestCase):
         registry.register(registry.build_human_checkpoint_tool())
         registry.register(registry.build_result_submission_tool())
         loop = AgentLoop(provider=provider, tools=registry)
-        task = SimpleNamespace(task_type="runtime_execution", payload={"goal": "Complete a gated downstream write."})
+        task = SimpleNamespace(task_type="scale_execution", payload={"goal": "Complete a gated downstream write."})
 
         result = loop.run(
             task,
@@ -586,7 +586,7 @@ class AgentLoopTests(unittest.TestCase):
         registry.register(registry.build_observation_tool())
         registry.register(registry.build_plan_progress_tool())
         loop = AgentLoop(provider=provider, tools=registry)
-        task = SimpleNamespace(task_type="runtime_execution", payload={"goal": "Inspect the browser scene"})
+        task = SimpleNamespace(task_type="scale_execution", payload={"goal": "Inspect the browser scene"})
 
         result = loop.run(
             task,

@@ -42,7 +42,7 @@ export interface CandidateRecord {
   platform: string;
   location: string;
   status: CandidateStatus;
-  workflowNode: string;
+  stageKey: string;
   jdTitle: string;
   matchScore: number;
   experienceYears: number;
@@ -223,7 +223,7 @@ export interface SkillRecord {
   category?: string;
   version: string;
   status: "draft" | "pending_review" | "approved" | "active" | "degraded" | "disabled";
-  boundNode: string;
+  boundStage: string;
   platform: string;
   inputSchema?: Record<string, unknown>;
   outputSchema?: Record<string, unknown>;
@@ -521,6 +521,7 @@ export interface AgentQueueAuditEvent {
 export interface AgentQueueItem {
   taskId: string;
   taskType: string;
+  adaptiveStage: string;
   priority: number;
   status: string;
   attempts: number;
@@ -528,8 +529,6 @@ export interface AgentQueueItem {
   lockedAt?: string | null;
   lockedBy?: string | null;
   candidateId?: string | null;
-  workflowId?: string | null;
-  workflowNodeId?: string | null;
   payload: Record<string, unknown>;
   queueAudit: AgentQueueAuditEvent[];
   createdAt: string;
@@ -648,8 +647,6 @@ export interface AgentTaskRequest {
   payload?: Record<string, unknown>;
   priority?: number;
   candidateId?: string;
-  workflowId?: string;
-  workflowNodeId?: string;
 }
 
 export interface AgentTaskEnqueueResult {

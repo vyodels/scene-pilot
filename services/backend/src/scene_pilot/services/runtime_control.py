@@ -19,6 +19,7 @@ from scene_pilot.repositories import (
 )
 from scene_pilot.scheduler.queue import TaskEnvelope
 from scene_pilot.scheduler.scheduler import TaskDeferred
+from scene_pilot.services.adaptive_runtime import resolve_adaptive_stage
 from scene_pilot.services.events import EventStreamService
 from scene_pilot.services.recruit_agent import ensure_primary_recruit_agent_profile
 
@@ -504,8 +505,6 @@ class RuntimeControlService:
             "payload": dict(task.payload or {}),
             "metadata": dict(task.metadata or {}),
             "candidate_id": task.candidate_id,
-            "workflow_id": task.workflow_id,
-            "workflow_node_id": task.workflow_node_id,
             "platform": task.platform,
             "attempts": task.attempts,
             "due_at": task.due_at.isoformat() if task.due_at else None,
@@ -516,20 +515,7 @@ class RuntimeControlService:
         explicit = str(task.metadata.get("adaptive_stage") or task.payload.get("adaptive_stage") or "").strip()
         if explicit:
             return explicit
-        mapping = {
-            "goal_intake": "goal_intake",
-            "exploration_trial": "exploration_trial",
-            "strategy_distill": "strategy_distill",
-            "scale_execution": "scale_execution",
-            "discover_candidate": "candidate_discovery",
-            "initial_screening": "candidate_probe",
-            "candidate_scoring": "candidate_scoring",
-            "initiate_communication": "candidate_outreach",
-            "request_resume": "resume_collection",
-            "archive_candidate": "candidate_archive",
-            "runtime_execution": "scale_execution",
-        }
-        return mapping.get(task.task_type, task.task_type)
+        return resolve_adaptive_stage(task_type=task.task_type, explicit_stage=explicit or None)
 
     def _ensure_goal_for_task(
         self,
@@ -570,7 +556,7 @@ class RuntimeControlService:
                 "last_activity_at": datetime.now(timezone.utc),
                 "goal_metadata": {
                     "created_from": "task_enqueue",
-                    "legacy_task_type": task.task_type,
+                    "source_task_type": task.task_type,
                     "adaptive_stage": adaptive_stage,
                 },
             }
@@ -629,8 +615,6 @@ class RuntimeControlService:
         return {
             "payload": dict(snapshot.get("payload") or {}),
             "platform": str(snapshot.get("platform") or work_item.platform or run.platform or "site"),
-            "workflow_id": snapshot.get("workflow_id"),
-            "workflow_node_id": snapshot.get("workflow_node_id"),
             "candidate_id": snapshot.get("candidate_id") or work_item.candidate_id or run.candidate_id,
             "due_at": snapshot.get("due_at"),
             "created_at": snapshot.get("created_at") or datetime.now(timezone.utc).isoformat(),

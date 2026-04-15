@@ -165,7 +165,7 @@ export function WorkbenchView({
                     </div>
                     <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
                       <StatusBadge tone={toneFromCandidateStatus(candidate.status)}>{translateUiToken(candidate.status, copy)}</StatusBadge>
-                      <StatusBadge tone="neutral">{candidate.workflowNode}</StatusBadge>
+                      <StatusBadge tone="neutral">{candidate.stageKey}</StatusBadge>
                       <StatusBadge tone="neutral">{copy(`score ${candidate.matchScore}`, `分数 ${candidate.matchScore}`)}</StatusBadge>
                     </div>
                   </div>

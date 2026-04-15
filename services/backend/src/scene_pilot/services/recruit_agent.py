@@ -183,7 +183,7 @@ def default_context_policy() -> dict[str, Any]:
             },
         },
         "run_type_overrides": {
-            "initiate_communication": {
+            "candidate_outreach": {
                 "prefer": ["recent_messages", "candidate_memory", "job_memory"],
                 "suppress": ["global_memory"],
             },
@@ -191,7 +191,7 @@ def default_context_policy() -> dict[str, Any]:
                 "prefer": ["assessments", "scorecards", "job_memory"],
                 "suppress": ["global_memory"],
             },
-            "request_resume": {
+            "resume_collection": {
                 "prefer": ["recent_messages", "candidate_progress", "candidate_memory"],
                 "suppress": ["global_memory"],
             },

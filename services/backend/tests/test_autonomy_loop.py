@@ -4,7 +4,7 @@ from fastapi.testclient import TestClient
 
 from scene_pilot.core.app import create_app
 from scene_pilot.core.settings import AppSettings, FeatureFlags
-from scene_pilot.models import Candidate, Skill, Workflow
+from scene_pilot.models import Candidate, Skill
 from scene_pilot.repositories import AgentRunRepository, AgentWorkItemRepository, TaskQueueRepository
 from scene_pilot.runtime.models import LLMResponse
 from scene_pilot.runtime.providers import ScriptedProvider
@@ -51,30 +51,13 @@ def test_autonomy_loop_processes_enqueued_task_when_enabled(tmp_path):
             platform_candidate_id="boss_autonomy_001",
             status="screening",
         )
-        workflow = Workflow(
-            name="One Step Workflow",
-            status="active",
-            config={
-                "start_node_id": "initial_screening",
-                "nodes": [
-                    {
-                        "id": "initial_screening",
-                        "name": "Initial Screening",
-                        "task_type": "initial_screening",
-                    }
-                ],
-            },
-        )
-        session.add_all([candidate, workflow])
+        session.add(candidate)
         session.commit()
         session.refresh(candidate)
-        session.refresh(workflow)
 
     container.agent_control.enqueue_task(
-        "initial_screening",
+        "candidate_probe",
         candidate_id=candidate.id,
-        workflow_id=workflow.id,
-        workflow_node_id="initial_screening",
         payload={"jd_criteria": "Python"},
         priority=250,
     )
@@ -161,30 +144,13 @@ def test_runtime_recovery_restores_recently_interrupted_run_on_restart(tmp_path)
             status="screening",
             jd_id="jd-recovery",
         )
-        workflow = Workflow(
-            name="Recovery Workflow",
-            status="active",
-            config={
-                "start_node_id": "initial_screening",
-                "nodes": [
-                    {
-                        "id": "initial_screening",
-                        "name": "Initial Screening",
-                        "task_type": "initial_screening",
-                    }
-                ],
-            },
-        )
-        session.add_all([candidate, workflow])
+        session.add(candidate)
         session.commit()
         session.refresh(candidate)
-        session.refresh(workflow)
 
     task = container.agent_control.enqueue_task(
-        "initial_screening",
+        "candidate_probe",
         candidate_id=candidate.id,
-        workflow_id=workflow.id,
-        workflow_node_id="initial_screening",
         payload={"jd_criteria": "Recovery path"},
         priority=260,
     )

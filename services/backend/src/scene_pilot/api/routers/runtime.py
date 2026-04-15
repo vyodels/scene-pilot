@@ -159,7 +159,7 @@ def enqueue_execution_plan(
             )
         )
         task = container.agent_control.enqueue_task(
-            "runtime_execution",
+            "scale_execution",
             payload={
                 **dict(payload.payload),
                 "task_spec_id": task_spec_id,
@@ -175,7 +175,6 @@ def enqueue_execution_plan(
                 **dict(payload.runtime_metadata),
             },
             priority=payload.priority,
-            workflow_node_id="runtime_execution",
         )
         return RuntimePlanEnqueueRead(
             task_id=task.task_id,

@@ -36,6 +36,7 @@ from scene_pilot.scheduler.scheduler import ScheduledOutcome, SerialScheduler
 from scene_pilot.services.context_assembler import ContextAssemblerService
 from scene_pilot.services.events import EventStreamService
 from scene_pilot.services.feature_flags import FeatureFlagService
+from scene_pilot.services.adaptive_runtime import resolve_adaptive_stage
 from scene_pilot.services.runtime_control import RuntimeControlService
 from scene_pilot.services.skills import SkillHealthCheckService
 from scene_pilot.services.sync import SyncService
@@ -62,18 +63,18 @@ class AgentControlService:
         metadata: dict[str, Any] | None = None,
         priority: int = 100,
         candidate_id: str | None = None,
-        workflow_id: str | None = None,
-        workflow_node_id: str | None = None,
     ) -> TaskEnvelope:
+        adaptive_stage = resolve_adaptive_stage(
+            task_type=task_type,
+            explicit_stage=str((metadata or {}).get("adaptive_stage") or (payload or {}).get("adaptive_stage") or "").strip() or None,
+        )
         task = TaskEnvelope(
             task_id=task_id or uuid4().hex,
-            task_type=task_type,
+            task_type=adaptive_stage,
             payload=payload or {},
             priority=priority,
             candidate_id=candidate_id,
-            workflow_id=workflow_id,
-            workflow_node_id=workflow_node_id,
-            metadata=metadata or {},
+            metadata={**(metadata or {}), "adaptive_stage": adaptive_stage},
         )
         if self.session_factory is not None:
             with self.session_factory() as session:
@@ -316,7 +317,6 @@ class AgentControlService:
 
                 runtime_task = SimpleNamespace(
                     task_type=task.task_type,
-                    workflow_node_id=adaptive_stage,
                     payload=task.payload,
                     max_turns=6,
                     token_budget=4096,
@@ -383,8 +383,7 @@ class AgentControlService:
             )
         else:
             runtime_task = SimpleNamespace(
-                task_type="runtime_execution",
-                workflow_node_id=self._adaptive_stage_for_task(task),
+                task_type="scale_execution",
                 payload={
                     **dict(task.payload or {}),
                     "goal": managed_execution.task_spec.goal,
@@ -555,7 +554,7 @@ class AgentControlService:
             ),
         )
         follow_up = self.enqueue_task(
-            "runtime_execution",
+            "scale_execution",
             payload={
                 **dict(task.payload or {}),
                 "task_spec_id": managed_execution.task_spec.id,
@@ -574,8 +573,6 @@ class AgentControlService:
             },
             priority=max(task.priority - 1, 1),
             candidate_id=task.candidate_id,
-            workflow_id=task.workflow_id,
-            workflow_node_id=task.workflow_node_id,
         )
         result.metadata["replanned_execution_plan_id"] = replanned.execution_plan.id
         result.metadata["replanned_task_id"] = follow_up.task_id
@@ -634,7 +631,7 @@ class AgentControlService:
                     "name": candidate.name,
                     "platform": candidate.platform,
                     "status": candidate.status,
-                    "current_workflow_node": candidate.current_workflow_node,
+                    "current_stage_key": candidate.current_stage_key,
                     "jd_id": candidate.jd_id,
                     "contact_info": dict(candidate.contact_info or {}),
                     "resume_path": candidate.resume_path,
@@ -671,11 +668,11 @@ class AgentControlService:
                 skill = repo.by_skill_id(preferred_skill_id.strip()) or repo.get(preferred_skill_id.strip())
 
             if skill is None and adaptive_stage:
-                candidates = repo.active_for_node(adaptive_stage, platform=task.platform)
+                candidates = repo.active_for_stage(adaptive_stage, platform=task.platform)
                 skill = candidates[0] if candidates else None
 
             if skill is None and task.task_type:
-                candidates = repo.active_for_node(task.task_type, platform=task.platform)
+                candidates = repo.active_for_stage(task.task_type, platform=task.platform)
                 skill = candidates[0] if candidates else None
 
             if skill is None:
@@ -688,7 +685,7 @@ class AgentControlService:
                 "status": skill.status,
                 "version": skill.version,
                 "platform": skill.platform,
-                "bound_to_workflow_node": adaptive_stage,
+                "bound_to_stage": adaptive_stage,
                 "strategy": dict(skill.strategy or {}),
                 "execution_hints": dict(skill.execution_hints or {}),
                 "last_health_status": skill.last_health_status,
@@ -723,7 +720,7 @@ class AgentControlService:
                     )
                     business_status = extract_business_status(result.data) or result.status
                     if not learning_stage:
-                        candidate.current_workflow_node = adaptive_stage
+                        candidate.current_stage_key = adaptive_stage
                         candidate.ai_reasoning = result.content or candidate.ai_reasoning
 
                     facts = dict(candidate_session.facts or {})
@@ -770,7 +767,7 @@ class AgentControlService:
                 if candidate is not None:
                     if task.task_type == "candidate_scoring" and isinstance(result.data, dict) and result.success:
                         candidate.ai_scores = dict(result.data)
-                    if task.task_type == "initiate_communication":
+                    if task.task_type == "candidate_outreach":
                         communication_repo.create(
                             {
                                 "candidate_id": candidate.id,
@@ -787,7 +784,7 @@ class AgentControlService:
                             content=str(result.metadata.get("platform_result", {}).get("message") or task.payload.get("message") or result.content),
                             metadata={"task_id": task.task_id, "task_type": task.task_type},
                         )
-                    elif task.task_type == "request_resume":
+                    elif task.task_type == "resume_collection":
                         communication_repo.create(
                             {
                                 "candidate_id": candidate.id,
@@ -1534,8 +1531,6 @@ class AgentControlService:
             "payload": dict(task.payload or {}),
             "metadata": dict(task.metadata or {}),
             "candidate_id": task.candidate_id,
-            "workflow_id": task.workflow_id,
-            "workflow_node_id": task.workflow_node_id,
             "platform": task.platform,
             "attempts": task.attempts,
             "due_at": task.due_at.isoformat() if task.due_at else None,
@@ -1590,8 +1585,6 @@ class AgentControlService:
                 metadata=dict(snapshot.get("metadata") or {}),
                 priority=int(snapshot.get("priority", 100) or 100),
                 candidate_id=snapshot.get("candidate_id"),
-                workflow_id=snapshot.get("workflow_id"),
-                workflow_node_id=snapshot.get("workflow_node_id"),
             )
             return True
         except Exception as exc:  # pragma: no cover - defensive guard
@@ -1686,20 +1679,7 @@ class AgentControlService:
         explicit = str(task.metadata.get("adaptive_stage") or task.payload.get("adaptive_stage") or "").strip()
         if explicit:
             return explicit
-        mapping = {
-            "goal_intake": "goal_intake",
-            "exploration_trial": "exploration_trial",
-            "strategy_distill": "strategy_distill",
-            "scale_execution": "scale_execution",
-            "discover_candidate": "candidate_discovery",
-            "initial_screening": "candidate_probe",
-            "candidate_scoring": "candidate_scoring",
-            "initiate_communication": "candidate_outreach",
-            "request_resume": "resume_collection",
-            "archive_candidate": "candidate_archive",
-            "runtime_execution": "scale_execution",
-        }
-        return mapping.get(task.task_type, task.task_type)
+        return resolve_adaptive_stage(task_type=task.task_type, explicit_stage=explicit or None)
 
     def _next_adaptive_stage(self, task: TaskEnvelope, result: AgentResult) -> str | None:
         current = self._adaptive_stage_for_task(task)

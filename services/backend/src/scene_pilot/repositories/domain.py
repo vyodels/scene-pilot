@@ -963,10 +963,10 @@ class SkillRepository(BaseRepository[Skill]):
         )
         return list(self.session.scalars(stmt).all())
 
-    def active_for_node(self, workflow_node_id: str, *, platform: str | None = None) -> list[Skill]:
+    def active_for_stage(self, stage_key: str, *, platform: str | None = None) -> list[Skill]:
         stmt = select(Skill).where(
             Skill.status == "active",
-            Skill.bound_to_workflow_node == workflow_node_id,
+            Skill.bound_to_stage == stage_key,
         )
         normalized_platform = str(platform or "").strip()
         if normalized_platform and normalized_platform.lower() != "site":

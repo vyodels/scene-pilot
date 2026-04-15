@@ -2321,8 +2321,7 @@ class PersistedRuntimeService:
                 },
             )
             runtime_task = SimpleNamespace(
-                task_type="runtime_execution",
-                workflow_node_id="runtime_execution",
+                task_type="scale_execution",
                 payload={
                     **managed_payload,
                     "goal": managed.task_spec.goal,
@@ -4440,7 +4439,7 @@ class PersistedRuntimeService:
                     "task_domain": task_spec.domain,
                     "execution_plan_id": plan.id,
                     "execution_episode_id": episode.id,
-                    "workflow_node_id": self._first_actionable_step(plan),
+                    "adaptive_stage": "strategy_distill",
                     "skill_draft": {
                         "kind": "skill_draft",
                         "skill_name": skill_name,

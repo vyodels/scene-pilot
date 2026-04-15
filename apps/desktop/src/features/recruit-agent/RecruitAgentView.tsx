@@ -997,8 +997,8 @@ export function RecruitAgentView({
                 <input value={selectedSkill.skillId} readOnly style={inputStyle} />
               </label>
               <label style={{ display: "grid", gap: "6px" }}>
-                <span>{copy("Bound node", "绑定节点")}</span>
-                <input value={selectedSkill.boundNode} readOnly style={inputStyle} />
+                <span>{copy("Bound stage", "绑定阶段")}</span>
+                <input value={selectedSkill.boundStage} readOnly style={inputStyle} />
               </label>
               <label style={{ display: "grid", gap: "6px" }}>
                 <span>{copy("Risk", "风险等级")}</span>

@@ -318,7 +318,7 @@ export function CommunicationsView({
     }
     await onCreateAssessment(selectedThread.candidate.id, {
       assessmentType,
-      stageKey: selectedThread.stateSnapshot.currentStageKey ?? selectedThread.candidate.workflowNode,
+      stageKey: selectedThread.stateSnapshot.currentStageKey ?? selectedThread.candidate.stageKey,
       status: "completed",
       decision: assessmentDecision,
       score: Number(assessmentScore || "0") || undefined,

@@ -17,8 +17,6 @@ class TaskEnvelope:
     priority: int = 100
     payload: dict[str, Any] = field(default_factory=dict)
     platform: str = "site"
-    workflow_id: str | None = None
-    workflow_node_id: str | None = None
     candidate_id: str | None = None
     due_at: datetime | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
@@ -42,8 +40,6 @@ def _serialize_task(task: TaskEnvelope) -> dict[str, Any]:
     return {
         "payload": dict(task.payload),
         "platform": task.platform,
-        "workflow_id": task.workflow_id,
-        "workflow_node_id": task.workflow_node_id,
         "candidate_id": task.candidate_id,
         "due_at": task.due_at.isoformat() if task.due_at else None,
         "created_at": task.created_at.isoformat(),
@@ -61,8 +57,6 @@ def _deserialize_task(task_id: str, task_type: str, priority: int, attempts: int
         priority=priority,
         payload=dict(envelope.get("payload", {})),
         platform=str(envelope.get("platform", "site")),
-        workflow_id=envelope.get("workflow_id"),
-        workflow_node_id=envelope.get("workflow_node_id"),
         candidate_id=envelope.get("candidate_id"),
         due_at=datetime.fromisoformat(due_at) if isinstance(due_at, str) and due_at else None,
         created_at=datetime.fromisoformat(created_at) if isinstance(created_at, str) and created_at else datetime.now(timezone.utc),

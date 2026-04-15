@@ -75,9 +75,5 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
 
     return app
 
-
-app = create_app()
-
-
 def main() -> dict[str, Any]:
     return {"app": "Recruit Agent backend"}

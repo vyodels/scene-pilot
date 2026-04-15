@@ -496,7 +496,7 @@ export function AgentInboxView({
                 : null}
               {selected.kind === "skill" ? (
                 <div style={{ display: "grid", gap: "6px", fontSize: "13px" }}>
-                  <div>{copy("Bound node", "绑定节点")}: {selected.skill.boundNode}</div>
+                  <div>{copy("Bound stage", "绑定阶段")}: {selected.skill.boundStage}</div>
                   <div>{copy("Version", "版本")}: {selected.skill.version}</div>
                   <div>{copy("Risk", "风险")}: {selected.skill.riskLevel ?? "medium"}</div>
                 </div>

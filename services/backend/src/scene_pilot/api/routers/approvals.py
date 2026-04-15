@@ -168,8 +168,6 @@ def approve_approval(
                 },
                 priority=int(resumed_task.get("priority", 100) or 100),
                 candidate_id=resumed_task.get("candidate_id"),
-                workflow_id=resumed_task.get("workflow_id"),
-                workflow_node_id=resumed_task.get("workflow_node_id"),
             )
             payload_snapshot["resume_task"] = resumed_task
         item.payload = payload_snapshot
@@ -382,7 +380,7 @@ def _promote_skill_draft(
         "version": next_version,
         "status": status,
         "platform": platform,
-        "bound_to_workflow_node": draft.get("bound_to_workflow_node") or payload.get("adaptive_stage") or payload.get("workflow_node_id"),
+        "bound_to_stage": draft.get("bound_to_stage") or payload.get("adaptive_stage") or payload.get("task_type"),
         "strategy": {
             **strategy,
             "version_governance": {

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Callable
+from typing import Any, Callable
 
 from sqlalchemy import text
 from sqlalchemy.engine import Connection, Engine
@@ -731,6 +732,219 @@ def _create_mcp_registry_tables(connection: Connection) -> None:
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_mcp_tools_risk_level ON mcp_tools (risk_level)"))
 
 
+def _rename_skill_binding_to_stage(connection: Connection) -> None:
+    tables = {
+        row[0]
+        for row in connection.execute(text("SELECT name FROM sqlite_master WHERE type='table'")).fetchall()
+    }
+    if "skills" not in tables:
+        return
+
+    columns = {
+        row[1]
+        for row in connection.execute(text("PRAGMA table_info(skills)")).fetchall()
+    }
+    if "bound_to_stage" not in columns:
+        connection.execute(text("ALTER TABLE skills ADD COLUMN bound_to_stage TEXT"))
+    if "bound_to_workflow_node" in columns:
+        connection.execute(
+            text(
+                """
+                UPDATE skills
+                SET bound_to_stage = COALESCE(NULLIF(bound_to_stage, ''), bound_to_workflow_node)
+                WHERE bound_to_workflow_node IS NOT NULL
+                """
+            )
+        )
+    connection.execute(text("CREATE INDEX IF NOT EXISTS ix_skills_bound_to_stage ON skills (bound_to_stage)"))
+
+
+_LEGACY_STAGE_MAP = {
+    "discover_candidate": "candidate_discovery",
+    "initial_screening": "candidate_probe",
+    "initiate_communication": "candidate_outreach",
+    "request_resume": "resume_collection",
+    "runtime_execution": "scale_execution",
+    "archive_candidate": "candidate_archive",
+}
+
+
+def _map_stage_value(value: Any) -> Any:
+    if isinstance(value, str):
+        return _LEGACY_STAGE_MAP.get(value, value)
+    return value
+
+
+def _rewrite_runtime_payload(value: Any) -> Any:
+    if isinstance(value, list):
+        return [_rewrite_runtime_payload(item) for item in value]
+    if not isinstance(value, dict):
+        return _map_stage_value(value)
+
+    rewritten: dict[str, Any] = {}
+    for key, item in value.items():
+        if key == "workflow_id":
+            continue
+        if key == "workflow_node_id":
+            if "adaptive_stage" not in value:
+                rewritten["adaptive_stage"] = _map_stage_value(item)
+            continue
+        if key == "bound_to_workflow_node":
+            rewritten["bound_to_stage"] = _map_stage_value(item)
+            continue
+        if key == "current_workflow_node":
+            rewritten["current_stage_key"] = _map_stage_value(item)
+            continue
+        rewritten[key] = _rewrite_runtime_payload(item)
+
+    for field in (
+        "task_type",
+        "adaptive_stage",
+        "run_type",
+        "item_type",
+        "decision_type",
+        "current_stage_key",
+        "bound_to_stage",
+    ):
+        if field in rewritten:
+            rewritten[field] = _map_stage_value(rewritten[field])
+
+    metadata = rewritten.get("metadata")
+    if isinstance(metadata, dict) and "adaptive_stage" not in metadata:
+        stage = rewritten.get("adaptive_stage")
+        if isinstance(stage, str) and stage.strip():
+            rewritten["metadata"] = {**metadata, "adaptive_stage": stage}
+    return rewritten
+
+
+def _rewrite_json_column(
+    connection: Connection,
+    *,
+    table: str,
+    id_column: str,
+    json_column: str,
+) -> None:
+    rows = connection.execute(text(f"SELECT {id_column}, {json_column} FROM {table}")).fetchall()
+    for row_id, payload in rows:
+        if payload in (None, ""):
+            continue
+        if isinstance(payload, str):
+            try:
+                data = json.loads(payload)
+            except json.JSONDecodeError:
+                continue
+        else:
+            data = payload
+        rewritten = _rewrite_runtime_payload(data)
+        if rewritten == data:
+            continue
+        connection.execute(
+            text(f"UPDATE {table} SET {json_column} = :payload WHERE {id_column} = :row_id"),
+            {"payload": json.dumps(rewritten, ensure_ascii=False), "row_id": row_id},
+        )
+
+
+def _rewrite_runtime_records_to_adaptive_format(connection: Connection) -> None:
+    tables = {
+        row[0]
+        for row in connection.execute(text("SELECT name FROM sqlite_master WHERE type='table'")).fetchall()
+    }
+
+    if "candidates" in tables:
+        candidate_columns = {
+            row[1]
+            for row in connection.execute(text("PRAGMA table_info(candidates)")).fetchall()
+        }
+        stage_column = "current_stage_key" if "current_stage_key" in candidate_columns else "current_workflow_node"
+        for legacy, adaptive in _LEGACY_STAGE_MAP.items():
+            connection.execute(
+                text(
+                    """
+                    UPDATE candidates
+                    SET {stage_column} = :adaptive
+                    WHERE {stage_column} = :legacy
+                    """
+                    .replace("{stage_column}", stage_column)
+                ),
+                {"legacy": legacy, "adaptive": adaptive},
+            )
+
+    if "task_queue" in tables:
+        for legacy, adaptive in _LEGACY_STAGE_MAP.items():
+            connection.execute(
+                text("UPDATE task_queue SET task_type = :adaptive WHERE task_type = :legacy"),
+                {"legacy": legacy, "adaptive": adaptive},
+            )
+        _rewrite_json_column(connection, table="task_queue", id_column="id", json_column="payload")
+
+    if "agent_runs" in tables:
+        for legacy, adaptive in _LEGACY_STAGE_MAP.items():
+            connection.execute(
+                text("UPDATE agent_runs SET run_type = :adaptive WHERE run_type = :legacy"),
+                {"legacy": legacy, "adaptive": adaptive},
+            )
+        _rewrite_json_column(connection, table="agent_runs", id_column="id", json_column="runtime_metadata")
+        _rewrite_json_column(connection, table="agent_runs", id_column="id", json_column="context_manifest")
+
+    if "agent_work_items" in tables:
+        for legacy, adaptive in _LEGACY_STAGE_MAP.items():
+            connection.execute(
+                text("UPDATE agent_work_items SET item_type = :adaptive WHERE item_type = :legacy"),
+                {"legacy": legacy, "adaptive": adaptive},
+            )
+        _rewrite_json_column(connection, table="agent_work_items", id_column="id", json_column="payload")
+
+    if "approval_items" in tables:
+        _rewrite_json_column(connection, table="approval_items", id_column="id", json_column="payload")
+
+    if "execution_traces" in tables:
+        _rewrite_json_column(connection, table="execution_traces", id_column="id", json_column="raw_trace")
+        _rewrite_json_column(connection, table="execution_traces", id_column="id", json_column="distilled_trace")
+        _rewrite_json_column(connection, table="execution_traces", id_column="id", json_column="outcome")
+        _rewrite_json_column(connection, table="execution_traces", id_column="id", json_column="trace_metadata")
+
+    if "goal_specs" in tables:
+        _rewrite_json_column(connection, table="goal_specs", id_column="id", json_column="goal_metadata")
+        _rewrite_json_column(connection, table="goal_specs", id_column="id", json_column="context_hints")
+
+    if "decision_logs" in tables:
+        for legacy, adaptive in _LEGACY_STAGE_MAP.items():
+            connection.execute(
+                text("UPDATE decision_logs SET decision_type = :adaptive WHERE decision_type = :legacy"),
+                {"legacy": legacy, "adaptive": adaptive},
+            )
+        _rewrite_json_column(connection, table="decision_logs", id_column="id", json_column="input_context_snapshot")
+
+    if "skills" in tables:
+        for legacy, adaptive in _LEGACY_STAGE_MAP.items():
+            connection.execute(
+                text("UPDATE skills SET bound_to_stage = :adaptive WHERE bound_to_stage = :legacy"),
+                {"legacy": legacy, "adaptive": adaptive},
+            )
+        _rewrite_json_column(connection, table="skills", id_column="id", json_column="strategy")
+        _rewrite_json_column(connection, table="skills", id_column="id", json_column="execution_hints")
+        _rewrite_json_column(connection, table="skills", id_column="id", json_column="health_check_config")
+        _rewrite_json_column(connection, table="skills", id_column="id", json_column="skill_metadata")
+
+
+def _rename_candidate_stage_column(connection: Connection) -> None:
+    tables = {
+        row[0]
+        for row in connection.execute(text("SELECT name FROM sqlite_master WHERE type='table'")).fetchall()
+    }
+    if "candidates" not in tables:
+        return
+
+    columns = {
+        row[1]
+        for row in connection.execute(text("PRAGMA table_info(candidates)")).fetchall()
+    }
+    if "current_stage_key" in columns:
+        return
+    if "current_workflow_node" in columns:
+        connection.execute(text("ALTER TABLE candidates RENAME COLUMN current_workflow_node TO current_stage_key"))
+
+
 MIGRATIONS: tuple[SchemaMigration, ...] = (
     SchemaMigration(
         version=1,
@@ -781,6 +995,21 @@ MIGRATIONS: tuple[SchemaMigration, ...] = (
         version=10,
         name="create_mcp_registry_tables",
         apply=_create_mcp_registry_tables,
+    ),
+    SchemaMigration(
+        version=11,
+        name="rename_skill_binding_to_stage",
+        apply=_rename_skill_binding_to_stage,
+    ),
+    SchemaMigration(
+        version=12,
+        name="rewrite_runtime_records_to_adaptive_format",
+        apply=_rewrite_runtime_records_to_adaptive_format,
+    ),
+    SchemaMigration(
+        version=13,
+        name="rename_candidate_stage_column",
+        apply=_rename_candidate_stage_column,
     ),
 )
 

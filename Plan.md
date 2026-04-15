@@ -65,16 +65,16 @@
 
 招聘 agent 的内部执行编排图。
 
-初始预设节点沿用现有招聘链路：
+初始预设节点采用当前自适应执行阶段：
 
-- `discover_candidate`
-- `initial_screening`
-- `initiate_communication`
-- `request_resume`
+- `candidate_discovery`
+- `candidate_probe`
+- `candidate_outreach`
+- `resume_collection`
 - `candidate_scoring`
-- `human_review`
-- `talent_pool_upload`
-- `cooldown`
+- `strategy_distill`
+- `scale_execution`
+- `candidate_archive`
 
 这套 workflow 可以：
 
@@ -608,7 +608,7 @@ UI 形态：
 - 删除“真实浏览器失败 -> 本地候选人存储 fallback”逻辑
 - 新增 MCP registry、tool bridge 与健康检查
 - 调整 `AgentLoop` 的工具压缩与候选人提取逻辑，不再写死 `boss_*` 工具名
-- 调整 runtime 能力驱动，不再预设 `boss_discover_candidates` / `boss_inspect_candidate`
+- 调整 runtime 能力驱动，不再预设任何站点专用发现/检查动作
 
 ### 验收标准
 

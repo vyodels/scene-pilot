@@ -43,21 +43,22 @@ def enqueue_task(
     payload: AgentTaskCreate,
     container: AppContainer = Depends(get_container),
 ) -> AgentTaskEnqueueRead:
-    task = container.agent_control.enqueue_task(
-        payload.task_type,
-        payload=payload.payload,
-        metadata={
-            "task_spec_id": payload.task_spec_id,
-            "execution_plan_id": payload.execution_plan_id,
-            "execution_episode_id": payload.execution_episode_id,
-            "requested_by": payload.requested_by,
-            "mode": payload.mode,
-        },
-        priority=payload.priority,
-        candidate_id=payload.candidate_id,
-        workflow_id=payload.workflow_id,
-        workflow_node_id=payload.workflow_node_id,
-    )
+    try:
+        task = container.agent_control.enqueue_task(
+            payload.task_type,
+            payload=payload.payload,
+            metadata={
+                "task_spec_id": payload.task_spec_id,
+                "execution_plan_id": payload.execution_plan_id,
+                "execution_episode_id": payload.execution_episode_id,
+                "requested_by": payload.requested_by,
+                "mode": payload.mode,
+            },
+            priority=payload.priority,
+            candidate_id=payload.candidate_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return AgentTaskEnqueueRead(
         task_id=task.task_id,
         task_type=task.task_type,
@@ -174,6 +175,7 @@ def _build_queue_item_read(item) -> AgentQueueItemRead:
     return AgentQueueItemRead(
         task_id=item.id,
         task_type=item.task_type,
+        adaptive_stage=_payload_value(serialized_payload.get("metadata"), "adaptive_stage") or item.task_type,
         priority=int(item.priority or 0),
         status=item.status,
         attempts=int(item.attempts or 0),
@@ -181,8 +183,6 @@ def _build_queue_item_read(item) -> AgentQueueItemRead:
         locked_at=item.locked_at,
         locked_by=item.locked_by,
         candidate_id=_payload_value(serialized_payload, "candidate_id"),
-        workflow_id=_payload_value(serialized_payload, "workflow_id"),
-        workflow_node_id=_payload_value(serialized_payload, "workflow_node_id"),
         payload=display_payload,
         queue_audit=[
             {

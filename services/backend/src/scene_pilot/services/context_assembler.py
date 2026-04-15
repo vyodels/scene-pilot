@@ -100,8 +100,6 @@ class ContextAssemblerService:
                 "adaptive_stage": str(task.metadata.get("adaptive_stage") or task.payload.get("adaptive_stage") or task.task_type),
                 "goal_spec_id": str(task.metadata.get("goal_spec_id") or task.payload.get("goal_id") or "") or None,
                 "candidate_id": task.candidate_id,
-                "workflow_id": task.workflow_id,
-                "workflow_node_id": task.workflow_node_id,
                 "payload": dict(task.payload or {}),
                 "metadata": dict(task.metadata or {}),
             },
@@ -132,7 +130,7 @@ class ContextAssemblerService:
                 content={
                     "candidate_id": candidate.id,
                     "status": candidate.status,
-                    "current_workflow_node": candidate.current_workflow_node,
+                    "current_stage_key": candidate.current_stage_key,
                     "jd_id": candidate.jd_id,
                     "state_snapshot": dict(candidate.state_snapshot or {}),
                 },

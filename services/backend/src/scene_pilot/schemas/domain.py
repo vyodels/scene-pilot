@@ -57,7 +57,7 @@ class CandidateBase(BaseModel):
     platform: str = "site"
     platform_candidate_id: str | None = None
     status: str = "discovered"
-    current_workflow_node: str | None = None
+    current_stage_key: str | None = None
     jd_id: str | None = None
     contact_info: dict[str, Any] = Field(default_factory=dict)
     state_snapshot: dict[str, Any] = Field(default_factory=dict)
@@ -78,7 +78,7 @@ class CandidateUpdate(BaseModel):
     platform: str | None = None
     platform_candidate_id: str | None = None
     status: str | None = None
-    current_workflow_node: str | None = None
+    current_stage_key: str | None = None
     jd_id: str | None = None
     contact_info: dict[str, Any] | None = None
     state_snapshot: dict[str, Any] | None = None
@@ -1104,7 +1104,7 @@ class SkillBase(BaseModel):
     category: str = "general"
     version: int = 1
     status: str = "draft"
-    bound_to_workflow_node: str | None = None
+    bound_to_stage: str | None = None
     platform: str = "site"
     input_schema: dict[str, Any] = Field(default_factory=dict)
     output_schema: dict[str, Any] = Field(default_factory=dict)
@@ -1130,7 +1130,7 @@ class SkillUpdate(BaseModel):
     category: str | None = None
     version: int | None = None
     status: str | None = None
-    bound_to_workflow_node: str | None = None
+    bound_to_stage: str | None = None
     platform: str | None = None
     input_schema: dict[str, Any] | None = None
     output_schema: dict[str, Any] | None = None
@@ -1566,7 +1566,7 @@ class CandidateDashboardRead(BaseModel):
     platform: str
     location: str
     status: str
-    workflowNode: str
+    stageKey: str
     jdTitle: str
     matchScore: int
     experienceYears: int
@@ -1602,7 +1602,7 @@ class SkillDashboardRead(BaseModel):
     name: str
     version: str
     status: str
-    boundNode: str
+    boundStage: str
     platform: str
     health: str
     lastCheckedAt: str
@@ -1649,8 +1649,6 @@ class AgentTaskCreate(BaseModel):
     payload: dict[str, Any] = Field(default_factory=dict)
     priority: int = 100
     candidate_id: str | None = None
-    workflow_id: str | None = None
-    workflow_node_id: str | None = None
     task_spec_id: str | None = None
     execution_plan_id: str | None = None
     execution_episode_id: str | None = None
@@ -1686,6 +1684,7 @@ class AgentQueueAuditEventRead(BaseModel):
 class AgentQueueItemRead(BaseModel):
     task_id: str
     task_type: str
+    adaptive_stage: str
     priority: int
     status: str
     attempts: int
@@ -1693,8 +1692,6 @@ class AgentQueueItemRead(BaseModel):
     locked_at: datetime | None = None
     locked_by: str | None = None
     candidate_id: str | None = None
-    workflow_id: str | None = None
-    workflow_node_id: str | None = None
     payload: dict[str, Any] = Field(default_factory=dict)
     queue_audit: list[AgentQueueAuditEventRead] = Field(default_factory=list)
     created_at: datetime

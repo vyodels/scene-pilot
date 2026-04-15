@@ -64,16 +64,16 @@ class WorkflowDefinition:
 
 
 _KIND_TO_TASK_TYPE = {
-    "discover": "discover_candidate",
-    "screen": "initial_screening",
-    "communicate": "initiate_communication",
-    "communication": "initiate_communication",
-    "resume": "request_resume",
+    "discover": "candidate_discovery",
+    "screen": "candidate_probe",
+    "communicate": "candidate_outreach",
+    "communication": "candidate_outreach",
+    "resume": "resume_collection",
     "score": "candidate_scoring",
-    "review": "hr_review",
-    "archive": "archive_candidate",
-    "cooldown": "cooldown",
-    "talent_pool": "talent_pool_upload",
+    "review": "strategy_distill",
+    "archive": "candidate_archive",
+    "cooldown": "strategy_distill",
+    "talent_pool": "scale_execution",
 }
 
 
@@ -229,35 +229,35 @@ def workflow_definition_from_config(
 
 def build_default_recruiting_workflow() -> WorkflowDefinition:
     nodes = {
-        "discover_candidate": WorkflowNode(
-            node_id="discover_candidate",
-            name="Discover Candidate",
-            task_type="discover_candidate",
-            transitions=[WorkflowTransition(condition="default", target_node_id="initial_screening")],
+        "candidate_discovery": WorkflowNode(
+            node_id="candidate_discovery",
+            name="Candidate Discovery",
+            task_type="candidate_discovery",
+            transitions=[WorkflowTransition(condition="default", target_node_id="candidate_probe")],
         ),
-        "initial_screening": WorkflowNode(
-            node_id="initial_screening",
-            name="Initial Screening",
-            task_type="initial_screening",
+        "candidate_probe": WorkflowNode(
+            node_id="candidate_probe",
+            name="Candidate Probe",
+            task_type="candidate_probe",
             transitions=[
-                WorkflowTransition(condition="pass", target_node_id="pending_communication"),
-                WorkflowTransition(condition="fail", target_node_id="cooldown"),
-                WorkflowTransition(condition="default", target_node_id="pending_communication"),
+                WorkflowTransition(condition="pass", target_node_id="candidate_outreach"),
+                WorkflowTransition(condition="fail", target_node_id="strategy_distill"),
+                WorkflowTransition(condition="default", target_node_id="candidate_outreach"),
             ],
         ),
-        "pending_communication": WorkflowNode(
-            node_id="pending_communication",
-            name="Pending Communication",
-            task_type="initiate_communication",
+        "candidate_outreach": WorkflowNode(
+            node_id="candidate_outreach",
+            name="Candidate Outreach",
+            task_type="candidate_outreach",
             transitions=[
-                WorkflowTransition(condition="resume_requested", target_node_id="request_resume"),
-                WorkflowTransition(condition="default", target_node_id="request_resume"),
+                WorkflowTransition(condition="resume_requested", target_node_id="resume_collection"),
+                WorkflowTransition(condition="default", target_node_id="resume_collection"),
             ],
         ),
-        "request_resume": WorkflowNode(
-            node_id="request_resume",
-            name="Request Resume",
-            task_type="request_resume",
+        "resume_collection": WorkflowNode(
+            node_id="resume_collection",
+            name="Resume Collection",
+            task_type="resume_collection",
             transitions=[WorkflowTransition(condition="default", target_node_id="candidate_scoring")],
         ),
         "candidate_scoring": WorkflowNode(
@@ -265,26 +265,26 @@ def build_default_recruiting_workflow() -> WorkflowDefinition:
             name="Candidate Scoring",
             task_type="candidate_scoring",
             transitions=[
-                WorkflowTransition(condition="pass", target_node_id="passed_to_talent_pool"),
-                WorkflowTransition(condition="fail", target_node_id="cooldown"),
-                WorkflowTransition(condition="default", target_node_id="passed_to_talent_pool"),
+                WorkflowTransition(condition="pass", target_node_id="scale_execution"),
+                WorkflowTransition(condition="fail", target_node_id="strategy_distill"),
+                WorkflowTransition(condition="default", target_node_id="strategy_distill"),
             ],
         ),
-        "passed_to_talent_pool": WorkflowNode(
-            node_id="passed_to_talent_pool",
-            name="Talent Pool",
-            task_type="talent_pool_upload",
+        "scale_execution": WorkflowNode(
+            node_id="scale_execution",
+            name="Scale Execution",
+            task_type="scale_execution",
         ),
-        "cooldown": WorkflowNode(
-            node_id="cooldown",
-            name="Cooldown",
-            task_type="cooldown",
+        "strategy_distill": WorkflowNode(
+            node_id="strategy_distill",
+            name="Strategy Distill",
+            task_type="strategy_distill",
         ),
     }
     workflow = WorkflowDefinition(
         workflow_id="default_recruiting",
         name="Default Recruiting Workflow",
-        start_node_id="discover_candidate",
+        start_node_id="candidate_discovery",
         nodes=nodes,
     )
     workflow.validate()

@@ -292,6 +292,7 @@ function normalizeAgentQueueItem(raw: unknown): AgentQueueItem {
   return {
     taskId: String(record.taskId ?? record.task_id ?? ""),
     taskType: String(record.taskType ?? record.task_type ?? ""),
+    adaptiveStage: String(record.adaptiveStage ?? record.adaptive_stage ?? record.taskType ?? record.task_type ?? ""),
     priority: Number(record.priority ?? 0),
     status: String(record.status ?? "pending"),
     attempts: Number(record.attempts ?? 0),
@@ -299,8 +300,6 @@ function normalizeAgentQueueItem(raw: unknown): AgentQueueItem {
     lockedAt: record.lockedAt ? String(record.lockedAt) : record.locked_at ? String(record.locked_at) : null,
     lockedBy: record.lockedBy ? String(record.lockedBy) : record.locked_by ? String(record.locked_by) : null,
     candidateId: record.candidateId ? String(record.candidateId) : record.candidate_id ? String(record.candidate_id) : null,
-    workflowId: record.workflowId ? String(record.workflowId) : record.workflow_id ? String(record.workflow_id) : null,
-    workflowNodeId: record.workflowNodeId ? String(record.workflowNodeId) : record.workflow_node_id ? String(record.workflow_node_id) : null,
     payload: asRecord(record.payload),
     queueAudit: asArray(record.queueAudit ?? record.queue_audit).map((entry) => {
       const audit = asRecord(entry);
@@ -455,13 +454,7 @@ function normalizeCandidateRecord(raw: unknown): CandidateRecord {
     platform: String(record.platform ?? "site"),
     location: String(record.location ?? contactInfo.location ?? "未知"),
     status: String(record.status ?? "discovered") as CandidateRecord["status"],
-    workflowNode: String(
-      record.workflowNode ??
-        record.workflow_node ??
-        record.currentWorkflowNode ??
-        record.current_workflow_node ??
-        "discover_candidate",
-    ),
+    stageKey: String(record.stageKey ?? record.stage_key ?? record.currentStageKey ?? record.current_stage_key ?? "candidate_probe"),
     jdTitle: String(record.jdTitle ?? record.jd_title ?? record.jdId ?? record.jd_id ?? "未分配岗位"),
     matchScore: Number(record.matchScore ?? record.match_score ?? aiScores.overall ?? 0),
     experienceYears: Number(record.experienceYears ?? record.experience_years ?? contactInfo.experience_years ?? 0),
@@ -533,7 +526,7 @@ function normalizeSkillRecord(raw: unknown): SkillRecord {
     category: record.category ? String(record.category) : undefined,
     version: String(record.version ?? "1"),
     status: String(record.status ?? "draft") as SkillRecord["status"],
-    boundNode: String(record.boundNode ?? record.bound_to_workflow_node ?? "unbound"),
+    boundStage: String(record.boundStage ?? record.bound_to_stage ?? "unbound"),
     platform: String(record.platform ?? "site"),
     inputSchema: asRecord(record.inputSchema ?? record.input_schema),
     outputSchema: asRecord(record.outputSchema ?? record.output_schema),
@@ -2237,7 +2230,7 @@ function createFetchClient(baseUrl: string): DesktopApiClient {
             category: payload.category,
             version: payload.version != null ? Number(payload.version) : undefined,
             status: payload.status,
-            bound_to_workflow_node: payload.boundNode,
+            bound_to_stage: payload.boundStage,
             platform: payload.platform,
             input_schema: payload.inputSchema,
             output_schema: payload.outputSchema,
@@ -2378,8 +2371,6 @@ function createFetchClient(baseUrl: string): DesktopApiClient {
             payload: task.payload ?? {},
             priority: task.priority ?? 100,
             candidate_id: task.candidateId,
-            workflow_id: task.workflowId,
-            workflow_node_id: task.workflowNodeId,
           }),
         }),
       ),

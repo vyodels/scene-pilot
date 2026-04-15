@@ -14,9 +14,9 @@ from scene_pilot.runtime.prompts import PromptBuilder, PromptLoader
 
 
 class PromptTests(unittest.TestCase):
-    def test_load_and_render_initial_screening_prompt(self) -> None:
+    def test_load_and_render_candidate_probe_prompt(self) -> None:
         loader = PromptLoader()
-        template = loader.load_text("tasks/initial_screening.md")
+        template = loader.load_text("tasks/candidate_probe.md")
         self.assertIn("{jd_criteria}", template)
 
         builder = PromptBuilder(loader=loader)
@@ -25,7 +25,7 @@ class PromptTests(unittest.TestCase):
 
     def test_build_messages_includes_system_and_context(self) -> None:
         builder = PromptBuilder()
-        task = SimpleNamespace(task_type="initial_screening", payload={"jd_criteria": "Go"})
+        task = SimpleNamespace(task_type="candidate_probe", payload={"jd_criteria": "Go"})
 
         messages = builder.build_messages(task, session={"session_id": "s-1"}, skill={"name": "screening"})
         self.assertGreaterEqual(len(messages), 2)

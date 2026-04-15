@@ -211,7 +211,7 @@ def test_recruit_agent_context_policy_profile_persistence(tmp_path):
                             }
                         },
                         "run_type_overrides": {
-                            "initiate_communication": {
+                            "candidate_outreach": {
                                 "prefer": ["recent_messages", "candidate_memory"],
                                 "suppress": ["global_memory"],
                             }
@@ -226,7 +226,7 @@ def test_recruit_agent_context_policy_profile_persistence(tmp_path):
         assert context_policy["global"]["token_budget_default"] == 3072
         assert context_policy["global"]["llm_rerank_enabled"] is True
         assert "recent_messages" in context_policy["lanes"]["candidate"]["must_include"]
-        assert context_policy["run_type_overrides"]["initiate_communication"]["prefer"][0] == "recent_messages"
+        assert context_policy["run_type_overrides"]["candidate_outreach"]["prefer"][0] == "recent_messages"
 
         profile_response = client.get("/api/recruit-agent/profile")
         assert profile_response.status_code == 200

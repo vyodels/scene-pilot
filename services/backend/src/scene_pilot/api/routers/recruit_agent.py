@@ -186,7 +186,7 @@ def _build_candidate_thread(session: Session, candidate) -> CandidateThreadRead:
                 to_status=candidate.status,
                 phase_key=_candidate_state_snapshot(candidate).current_phase_key,
                 phase_label=_candidate_state_snapshot(candidate).current_phase_label,
-                stage_key=candidate.current_workflow_node or candidate.status,
+                stage_key=candidate.current_stage_key or candidate.status,
                 stage_label=_candidate_state_snapshot(candidate).current_stage_label,
                 actor="agent",
                 source="synthetic",
@@ -204,7 +204,7 @@ def _build_candidate_thread(session: Session, candidate) -> CandidateThreadRead:
                 id=f"synthetic-ai-{candidate.id}",
                 candidate_id=candidate.id,
                 assessment_type="ai",
-                stage_key=candidate.current_workflow_node or candidate.status,
+                stage_key=candidate.current_stage_key or candidate.status,
                 status="completed",
                 decision=str((candidate.ai_scores or {}).get("decision") or "pending"),
                 score=int((candidate.ai_scores or {}).get("overall") or 0),
@@ -754,7 +754,7 @@ def transition_candidate_state(
         if "wechat" in payload.contact_channels:
             contact_info.setdefault("has_wechat", True)
         candidate.contact_info = contact_info
-    candidate.current_workflow_node = payload.stage_key or payload.to_status
+    candidate.current_stage_key = payload.stage_key or payload.to_status
     candidate_repo.update_state_snapshot(candidate, status=payload.to_status, snapshot=next_snapshot)
     CandidateStageEventRepository(session).create(
         {

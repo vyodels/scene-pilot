@@ -200,7 +200,7 @@ export function EvolutionView({
         .map((skill) => ({
           key: `skill:${skill.id}`,
           label: skill.name,
-          detail: `${skill.boundNode} · ${skill.summary}`,
+          detail: `${skill.boundStage} · ${skill.summary}`,
           status: skill.status === "active" ? skill.health : skill.status,
           updatedAt: skill.lastCheckedAt,
           tone: toneFromStatus(skill.health === "healthy" ? skill.status : skill.health),
@@ -765,7 +765,7 @@ export function EvolutionView({
         <div style={{ display: "grid", gap: "12px" }}>
           <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
             <StatusBadge tone={toneFromStatus(selectedSkill.health)}>{selectedSkill.health}</StatusBadge>
-            <StatusBadge tone="neutral">{selectedSkill.boundNode}</StatusBadge>
+            <StatusBadge tone="neutral">{selectedSkill.boundStage}</StatusBadge>
             <StatusBadge tone="neutral">{selectedSkill.version}</StatusBadge>
           </div>
           <label style={{ display: "grid", gap: "6px" }}>

@@ -91,7 +91,7 @@ class ApiWorkflowTests(unittest.TestCase):
 
         updated = self.client.patch(
             f"/api/candidates/{candidate_id}",
-            json={"status": "screening", "current_workflow_node": "initial_screening"},
+            json={"status": "screening", "current_stage_key": "candidate_probe"},
         )
         self.assertEqual(updated.status_code, 200)
         self.assertEqual(updated.json()["status"], "screening")
@@ -114,7 +114,7 @@ class ApiWorkflowTests(unittest.TestCase):
         queued = self.client.post(
             "/api/agent/tasks",
             json={
-                "task_type": "initial_screening",
+                "task_type": "candidate_probe",
                 "priority": 150,
                 "candidate_id": candidate_id,
                 "payload": {"jd_criteria": "Python"},
@@ -136,7 +136,7 @@ class ApiWorkflowTests(unittest.TestCase):
 
         request_resume = self.client.post(
             "/api/agent/tasks",
-            json={"task_type": "request_resume", "priority": 300, "candidate_id": candidate_id},
+            json={"task_type": "resume_collection", "priority": 300, "candidate_id": candidate_id},
         )
         self.assertEqual(request_resume.status_code, 200)
         self.assertGreaterEqual(request_resume.json()["queue_depth"], 2)
@@ -189,7 +189,7 @@ class ApiWorkflowTests(unittest.TestCase):
         queued = self.client.post(
             "/api/agent/tasks",
             json={
-                "task_type": "initial_screening",
+                "task_type": "candidate_probe",
                 "priority": 200,
                 "candidate_id": candidate_id,
                 "payload": {"jd_criteria": "Architecture"},
@@ -229,7 +229,7 @@ class ApiWorkflowTests(unittest.TestCase):
         skills = self.client.get("/api/skills")
         self.assertEqual(skills.status_code, 200)
         promoted_skill = next(item for item in skills.json() if item["id"] == promoted_skill_id)
-        self.assertEqual(promoted_skill["bound_to_workflow_node"], "candidate_probe")
+        self.assertEqual(promoted_skill["bound_to_stage"], "candidate_probe")
         self.assertEqual(promoted_skill["status"], "approved")
         self.assertEqual(promoted_skill["platform"], "runtime-scene")
 
@@ -273,7 +273,7 @@ class ApiWorkflowTests(unittest.TestCase):
                 "name": "Screening Active V1",
                 "status": "active",
                 "platform": "boss",
-                "bound_to_workflow_node": "initial_screening",
+                "bound_to_stage": "candidate_probe",
                 "strategy": {"summary": "Prioritize architecture ownership."},
                 "execution_hints": {"style": "structured"},
             },
@@ -286,7 +286,7 @@ class ApiWorkflowTests(unittest.TestCase):
         queued = self.client.post(
             "/api/agent/tasks",
             json={
-                "task_type": "initial_screening",
+                "task_type": "candidate_probe",
                 "priority": 240,
                 "candidate_id": candidate_id,
                 "payload": {"jd_criteria": "Distributed systems"},
@@ -313,7 +313,7 @@ class ApiWorkflowTests(unittest.TestCase):
             self.assertIsNotNone(trace)
             self.assertEqual(trace.status, "completed")
             self.assertEqual(trace.raw_trace["task_snapshot"]["task_id"], task_id)
-            self.assertEqual(trace.distilled_trace["attempt"]["task_type"], "initial_screening")
+            self.assertEqual(trace.distilled_trace["attempt"]["task_type"], "candidate_probe")
             self.assertEqual(trace.raw_trace["session_context"]["candidate"]["id"], candidate_id)
 
             candidate_session = session.query(CandidateSession).filter(CandidateSession.candidate_id == candidate_id).first()
@@ -327,7 +327,7 @@ class ApiWorkflowTests(unittest.TestCase):
 
             decision_log = session.query(DecisionLog).filter(DecisionLog.task_id == task_id).first()
             self.assertIsNotNone(decision_log)
-            self.assertEqual(decision_log.decision_type, "initial_screening")
+            self.assertEqual(decision_log.decision_type, "candidate_probe")
             self.assertEqual(decision_log.decision, "pass")
 
     def test_runtime_endpoints_expose_session_runs_and_events(self) -> None:
@@ -351,7 +351,7 @@ class ApiWorkflowTests(unittest.TestCase):
         queued = self.client.post(
             "/api/agent/tasks",
             json={
-                "task_type": "initial_screening",
+                "task_type": "candidate_probe",
                 "priority": 220,
                 "candidate_id": candidate_id,
                 "payload": {"jd_criteria": "Runtime context"},
@@ -417,7 +417,7 @@ class ApiWorkflowTests(unittest.TestCase):
                             }
                         },
                         "run_type_overrides": {
-                            "initiate_communication": {
+                            "candidate_outreach": {
                                 "prefer": ["recent_messages", "candidate_memory"],
                                 "suppress": ["global_memory"],
                             }
@@ -446,7 +446,7 @@ class ApiWorkflowTests(unittest.TestCase):
         queued = self.client.post(
             "/api/agent/tasks",
             json={
-                "task_type": "initiate_communication",
+                "task_type": "candidate_outreach",
                 "priority": 210,
                 "candidate_id": candidate_id,
                 "payload": {"message": "你好，想继续和你沟通岗位细节。"},
@@ -498,7 +498,7 @@ class ApiWorkflowTests(unittest.TestCase):
         queued = self.client.post(
             "/api/agent/tasks",
             json={
-                "task_type": "initial_screening",
+                "task_type": "candidate_probe",
                 "priority": 240,
                 "candidate_id": candidate_id,
                 "payload": {"jd_criteria": "Distributed systems"},
@@ -549,7 +549,7 @@ class ApiWorkflowTests(unittest.TestCase):
                 "name": "Health Sensitive Screening",
                 "status": "active",
                 "platform": "boss",
-                "bound_to_workflow_node": "initial_screening",
+                "bound_to_stage": "candidate_probe",
                 "strategy": {"summary": "Require stronger quality bar."},
                 "health_check_config": {"minimum_overall_score": 85},
             },
@@ -563,10 +563,10 @@ class ApiWorkflowTests(unittest.TestCase):
         queued = self.client.post(
             "/api/agent/tasks",
             json={
-                "task_type": "initial_screening",
+                "task_type": "candidate_probe",
                 "priority": 240,
                 "candidate_id": candidate_id,
-                "workflow_node_id": "initial_screening",
+                "adaptive_stage": "candidate_probe",
                 "payload": {"jd_criteria": "Distributed systems"},
             },
         )
@@ -607,7 +607,7 @@ class ApiWorkflowTests(unittest.TestCase):
         queued = self.client.post(
             "/api/agent/tasks",
             json={
-                "task_type": "initial_screening",
+                "task_type": "candidate_probe",
                 "priority": 210,
                 "candidate_id": candidate_id,
                 "payload": {"jd_criteria": "Resume review"},
@@ -703,7 +703,7 @@ class ApiWorkflowTests(unittest.TestCase):
                     "jd_id": blocker_candidate["jd_id"],
                     "platform": "site",
                     "lane": "candidate",
-                    "run_type": "initial_screening",
+                    "run_type": "candidate_probe",
                     "status": "running",
                     "priority": 300,
                     "queue_task_id": "existing-runtime-run",
@@ -714,7 +714,7 @@ class ApiWorkflowTests(unittest.TestCase):
         queued = self.client.post(
             "/api/agent/tasks",
             json={
-                "task_type": "initial_screening",
+                "task_type": "candidate_probe",
                 "priority": 180,
                 "candidate_id": target_candidate["id"],
                 "payload": {"jd_criteria": "Global limit"},
@@ -751,7 +751,7 @@ class ApiWorkflowTests(unittest.TestCase):
         queued = self.client.post(
             "/api/agent/tasks",
             json={
-                "task_type": "initial_screening",
+                "task_type": "candidate_probe",
                 "priority": 205,
                 "candidate_id": candidate_id,
                 "payload": {"jd_criteria": "Resume review"},
