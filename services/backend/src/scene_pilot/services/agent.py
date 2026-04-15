@@ -13,12 +13,20 @@ from scene_pilot.db.base import utcnow
 from scene_pilot.models import AgentLearning, ApprovalItem
 from scene_pilot.repositories import (
     AgentLearningRepository,
+    AgentRunCheckpointRepository,
+    AgentRunRepository,
+    AgentSessionRepository,
+    ExecutionGraphProjectionRepository,
+    ExecutionTraceRepository,
+    GoalSpecRepository,
+    OperatorInteractionRepository,
     ApprovalRepository,
     CandidateRepository,
     CandidateSessionRepository,
     CommunicationLogRepository,
     DecisionLogRepository,
     SkillRepository,
+    StrategyFragmentRepository,
     WorkflowRunRepository,
 )
 from scene_pilot.runtime.agent_loop import AgentLoop
@@ -171,6 +179,7 @@ class AgentControlService:
             def _finalize_runtime_error(exc: Exception) -> None:
                 if self.session_factory is None or runtime_state is None:
                     return
+                self._persist_goal_runtime_error(task, error=str(exc), context_manifest=context_manifest or {})
                 with self.session_factory() as session:
                     RuntimeControlService(
                         session,
@@ -192,6 +201,7 @@ class AgentControlService:
             ) -> AgentResult:
                 if result.status == "waiting_human":
                     self._persist_blocked_task_approval(task, result)
+                    self._persist_operator_interaction(task, result)
                 self._persist_task_artifacts(
                     task,
                     result,
@@ -200,6 +210,12 @@ class AgentControlService:
                     workflow_run_id=workflow_run_id,
                     session_context=session_context_override if session_context_override is not None else runtime_session,
                     skill_context=runtime_skill,
+                )
+                self._persist_goal_runtime_assets(
+                    task,
+                    result,
+                    context_manifest=context_manifest or {},
+                    session_context=session_context_override if session_context_override is not None else runtime_session,
                 )
                 if persist_learning:
                     self._persist_runtime_learning(task, result)
@@ -1213,6 +1229,418 @@ class AgentControlService:
                 error=str(exc),
             )
 
+    def _persist_operator_interaction(self, task: TaskEnvelope, result: AgentResult) -> None:
+        if self.session_factory is None:
+            return
+
+        try:
+            with self.session_factory() as session:
+                approval = (
+                    session.query(ApprovalItem)
+                    .filter(
+                        ApprovalItem.target_type == "blocked_task",
+                        ApprovalItem.target_id == task.task_id,
+                    )
+                    .first()
+                )
+                if approval is None:
+                    return
+                repo = OperatorInteractionRepository(session)
+                existing = repo.open_for_approval(approval.id)
+                prompt = self._build_operator_prompt(task, result)
+                options = self._build_operator_options(task, result)
+                if existing is not None:
+                    repo.update(
+                        existing,
+                        {
+                            "title": approval.title,
+                            "agent_prompt": prompt,
+                            "suggested_options": options,
+                            "interaction_metadata": {
+                                **dict(existing.interaction_metadata or {}),
+                                "task_type": task.task_type,
+                                "candidate_id": task.candidate_id,
+                            },
+                        },
+                    )
+                    return
+
+                checkpoint = AgentRunCheckpointRepository(session).by_approval(approval.id)
+                repo.create(
+                    {
+                        "session_id": str(task.metadata.get("agent_session_id") or ""),
+                        "run_id": str(task.metadata.get("agent_run_id") or "") or None,
+                        "checkpoint_id": checkpoint.id if checkpoint is not None else None,
+                        "approval_id": approval.id,
+                        "goal_spec_id": str(task.metadata.get("goal_spec_id") or task.payload.get("goal_id") or "") or None,
+                        "candidate_id": task.candidate_id,
+                        "lane": str(task.metadata.get("lane") or ("candidate" if task.candidate_id else "agent")),
+                        "interaction_type": "confirm",
+                        "status": "pending",
+                        "title": approval.title,
+                        "agent_prompt": prompt,
+                        "suggested_options": options,
+                        "scope": "run_only",
+                        "interaction_metadata": {
+                            "task_id": task.task_id,
+                            "task_type": task.task_type,
+                            "approval_id": approval.id,
+                            "candidate_id": task.candidate_id,
+                        },
+                    }
+                )
+        except Exception as exc:  # pragma: no cover - defensive guard
+            self.events.publish(
+                "error",
+                "operator_interaction",
+                "保存运行时人工介入项失败。",
+                task_id=task.task_id,
+                error=str(exc),
+            )
+
+    def _persist_goal_runtime_assets(
+        self,
+        task: TaskEnvelope,
+        result: AgentResult,
+        *,
+        context_manifest: dict[str, Any],
+        session_context: dict[str, Any] | None,
+    ) -> None:
+        if self.session_factory is None:
+            return
+
+        try:
+            with self.session_factory() as session:
+                run_id = str(task.metadata.get("agent_run_id") or "").strip()
+                session_id = str(task.metadata.get("agent_session_id") or "").strip()
+                goal_spec_id = str(task.metadata.get("goal_spec_id") or task.payload.get("goal_id") or "").strip() or None
+                run = AgentRunRepository(session).get(run_id) if run_id else None
+                goal = GoalSpecRepository(session).get(goal_spec_id) if goal_spec_id else None
+
+                title = goal.title if goal is not None else self._humanize_task_label(task.task_type)
+                summary = result.content or f"{title} 当前状态为 {result.status}。"
+                raw_trace = {
+                    "task_snapshot": self._task_snapshot(task),
+                    "result": {
+                        "status": result.status,
+                        "success": result.success,
+                        "content": result.content,
+                        "metadata": dict(result.metadata or {}),
+                        "artifacts": list(result.artifacts or []),
+                    },
+                    "context_manifest": context_manifest,
+                    "session_context": {
+                        "candidate": dict((session_context or {}).get("candidate") or {}),
+                        "runtime": dict((session_context or {}).get("runtime") or {}),
+                    },
+                }
+                distilled_trace = {
+                    "goal": goal.goal_text if goal is not None else str(task.payload.get("goal_text") or task.task_type),
+                    "attempt": {
+                        "task_type": task.task_type,
+                        "lane": str(run.lane if run is not None else task.metadata.get("lane") or "agent"),
+                        "candidate_id": task.candidate_id,
+                    },
+                    "signals": list((context_manifest or {}).get("selected_fragments") or []),
+                    "blocked": result.status in {"waiting_human", "waiting_candidate", "blocked"},
+                    "next_step_hint": self._next_step_hint(result.status),
+                }
+                outcome = {
+                    "status": result.status,
+                    "success": result.success,
+                    "blocked_reason": result.content if result.status in {"waiting_human", "blocked"} else None,
+                    "selected_token_estimate": int((context_manifest or {}).get("selected_token_estimate") or 0),
+                }
+
+                trace_repo = ExecutionTraceRepository(session)
+                existing_trace = trace_repo.by_run(run_id) if run_id else None
+                trace_payload = {
+                    "session_id": session_id or (run.session_id if run is not None else ""),
+                    "run_id": run_id or None,
+                    "goal_spec_id": goal_spec_id,
+                    "candidate_id": task.candidate_id,
+                    "lane": str(run.lane if run is not None else task.metadata.get("lane") or "agent"),
+                    "trace_kind": "adaptive_run",
+                    "status": "blocked" if result.status in {"waiting_human", "blocked"} else ("completed" if result.success else result.status),
+                    "title": title,
+                    "summary": summary,
+                    "raw_trace": raw_trace,
+                    "distilled_trace": distilled_trace,
+                    "outcome": outcome,
+                    "trace_metadata": {
+                        "task_id": task.task_id,
+                        "task_type": task.task_type,
+                    },
+                    "started_at": run.started_at if run is not None else None,
+                    "finished_at": run.finished_at if run is not None else None,
+                }
+                if existing_trace is not None:
+                    trace_repo.update(existing_trace, trace_payload)
+                else:
+                    trace_repo.create(trace_payload)
+
+                graph_repo = ExecutionGraphProjectionRepository(session)
+                existing_graph = graph_repo.by_run(run_id) if run_id else None
+                graph_payload = self._build_graph_projection_payload(task=task, goal=goal, result=result)
+                if existing_graph is not None:
+                    graph_repo.update(existing_graph, graph_payload)
+                else:
+                    graph_repo.create(graph_payload)
+
+                session_record = AgentSessionRepository(session).get(session_id) if session_id else None
+                agent_profile_id = (
+                    goal.agent_profile_id
+                    if goal is not None
+                    else session_record.agent_profile_id
+                    if session_record is not None
+                    else ensure_primary_recruit_agent_profile(session).id
+                )
+                fragment_repo = StrategyFragmentRepository(session)
+                fragment_repo.create(
+                    {
+                        "agent_profile_id": agent_profile_id,
+                        "goal_spec_id": goal_spec_id,
+                        "run_id": run_id or None,
+                        "candidate_id": task.candidate_id,
+                        "jd_id": getattr(run, "jd_id", None),
+                        "scope": "candidate" if task.candidate_id else "agent",
+                        "fragment_kind": "adaptive_strategy",
+                        "title": f"{title} · {self._humanize_task_label(task.task_type)}",
+                        "summary": self._strategy_fragment_summary(task=task, result=result),
+                        "content": {
+                            "suggested_path": self._next_step_hint(result.status),
+                            "task_type": task.task_type,
+                            "result_status": result.status,
+                            "candidate_id": task.candidate_id,
+                        },
+                        "evidence": {
+                            "run_id": run_id or None,
+                            "goal_spec_id": goal_spec_id,
+                            "result_status": result.status,
+                        },
+                        "status": "draft" if not result.success else "active",
+                        "fragment_metadata": {
+                            "generated_by": "adaptive_runtime",
+                        },
+                    }
+                )
+
+                if goal is not None:
+                    GoalSpecRepository(session).update(
+                        goal,
+                        {
+                            "status": self._goal_status_from_result(result),
+                            "summary": summary,
+                            "latest_run_id": run_id or goal.latest_run_id,
+                            "last_activity_at": utcnow(),
+                            "goal_metadata": {
+                                **dict(goal.goal_metadata or {}),
+                                "last_result_status": result.status,
+                            },
+                        },
+                    )
+        except Exception as exc:  # pragma: no cover - defensive guard
+            self.events.publish(
+                "error",
+                "adaptive_runtime",
+                "保存目标驱动运行资产失败。",
+                task_id=task.task_id,
+                error=str(exc),
+            )
+
+    def _persist_goal_runtime_error(
+        self,
+        task: TaskEnvelope,
+        *,
+        error: str,
+        context_manifest: dict[str, Any],
+    ) -> None:
+        if self.session_factory is None:
+            return
+        try:
+            with self.session_factory() as session:
+                run_id = str(task.metadata.get("agent_run_id") or "").strip()
+                session_id = str(task.metadata.get("agent_session_id") or "").strip()
+                goal_spec_id = str(task.metadata.get("goal_spec_id") or task.payload.get("goal_id") or "").strip() or None
+                trace_repo = ExecutionTraceRepository(session)
+                existing = trace_repo.by_run(run_id) if run_id else None
+                payload = {
+                    "session_id": session_id,
+                    "run_id": run_id or None,
+                    "goal_spec_id": goal_spec_id,
+                    "candidate_id": task.candidate_id,
+                    "lane": str(task.metadata.get("lane") or ("candidate" if task.candidate_id else "agent")),
+                    "trace_kind": "adaptive_run",
+                    "status": "failed",
+                    "title": self._humanize_task_label(task.task_type),
+                    "summary": error,
+                    "raw_trace": {
+                        "task_snapshot": self._task_snapshot(task),
+                        "error": error,
+                        "context_manifest": context_manifest,
+                    },
+                    "distilled_trace": {
+                        "goal": str(task.payload.get("goal_text") or task.task_type),
+                        "failure": error,
+                    },
+                    "outcome": {"status": "failed", "success": False},
+                    "trace_metadata": {"task_id": task.task_id, "task_type": task.task_type},
+                }
+                if existing is not None:
+                    trace_repo.update(existing, payload)
+                else:
+                    trace_repo.create(payload)
+                goal = GoalSpecRepository(session).get(goal_spec_id) if goal_spec_id else None
+                if goal is not None:
+                    GoalSpecRepository(session).update(
+                        goal,
+                        {
+                            "status": "failed",
+                            "summary": error,
+                            "last_activity_at": utcnow(),
+                        },
+                    )
+        except Exception:
+            return
+
+    def _build_operator_prompt(self, task: TaskEnvelope, result: AgentResult) -> str:
+        task_label = self._humanize_task_label(task.task_type)
+        if task.candidate_id:
+            return f"{task_label} 在候选人上下文中暂停了。当前问题：{result.content or '需要你确认下一步处理方式。'}"
+        return f"{task_label} 暂时无法继续。当前问题：{result.content or '需要你确认下一步处理方式。'}"
+
+    def _build_operator_options(self, task: TaskEnvelope, result: AgentResult) -> list[dict[str, Any]]:
+        options = [
+            {
+                "id": "confirm",
+                "label": "继续执行",
+                "action": "confirm",
+                "description": "保留当前路径，恢复这个 run。",
+            },
+            {
+                "id": "retry",
+                "label": "重试一次",
+                "action": "retry",
+                "description": "按当前目标再试一次，并保留新的人工说明。",
+            },
+            {
+                "id": "correct",
+                "label": "给出纠偏意见",
+                "action": "correct",
+                "description": "输入新的方向，由模型据此继续执行。",
+            },
+            {
+                "id": "teach",
+                "label": "教给 Agent",
+                "action": "teach",
+                "description": "把这次经验记录为后续策略输入。",
+            },
+        ]
+        if task.candidate_id:
+            options.append(
+                {
+                    "id": "handoff",
+                    "label": "我来接管候选人",
+                    "action": "handoff",
+                    "description": "停止当前自动路径，改由你手动处理这个候选人。",
+                }
+            )
+        else:
+            options.append(
+                {
+                    "id": "stop",
+                    "label": "停止这条路径",
+                    "action": "stop",
+                    "description": "结束当前尝试，避免继续重复失败。",
+                }
+            )
+        return options
+
+    def _build_graph_projection_payload(self, *, task: TaskEnvelope, goal, result: AgentResult) -> dict[str, Any]:
+        title = goal.title if goal is not None else self._humanize_task_label(task.task_type)
+        blocked = result.status in {"waiting_human", "blocked"}
+        nodes = [
+            {"id": "goal", "label": title, "kind": "goal", "state": "active"},
+            {"id": "explore", "label": "探索执行路径", "kind": "phase", "state": "completed"},
+            {"id": "execute", "label": self._humanize_task_label(task.task_type), "kind": "phase", "state": "blocked" if blocked else ("completed" if result.success else "failed")},
+        ]
+        edges = [
+            {"from": "goal", "to": "explore", "label": "意图拆解"},
+            {"from": "explore", "to": "execute", "label": "实操尝试"},
+        ]
+        if blocked:
+            nodes.append({"id": "operator", "label": "等待人工介入", "kind": "operator", "state": "pending"})
+            edges.append({"from": "execute", "to": "operator", "label": "触发确认"})
+        elif result.success:
+            nodes.append({"id": "distill", "label": "沉淀策略与记忆", "kind": "learning", "state": "completed"})
+            edges.append({"from": "execute", "to": "distill", "label": "提炼结果"})
+        rendered = "\n".join(
+            [
+                "graph TD",
+                '  goal["目标"] --> explore["探索路径"]',
+                f'  explore --> execute["{self._humanize_task_label(task.task_type)}"]',
+                '  execute --> operator["人工介入"]' if blocked else '  execute --> distill["策略沉淀"]',
+            ]
+        )
+        return {
+            "goal_spec_id": goal.id if goal is not None else str(task.metadata.get("goal_spec_id") or task.payload.get("goal_id") or "") or None,
+            "run_id": str(task.metadata.get("agent_run_id") or "") or None,
+            "candidate_id": task.candidate_id,
+            "graph_kind": "execution_projection",
+            "title": title,
+            "summary": result.content or f"{title} 当前状态为 {result.status}。",
+            "nodes": nodes,
+            "edges": edges,
+            "rendered_text": rendered,
+            "graph_metadata": {
+                "result_status": result.status,
+                "task_type": task.task_type,
+            },
+        }
+
+    def _goal_status_from_result(self, result: AgentResult) -> str:
+        if result.status in {"waiting_human", "waiting_candidate", "blocked"}:
+            return "blocked"
+        if result.success:
+            return "active"
+        if result.status in {"failed", "rejected", "cancelled"}:
+            return "failed"
+        return result.status or "active"
+
+    def _strategy_fragment_summary(self, *, task: TaskEnvelope, result: AgentResult) -> str:
+        base = result.content or self._next_step_hint(result.status)
+        return f"{self._humanize_task_label(task.task_type)}：{base}"
+
+    def _next_step_hint(self, status: str) -> str:
+        if status == "waiting_human":
+            return "等待人工确认后继续。"
+        if status == "waiting_candidate":
+            return "等待候选人响应后继续。"
+        if status == "completed":
+            return "已完成当前尝试，可继续扩展执行范围。"
+        if status == "failed":
+            return "需要换一条路径或补充新的操作线索。"
+        return "继续观察结果并决定下一步。"
+
+    def _humanize_task_label(self, task_type: str) -> str:
+        return str(task_type or "task").replace("_", " ").strip().title()
+
+    def _task_snapshot(self, task: TaskEnvelope) -> dict[str, Any]:
+        return {
+            "task_id": task.task_id,
+            "task_type": task.task_type,
+            "priority": task.priority,
+            "payload": dict(task.payload or {}),
+            "metadata": dict(task.metadata or {}),
+            "candidate_id": task.candidate_id,
+            "workflow_id": task.workflow_id,
+            "workflow_node_id": task.workflow_node_id,
+            "platform": task.platform,
+            "attempts": task.attempts,
+            "due_at": task.due_at.isoformat() if task.due_at else None,
+            "created_at": task.created_at.isoformat(),
+        }
+
     def _requires_runtime_review(self, draft: dict[str, Any]) -> bool:
         if "requires_review" in draft:
             return bool(draft["requires_review"])
@@ -1309,21 +1737,6 @@ class AgentControlService:
         candidate_session.status = "active" if status == "approved" else "closed"
         candidate_session.suspend_reason = None if status == "approved" else (notes or "Human review rejected the blocked task.")
         candidate_session.last_active_at = utcnow()
-
-    def _task_snapshot(self, task: TaskEnvelope) -> dict[str, Any]:
-        return {
-            "task_id": task.task_id,
-            "task_type": task.task_type,
-            "priority": task.priority,
-            "payload": dict(task.payload or {}),
-            "metadata": dict(task.metadata or {}),
-            "candidate_id": task.candidate_id,
-            "workflow_id": task.workflow_id,
-            "workflow_node_id": task.workflow_node_id,
-            "platform": task.platform,
-            "attempts": task.attempts,
-            "due_at": task.due_at.isoformat() if task.due_at else None,
-        }
 
     def _blocked_task_title(self, task: TaskEnvelope) -> str:
         node = task.workflow_node_id or task.task_type

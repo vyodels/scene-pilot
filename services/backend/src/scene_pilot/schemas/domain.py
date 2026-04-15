@@ -566,6 +566,7 @@ class CandidateThreadRead(BaseModel):
     sync_records: list[TalentPoolSyncRecordRead] = Field(default_factory=list)
     available_statuses: list[str] = Field(default_factory=list)
     runtime_approvals: list["ApprovalRead"] = Field(default_factory=list)
+    runtime_interactions: list["OperatorInteractionRead"] = Field(default_factory=list)
 
 
 class WorkflowBase(BaseModel):
@@ -1622,6 +1623,7 @@ class RuntimeSessionRead(BaseModel):
     agent_profile_id: str
     session_key: str
     status: str
+    current_goal_id: str | None = None
     current_lane: str | None = None
     last_active_at: datetime | None = None
     last_run_at: datetime | None = None
@@ -1636,6 +1638,7 @@ class RuntimeControlledRunRead(BaseModel):
     id: str
     session_id: str
     execution_episode_id: str | None = None
+    goal_spec_id: str | None = None
     candidate_id: str | None = None
     jd_id: str | None = None
     platform: str
@@ -1662,6 +1665,7 @@ class RuntimeWorkItemRead(BaseModel):
     session_id: str
     run_id: str | None = None
     queue_task_id: str | None = None
+    goal_spec_id: str | None = None
     candidate_id: str | None = None
     platform: str
     lane: str
@@ -1713,6 +1717,165 @@ class RuntimeEventRead(BaseModel):
     occurred_at: datetime
     created_at: datetime
     updated_at: datetime
+
+
+class GoalSpecBase(BaseModel):
+    title: str
+    goal_text: str
+    goal_kind: str = "recruiting"
+    status: str = "draft"
+    source: str = "operator"
+    source_text: str | None = None
+    requested_by: str | None = None
+    constraints: dict[str, Any] = Field(default_factory=dict)
+    success_criteria: dict[str, Any] = Field(default_factory=dict)
+    context_hints: dict[str, Any] = Field(default_factory=dict)
+    trial_budget: dict[str, Any] = Field(default_factory=dict)
+    run_preferences: dict[str, Any] = Field(default_factory=dict)
+    summary: str | None = None
+    latest_run_id: str | None = None
+    last_activity_at: datetime | None = None
+    goal_metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class GoalSpecCreate(BaseModel):
+    title: str
+    goal_text: str
+    goal_kind: str = "recruiting"
+    requested_by: str = "desktop-user"
+    constraints: dict[str, Any] = Field(default_factory=dict)
+    success_criteria: dict[str, Any] = Field(default_factory=dict)
+    context_hints: dict[str, Any] = Field(default_factory=dict)
+    trial_budget: dict[str, Any] = Field(default_factory=dict)
+    run_preferences: dict[str, Any] = Field(default_factory=dict)
+    summary: str | None = None
+    priority: int = 100
+
+
+class GoalSpecUpdate(BaseModel):
+    title: str | None = None
+    goal_text: str | None = None
+    goal_kind: str | None = None
+    status: str | None = None
+    source: str | None = None
+    source_text: str | None = None
+    requested_by: str | None = None
+    constraints: dict[str, Any] | None = None
+    success_criteria: dict[str, Any] | None = None
+    context_hints: dict[str, Any] | None = None
+    trial_budget: dict[str, Any] | None = None
+    run_preferences: dict[str, Any] | None = None
+    summary: str | None = None
+    latest_run_id: str | None = None
+    last_activity_at: datetime | None = None
+    goal_metadata: dict[str, Any] | None = None
+
+
+class GoalSpecRead(GoalSpecBase):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    agent_profile_id: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class ExecutionTraceRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    session_id: str
+    run_id: str | None = None
+    goal_spec_id: str | None = None
+    candidate_id: str | None = None
+    lane: str
+    trace_kind: str
+    status: str
+    title: str
+    summary: str | None = None
+    raw_trace: dict[str, Any] = Field(default_factory=dict)
+    distilled_trace: dict[str, Any] = Field(default_factory=dict)
+    outcome: dict[str, Any] = Field(default_factory=dict)
+    trace_metadata: dict[str, Any] = Field(default_factory=dict)
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class StrategyFragmentRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    agent_profile_id: str
+    goal_spec_id: str | None = None
+    run_id: str | None = None
+    candidate_id: str | None = None
+    jd_id: str | None = None
+    scope: str
+    fragment_kind: str
+    title: str
+    summary: str | None = None
+    content: dict[str, Any] = Field(default_factory=dict)
+    evidence: dict[str, Any] = Field(default_factory=dict)
+    status: str
+    adoption_count: int = 0
+    last_applied_at: datetime | None = None
+    fragment_metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
+    updated_at: datetime
+
+
+class ExecutionGraphProjectionRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    goal_spec_id: str | None = None
+    run_id: str | None = None
+    candidate_id: str | None = None
+    graph_kind: str
+    title: str
+    summary: str | None = None
+    nodes: list[dict[str, Any]] = Field(default_factory=list)
+    edges: list[dict[str, Any]] = Field(default_factory=list)
+    rendered_text: str | None = None
+    graph_metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
+    updated_at: datetime
+
+
+class OperatorInteractionRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    session_id: str
+    run_id: str | None = None
+    checkpoint_id: str | None = None
+    approval_id: str | None = None
+    goal_spec_id: str | None = None
+    candidate_id: str | None = None
+    lane: str
+    interaction_type: str
+    status: str
+    title: str
+    agent_prompt: str
+    suggested_options: list[dict[str, Any]] = Field(default_factory=list)
+    operator_response: dict[str, Any] = Field(default_factory=dict)
+    effect_summary: str | None = None
+    scope: str = "run_only"
+    interaction_metadata: dict[str, Any] = Field(default_factory=dict)
+    surfaced_at: datetime
+    resolved_at: datetime | None = None
+    resolved_by: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class OperatorInteractionResolveRequest(BaseModel):
+    action: str
+    comment: str | None = None
+    operator: str = "desktop-user"
+    scope: str | None = None
 
 
 class TrialRunRequest(BaseModel):

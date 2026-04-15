@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from scene_pilot.api.deps import get_session
 from scene_pilot.db.base import utcnow
-from scene_pilot.repositories import AgentLearningRepository, ApprovalRepository, SkillRepository
+from scene_pilot.repositories import AgentLearningRepository, ApprovalRepository, OperatorInteractionRepository, SkillRepository
 from scene_pilot.schemas import (
     ApprovalCreate,
     ApprovalDecisionRequest,
@@ -174,6 +174,15 @@ def approve_approval(
             payload_snapshot["resume_task"] = resumed_task
         item.payload = payload_snapshot
     updated = repo.mark_review(item, "approved", reviewer=payload.reviewer, notes=payload.reason)
+    _sync_operator_interactions(
+        session,
+        approval_id=updated.id,
+        status="resolved",
+        reviewer=payload.reviewer,
+        action="approve",
+        reason=payload.reason,
+        effect_summary="已按操作员确认恢复或接受这项请求。",
+    )
     return ApprovalRead.model_validate(updated)
 
 
@@ -233,7 +242,46 @@ def reject_approval(
             payload_snapshot.setdefault("closed_at", utcnow().isoformat())
         item.payload = payload_snapshot
     updated = repo.mark_review(item, "rejected", reviewer=payload.reviewer, notes=payload.reason)
+    _sync_operator_interactions(
+        session,
+        approval_id=updated.id,
+        status="resolved",
+        reviewer=payload.reviewer,
+        action="reject",
+        reason=payload.reason,
+        effect_summary="已按操作员选择停止当前路径或拒绝这项请求。",
+    )
     return ApprovalRead.model_validate(updated)
+
+
+def _sync_operator_interactions(
+    session: Session,
+    *,
+    approval_id: str,
+    status: str,
+    reviewer: str,
+    action: str,
+    reason: str | None,
+    effect_summary: str,
+) -> None:
+    repo = OperatorInteractionRepository(session)
+    items = repo.list_recent(status="pending", limit=200, offset=0)
+    for item in items:
+        if item.approval_id != approval_id:
+            continue
+        repo.update(
+            item,
+            {
+                "status": status,
+                "operator_response": {
+                    "action": action,
+                    "comment": reason,
+                },
+                "effect_summary": effect_summary,
+                "resolved_at": utcnow(),
+                "resolved_by": reviewer,
+            },
+        )
 
 
 def _extract_resume_task(payload: dict[str, object]) -> dict[str, object] | None:

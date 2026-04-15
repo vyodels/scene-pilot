@@ -12,11 +12,15 @@ from scene_pilot.db.base import utcnow
 from scene_pilot.models import (
     AgentLearning,
     AgentGlobalMemory,
+    ExecutionGraphProjection,
+    ExecutionTrace,
+    GoalSpec,
     AgentRun,
     AgentRunCheckpoint,
     AgentRuntimeEvent,
     AgentSession,
     AgentWorkItem,
+    OperatorInteraction,
     ApprovalItem,
     AppSetting,
     Candidate,
@@ -37,6 +41,7 @@ from scene_pilot.models import (
     RecruitAgentProfile,
     ResumeArtifact,
     Skill,
+    StrategyFragment,
     SyncBacklogEntry,
     TaskSpec,
     TaskQueueItem,
@@ -583,6 +588,143 @@ class AgentRuntimeEventRepository(BaseRepository[AgentRuntimeEvent]):
         if run_id is not None:
             stmt = stmt.where(AgentRuntimeEvent.run_id == run_id)
         stmt = stmt.order_by(AgentRuntimeEvent.occurred_at.desc(), AgentRuntimeEvent.id.desc()).offset(offset).limit(limit)
+        return list(self.session.scalars(stmt).all())
+
+
+class GoalSpecRepository(BaseRepository[GoalSpec]):
+    model = GoalSpec
+
+    def list_recent(
+        self,
+        *,
+        agent_profile_id: str | None = None,
+        status: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[GoalSpec]:
+        stmt = select(GoalSpec)
+        if agent_profile_id is not None:
+            stmt = stmt.where(GoalSpec.agent_profile_id == agent_profile_id)
+        if status is not None:
+            stmt = stmt.where(GoalSpec.status == status)
+        stmt = stmt.order_by(
+            GoalSpec.last_activity_at.desc().nullslast(),
+            GoalSpec.created_at.desc(),
+            GoalSpec.id.desc(),
+        ).offset(offset).limit(limit)
+        return list(self.session.scalars(stmt).all())
+
+
+class ExecutionTraceRepository(BaseRepository[ExecutionTrace]):
+    model = ExecutionTrace
+
+    def by_run(self, run_id: str) -> ExecutionTrace | None:
+        stmt = (
+            select(ExecutionTrace)
+            .where(ExecutionTrace.run_id == run_id)
+            .order_by(ExecutionTrace.created_at.desc(), ExecutionTrace.id.desc())
+        )
+        return self.session.scalars(stmt).first()
+
+    def list_recent(
+        self,
+        *,
+        goal_spec_id: str | None = None,
+        session_id: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[ExecutionTrace]:
+        stmt = select(ExecutionTrace)
+        if goal_spec_id is not None:
+            stmt = stmt.where(ExecutionTrace.goal_spec_id == goal_spec_id)
+        if session_id is not None:
+            stmt = stmt.where(ExecutionTrace.session_id == session_id)
+        stmt = stmt.order_by(ExecutionTrace.created_at.desc(), ExecutionTrace.id.desc()).offset(offset).limit(limit)
+        return list(self.session.scalars(stmt).all())
+
+
+class StrategyFragmentRepository(BaseRepository[StrategyFragment]):
+    model = StrategyFragment
+
+    def list_recent(
+        self,
+        *,
+        agent_profile_id: str | None = None,
+        status: str | None = None,
+        scope: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[StrategyFragment]:
+        stmt = select(StrategyFragment)
+        if agent_profile_id is not None:
+            stmt = stmt.where(StrategyFragment.agent_profile_id == agent_profile_id)
+        if status is not None:
+            stmt = stmt.where(StrategyFragment.status == status)
+        if scope is not None:
+            stmt = stmt.where(StrategyFragment.scope == scope)
+        stmt = stmt.order_by(StrategyFragment.updated_at.desc(), StrategyFragment.id.desc()).offset(offset).limit(limit)
+        return list(self.session.scalars(stmt).all())
+
+
+class ExecutionGraphProjectionRepository(BaseRepository[ExecutionGraphProjection]):
+    model = ExecutionGraphProjection
+
+    def by_run(self, run_id: str) -> ExecutionGraphProjection | None:
+        stmt = (
+            select(ExecutionGraphProjection)
+            .where(ExecutionGraphProjection.run_id == run_id)
+            .order_by(ExecutionGraphProjection.created_at.desc(), ExecutionGraphProjection.id.desc())
+        )
+        return self.session.scalars(stmt).first()
+
+    def list_recent(
+        self,
+        *,
+        goal_spec_id: str | None = None,
+        candidate_id: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[ExecutionGraphProjection]:
+        stmt = select(ExecutionGraphProjection)
+        if goal_spec_id is not None:
+            stmt = stmt.where(ExecutionGraphProjection.goal_spec_id == goal_spec_id)
+        if candidate_id is not None:
+            stmt = stmt.where(ExecutionGraphProjection.candidate_id == candidate_id)
+        stmt = stmt.order_by(ExecutionGraphProjection.created_at.desc(), ExecutionGraphProjection.id.desc()).offset(offset).limit(limit)
+        return list(self.session.scalars(stmt).all())
+
+
+class OperatorInteractionRepository(BaseRepository[OperatorInteraction]):
+    model = OperatorInteraction
+
+    def open_for_approval(self, approval_id: str) -> OperatorInteraction | None:
+        stmt = (
+            select(OperatorInteraction)
+            .where(
+                OperatorInteraction.approval_id == approval_id,
+                OperatorInteraction.status == "pending",
+            )
+            .order_by(OperatorInteraction.created_at.desc(), OperatorInteraction.id.desc())
+        )
+        return self.session.scalars(stmt).first()
+
+    def list_recent(
+        self,
+        *,
+        session_id: str | None = None,
+        candidate_id: str | None = None,
+        status: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[OperatorInteraction]:
+        stmt = select(OperatorInteraction)
+        if session_id is not None:
+            stmt = stmt.where(OperatorInteraction.session_id == session_id)
+        if candidate_id is not None:
+            stmt = stmt.where(OperatorInteraction.candidate_id == candidate_id)
+        if status is not None:
+            stmt = stmt.where(OperatorInteraction.status == status)
+        stmt = stmt.order_by(OperatorInteraction.surfaced_at.desc(), OperatorInteraction.id.desc()).offset(offset).limit(limit)
         return list(self.session.scalars(stmt).all())
 
 

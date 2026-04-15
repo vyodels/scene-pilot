@@ -9,10 +9,14 @@ from sqlalchemy.orm import Session
 from scene_pilot.api.deps import get_container, get_session
 from scene_pilot.repositories import (
     AgentGlobalMemoryRepository,
+    ExecutionGraphProjectionRepository,
+    ExecutionTraceRepository,
+    GoalSpecRepository,
     AgentRunCheckpointRepository,
     AgentRunRepository,
     AgentRuntimeEventRepository,
     AgentSessionRepository,
+    OperatorInteractionRepository,
     ApprovalRepository,
     CandidateAssessmentRepository,
     CandidateAssignmentRepository,
@@ -27,6 +31,7 @@ from scene_pilot.repositories import (
     JobMemoryRepository,
     RecruitAgentProfileRepository,
     ResumeArtifactRepository,
+    StrategyFragmentRepository,
     TalentPoolSyncRecordRepository,
 )
 from scene_pilot.schemas import (
@@ -50,12 +55,19 @@ from scene_pilot.schemas import (
     CandidateStateSnapshotRead,
     CandidateStateTransitionRequest,
     CandidateThreadRead,
+    ExecutionGraphProjectionRead,
+    ExecutionTraceRead,
     EvolutionArtifactCreate,
     EvolutionArtifactRead,
     EvolutionArtifactUpdate,
+    GoalSpecCreate,
+    GoalSpecRead,
+    GoalSpecUpdate,
     JobMemoryRead,
     JobMemoryUpdate,
     MemoryCompactRequest,
+    OperatorInteractionRead,
+    OperatorInteractionResolveRequest,
     RecruitAgentProfileRead,
     RecruitAgentProfileUpdate,
     ResumeArtifactCreate,
@@ -64,10 +76,12 @@ from scene_pilot.schemas import (
     RuntimeControlledRunRead,
     RuntimeEventRead,
     RuntimeSessionRead,
+    StrategyFragmentRead,
     TalentPoolSyncRecordCreate,
     TalentPoolSyncRecordRead,
 )
 from scene_pilot.services.container import AppContainer
+from scene_pilot.services.events import EventStreamService
 from scene_pilot.services.recruit_agent import (
     AUTO_COMPACT_THRESHOLD,
     apply_memory_compaction,
@@ -111,6 +125,11 @@ def _runtime_approvals_for_candidate(session: Session, candidate_id: str) -> lis
         if str(blocked.get("candidate_id") or "") == candidate_id:
             items.append(approval)
     return [ApprovalRead.model_validate(item) for item in items]
+
+
+def _runtime_interactions_for_candidate(session: Session, candidate_id: str) -> list[OperatorInteractionRead]:
+    items = OperatorInteractionRepository(session).list_recent(candidate_id=candidate_id, limit=100, offset=0)
+    return [OperatorInteractionRead.model_validate(item) for item in items]
 
 
 def _ensure_runtime_session(session: Session):
@@ -237,6 +256,7 @@ def _build_candidate_thread(session: Session, candidate) -> CandidateThreadRead:
         sync_records=sync_records,
         available_statuses=DEFAULT_CANDIDATE_STATUSES,
         runtime_approvals=_runtime_approvals_for_candidate(session, candidate.id),
+        runtime_interactions=_runtime_interactions_for_candidate(session, candidate.id),
     )
 
 
@@ -949,6 +969,90 @@ def create_candidate_sync_record(
     return TalentPoolSyncRecordRead.model_validate(item)
 
 
+@router.get("/goals", response_model=list[GoalSpecRead])
+def list_goal_specs(
+    status: str | None = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    session: Session = Depends(get_session),
+) -> list[GoalSpecRead]:
+    profile = ensure_primary_recruit_agent_profile(session)
+    items = GoalSpecRepository(session).list_recent(
+        agent_profile_id=profile.id,
+        status=status,
+        limit=limit,
+        offset=offset,
+    )
+    return [GoalSpecRead.model_validate(item) for item in items]
+
+
+@router.post("/goals", response_model=GoalSpecRead, status_code=201)
+def create_goal_spec(
+    payload: GoalSpecCreate,
+    session: Session = Depends(get_session),
+    container: AppContainer = Depends(get_container),
+) -> GoalSpecRead:
+    profile = ensure_primary_recruit_agent_profile(session)
+    goal = GoalSpecRepository(session).create(
+        {
+            "agent_profile_id": profile.id,
+            "title": payload.title,
+            "goal_text": payload.goal_text,
+            "goal_kind": payload.goal_kind,
+            "status": "queued",
+            "source": "operator",
+            "source_text": payload.goal_text,
+            "requested_by": payload.requested_by,
+            "constraints": payload.constraints,
+            "success_criteria": payload.success_criteria,
+            "context_hints": payload.context_hints,
+            "trial_budget": payload.trial_budget,
+            "run_preferences": payload.run_preferences,
+            "summary": payload.summary or f"围绕目标“{payload.title}”启动自适应招聘探索。",
+            "last_activity_at": _now(),
+            "goal_metadata": {
+                "created_from": "desktop_workbench",
+                "execution_mode": "adaptive_goal",
+            },
+        }
+    )
+    container.agent_control.enqueue_task(
+        "goal_intake",
+        payload={
+            "goal_id": goal.id,
+            "goal_text": goal.goal_text,
+            "goal_kind": goal.goal_kind,
+            "constraints": dict(goal.constraints or {}),
+            "success_criteria": dict(goal.success_criteria or {}),
+            "context_hints": dict(goal.context_hints or {}),
+            "trial_budget": dict(goal.trial_budget or {}),
+        },
+        metadata={
+            "requested_by": payload.requested_by,
+            "goal_spec_id": goal.id,
+            "lane": "agent",
+            "mode": "adaptive_goal",
+        },
+        priority=payload.priority,
+    )
+    refreshed = GoalSpecRepository(session).get(goal.id)
+    return GoalSpecRead.model_validate(refreshed or goal)
+
+
+@router.patch("/goals/{goal_id}", response_model=GoalSpecRead)
+def update_goal_spec(
+    goal_id: str,
+    payload: GoalSpecUpdate,
+    session: Session = Depends(get_session),
+) -> GoalSpecRead:
+    repo = GoalSpecRepository(session)
+    item = repo.get(goal_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Goal not found")
+    updated = repo.update(item, payload.model_dump(exclude_unset=True))
+    return GoalSpecRead.model_validate(updated)
+
+
 @router.get("/runtime/session", response_model=RuntimeSessionRead)
 def get_runtime_session(session: Session = Depends(get_session)) -> RuntimeSessionRead:
     item = _ensure_runtime_session(session)
@@ -1011,6 +1115,148 @@ def list_runtime_events(
         offset=offset,
     )
     return [RuntimeEventRead.model_validate(item) for item in items]
+
+
+@router.get("/runtime/traces", response_model=list[ExecutionTraceRead])
+def list_runtime_traces(
+    goal_id: str | None = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    session: Session = Depends(get_session),
+) -> list[ExecutionTraceRead]:
+    session_record = _ensure_runtime_session(session)
+    items = ExecutionTraceRepository(session).list_recent(
+        goal_spec_id=goal_id,
+        session_id=session_record.id,
+        limit=limit,
+        offset=offset,
+    )
+    return [ExecutionTraceRead.model_validate(item) for item in items]
+
+
+@router.get("/runtime/graphs", response_model=list[ExecutionGraphProjectionRead])
+def list_runtime_graphs(
+    goal_id: str | None = Query(default=None),
+    candidate_id: str | None = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    session: Session = Depends(get_session),
+) -> list[ExecutionGraphProjectionRead]:
+    items = ExecutionGraphProjectionRepository(session).list_recent(
+        goal_spec_id=goal_id,
+        candidate_id=candidate_id,
+        limit=limit,
+        offset=offset,
+    )
+    return [ExecutionGraphProjectionRead.model_validate(item) for item in items]
+
+
+@router.get("/runtime/strategy-fragments", response_model=list[StrategyFragmentRead])
+def list_strategy_fragments(
+    status: str | None = Query(default=None),
+    scope: str | None = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    session: Session = Depends(get_session),
+) -> list[StrategyFragmentRead]:
+    profile = ensure_primary_recruit_agent_profile(session)
+    items = StrategyFragmentRepository(session).list_recent(
+        agent_profile_id=profile.id,
+        status=status,
+        scope=scope,
+        limit=limit,
+        offset=offset,
+    )
+    return [StrategyFragmentRead.model_validate(item) for item in items]
+
+
+@router.get("/runtime/operator-interactions", response_model=list[OperatorInteractionRead])
+def list_operator_interactions(
+    status: str | None = Query(default=None),
+    candidate_id: str | None = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    session: Session = Depends(get_session),
+) -> list[OperatorInteractionRead]:
+    session_record = _ensure_runtime_session(session)
+    items = OperatorInteractionRepository(session).list_recent(
+        session_id=session_record.id,
+        candidate_id=candidate_id,
+        status=status,
+        limit=limit,
+        offset=offset,
+    )
+    return [OperatorInteractionRead.model_validate(item) for item in items]
+
+
+@router.post("/runtime/operator-interactions/{interaction_id}/resolve", response_model=OperatorInteractionRead)
+def resolve_operator_interaction(
+    interaction_id: str,
+    payload: OperatorInteractionResolveRequest,
+    session: Session = Depends(get_session),
+    container: AppContainer = Depends(get_container),
+) -> OperatorInteractionRead:
+    repo = OperatorInteractionRepository(session)
+    item = repo.get(interaction_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Operator interaction not found")
+    if item.status != "pending":
+        return OperatorInteractionRead.model_validate(item)
+
+    action = payload.action.strip().lower()
+    approval = ApprovalRepository(session).get(item.approval_id) if item.approval_id else None
+    effect_summary = None
+    if approval is not None:
+        if action in {"confirm", "approve", "retry", "correct", "teach"}:
+            updated_approval = container.agent_control.apply_approval_resolution(
+                session,
+                approval,
+                status="approved",
+                reviewer=payload.operator,
+                notes=payload.comment,
+            )
+            ApprovalRepository(session).mark_review(
+                updated_approval,
+                "approved",
+                reviewer=payload.operator,
+                notes=payload.comment,
+            )
+            effect_summary = "已按操作员确认恢复运行。"
+        elif action in {"reject", "stop", "handoff"}:
+            updated_approval = container.agent_control.apply_approval_resolution(
+                session,
+                approval,
+                status="rejected",
+                reviewer=payload.operator,
+                notes=payload.comment,
+            )
+            ApprovalRepository(session).mark_review(
+                updated_approval,
+                "rejected",
+                reviewer=payload.operator,
+                notes=payload.comment,
+            )
+            effect_summary = "已停止当前路径，等待人工后续处理。"
+        else:
+            raise HTTPException(status_code=400, detail="Unsupported operator action")
+    else:
+        effect_summary = "已记录操作员输入，供后续运行参考。"
+
+    updated = repo.update(
+        item,
+        {
+            "status": "resolved",
+            "operator_response": {
+                "action": action,
+                "comment": payload.comment,
+                "scope": payload.scope or item.scope,
+            },
+            "effect_summary": effect_summary,
+            "resolved_at": _now(),
+            "resolved_by": payload.operator,
+        },
+    )
+    return OperatorInteractionRead.model_validate(updated)
 
 
 @router.get("/evolution-artifacts", response_model=list[EvolutionArtifactRead])

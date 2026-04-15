@@ -4,11 +4,30 @@ import { formatCompactDate } from "../../lib/format";
 import { useI18n } from "../../lib/i18n";
 import { theme } from "../../lib/theme";
 import { translateUiToken } from "../../lib/uiText";
-import type { AgentEvent, ApprovalItem, EvolutionArtifactRecord, SkillRecord } from "../../lib/types";
+import type {
+  AgentEvent,
+  ApprovalItem,
+  EvolutionArtifactRecord,
+  ExecutionGraphProjectionRecord,
+  ExecutionTraceRecord,
+  GoalSpecRecord,
+  OperatorInteractionRecord,
+  SkillRecord,
+} from "../../lib/types";
 
-type InboxFilter = "all" | "approvals" | "permissions" | "skills" | "artifacts";
+type InboxFilter = "all" | "interactions" | "approvals" | "permissions" | "skills" | "artifacts";
 
 type InboxItem =
+  | {
+      key: string;
+      kind: "interaction";
+      title: string;
+      detail: string;
+      at: string;
+      tone: "positive" | "neutral" | "warning" | "critical";
+      interaction: OperatorInteractionRecord;
+      candidateId?: string | null;
+    }
   | {
       key: string;
       kind: "approval";
@@ -38,20 +57,26 @@ type InboxItem =
       artifact: EvolutionArtifactRecord;
     };
 
+type InteractionInboxItem = Extract<InboxItem, { kind: "interaction" }>;
 type ApprovalInboxItem = Extract<InboxItem, { kind: "approval" }>;
 type SkillInboxItem = Extract<InboxItem, { kind: "skill" }>;
 type ArtifactInboxItem = Extract<InboxItem, { kind: "artifact" }>;
 
 interface AgentInboxViewProps {
+  interactions: OperatorInteractionRecord[];
   approvals: ApprovalItem[];
   skills: SkillRecord[];
   artifacts: EvolutionArtifactRecord[];
   events: AgentEvent[];
+  goals: GoalSpecRecord[];
+  traces: ExecutionTraceRecord[];
+  graphs: ExecutionGraphProjectionRecord[];
   pendingActionId?: string;
   requestedFilter?: string;
   requestedItemId?: string;
   onApprove(id: string): Promise<void> | void;
   onReject(id: string): Promise<void> | void;
+  onResolveInteraction(id: string, action: string, comment?: string): Promise<void> | void;
   onOpenCandidate(candidateId: string): void;
   onOpenEvolution(section?: string, itemId?: string): void;
 }
@@ -99,6 +124,16 @@ function toneFromApproval(approval: ApprovalItem): "positive" | "neutral" | "war
   return "warning";
 }
 
+function toneFromInteraction(item: OperatorInteractionRecord): "positive" | "neutral" | "warning" | "critical" {
+  if (item.status === "resolved") {
+    return "positive";
+  }
+  if (/(handoff|stop)/i.test(item.interactionType)) {
+    return "critical";
+  }
+  return "warning";
+}
+
 function summarizePayload(payload: Record<string, unknown> | undefined): string[] {
   if (!payload || !Object.keys(payload).length) {
     return [];
@@ -107,22 +142,52 @@ function summarizePayload(payload: Record<string, unknown> | undefined): string[
   return entries.map(([key, value]) => `${key}: ${typeof value === "string" ? value : JSON.stringify(value)}`);
 }
 
+function humanizeLabel(value: string): string {
+  return value
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
 export function AgentInboxView({
+  interactions,
   approvals,
   skills,
   artifacts,
   events,
+  goals,
+  traces,
+  graphs,
   pendingActionId,
   requestedFilter,
   requestedItemId,
   onApprove,
   onReject,
+  onResolveInteraction,
   onOpenCandidate,
   onOpenEvolution,
 }: AgentInboxViewProps): JSX.Element {
   const { copy } = useI18n();
   const [filter, setFilter] = useState<InboxFilter>("all");
   const [selectedKey, setSelectedKey] = useState<string>();
+
+  const interactionItems = useMemo<InteractionInboxItem[]>(
+    () =>
+      interactions
+        .filter((item) => !item.candidateId)
+        .map<InteractionInboxItem>((interaction) => ({
+          key: `interaction:${interaction.id}`,
+          kind: "interaction",
+          title: interaction.title,
+          detail: interaction.agentPrompt,
+          at: interaction.updatedAt ?? interaction.surfacedAt,
+          tone: toneFromInteraction(interaction),
+          interaction,
+          candidateId: interaction.candidateId,
+        })),
+    [interactions],
+  );
 
   const runtimeItems = useMemo<ApprovalInboxItem[]>(
     () =>
@@ -174,8 +239,10 @@ export function AgentInboxView({
   );
 
   const items = useMemo(() => {
-    const merged = [...runtimeItems, ...skillItems, ...artifactItems].sort((left, right) => right.at.localeCompare(left.at));
+    const merged = [...interactionItems, ...runtimeItems, ...skillItems, ...artifactItems].sort((left, right) => right.at.localeCompare(left.at));
     switch (filter) {
+      case "interactions":
+        return merged.filter((item) => item.kind === "interaction");
       case "approvals":
         return merged.filter((item) => item.kind === "approval");
       case "permissions":
@@ -191,10 +258,10 @@ export function AgentInboxView({
       default:
         return merged;
     }
-  }, [artifactItems, filter, runtimeItems, skillItems]);
+  }, [artifactItems, filter, interactionItems, runtimeItems, skillItems]);
 
   useEffect(() => {
-    if (requestedFilter === "approvals" || requestedFilter === "permissions" || requestedFilter === "skills" || requestedFilter === "artifacts" || requestedFilter === "all") {
+    if (requestedFilter === "interactions" || requestedFilter === "approvals" || requestedFilter === "permissions" || requestedFilter === "skills" || requestedFilter === "artifacts" || requestedFilter === "all") {
       setFilter(requestedFilter);
     }
   }, [requestedFilter]);
@@ -217,10 +284,14 @@ export function AgentInboxView({
   }, [items, requestedItemId, selectedKey]);
 
   const selected = items.find((item) => item.key === selectedKey) ?? null;
+  const pendingInteractions = interactionItems.filter((item) => item.interaction.status === "pending").length;
   const pendingApprovals = runtimeItems.filter((item) => item.approval.status === "pending").length;
   const degradedSkills = skillItems.filter((item) => item.skill.health !== "healthy" || item.skill.status !== "active").length;
   const pendingArtifacts = artifactItems.filter((item) => /(pending|draft|review)/i.test(item.artifact.status)).length;
   const recentSignals = events.filter((event) => event.level !== "info").slice(-6).reverse();
+  const latestGoal = goals[0] ?? null;
+  const latestTrace = traces[0] ?? null;
+  const latestGraph = graphs[0] ?? null;
 
   return (
     <div style={{ display: "grid", gridTemplateColumns: "280px minmax(0, 1fr) 320px", gap: "16px", minWidth: 0 }}>
@@ -233,7 +304,8 @@ export function AgentInboxView({
         <div style={{ display: "grid", gap: "8px" }}>
           {[
             { key: "all", label: copy("All", "全部"), count: items.length },
-            { key: "approvals", label: copy("Approvals", "审批"), count: pendingApprovals },
+            { key: "interactions", label: copy("Interactions", "确认/介入"), count: pendingInteractions },
+            { key: "approvals", label: copy("Legacy approvals", "兼容审批"), count: pendingApprovals },
             { key: "permissions", label: copy("Permissions", "权限"), count: runtimeItems.filter((item) => /(system_command|permission|command)/i.test(item.approval.targetType ?? item.approval.kind ?? "")).length },
             { key: "skills", label: copy("Skills", "Skills"), count: degradedSkills },
             { key: "artifacts", label: copy("Artifacts", "演进产物"), count: pendingArtifacts },
@@ -281,7 +353,15 @@ export function AgentInboxView({
             >
               <div style={{ display: "flex", justifyContent: "space-between", gap: "8px", alignItems: "start" }}>
                 <strong style={{ fontSize: "13px", lineHeight: 1.4 }}>{item.title}</strong>
-                <StatusBadge tone={item.tone}>{item.kind === "approval" ? translateUiToken(item.approval.status, copy) : item.kind === "skill" ? item.skill.health : translateUiToken(item.artifact.status, copy)}</StatusBadge>
+                <StatusBadge tone={item.tone}>
+                  {item.kind === "interaction"
+                    ? translateUiToken(item.interaction.status, copy)
+                    : item.kind === "approval"
+                      ? translateUiToken(item.approval.status, copy)
+                      : item.kind === "skill"
+                        ? item.skill.health
+                        : translateUiToken(item.artifact.status, copy)}
+                </StatusBadge>
               </div>
               <div style={{ color: theme.colors.muted, fontSize: "12px", lineHeight: 1.5 }}>{item.detail}</div>
               <div style={{ color: theme.colors.muted, fontSize: "11px" }}>{formatCompactDate(item.at)}</div>
@@ -328,7 +408,9 @@ export function AgentInboxView({
               >
                 <div style={{ color: theme.colors.muted, fontSize: "12px", marginBottom: "6px" }}>{copy("Operator options", "操作选项")}</div>
                 <div style={{ lineHeight: 1.65 }}>
-                  {selected.kind === "approval"
+                  {selected.kind === "interaction"
+                    ? copy("These options are generated for the current runtime block. Confirm one here, or add your own comment to steer the next attempt.", "这些选项是当前运行时阻塞下生成的可执行选择。你可以直接确认，也可以补充意见来纠偏下一次尝试。")
+                    : selected.kind === "approval"
                     ? copy("This request can be resolved directly here. Use Evolution only when you need a full diff or history.", "这条请求可以直接在这里处理。只有需要查看完整 diff 或历史版本时才进入 Evolution。")
                     : selected.kind === "skill"
                       ? copy("The skill is visible and manageable, but structural edits belong in Evolution.", "这个 skill 的状态已经暴露出来，但结构化修改仍建议在 Evolution 中完成。")
@@ -336,6 +418,30 @@ export function AgentInboxView({
                 </div>
               </div>
             </div>
+
+            {selected.kind === "interaction" ? (
+              <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                {(selected.interaction.suggestedOptions.length ? selected.interaction.suggestedOptions : [{ id: "confirm", label: copy("Continue", "继续执行"), action: "confirm" }]).map((option) => {
+                  const action = String(option.action ?? option.id ?? "confirm");
+                  return (
+                    <button
+                      key={String(option.id ?? action)}
+                      type="button"
+                      onClick={() => void onResolveInteraction(selected.interaction.id, action)}
+                      disabled={pendingActionId === selected.interaction.id}
+                      style={buttonStyle}
+                    >
+                      {String(option.label ?? humanizeLabel(action))}
+                    </button>
+                  );
+                })}
+                {selected.interaction.candidateId ? (
+                  <button type="button" onClick={() => onOpenCandidate(selected.interaction.candidateId!)} style={buttonStyle}>
+                    {copy("Open candidate", "打开候选人")}
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
 
             {selected.kind === "approval" && selected.approval.status === "pending" ? (
               <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
@@ -374,6 +480,13 @@ export function AgentInboxView({
 
             <div style={{ borderTop: `1px solid ${theme.colors.border}`, paddingTop: "12px", display: "grid", gap: "8px" }}>
               <div style={{ fontSize: "12px", color: theme.colors.muted, textTransform: "uppercase", letterSpacing: "0.12em" }}>{copy("Context", "上下文")}</div>
+              {selected.kind === "interaction" ? (
+                <div style={{ display: "grid", gap: "6px", fontSize: "13px", lineHeight: 1.6 }}>
+                  <div>{copy("Lane", "执行通道")}: {translateUiToken(selected.interaction.lane, copy)}</div>
+                  <div>{copy("Type", "类型")}: {translateUiToken(selected.interaction.interactionType, copy)}</div>
+                  <div>{copy("Scope", "影响范围")}: {translateUiToken(selected.interaction.scope, copy)}</div>
+                </div>
+              ) : null}
               {selected.kind === "approval"
                 ? summarizePayload(selected.approval.payload).map((line) => (
                     <div key={line} style={{ fontSize: "13px", lineHeight: 1.6 }}>
@@ -404,6 +517,27 @@ export function AgentInboxView({
 
       <Panel dense title={copy("Signals", "旁路信号")} eyebrow={copy("Recent context", "最近上下文")} description={copy("Signals stay dense. The right rail is for scope, risk, and fast routing, not for a pile of large cards.", "右侧只放范围、风险和快速跳转，不堆大卡片。")}>
         <div style={{ display: "grid", gap: "10px" }}>
+          {latestGoal ? (
+            <div style={{ display: "grid", gap: "6px", fontSize: "13px" }}>
+              <div style={{ fontSize: "12px", color: theme.colors.muted, textTransform: "uppercase", letterSpacing: "0.12em" }}>{copy("Latest goal", "最近目标")}</div>
+              <strong>{latestGoal.title}</strong>
+              <div style={{ color: theme.colors.muted, lineHeight: 1.5 }}>{latestGoal.summary ?? latestGoal.goalText}</div>
+            </div>
+          ) : null}
+          {latestTrace ? (
+            <div style={{ display: "grid", gap: "6px", fontSize: "13px" }}>
+              <div style={{ fontSize: "12px", color: theme.colors.muted, textTransform: "uppercase", letterSpacing: "0.12em" }}>{copy("Latest trace", "最近轨迹")}</div>
+              <div>{latestTrace.summary ?? latestTrace.status}</div>
+            </div>
+          ) : null}
+          {latestGraph?.renderedText ? (
+            <div style={{ display: "grid", gap: "6px", fontSize: "12px" }}>
+              <div style={{ fontSize: "12px", color: theme.colors.muted, textTransform: "uppercase", letterSpacing: "0.12em" }}>{copy("Graph projection", "执行图投影")}</div>
+              <pre style={{ margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word", fontSize: "12px", lineHeight: 1.5, color: "rgba(233,239,255,0.78)" }}>
+                {latestGraph.renderedText}
+              </pre>
+            </div>
+          ) : null}
           {selected?.kind === "approval" ? (
             <>
               <div style={{ display: "grid", gap: "6px", fontSize: "13px" }}>
@@ -418,23 +552,11 @@ export function AgentInboxView({
               ) : null}
             </>
           ) : null}
-          {selected?.kind === "artifact" ? (
-            <pre style={{ margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word", fontSize: "12px", lineHeight: 1.6, color: "rgba(233,239,255,0.78)" }}>
-              {JSON.stringify(selected.artifact.artifactBody, null, 2)}
-            </pre>
-          ) : null}
-          {selected?.kind === "skill" ? (
-            <pre style={{ margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word", fontSize: "12px", lineHeight: 1.6, color: "rgba(233,239,255,0.78)" }}>
-              {JSON.stringify(
-                {
-                  strategy: selected.skill.strategy ?? {},
-                  execution_hints: selected.skill.executionHints ?? {},
-                  metadata: selected.skill.skillMetadata ?? {},
-                },
-                null,
-                2,
-              )}
-            </pre>
+          {selected?.kind === "interaction" ? (
+            <div style={{ display: "grid", gap: "6px", fontSize: "13px" }}>
+              <div>{copy("Status", "状态")}: {translateUiToken(selected.interaction.status, copy)}</div>
+              <div>{copy("Suggested actions", "建议操作数")}: {selected.interaction.suggestedOptions.length}</div>
+            </div>
           ) : null}
 
           <div style={{ borderTop: `1px solid ${theme.colors.border}`, paddingTop: "10px", display: "grid", gap: "8px" }}>

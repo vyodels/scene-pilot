@@ -361,6 +361,7 @@ class AgentSession(Base, TimestampMixin):
     )
     session_key: Mapped[str] = mapped_column(String(128), nullable=False, index=True, default="primary")
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="active", index=True)
+    current_goal_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
     current_lane: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
     last_active_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
     last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
@@ -377,6 +378,7 @@ class AgentRun(Base, TimestampMixin):
         nullable=True,
         index=True,
     )
+    goal_spec_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
     candidate_id: Mapped[str | None] = mapped_column(ForeignKey("candidates.id", ondelete="SET NULL"), nullable=True, index=True)
     jd_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     platform: Mapped[str] = mapped_column(String(64), nullable=False, default="site", index=True)
@@ -409,6 +411,7 @@ class AgentWorkItem(Base, TimestampMixin):
     session_id: Mapped[str] = mapped_column(ForeignKey("agent_sessions.id", ondelete="CASCADE"), nullable=False, index=True)
     run_id: Mapped[str | None] = mapped_column(ForeignKey("agent_runs.id", ondelete="SET NULL"), nullable=True, index=True)
     queue_task_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    goal_spec_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
     candidate_id: Mapped[str | None] = mapped_column(ForeignKey("candidates.id", ondelete="SET NULL"), nullable=True, index=True)
     platform: Mapped[str] = mapped_column(String(64), nullable=False, default="site", index=True)
     lane: Mapped[str] = mapped_column(String(32), nullable=False, default="agent", index=True)
@@ -462,6 +465,145 @@ class AgentRuntimeEvent(Base, TimestampMixin):
     __table_args__ = (
         Index("ix_agent_runtime_events_session_occurred_at", "session_id", "occurred_at"),
         Index("ix_agent_runtime_events_run_occurred_at", "run_id", "occurred_at"),
+    )
+
+
+class GoalSpec(Base, TimestampMixin):
+    __tablename__ = "goal_specs"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=generate_id)
+    agent_profile_id: Mapped[str] = mapped_column(
+        ForeignKey("recruit_agent_profiles.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    title: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    goal_text: Mapped[str] = mapped_column(Text, nullable=False)
+    goal_kind: Mapped[str] = mapped_column(String(64), nullable=False, default="recruiting", index=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="draft", index=True)
+    source: Mapped[str] = mapped_column(String(64), nullable=False, default="operator", index=True)
+    source_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    requested_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    constraints: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    success_criteria: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    context_hints: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    trial_budget: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    run_preferences: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    latest_run_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    last_activity_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    goal_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+
+    __table_args__ = (
+        Index("ix_goal_specs_agent_status", "agent_profile_id", "status"),
+    )
+
+
+class ExecutionTrace(Base, TimestampMixin):
+    __tablename__ = "execution_traces"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=generate_id)
+    session_id: Mapped[str] = mapped_column(ForeignKey("agent_sessions.id", ondelete="CASCADE"), nullable=False, index=True)
+    run_id: Mapped[str | None] = mapped_column(ForeignKey("agent_runs.id", ondelete="SET NULL"), nullable=True, index=True)
+    goal_spec_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    candidate_id: Mapped[str | None] = mapped_column(ForeignKey("candidates.id", ondelete="SET NULL"), nullable=True, index=True)
+    lane: Mapped[str] = mapped_column(String(32), nullable=False, default="agent", index=True)
+    trace_kind: Mapped[str] = mapped_column(String(64), nullable=False, default="adaptive_run", index=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="captured", index=True)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    raw_trace: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    distilled_trace: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    outcome: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    trace_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+
+    __table_args__ = (
+        Index("ix_execution_traces_goal_created_at", "goal_spec_id", "created_at"),
+        Index("ix_execution_traces_run_created_at", "run_id", "created_at"),
+    )
+
+
+class StrategyFragment(Base, TimestampMixin):
+    __tablename__ = "strategy_fragments"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=generate_id)
+    agent_profile_id: Mapped[str] = mapped_column(
+        ForeignKey("recruit_agent_profiles.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    goal_spec_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    run_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    candidate_id: Mapped[str | None] = mapped_column(ForeignKey("candidates.id", ondelete="SET NULL"), nullable=True, index=True)
+    jd_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    scope: Mapped[str] = mapped_column(String(32), nullable=False, default="agent", index=True)
+    fragment_kind: Mapped[str] = mapped_column(String(64), nullable=False, default="strategy", index=True)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    content: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    evidence: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="draft", index=True)
+    adoption_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_applied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    fragment_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+
+    __table_args__ = (
+        Index("ix_strategy_fragments_agent_status", "agent_profile_id", "status"),
+        Index("ix_strategy_fragments_kind_scope", "fragment_kind", "scope"),
+    )
+
+
+class ExecutionGraphProjection(Base, TimestampMixin):
+    __tablename__ = "execution_graph_projections"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=generate_id)
+    goal_spec_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    run_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    candidate_id: Mapped[str | None] = mapped_column(ForeignKey("candidates.id", ondelete="SET NULL"), nullable=True, index=True)
+    graph_kind: Mapped[str] = mapped_column(String(64), nullable=False, default="execution_projection", index=True)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    nodes: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
+    edges: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
+    rendered_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    graph_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+
+    __table_args__ = (
+        Index("ix_execution_graph_projections_goal_created_at", "goal_spec_id", "created_at"),
+        Index("ix_execution_graph_projections_run_created_at", "run_id", "created_at"),
+    )
+
+
+class OperatorInteraction(Base, TimestampMixin):
+    __tablename__ = "operator_interactions"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=generate_id)
+    session_id: Mapped[str] = mapped_column(ForeignKey("agent_sessions.id", ondelete="CASCADE"), nullable=False, index=True)
+    run_id: Mapped[str | None] = mapped_column(ForeignKey("agent_runs.id", ondelete="SET NULL"), nullable=True, index=True)
+    checkpoint_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    approval_id: Mapped[str | None] = mapped_column(ForeignKey("approval_items.id", ondelete="SET NULL"), nullable=True, index=True)
+    goal_spec_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    candidate_id: Mapped[str | None] = mapped_column(ForeignKey("candidates.id", ondelete="SET NULL"), nullable=True, index=True)
+    lane: Mapped[str] = mapped_column(String(32), nullable=False, default="agent", index=True)
+    interaction_type: Mapped[str] = mapped_column(String(64), nullable=False, default="confirm", index=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending", index=True)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    agent_prompt: Mapped[str] = mapped_column(Text, nullable=False)
+    suggested_options: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
+    operator_response: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    effect_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    scope: Mapped[str] = mapped_column(String(32), nullable=False, default="run_only", index=True)
+    interaction_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    surfaced_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow, index=True)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    resolved_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    __table_args__ = (
+        Index("ix_operator_interactions_status_surfaced_at", "status", "surfaced_at"),
+        Index("ix_operator_interactions_candidate_status", "candidate_id", "status"),
+        Index("ix_operator_interactions_approval_status", "approval_id", "status"),
     )
 
 

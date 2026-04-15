@@ -483,6 +483,189 @@ def _create_agent_runtime_control_tables(connection: Connection) -> None:
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_agent_runtime_events_run_occurred_at ON agent_runtime_events (run_id, occurred_at)"))
 
 
+def _create_goal_runtime_tables(connection: Connection) -> None:
+    tables = {
+        row[0]
+        for row in connection.execute(text("SELECT name FROM sqlite_master WHERE type='table'")).fetchall()
+    }
+
+    if "agent_sessions" in tables:
+        columns = {row[1] for row in connection.execute(text("PRAGMA table_info(agent_sessions)")).fetchall()}
+        if "current_goal_id" not in columns:
+            connection.execute(text("ALTER TABLE agent_sessions ADD COLUMN current_goal_id TEXT"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_agent_sessions_current_goal_id ON agent_sessions (current_goal_id)"))
+
+    if "agent_runs" in tables:
+        columns = {row[1] for row in connection.execute(text("PRAGMA table_info(agent_runs)")).fetchall()}
+        if "goal_spec_id" not in columns:
+            connection.execute(text("ALTER TABLE agent_runs ADD COLUMN goal_spec_id TEXT"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_agent_runs_goal_spec_id ON agent_runs (goal_spec_id)"))
+
+    if "agent_work_items" in tables:
+        columns = {row[1] for row in connection.execute(text("PRAGMA table_info(agent_work_items)")).fetchall()}
+        if "goal_spec_id" not in columns:
+            connection.execute(text("ALTER TABLE agent_work_items ADD COLUMN goal_spec_id TEXT"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_agent_work_items_goal_spec_id ON agent_work_items (goal_spec_id)"))
+
+    if "goal_specs" not in tables:
+        connection.execute(
+            text(
+                """
+                CREATE TABLE goal_specs (
+                    id TEXT PRIMARY KEY,
+                    agent_profile_id TEXT NOT NULL REFERENCES recruit_agent_profiles(id) ON DELETE CASCADE,
+                    title TEXT NOT NULL,
+                    goal_text TEXT NOT NULL,
+                    goal_kind TEXT NOT NULL DEFAULT 'recruiting',
+                    status TEXT NOT NULL DEFAULT 'draft',
+                    source TEXT NOT NULL DEFAULT 'operator',
+                    source_text TEXT,
+                    requested_by TEXT,
+                    constraints TEXT NOT NULL DEFAULT '{}',
+                    success_criteria TEXT NOT NULL DEFAULT '{}',
+                    context_hints TEXT NOT NULL DEFAULT '{}',
+                    trial_budget TEXT NOT NULL DEFAULT '{}',
+                    run_preferences TEXT NOT NULL DEFAULT '{}',
+                    summary TEXT,
+                    latest_run_id TEXT,
+                    last_activity_at TEXT,
+                    goal_metadata TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+        )
+    if "execution_traces" not in tables:
+        connection.execute(
+            text(
+                """
+                CREATE TABLE execution_traces (
+                    id TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL REFERENCES agent_sessions(id) ON DELETE CASCADE,
+                    run_id TEXT REFERENCES agent_runs(id) ON DELETE SET NULL,
+                    goal_spec_id TEXT,
+                    candidate_id TEXT REFERENCES candidates(id) ON DELETE SET NULL,
+                    lane TEXT NOT NULL DEFAULT 'agent',
+                    trace_kind TEXT NOT NULL DEFAULT 'adaptive_run',
+                    status TEXT NOT NULL DEFAULT 'captured',
+                    title TEXT NOT NULL,
+                    summary TEXT,
+                    raw_trace TEXT NOT NULL DEFAULT '{}',
+                    distilled_trace TEXT NOT NULL DEFAULT '{}',
+                    outcome TEXT NOT NULL DEFAULT '{}',
+                    trace_metadata TEXT NOT NULL DEFAULT '{}',
+                    started_at TEXT,
+                    finished_at TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+        )
+    if "strategy_fragments" not in tables:
+        connection.execute(
+            text(
+                """
+                CREATE TABLE strategy_fragments (
+                    id TEXT PRIMARY KEY,
+                    agent_profile_id TEXT NOT NULL REFERENCES recruit_agent_profiles(id) ON DELETE CASCADE,
+                    goal_spec_id TEXT,
+                    run_id TEXT,
+                    candidate_id TEXT REFERENCES candidates(id) ON DELETE SET NULL,
+                    jd_id TEXT,
+                    scope TEXT NOT NULL DEFAULT 'agent',
+                    fragment_kind TEXT NOT NULL DEFAULT 'strategy',
+                    title TEXT NOT NULL,
+                    summary TEXT,
+                    content TEXT NOT NULL DEFAULT '{}',
+                    evidence TEXT NOT NULL DEFAULT '{}',
+                    status TEXT NOT NULL DEFAULT 'draft',
+                    adoption_count INTEGER NOT NULL DEFAULT 0,
+                    last_applied_at TEXT,
+                    fragment_metadata TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+        )
+    if "execution_graph_projections" not in tables:
+        connection.execute(
+            text(
+                """
+                CREATE TABLE execution_graph_projections (
+                    id TEXT PRIMARY KEY,
+                    goal_spec_id TEXT,
+                    run_id TEXT,
+                    candidate_id TEXT REFERENCES candidates(id) ON DELETE SET NULL,
+                    graph_kind TEXT NOT NULL DEFAULT 'execution_projection',
+                    title TEXT NOT NULL,
+                    summary TEXT,
+                    nodes TEXT NOT NULL DEFAULT '[]',
+                    edges TEXT NOT NULL DEFAULT '[]',
+                    rendered_text TEXT,
+                    graph_metadata TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+        )
+    if "operator_interactions" not in tables:
+        connection.execute(
+            text(
+                """
+                CREATE TABLE operator_interactions (
+                    id TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL REFERENCES agent_sessions(id) ON DELETE CASCADE,
+                    run_id TEXT REFERENCES agent_runs(id) ON DELETE SET NULL,
+                    checkpoint_id TEXT,
+                    approval_id TEXT REFERENCES approval_items(id) ON DELETE SET NULL,
+                    goal_spec_id TEXT,
+                    candidate_id TEXT REFERENCES candidates(id) ON DELETE SET NULL,
+                    lane TEXT NOT NULL DEFAULT 'agent',
+                    interaction_type TEXT NOT NULL DEFAULT 'confirm',
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    title TEXT NOT NULL,
+                    agent_prompt TEXT NOT NULL,
+                    suggested_options TEXT NOT NULL DEFAULT '[]',
+                    operator_response TEXT NOT NULL DEFAULT '{}',
+                    effect_summary TEXT,
+                    scope TEXT NOT NULL DEFAULT 'run_only',
+                    interaction_metadata TEXT NOT NULL DEFAULT '{}',
+                    surfaced_at TEXT NOT NULL,
+                    resolved_at TEXT,
+                    resolved_by TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+        )
+
+    indexed_tables = {
+        row[0]
+        for row in connection.execute(text("SELECT name FROM sqlite_master WHERE type='table'")).fetchall()
+    }
+    if "goal_specs" in indexed_tables:
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_goal_specs_agent_status ON goal_specs (agent_profile_id, status)"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_goal_specs_last_activity_at ON goal_specs (last_activity_at)"))
+    if "execution_traces" in indexed_tables:
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_execution_traces_goal_created_at ON execution_traces (goal_spec_id, created_at)"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_execution_traces_run_created_at ON execution_traces (run_id, created_at)"))
+    if "strategy_fragments" in indexed_tables:
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_strategy_fragments_agent_status ON strategy_fragments (agent_profile_id, status)"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_strategy_fragments_kind_scope ON strategy_fragments (fragment_kind, scope)"))
+    if "execution_graph_projections" in indexed_tables:
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_execution_graph_projections_goal_created_at ON execution_graph_projections (goal_spec_id, created_at)"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_execution_graph_projections_run_created_at ON execution_graph_projections (run_id, created_at)"))
+    if "operator_interactions" in indexed_tables:
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_operator_interactions_status_surfaced_at ON operator_interactions (status, surfaced_at)"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_operator_interactions_candidate_status ON operator_interactions (candidate_id, status)"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_operator_interactions_approval_status ON operator_interactions (approval_id, status)"))
+
+
 MIGRATIONS: tuple[SchemaMigration, ...] = (
     SchemaMigration(
         version=1,
@@ -523,6 +706,11 @@ MIGRATIONS: tuple[SchemaMigration, ...] = (
         version=8,
         name="create_agent_runtime_control_tables",
         apply=_create_agent_runtime_control_tables,
+    ),
+    SchemaMigration(
+        version=9,
+        name="create_goal_runtime_tables",
+        apply=_create_goal_runtime_tables,
     ),
 )
 

@@ -2,6 +2,7 @@ from fastapi.testclient import TestClient
 
 from scene_pilot.core.app import create_app
 from scene_pilot.core.settings import AppSettings
+from scene_pilot.repositories import GoalSpecRepository, OperatorInteractionRepository, RecruitAgentProfileRepository
 
 
 def make_client(tmp_path):
@@ -232,3 +233,75 @@ def test_recruit_agent_context_policy_profile_persistence(tmp_path):
         persisted = profile_response.json()["prompt_config"]["context_policy"]
         assert persisted["global"]["llm_rerank_top_k"] == 4
         assert persisted["lanes"]["candidate"]["default_weights"]["candidate_memory"] == 1.3
+
+
+def test_recruit_agent_goal_creation_and_operator_interaction_resolution(tmp_path):
+    app = create_app(
+        AppSettings(
+            data_dir=str(tmp_path / "data"),
+            database_url=f"sqlite:///{tmp_path / 'recruit-agent.db'}",
+        )
+    )
+    with TestClient(app) as client:
+        goal_response = client.post(
+            "/api/recruit-agent/goals",
+            json={
+                "title": "筛选 Go 后端候选人",
+                "goal_text": "先探索 Boss 上是否有更高效的筛选入口，再推进 3 个高匹配候选人到初次沟通。",
+                "goal_kind": "recruiting",
+                "constraints": {"platform": "boss"},
+                "success_criteria": {"target_candidates": 3},
+            },
+        )
+        assert goal_response.status_code == 201
+        goal_payload = goal_response.json()
+        assert goal_payload["status"] == "queued"
+        assert goal_payload["title"] == "筛选 Go 后端候选人"
+
+        goals_response = client.get("/api/recruit-agent/goals")
+        assert goals_response.status_code == 200
+        assert len(goals_response.json()) == 1
+
+        runtime_session = client.get("/api/recruit-agent/runtime/session")
+        assert runtime_session.status_code == 200
+        session_id = runtime_session.json()["id"]
+
+        with app.state.container.session_factory() as session:
+            profile = RecruitAgentProfileRepository(session).primary()
+            assert profile is not None
+            goal = GoalSpecRepository(session).list_recent(agent_profile_id=profile.id, limit=1, offset=0)[0]
+            interaction = OperatorInteractionRepository(session).create(
+                {
+                    "session_id": session_id,
+                    "goal_spec_id": goal.id,
+                    "lane": "agent",
+                    "interaction_type": "confirm",
+                    "status": "pending",
+                    "title": "需要确认新的搜索路径",
+                    "agent_prompt": "Boss 关键词搜索效果一般，是否改用平台筛选器继续？",
+                    "suggested_options": [
+                        {"id": "confirm", "label": "改用筛选器", "action": "confirm"},
+                        {"id": "retry", "label": "原路径重试", "action": "retry"},
+                    ],
+                    "scope": "run_only",
+                    "interaction_metadata": {"source": "test"},
+                }
+            )
+
+        interactions_response = client.get("/api/recruit-agent/runtime/operator-interactions")
+        assert interactions_response.status_code == 200
+        assert len(interactions_response.json()) == 1
+
+        resolve_response = client.post(
+            f"/api/recruit-agent/runtime/operator-interactions/{interaction.id}/resolve",
+            json={
+                "action": "confirm",
+                "comment": "优先看最近活跃候选人。",
+                "operator": "desktop-user",
+            },
+        )
+        assert resolve_response.status_code == 200
+        resolved_payload = resolve_response.json()
+        assert resolved_payload["status"] == "resolved"
+        assert resolved_payload["operator_response"]["action"] == "confirm"
+        assert "记录" in (resolved_payload["effect_summary"] or "")

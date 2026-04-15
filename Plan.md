@@ -720,6 +720,14 @@ UI 形态：
 
 ## 后续计划：Goal-Driven Adaptive Runtime
 
+当前状态：
+
+- 已完成第一轮最小闭环
+- `GoalSpec / ExecutionTrace / StrategyFragment / ExecutionGraphProjection` 已落库并接入 API
+- `Workbench` 已支持直接创建目标驱动任务
+- 运行结果会自动沉淀 trace、策略片段和面向用户的执行图投影
+- 当前仍是“并行接入现有 runtime”，还没有彻底替换底层 `task / run` 主链路
+
 开始这一轮前，先在当前稳定分支上做一次备份分支或 tag，避免探索式改动跨度过大时难以快速回退。
 
 下一轮不再把“预先编排完整 workflow”作为 runtime 的主要执行依据，而是转向：
@@ -827,6 +835,15 @@ UI 形态：
 - context policy
 
 ## 后续计划：Operator Intervention Layer
+
+当前状态：
+
+- 已完成第一轮最小闭环
+- `OperatorInteraction` 已作为新的运行时交互对象接入
+- `Agent IM` 已优先展示确认/介入项，而不是只看旧审批对象
+- 用户可直接在 IM 中执行 `confirm / retry / correct / teach / handoff / stop` 等动作
+- 后台会保留结构化记录，前台展示为自然语言交互与操作结果
+- 当前仍保留 `ApprovalItem` 作为兼容层，后续再继续下沉旧审批语义
 
 开始这一轮前，沿用同一条原则：先对当前稳定分支做备份，再进入大范围交互模型改造。
 

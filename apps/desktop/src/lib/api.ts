@@ -30,8 +30,12 @@ import type {
   CompileTaskResponse,
   DashboardSummary,
   DomainPackRecord,
+  ExecutionGraphProjectionRecord,
+  ExecutionTraceRecord,
   EvolutionArtifactRecord,
+  GoalSpecRecord,
   JobMemoryRecord,
+  OperatorInteractionRecord,
   RecruitAgentProfileRecord,
   ResumeArtifactRecord,
   RuntimeCapabilityDriver,
@@ -51,6 +55,7 @@ import type {
   RuntimeWorkspaceData,
   SettingsSnapshot,
   SkillRecord,
+  StrategyFragmentRecord,
   SyncBacklogItem,
   SyncFlushResult,
   TalentPoolSyncRecord,
@@ -85,6 +90,28 @@ export interface DesktopApiClient {
   rejectRuntimePatch(id: string, reason?: string): Promise<RuntimePatch>;
   getRecruitAgentProfile(): Promise<RecruitAgentProfileRecord>;
   updateRecruitAgentProfile(payload: Partial<RecruitAgentProfileRecord>): Promise<RecruitAgentProfileRecord>;
+  listGoals(): Promise<GoalSpecRecord[]>;
+  createGoal(payload: {
+    title: string;
+    goalText: string;
+    goalKind?: string;
+    requestedBy?: string;
+    constraints?: Record<string, unknown>;
+    successCriteria?: Record<string, unknown>;
+    contextHints?: Record<string, unknown>;
+    trialBudget?: Record<string, unknown>;
+    runPreferences?: Record<string, unknown>;
+    summary?: string;
+    priority?: number;
+  }): Promise<GoalSpecRecord>;
+  listExecutionTraces(goalId?: string): Promise<ExecutionTraceRecord[]>;
+  listExecutionGraphs(goalId?: string): Promise<ExecutionGraphProjectionRecord[]>;
+  listStrategyFragments(): Promise<StrategyFragmentRecord[]>;
+  listOperatorInteractions(candidateId?: string): Promise<OperatorInteractionRecord[]>;
+  resolveOperatorInteraction(
+    interactionId: string,
+    payload: { action: string; comment?: string; operator?: string; scope?: string },
+  ): Promise<OperatorInteractionRecord>;
   listCandidateMemories(): Promise<CandidateMemoryRecord[]>;
   getCandidateMemory(candidateId: string): Promise<CandidateMemoryRecord>;
   updateCandidateMemory(candidateId: string, payload: Partial<CandidateMemoryRecord>): Promise<CandidateMemoryRecord>;
@@ -502,6 +529,127 @@ function normalizeApprovalItem(raw: unknown): ApprovalItem {
   };
 }
 
+function normalizeGoalSpec(raw: unknown): GoalSpecRecord {
+  const record = asRecord(raw);
+  return {
+    id: String(record.id ?? ""),
+    agentProfileId: String(record.agentProfileId ?? record.agent_profile_id ?? ""),
+    title: String(record.title ?? ""),
+    goalText: String(record.goalText ?? record.goal_text ?? ""),
+    goalKind: String(record.goalKind ?? record.goal_kind ?? "recruiting"),
+    status: String(record.status ?? "draft"),
+    source: String(record.source ?? "operator"),
+    sourceText: record.sourceText ? String(record.sourceText) : record.source_text ? String(record.source_text) : null,
+    requestedBy: record.requestedBy ? String(record.requestedBy) : record.requested_by ? String(record.requested_by) : null,
+    constraints: asRecord(record.constraints),
+    successCriteria: asRecord(record.successCriteria ?? record.success_criteria),
+    contextHints: asRecord(record.contextHints ?? record.context_hints),
+    trialBudget: asRecord(record.trialBudget ?? record.trial_budget),
+    runPreferences: asRecord(record.runPreferences ?? record.run_preferences),
+    summary: record.summary ? String(record.summary) : null,
+    latestRunId: record.latestRunId ? String(record.latestRunId) : record.latest_run_id ? String(record.latest_run_id) : null,
+    lastActivityAt: record.lastActivityAt ? String(record.lastActivityAt) : record.last_activity_at ? String(record.last_activity_at) : null,
+    goalMetadata: asRecord(record.goalMetadata ?? record.goal_metadata),
+    createdAt: String(record.createdAt ?? record.created_at ?? new Date().toISOString()),
+    updatedAt: String(record.updatedAt ?? record.updated_at ?? new Date().toISOString()),
+  };
+}
+
+function normalizeExecutionTrace(raw: unknown): ExecutionTraceRecord {
+  const record = asRecord(raw);
+  return {
+    id: String(record.id ?? ""),
+    sessionId: String(record.sessionId ?? record.session_id ?? ""),
+    runId: record.runId ? String(record.runId) : record.run_id ? String(record.run_id) : null,
+    goalSpecId: record.goalSpecId ? String(record.goalSpecId) : record.goal_spec_id ? String(record.goal_spec_id) : null,
+    candidateId: record.candidateId ? String(record.candidateId) : record.candidate_id ? String(record.candidate_id) : null,
+    lane: String(record.lane ?? "agent"),
+    traceKind: String(record.traceKind ?? record.trace_kind ?? "adaptive_run"),
+    status: String(record.status ?? "captured"),
+    title: String(record.title ?? ""),
+    summary: record.summary ? String(record.summary) : null,
+    rawTrace: asRecord(record.rawTrace ?? record.raw_trace),
+    distilledTrace: asRecord(record.distilledTrace ?? record.distilled_trace),
+    outcome: asRecord(record.outcome),
+    traceMetadata: asRecord(record.traceMetadata ?? record.trace_metadata),
+    startedAt: record.startedAt ? String(record.startedAt) : record.started_at ? String(record.started_at) : null,
+    finishedAt: record.finishedAt ? String(record.finishedAt) : record.finished_at ? String(record.finished_at) : null,
+    createdAt: String(record.createdAt ?? record.created_at ?? new Date().toISOString()),
+    updatedAt: String(record.updatedAt ?? record.updated_at ?? new Date().toISOString()),
+  };
+}
+
+function normalizeExecutionGraph(raw: unknown): ExecutionGraphProjectionRecord {
+  const record = asRecord(raw);
+  return {
+    id: String(record.id ?? ""),
+    goalSpecId: record.goalSpecId ? String(record.goalSpecId) : record.goal_spec_id ? String(record.goal_spec_id) : null,
+    runId: record.runId ? String(record.runId) : record.run_id ? String(record.run_id) : null,
+    candidateId: record.candidateId ? String(record.candidateId) : record.candidate_id ? String(record.candidate_id) : null,
+    graphKind: String(record.graphKind ?? record.graph_kind ?? "execution_projection"),
+    title: String(record.title ?? ""),
+    summary: record.summary ? String(record.summary) : null,
+    nodes: asArray<Record<string, unknown>>(record.nodes),
+    edges: asArray<Record<string, unknown>>(record.edges),
+    renderedText: record.renderedText ? String(record.renderedText) : record.rendered_text ? String(record.rendered_text) : null,
+    graphMetadata: asRecord(record.graphMetadata ?? record.graph_metadata),
+    createdAt: String(record.createdAt ?? record.created_at ?? new Date().toISOString()),
+    updatedAt: String(record.updatedAt ?? record.updated_at ?? new Date().toISOString()),
+  };
+}
+
+function normalizeStrategyFragment(raw: unknown): StrategyFragmentRecord {
+  const record = asRecord(raw);
+  return {
+    id: String(record.id ?? ""),
+    agentProfileId: String(record.agentProfileId ?? record.agent_profile_id ?? ""),
+    goalSpecId: record.goalSpecId ? String(record.goalSpecId) : record.goal_spec_id ? String(record.goal_spec_id) : null,
+    runId: record.runId ? String(record.runId) : record.run_id ? String(record.run_id) : null,
+    candidateId: record.candidateId ? String(record.candidateId) : record.candidate_id ? String(record.candidate_id) : null,
+    jdId: record.jdId ? String(record.jdId) : record.jd_id ? String(record.jd_id) : null,
+    scope: String(record.scope ?? "agent"),
+    fragmentKind: String(record.fragmentKind ?? record.fragment_kind ?? "strategy"),
+    title: String(record.title ?? ""),
+    summary: record.summary ? String(record.summary) : null,
+    content: asRecord(record.content),
+    evidence: asRecord(record.evidence),
+    status: String(record.status ?? "draft"),
+    adoptionCount: Number(record.adoptionCount ?? record.adoption_count ?? 0),
+    lastAppliedAt: record.lastAppliedAt ? String(record.lastAppliedAt) : record.last_applied_at ? String(record.last_applied_at) : null,
+    fragmentMetadata: asRecord(record.fragmentMetadata ?? record.fragment_metadata),
+    createdAt: String(record.createdAt ?? record.created_at ?? new Date().toISOString()),
+    updatedAt: String(record.updatedAt ?? record.updated_at ?? new Date().toISOString()),
+  };
+}
+
+function normalizeOperatorInteraction(raw: unknown): OperatorInteractionRecord {
+  const record = asRecord(raw);
+  return {
+    id: String(record.id ?? ""),
+    sessionId: String(record.sessionId ?? record.session_id ?? ""),
+    runId: record.runId ? String(record.runId) : record.run_id ? String(record.run_id) : null,
+    checkpointId: record.checkpointId ? String(record.checkpointId) : record.checkpoint_id ? String(record.checkpoint_id) : null,
+    approvalId: record.approvalId ? String(record.approvalId) : record.approval_id ? String(record.approval_id) : null,
+    goalSpecId: record.goalSpecId ? String(record.goalSpecId) : record.goal_spec_id ? String(record.goal_spec_id) : null,
+    candidateId: record.candidateId ? String(record.candidateId) : record.candidate_id ? String(record.candidate_id) : null,
+    lane: String(record.lane ?? "agent"),
+    interactionType: String(record.interactionType ?? record.interaction_type ?? "confirm"),
+    status: String(record.status ?? "pending"),
+    title: String(record.title ?? ""),
+    agentPrompt: String(record.agentPrompt ?? record.agent_prompt ?? ""),
+    suggestedOptions: asArray<Record<string, unknown>>(record.suggestedOptions ?? record.suggested_options),
+    operatorResponse: asRecord(record.operatorResponse ?? record.operator_response),
+    effectSummary: record.effectSummary ? String(record.effectSummary) : record.effect_summary ? String(record.effect_summary) : null,
+    scope: String(record.scope ?? "run_only"),
+    interactionMetadata: asRecord(record.interactionMetadata ?? record.interaction_metadata),
+    surfacedAt: String(record.surfacedAt ?? record.surfaced_at ?? new Date().toISOString()),
+    resolvedAt: record.resolvedAt ? String(record.resolvedAt) : record.resolved_at ? String(record.resolved_at) : null,
+    resolvedBy: record.resolvedBy ? String(record.resolvedBy) : record.resolved_by ? String(record.resolved_by) : null,
+    createdAt: String(record.createdAt ?? record.created_at ?? new Date().toISOString()),
+    updatedAt: String(record.updatedAt ?? record.updated_at ?? new Date().toISOString()),
+  };
+}
+
 function normalizeRecruitAgentProfile(raw: unknown): RecruitAgentProfileRecord {
   const record = asRecord(raw);
   return {
@@ -785,6 +933,7 @@ function normalizeCandidateThread(raw: unknown): CandidateThreadRecord {
     syncRecords: asArray(record.syncRecords ?? record.sync_records).map(normalizeTalentPoolSyncRecord),
     availableStatuses: asArray<string>(record.availableStatuses ?? record.available_statuses),
     runtimeApprovals: asArray(record.runtimeApprovals ?? record.runtime_approvals).map(normalizeApprovalItem),
+    runtimeInteractions: asArray(record.runtimeInteractions ?? record.runtime_interactions).map(normalizeOperatorInteraction),
   };
 }
 
@@ -1750,6 +1899,61 @@ function createFetchClient(baseUrl: string): DesktopApiClient {
           }),
         }),
       ),
+    listGoals: async () => asArray(await requestJson<unknown>(baseUrl, "/api/recruit-agent/goals")).map(normalizeGoalSpec),
+    createGoal: async (payload) =>
+      normalizeGoalSpec(
+        await requestJson<unknown>(baseUrl, "/api/recruit-agent/goals", {
+          method: "POST",
+          body: JSON.stringify({
+            title: payload.title,
+            goal_text: payload.goalText,
+            goal_kind: payload.goalKind ?? "recruiting",
+            requested_by: payload.requestedBy ?? "desktop-user",
+            constraints: payload.constraints ?? {},
+            success_criteria: payload.successCriteria ?? {},
+            context_hints: payload.contextHints ?? {},
+            trial_budget: payload.trialBudget ?? {},
+            run_preferences: payload.runPreferences ?? {},
+            summary: payload.summary,
+            priority: payload.priority ?? 100,
+          }),
+        }),
+      ),
+    listExecutionTraces: async (goalId) =>
+      asArray(
+        await requestJson<unknown>(
+          baseUrl,
+          `/api/recruit-agent/runtime/traces${goalId ? `?goal_id=${encodeURIComponent(goalId)}` : ""}`,
+        ),
+      ).map(normalizeExecutionTrace),
+    listExecutionGraphs: async (goalId) =>
+      asArray(
+        await requestJson<unknown>(
+          baseUrl,
+          `/api/recruit-agent/runtime/graphs${goalId ? `?goal_id=${encodeURIComponent(goalId)}` : ""}`,
+        ),
+      ).map(normalizeExecutionGraph),
+    listStrategyFragments: async () =>
+      asArray(await requestJson<unknown>(baseUrl, "/api/recruit-agent/runtime/strategy-fragments")).map(normalizeStrategyFragment),
+    listOperatorInteractions: async (candidateId) =>
+      asArray(
+        await requestJson<unknown>(
+          baseUrl,
+          `/api/recruit-agent/runtime/operator-interactions${candidateId ? `?candidate_id=${encodeURIComponent(candidateId)}` : ""}`,
+        ),
+      ).map(normalizeOperatorInteraction),
+    resolveOperatorInteraction: async (interactionId, payload) =>
+      normalizeOperatorInteraction(
+        await requestJson<unknown>(baseUrl, `/api/recruit-agent/runtime/operator-interactions/${interactionId}/resolve`, {
+          method: "POST",
+          body: JSON.stringify({
+            action: payload.action,
+            comment: payload.comment,
+            operator: payload.operator ?? "desktop-user",
+            scope: payload.scope,
+          }),
+        }),
+      ),
     listCandidateMemories: async () =>
       asArray(await requestJson<unknown>(baseUrl, "/api/recruit-agent/candidate-memories")).map(normalizeCandidateMemory),
     getCandidateMemory: async (candidateId) =>
@@ -2042,6 +2246,11 @@ function createMockClient(): DesktopApiClient {
   let mockApprovals: ApprovalItem[] = baseSnapshot.approvals.map((item) => ({ ...item }));
   let mockSkills: SkillRecord[] = baseSnapshot.skills.map((item) => ({ ...item }));
   let mockEvolutionArtifacts: EvolutionArtifactRecord[] = desktopEvolutionArtifactsMock.map((item) => ({ ...item }));
+  let mockGoals: GoalSpecRecord[] = [];
+  let mockExecutionTraces: ExecutionTraceRecord[] = [];
+  let mockExecutionGraphs: ExecutionGraphProjectionRecord[] = [];
+  let mockStrategyFragments: StrategyFragmentRecord[] = [];
+  let mockOperatorInteractions: OperatorInteractionRecord[] = [];
   let mockProfile = normalizeRecruitAgentProfile({
     id: "agent-profile-recruit",
     agent_key: "recruit-agent",
@@ -2206,6 +2415,8 @@ function createMockClient(): DesktopApiClient {
   });
   const runtimeApprovalsForCandidate = (candidateId: string) =>
     mockApprovals.filter((item) => item.surface === "runtime" && item.relatedCandidateId === candidateId);
+  const runtimeInteractionsForCandidate = (candidateId: string) =>
+    mockOperatorInteractions.filter((item) => item.candidateId === candidateId);
   let mockThreads = new Map(
     baseSnapshot.candidates.map((candidate) => [
       candidate.id,
@@ -2287,6 +2498,7 @@ function createMockClient(): DesktopApiClient {
             ]
           : [],
         runtime_approvals: runtimeApprovalsForCandidate(candidate.id),
+        runtime_interactions: runtimeInteractionsForCandidate(candidate.id),
       }),
     ]),
   );
@@ -2307,10 +2519,42 @@ function createMockClient(): DesktopApiClient {
     }
     const candidate =
       baseSnapshot.candidates.find((item) => item.id === candidateId) ?? normalizeCandidateRecord({ id: candidateId, name: candidateId });
-    const created = normalizeCandidateThread({ candidate, runtime_approvals: runtimeApprovalsForCandidate(candidateId) });
+    const created = normalizeCandidateThread({
+      candidate,
+      runtime_approvals: runtimeApprovalsForCandidate(candidateId),
+      runtime_interactions: runtimeInteractionsForCandidate(candidateId),
+    });
     mockThreads.set(candidateId, created);
     return created;
   };
+  mockOperatorInteractions = mockApprovals
+    .filter((item) => item.surface === "runtime" && item.status === "pending")
+    .map((item, index) =>
+      normalizeOperatorInteraction({
+        id: `operator-interaction-${index + 1}`,
+        session_id: "runtime-session-primary",
+        run_id: `run-${index + 1}`,
+        approval_id: item.id,
+        candidate_id: item.relatedCandidateId,
+        lane: item.relatedCandidateId ? "candidate" : "agent",
+        interaction_type: "confirm",
+        status: "pending",
+        title: item.title,
+        agent_prompt: item.detail,
+        suggested_options: [
+          { id: "confirm", label: "继续执行", action: "confirm" },
+          { id: "retry", label: "重试一次", action: "retry" },
+          { id: item.relatedCandidateId ? "handoff" : "stop", label: item.relatedCandidateId ? "我来接管" : "停止路径", action: item.relatedCandidateId ? "handoff" : "stop" },
+        ],
+        operator_response: {},
+        effect_summary: null,
+        scope: "run_only",
+        interaction_metadata: {},
+        surfaced_at: item.updatedAt ?? item.createdAt,
+        created_at: item.createdAt,
+        updated_at: item.updatedAt ?? item.createdAt,
+      }),
+    );
   const buildSnapshot = (): DashboardSummary => ({
     ...baseSnapshot,
     candidates: baseSnapshot.candidates.map((candidate) => mockThreads.get(candidate.id)?.candidate ?? candidate),
@@ -2509,6 +2753,122 @@ function createMockClient(): DesktopApiClient {
         updatedAt: new Date().toISOString(),
       };
       return { ...mockProfile };
+    },
+    listGoals: async () => mockGoals,
+    createGoal: async (payload) => {
+      const created = normalizeGoalSpec({
+        id: `goal-${Date.now()}`,
+        agent_profile_id: mockProfile.id,
+        title: payload.title,
+        goal_text: payload.goalText,
+        goal_kind: payload.goalKind ?? "recruiting",
+        status: "queued",
+        source: "operator",
+        source_text: payload.goalText,
+        requested_by: payload.requestedBy ?? "desktop-user",
+        constraints: payload.constraints ?? {},
+        success_criteria: payload.successCriteria ?? {},
+        context_hints: payload.contextHints ?? {},
+        trial_budget: payload.trialBudget ?? {},
+        run_preferences: payload.runPreferences ?? {},
+        summary: payload.summary ?? `围绕目标“${payload.title}”启动自适应招聘探索。`,
+        goal_metadata: { created_from: "mock" },
+        last_activity_at: new Date().toISOString(),
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+      mockGoals = [created, ...mockGoals];
+      mockExecutionTraces = [
+        normalizeExecutionTrace({
+          id: `trace-${created.id}`,
+          session_id: "runtime-session-primary",
+          goal_spec_id: created.id,
+          lane: "agent",
+          trace_kind: "adaptive_run",
+          status: "queued",
+          title: created.title,
+          summary: created.summary,
+          raw_trace: {},
+          distilled_trace: { goal: created.goalText },
+          outcome: { status: "queued", success: false },
+          trace_metadata: {},
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        }),
+        ...mockExecutionTraces,
+      ];
+      mockExecutionGraphs = [
+        normalizeExecutionGraph({
+          id: `graph-${created.id}`,
+          goal_spec_id: created.id,
+          graph_kind: "execution_projection",
+          title: created.title,
+          summary: "Mock 自适应执行图。",
+          nodes: [
+            { id: "goal", label: "目标" },
+            { id: "explore", label: "探索路径" },
+            { id: "execute", label: "开始执行" },
+          ],
+          edges: [
+            { from: "goal", to: "explore" },
+            { from: "explore", to: "execute" },
+          ],
+          rendered_text: "graph TD\n  goal[目标] --> explore[探索路径]\n  explore --> execute[开始执行]",
+          graph_metadata: {},
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        }),
+        ...mockExecutionGraphs,
+      ];
+      return created;
+    },
+    listExecutionTraces: async (goalId) =>
+      goalId ? mockExecutionTraces.filter((item) => item.goalSpecId === goalId) : mockExecutionTraces,
+    listExecutionGraphs: async (goalId) =>
+      goalId ? mockExecutionGraphs.filter((item) => item.goalSpecId === goalId) : mockExecutionGraphs,
+    listStrategyFragments: async () => mockStrategyFragments,
+    listOperatorInteractions: async (candidateId) =>
+      candidateId
+        ? mockOperatorInteractions.filter((item) => item.candidateId === candidateId)
+        : mockOperatorInteractions,
+    resolveOperatorInteraction: async (interactionId, payload) => {
+      const now = new Date().toISOString();
+      mockOperatorInteractions = mockOperatorInteractions.map((item) =>
+        item.id === interactionId
+          ? {
+              ...item,
+              status: "resolved",
+              operatorResponse: {
+                action: payload.action,
+                comment: payload.comment ?? null,
+              },
+              effectSummary:
+                payload.action === "confirm" || payload.action === "retry"
+                  ? "已按操作员确认继续执行。"
+                  : "已按操作员指示停止或接管当前路径。",
+              resolvedAt: now,
+              resolvedBy: payload.operator ?? "desktop-user",
+              updatedAt: now,
+            }
+          : item,
+      );
+      const updated = mockOperatorInteractions.find((item) => item.id === interactionId);
+      if (!updated) {
+        throw new Error(`Unknown interaction ${interactionId}`);
+      }
+      if (updated.approvalId) {
+        mockApprovals = mockApprovals.map((item) =>
+          item.id === updated.approvalId
+            ? {
+                ...item,
+                status: payload.action === "confirm" || payload.action === "retry" ? "approved" : "rejected",
+                reviewedAt: now,
+                updatedAt: now,
+              }
+            : item,
+        );
+      }
+      return updated;
     },
     listCandidateMemories: async () => Array.from(mockCandidateMemories.values()),
     getCandidateMemory: async (candidateId) => ensureMockCandidateMemory(candidateId),
@@ -3019,6 +3379,62 @@ export function createDesktopApiClient(baseUrl?: string): DesktopApiClient {
       return fetchClient.updateRecruitAgentProfile(payload).catch(async (error) => {
         if (isOfflineError(error) || isMissingEndpointError(error)) {
           return fallbackClient.updateRecruitAgentProfile(payload);
+        }
+        throw error;
+      });
+    },
+    async listGoals() {
+      return fetchClient.listGoals().catch(async (error) => {
+        if (isOfflineError(error) || isMissingEndpointError(error)) {
+          return fallbackClient.listGoals();
+        }
+        throw error;
+      });
+    },
+    async createGoal(payload) {
+      return fetchClient.createGoal(payload).catch(async (error) => {
+        if (isOfflineError(error) || isMissingEndpointError(error)) {
+          return fallbackClient.createGoal(payload);
+        }
+        throw error;
+      });
+    },
+    async listExecutionTraces(goalId) {
+      return fetchClient.listExecutionTraces(goalId).catch(async (error) => {
+        if (isOfflineError(error) || isMissingEndpointError(error)) {
+          return fallbackClient.listExecutionTraces(goalId);
+        }
+        throw error;
+      });
+    },
+    async listExecutionGraphs(goalId) {
+      return fetchClient.listExecutionGraphs(goalId).catch(async (error) => {
+        if (isOfflineError(error) || isMissingEndpointError(error)) {
+          return fallbackClient.listExecutionGraphs(goalId);
+        }
+        throw error;
+      });
+    },
+    async listStrategyFragments() {
+      return fetchClient.listStrategyFragments().catch(async (error) => {
+        if (isOfflineError(error) || isMissingEndpointError(error)) {
+          return fallbackClient.listStrategyFragments();
+        }
+        throw error;
+      });
+    },
+    async listOperatorInteractions(candidateId) {
+      return fetchClient.listOperatorInteractions(candidateId).catch(async (error) => {
+        if (isOfflineError(error) || isMissingEndpointError(error)) {
+          return fallbackClient.listOperatorInteractions(candidateId);
+        }
+        throw error;
+      });
+    },
+    async resolveOperatorInteraction(interactionId, payload) {
+      return fetchClient.resolveOperatorInteraction(interactionId, payload).catch(async (error) => {
+        if (isOfflineError(error) || isMissingEndpointError(error)) {
+          return fallbackClient.resolveOperatorInteraction(interactionId, payload);
         }
         throw error;
       });

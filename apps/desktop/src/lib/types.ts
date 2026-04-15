@@ -258,6 +258,112 @@ export interface ApprovalItem {
   relatedCandidateId?: string | null;
 }
 
+export interface GoalSpecRecord {
+  id: string;
+  agentProfileId: string;
+  title: string;
+  goalText: string;
+  goalKind: string;
+  status: string;
+  source: string;
+  sourceText?: string | null;
+  requestedBy?: string | null;
+  constraints: Record<string, unknown>;
+  successCriteria: Record<string, unknown>;
+  contextHints: Record<string, unknown>;
+  trialBudget: Record<string, unknown>;
+  runPreferences: Record<string, unknown>;
+  summary?: string | null;
+  latestRunId?: string | null;
+  lastActivityAt?: string | null;
+  goalMetadata: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ExecutionTraceRecord {
+  id: string;
+  sessionId: string;
+  runId?: string | null;
+  goalSpecId?: string | null;
+  candidateId?: string | null;
+  lane: string;
+  traceKind: string;
+  status: string;
+  title: string;
+  summary?: string | null;
+  rawTrace: Record<string, unknown>;
+  distilledTrace: Record<string, unknown>;
+  outcome: Record<string, unknown>;
+  traceMetadata: Record<string, unknown>;
+  startedAt?: string | null;
+  finishedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ExecutionGraphProjectionRecord {
+  id: string;
+  goalSpecId?: string | null;
+  runId?: string | null;
+  candidateId?: string | null;
+  graphKind: string;
+  title: string;
+  summary?: string | null;
+  nodes: Array<Record<string, unknown>>;
+  edges: Array<Record<string, unknown>>;
+  renderedText?: string | null;
+  graphMetadata: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface StrategyFragmentRecord {
+  id: string;
+  agentProfileId: string;
+  goalSpecId?: string | null;
+  runId?: string | null;
+  candidateId?: string | null;
+  jdId?: string | null;
+  scope: string;
+  fragmentKind: string;
+  title: string;
+  summary?: string | null;
+  content: Record<string, unknown>;
+  evidence: Record<string, unknown>;
+  status: string;
+  adoptionCount: number;
+  lastAppliedAt?: string | null;
+  fragmentMetadata: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface OperatorInteractionRecord {
+  id: string;
+  sessionId: string;
+  runId?: string | null;
+  checkpointId?: string | null;
+  approvalId?: string | null;
+  goalSpecId?: string | null;
+  candidateId?: string | null;
+  lane: string;
+  interactionType: string;
+  status: string;
+  title: string;
+  agentPrompt: string;
+  suggestedOptions: Array<Record<string, unknown>>;
+  operatorResponse: Record<string, unknown>;
+  effectSummary?: string | null;
+  scope: string;
+  interactionMetadata: Record<string, unknown>;
+  surfacedAt: string;
+  resolvedAt?: string | null;
+  resolvedBy?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface RecruitAgentProfileRecord {
   id: string;
   agentKey: string;
@@ -359,6 +465,7 @@ export interface CandidateThreadRecord {
   syncRecords: TalentPoolSyncRecord[];
   availableStatuses: string[];
   runtimeApprovals: ApprovalItem[];
+  runtimeInteractions: OperatorInteractionRecord[];
 }
 
 export type EvolutionArtifactKind = "skill_draft" | "prompt_patch" | "memory_policy_patch" | "playbook_patch" | "workflow_patch";

@@ -12,13 +12,18 @@ import type {
   CandidateMemoryRecord,
   CandidateThreadRecord,
   DashboardSummary,
+  ExecutionGraphProjectionRecord,
+  ExecutionTraceRecord,
   EvolutionArtifactRecord,
+  GoalSpecRecord,
   JobMemoryRecord,
+  OperatorInteractionRecord,
   RecruitAgentProfileRecord,
   RuntimeEpisodeReplay,
   RuntimeWorkspaceData,
   SettingsSnapshot,
   SkillRecord,
+  StrategyFragmentRecord,
   SyncBacklogItem,
   SyncStatusSnapshot,
   WorkspaceTab,
@@ -63,6 +68,11 @@ export function DesktopWorkspace(): JSX.Element {
   const [globalMemory, setGlobalMemory] = useState<AgentGlobalMemoryRecord | null>(null);
   const [candidateThreads, setCandidateThreads] = useState<CandidateThreadRecord[]>([]);
   const [evolutionArtifacts, setEvolutionArtifacts] = useState<EvolutionArtifactRecord[]>([]);
+  const [goals, setGoals] = useState<GoalSpecRecord[]>([]);
+  const [executionTraces, setExecutionTraces] = useState<ExecutionTraceRecord[]>([]);
+  const [executionGraphs, setExecutionGraphs] = useState<ExecutionGraphProjectionRecord[]>([]);
+  const [strategyFragments, setStrategyFragments] = useState<StrategyFragmentRecord[]>([]);
+  const [operatorInteractions, setOperatorInteractions] = useState<OperatorInteractionRecord[]>([]);
   const [communicationsFocus, setCommunicationsFocus] = useState<{ candidateId?: string; statusFilter?: string }>({});
   const [agentInboxFocus, setAgentInboxFocus] = useState<{ filter?: string; itemId?: string }>({});
   const [evolutionFocus, setEvolutionFocus] = useState<{ section?: string; itemId?: string }>({});
@@ -84,6 +94,11 @@ export function DesktopWorkspace(): JSX.Element {
         nextApprovals,
         nextSkills,
         nextProfile,
+        nextGoals,
+        nextExecutionTraces,
+        nextExecutionGraphs,
+        nextStrategyFragments,
+        nextOperatorInteractions,
         nextCandidateMemories,
         nextJobMemories,
         nextGlobalMemory,
@@ -99,6 +114,11 @@ export function DesktopWorkspace(): JSX.Element {
         apiClient.listApprovals(),
         apiClient.listSkills(),
         apiClient.getRecruitAgentProfile(),
+        apiClient.listGoals(),
+        apiClient.listExecutionTraces(),
+        apiClient.listExecutionGraphs(),
+        apiClient.listStrategyFragments(),
+        apiClient.listOperatorInteractions(),
         apiClient.listCandidateMemories(),
         apiClient.listJobMemories(),
         apiClient.getAgentGlobalMemory(),
@@ -118,6 +138,11 @@ export function DesktopWorkspace(): JSX.Element {
         setSyncBacklog(nextSyncBacklog);
         setQueueItems(nextQueueItems);
         setProfile(nextProfile);
+        setGoals(nextGoals);
+        setExecutionTraces(nextExecutionTraces);
+        setExecutionGraphs(nextExecutionGraphs);
+        setStrategyFragments(nextStrategyFragments);
+        setOperatorInteractions(nextOperatorInteractions);
         setCandidateMemories(nextCandidateMemories);
         setJobMemories(nextJobMemories);
         setGlobalMemory(nextGlobalMemory);
@@ -143,6 +168,11 @@ export function DesktopWorkspace(): JSX.Element {
       setSyncStatus(desktopSyncStatusMock);
       setSyncBacklog(desktopSyncBacklogMock);
       setQueueItems(desktopAgentQueueMock);
+      setGoals([]);
+      setExecutionTraces([]);
+      setExecutionGraphs([]);
+      setStrategyFragments([]);
+      setOperatorInteractions([]);
       setSelectedReplay(desktopReplayMockByEpisode[selectedEpisodeId ?? "episode-001"] ?? desktopReplayMockByEpisode["episode-001"]);
       setErrorMessage(error instanceof Error ? error.message : copy("Failed to refresh workspace.", "刷新工作区失败。"));
       appendEvent({
@@ -218,20 +248,20 @@ export function DesktopWorkspace(): JSX.Element {
       ({
       "recruit-agent": summary.skills.filter((skill) => skill.status !== "active" || skill.health !== "healthy").length,
         "agent-inbox":
-          summary.approvals.filter((approval) => !approval.relatedCandidateId && approval.status === "pending").length +
+          operatorInteractions.filter((item) => !item.candidateId && item.status === "pending").length +
           summary.skills.filter((skill) => skill.status !== "active" || skill.health !== "healthy").length +
           evolutionArtifacts.filter((artifact) => /(pending|draft|review)/i.test(artifact.status)).length,
         workbench: summary.candidates.filter((candidate) => !/(rejected|cooldown)/i.test(candidate.status)).length,
         communications: candidateThreads.filter(
           (thread) =>
-            thread.runtimeApprovals.some((approval) => approval.status === "pending") ||
+            thread.runtimeInteractions.some((interaction) => interaction.status === "pending") ||
             /(contact_required|contact_acquired|pending_communication|communicating|waiting_reply|resume_requested)/i.test(thread.candidate.status),
         ).length,
         evolution:
           summary.approvals.filter((approval) => approval.surface === "evolution" && approval.status === "pending").length +
           summary.skills.filter((skill) => skill.status !== "active" || skill.health !== "healthy").length,
       }) satisfies Partial<Record<WorkspaceTab, number>>,
-    [candidateThreads, evolutionArtifacts, summary],
+    [candidateThreads, evolutionArtifacts, operatorInteractions, summary],
   );
 
   const sectionMeta = useMemo(
@@ -350,6 +380,41 @@ export function DesktopWorkspace(): JSX.Element {
     await loadWorkspace(copy("Recruit Agent profile saved.", "Recruit Agent 配置已保存。"));
   };
 
+  const handleCreateGoal = async (payload: {
+    title: string;
+    goalText: string;
+    goalKind?: string;
+    summary?: string;
+    constraints?: Record<string, unknown>;
+    successCriteria?: Record<string, unknown>;
+    contextHints?: Record<string, unknown>;
+    trialBudget?: Record<string, unknown>;
+    runPreferences?: Record<string, unknown>;
+    priority?: number;
+  }) => {
+    setRuntimeActionBusy(true);
+    try {
+      await apiClient.createGoal(payload);
+      await loadWorkspace(copy("Adaptive goal created.", "已创建目标驱动任务。"));
+    } finally {
+      setRuntimeActionBusy(false);
+    }
+  };
+
+  const handleResolveInteraction = async (interactionId: string, action: string, comment?: string) => {
+    setApprovalActionId(interactionId);
+    try {
+      await apiClient.resolveOperatorInteraction(interactionId, {
+        action,
+        comment,
+        operator: "desktop-user",
+      });
+      await loadWorkspace(copy("Operator interaction resolved.", "已处理人工介入项。"));
+    } finally {
+      setApprovalActionId(undefined);
+    }
+  };
+
   const handleUpdateSkill = async (skillId: string, payload: Partial<SkillRecord>) => {
     await apiClient.updateSkill(skillId, payload);
     await loadWorkspace(copy("Skill updated.", "Skill 已更新。"));
@@ -457,19 +522,24 @@ export function DesktopWorkspace(): JSX.Element {
   const content = (() => {
     switch (tab) {
       case "dashboard":
-        return <DashboardView summary={summary} onOpenAgentInbox={() => openAgentInbox("approvals")} onOpenCommunications={openCommunications} onOpenEvolution={openEvolution} />;
+        return <DashboardView summary={summary} onOpenAgentInbox={() => openAgentInbox("all")} onOpenCommunications={openCommunications} onOpenEvolution={openEvolution} />;
       case "agent-inbox":
         return (
           <AgentInboxView
+            interactions={operatorInteractions}
             approvals={summary.approvals}
             skills={summary.skills}
             artifacts={evolutionArtifacts}
             events={events}
+            goals={goals}
+            traces={executionTraces}
+            graphs={executionGraphs}
             pendingActionId={approvalActionId}
             requestedFilter={agentInboxFocus.filter}
             requestedItemId={agentInboxFocus.itemId}
             onApprove={handleApprove}
             onReject={handleReject}
+            onResolveInteraction={handleResolveInteraction}
             onOpenCandidate={(candidateId) => openCommunications("candidate", candidateId)}
             onOpenEvolution={openEvolution}
           />
@@ -506,14 +576,18 @@ export function DesktopWorkspace(): JSX.Element {
             syncStatus={syncStatus}
             syncBacklog={syncBacklog}
             queueItems={queueItems}
+            goals={goals}
+            traces={executionTraces}
+            graphs={executionGraphs}
             runningAction={runtimeActionBusy}
             syncingAction={syncingBacklog}
             onRunOnce={handleRunOnce}
             onQueueScreeningTask={handleQueueScreeningTask}
+            onCreateGoal={handleCreateGoal}
             onFlushSync={handleFlushSync}
             onSelectEpisode={setSelectedEpisodeId}
             onOpenCommunications={openCommunications}
-            onOpenAgentInbox={() => openAgentInbox("approvals")}
+            onOpenAgentInbox={() => openAgentInbox("all")}
           />
         );
       case "communications":

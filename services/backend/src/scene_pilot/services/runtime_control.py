@@ -40,6 +40,7 @@ class RuntimeControlService:
     def ensure_run_for_task(self, task: TaskEnvelope) -> dict[str, Any]:
         session_record = self._ensure_session()
         lane = self.resolve_lane(task)
+        goal_spec_id = str(task.metadata.get("goal_spec_id") or task.payload.get("goal_id") or "").strip() or None
         candidate = CandidateRepository(self.session).resolve(task.candidate_id) if task.candidate_id else None
         run_repo = AgentRunRepository(self.session)
         work_item_repo = AgentWorkItemRepository(self.session)
@@ -52,6 +53,7 @@ class RuntimeControlService:
             run = run_repo.create(
                 {
                     "session_id": session_record.id,
+                    "goal_spec_id": goal_spec_id,
                     "candidate_id": candidate.id if candidate is not None else None,
                     "jd_id": candidate.jd_id if candidate is not None else None,
                     "platform": task.platform or (candidate.platform if candidate is not None else "site"),
@@ -77,6 +79,7 @@ class RuntimeControlService:
                 {
                     "priority": max(int(run.priority or 0), int(task.priority or 0)),
                     "queue_task_id": task.task_id,
+                    "goal_spec_id": goal_spec_id or run.goal_spec_id,
                     "runtime_metadata": metadata,
                 },
             )
@@ -88,6 +91,7 @@ class RuntimeControlService:
                     "session_id": session_record.id,
                     "run_id": run.id,
                     "queue_task_id": task.task_id,
+                    "goal_spec_id": goal_spec_id,
                     "candidate_id": candidate.id if candidate is not None else None,
                     "platform": task.platform or (candidate.platform if candidate is not None else "site"),
                     "lane": lane,
@@ -112,6 +116,10 @@ class RuntimeControlService:
         task.metadata["agent_session_id"] = session_record.id
         task.metadata["agent_run_id"] = run.id
         task.metadata["agent_work_item_id"] = work_item.id
+        if goal_spec_id:
+            task.metadata["goal_spec_id"] = goal_spec_id
+            session_record.current_goal_id = goal_spec_id
+            self.session.commit()
         self.publish_event(
             session_id=session_record.id,
             run_id=run.id,

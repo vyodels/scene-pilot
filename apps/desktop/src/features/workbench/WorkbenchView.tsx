@@ -1,4 +1,4 @@
-import React, { useMemo } from "react";
+import React, { useMemo, useState } from "react";
 import { MetricCard, Panel, ProgressBars, StatusBadge, Timeline } from "../../components";
 import { formatCompactDate } from "../../lib/format";
 import { useI18n } from "../../lib/i18n";
@@ -9,6 +9,9 @@ import type {
   AgentQueueItem,
   AgentSnapshot,
   DashboardSummary,
+  ExecutionGraphProjectionRecord,
+  ExecutionTraceRecord,
+  GoalSpecRecord,
   RuntimeEpisodeReplay,
   RuntimeWorkspaceData,
   SyncBacklogItem,
@@ -25,10 +28,14 @@ interface WorkbenchViewProps {
   syncStatus?: SyncStatusSnapshot | null;
   syncBacklog?: SyncBacklogItem[];
   queueItems?: AgentQueueItem[];
+  goals?: GoalSpecRecord[];
+  traces?: ExecutionTraceRecord[];
+  graphs?: ExecutionGraphProjectionRecord[];
   runningAction?: boolean;
   syncingAction?: boolean;
   onRunOnce(): void;
   onQueueScreeningTask(): void;
+  onCreateGoal?(payload: { title: string; goalText: string; summary?: string }): void;
   onFlushSync?(): void;
   onSelectEpisode?(episodeId: string): void;
   onOpenCommunications?(filter?: string, candidateId?: string): void;
@@ -68,16 +75,22 @@ export function WorkbenchView({
   syncStatus,
   syncBacklog = [],
   queueItems = [],
+  goals = [],
+  traces = [],
+  graphs = [],
   runningAction,
   syncingAction,
   onRunOnce,
   onQueueScreeningTask,
+  onCreateGoal,
   onFlushSync,
   onSelectEpisode,
   onOpenCommunications,
   onOpenAgentInbox,
 }: WorkbenchViewProps): JSX.Element {
   const { copy } = useI18n();
+  const [goalTitle, setGoalTitle] = useState("");
+  const [goalText, setGoalText] = useState("");
 
   const executionCards = useMemo(
     () =>
@@ -116,6 +129,9 @@ export function WorkbenchView({
   const activeCandidates = summary.candidates.filter((candidate) => !/(rejected|cooldown)/i.test(candidate.status));
   const waitingCommunications = summary.candidates.filter((candidate) => /(contact_required|contact_acquired|pending_communication|communicating|waiting_reply|resume_requested)/i.test(candidate.status));
   const pendingApprovals = summary.approvals.filter((approval) => approval.status === "pending").length;
+  const latestGoal = goals[0] ?? null;
+  const latestTrace = traces[0] ?? null;
+  const latestGraph = graphs[0] ?? null;
 
   return (
     <div style={{ display: "grid", gap: "18px" }}>
@@ -182,6 +198,50 @@ export function WorkbenchView({
             <button type="button" onClick={onQueueScreeningTask} disabled={Boolean(runningAction)} style={buttonStyle}>
               {copy("Queue screening task", "排入初筛任务")}
             </button>
+            <div style={{ display: "grid", gap: "8px", marginTop: "4px" }}>
+              <input
+                value={goalTitle}
+                onChange={(event) => setGoalTitle(event.target.value)}
+                placeholder={copy("Goal title", "目标标题")}
+                style={{
+                  borderRadius: "10px",
+                  border: `1px solid ${theme.colors.border}`,
+                  background: "rgba(255,255,255,0.03)",
+                  color: theme.colors.text,
+                  padding: "9px 10px",
+                }}
+              />
+              <textarea
+                value={goalText}
+                onChange={(event) => setGoalText(event.target.value)}
+                placeholder={copy("Describe what the Recruit Agent should achieve in natural language.", "直接描述 Recruit Agent 要完成什么，系统会先探索路径再执行。")}
+                rows={4}
+                style={{
+                  borderRadius: "10px",
+                  border: `1px solid ${theme.colors.border}`,
+                  background: "rgba(255,255,255,0.03)",
+                  color: theme.colors.text,
+                  padding: "9px 10px",
+                  resize: "vertical",
+                }}
+              />
+              <button
+                type="button"
+                disabled={Boolean(runningAction) || !goalTitle.trim() || !goalText.trim()}
+                onClick={() => {
+                  onCreateGoal?.({
+                    title: goalTitle.trim(),
+                    goalText: goalText.trim(),
+                    summary: copy("Start with a small exploratory run, then distill reusable strategy.", "先用小规模探索 run 找路径，再提炼可复用策略。"),
+                  });
+                  setGoalTitle("");
+                  setGoalText("");
+                }}
+                style={buttonStyle}
+              >
+                {copy("Start adaptive goal", "启动目标驱动任务")}
+              </button>
+            </div>
             {onFlushSync ? (
               <button type="button" onClick={onFlushSync} disabled={Boolean(syncingAction)} style={buttonStyle}>
                 {syncingAction ? copy("Syncing...", "同步中...") : copy("Flush sync backlog", "重试同步积压")}
@@ -200,6 +260,17 @@ export function WorkbenchView({
                   `Sync ${syncStatus.remoteAvailable ? "available" : "offline"} · pending ${syncStatus.pendingCount} · failed ${syncStatus.failedDeliveryCount ?? 0}`,
                   `同步${syncStatus.remoteAvailable ? "可用" : "离线"} · 待处理 ${syncStatus.pendingCount} · 失败 ${syncStatus.failedDeliveryCount ?? 0}`,
                 )}
+              </div>
+            ) : null}
+            {latestGoal ? (
+              <div style={{ borderRadius: "12px", border: `1px solid ${theme.colors.border}`, padding: "10px 12px", background: "rgba(255,255,255,0.02)" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: "8px" }}>
+                  <strong>{latestGoal.title}</strong>
+                  <StatusBadge tone={/blocked|failed/i.test(latestGoal.status) ? "warning" : "neutral"}>{translateUiToken(latestGoal.status, copy)}</StatusBadge>
+                </div>
+                <div style={{ marginTop: "6px", color: theme.colors.muted, fontSize: "13px", lineHeight: 1.6 }}>
+                  {latestGoal.summary ?? latestGoal.goalText}
+                </div>
               </div>
             ) : null}
           </div>
@@ -265,6 +336,32 @@ export function WorkbenchView({
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: "18px", alignItems: "start" }}>
+        <Panel title={copy("Adaptive runtime", "目标驱动运行时")} eyebrow={copy("Goals, traces, graphs", "目标、轨迹、执行图")} description={copy("Goals are the new runtime entry. The graph is for human interpretation, while trace and strategy assets drive execution.", "目标是新的运行时入口；图用于解释，真正驱动执行的是 trace 和策略资产。")}>
+          <div style={{ display: "grid", gap: "12px" }}>
+            {latestGoal ? (
+              <article style={{ borderRadius: "14px", border: `1px solid ${theme.colors.border}`, background: "rgba(255,255,255,0.03)", padding: "12px 14px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: "8px", alignItems: "start" }}>
+                  <strong>{latestGoal.title}</strong>
+                  <StatusBadge tone={/blocked|failed/i.test(latestGoal.status) ? "warning" : "neutral"}>{translateUiToken(latestGoal.status, copy)}</StatusBadge>
+                </div>
+                <div style={{ color: theme.colors.muted, fontSize: "13px", marginTop: "6px", lineHeight: 1.6 }}>{latestGoal.goalText}</div>
+                {latestTrace ? (
+                  <div style={{ color: theme.colors.muted, fontSize: "12px", marginTop: "8px" }}>
+                    {copy("Latest trace", "最近轨迹")} · {latestTrace.summary ?? latestTrace.status}
+                  </div>
+                ) : null}
+                {latestGraph?.renderedText ? (
+                  <pre style={{ marginTop: "10px", padding: "10px 12px", borderRadius: "12px", background: "rgba(5,10,18,0.65)", color: "#d9e5ff", fontSize: "12px", overflowX: "auto" }}>
+                    {latestGraph.renderedText}
+                  </pre>
+                ) : null}
+              </article>
+            ) : (
+              <div style={{ color: theme.colors.muted }}>{copy("No adaptive goal yet. Create one from the right panel.", "还没有目标驱动任务。可在右侧面板直接创建。")}</div>
+            )}
+          </div>
+        </Panel>
+
         <Panel title={copy("Live event stream", "实时事件流")} eyebrow={copy("Operator visibility", "操作员可见性")} description={copy("Recent Recruit Agent signals from the local runtime.", "来自本地运行时的最近 Recruit Agent 信号。")}>
           <Timeline events={timelineEvents} />
         </Panel>
