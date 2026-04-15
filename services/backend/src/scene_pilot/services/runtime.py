@@ -69,6 +69,7 @@ from scene_pilot.runtime.providers import ProviderError, ProviderRegistry, Scrip
 from scene_pilot.runtime.prompts import PromptBuilder
 from scene_pilot.runtime.result_semantics import extract_business_status
 from scene_pilot.runtime.tools import ToolRegistry
+from scene_pilot.services.browser_mcp import BrowserMcpClient, BrowserMcpError, capture_boss_scene
 from scene_pilot.services.skills import SkillHealthCheckService
 
 
@@ -79,6 +80,24 @@ def _json_default(value: Any) -> Any:
     if callable(isoformat):
         return isoformat()
     return str(value)
+
+
+def _normalize_compile_outline_item(item: Any, *, index: int) -> dict[str, Any]:
+    if isinstance(item, dict):
+        return dict(item)
+    text = str(item or "").strip()
+    if not text:
+        return {"id": f"step_{index + 1}", "action": f"Step {index + 1}"}
+    return {"id": f"step_{index + 1}", "action": text}
+
+
+def _normalize_compile_checkpoint_item(item: Any) -> dict[str, Any]:
+    if isinstance(item, dict):
+        return dict(item)
+    text = str(item or "").strip()
+    if not text:
+        return {"kind": "checkpoint", "label": "Unnamed checkpoint"}
+    return {"kind": "checkpoint", "label": text}
 
 
 _GENERIC_EXECUTION_RESULT_STATUSES = {
@@ -257,6 +276,9 @@ CAPABILITY_DRIVERS: dict[str, dict[str, Any]] = {
         "replan_on_error": True,
         "scene_required": True,
         "preferred_tools": [
+            "browser_capture_scene",
+            "boss_discover_candidates",
+            "boss_inspect_candidate",
             "record_observation",
             "advance_plan_step",
             "request_replan",
@@ -276,7 +298,14 @@ CAPABILITY_DRIVERS: dict[str, dict[str, Any]] = {
         "executor_mode": "discover",
         "replan_on_error": False,
         "scene_required": False,
-        "preferred_tools": ["record_observation", "advance_plan_step", "submit_result"],
+        "preferred_tools": [
+            "browser_capture_scene",
+            "boss_discover_candidates",
+            "boss_inspect_candidate",
+            "record_observation",
+            "advance_plan_step",
+            "submit_result",
+        ],
         "checkpoint_policy": {"checkpoint_on_empty_results": True},
     },
     "http": {
@@ -516,6 +545,7 @@ class PersistedRuntimeService:
     providers: ProviderRegistry | None = None
     tools: ToolRegistry | None = None
     prompt_builder: PromptBuilder = field(default_factory=PromptBuilder)
+    browser_client: BrowserMcpClient | None = field(default_factory=BrowserMcpClient)
     allow_heuristic_fallback: bool = False
 
     def list_domain_packs(self) -> list[DomainPackRead]:
@@ -1444,12 +1474,30 @@ class PersistedRuntimeService:
 
     def _parse_semantic_compile_response(self, response) -> SemanticTaskCompileDraft:
         if isinstance(response.result_data, dict):
-            return SemanticTaskCompileDraft.model_validate(response.result_data)
+            payload = dict(response.result_data)
+            payload["checkpoints"] = [
+                _normalize_compile_checkpoint_item(item)
+                for item in list(payload.get("checkpoints") or [])
+            ]
+            payload["step_outline"] = [
+                _normalize_compile_outline_item(item, index=index)
+                for index, item in enumerate(list(payload.get("step_outline") or []))
+            ]
+            return SemanticTaskCompileDraft.model_validate(payload)
 
         content = (response.content or "").strip()
         if not content:
             raise ValueError("Compiler returned an empty response")
-        return SemanticTaskCompileDraft.model_validate(self._extract_json_object(content))
+        payload = self._extract_json_object(content)
+        payload["checkpoints"] = [
+            _normalize_compile_checkpoint_item(item)
+            for item in list(payload.get("checkpoints") or [])
+        ]
+        payload["step_outline"] = [
+            _normalize_compile_outline_item(item, index=index)
+            for index, item in enumerate(list(payload.get("step_outline") or []))
+        ]
+        return SemanticTaskCompileDraft.model_validate(payload)
 
     def _review_semantic_compile_candidate(
         self,
@@ -1479,7 +1527,11 @@ class PersistedRuntimeService:
         if not isinstance(draft.output_contract, dict) or not draft.output_contract:
             critical_issues.append("missing_output_contract")
 
-        approval_policy = dict(draft.approval_policy or {})
+        approval_policy = self._merge_dicts(
+            self._default_approval_policy(payload.instruction, capabilities),
+            draft.approval_policy,
+        )
+        approval_policy = self._merge_dicts(approval_policy, payload.approval_policy)
         approval_actions = {
             str(item).strip().lower()
             for item in list(approval_policy.get("approval_actions") or [])
@@ -2139,6 +2191,33 @@ class PersistedRuntimeService:
                 "final_result_status": result.status,
                 "final_result_success": result.success,
                 "final_result_data": dict(result.data or {}),
+                "agent_result": {
+                    "status": result.status,
+                    "success": result.success,
+                    "content": result.content,
+                    "data": dict(result.data or {}),
+                    "usage": {
+                        "prompt_tokens": result.usage.prompt_tokens,
+                        "completion_tokens": result.usage.completion_tokens,
+                        "total_tokens": result.usage.total_tokens,
+                    },
+                    "tool_outputs": [
+                        {
+                            "tool_name": item.tool_name,
+                            "is_error": item.is_error,
+                            "message_length": len(item.to_message_content() or ""),
+                        }
+                        for item in list(result.tool_outputs or [])
+                    ],
+                    "message_lengths": [
+                        {
+                            "role": message.role,
+                            "name": message.name,
+                            "length": len(message.content or ""),
+                        }
+                        for message in list(result.messages or [])
+                    ],
+                },
                 "executor_metadata": dict(result.metadata or {}),
             }
         )
@@ -2230,6 +2309,8 @@ class PersistedRuntimeService:
         task_spec = TaskSpecRepository(self.session).get(episode.task_spec_id)
         if task_spec is None:
             raise ValueError("Task spec not found")
+
+        payload = self._hydrate_trial_payload_with_live_scene(task_spec=task_spec, payload=payload)
 
         if self.providers is not None and self.tools is not None:
             managed_payload = self._trial_task_payload(task_spec=task_spec, plan=plan, payload=payload)
@@ -2379,6 +2460,54 @@ class PersistedRuntimeService:
 
         return self.derive_learning_from_episode(updated_episode.id)
 
+    def _hydrate_trial_payload_with_live_scene(self, *, task_spec, payload: TrialRunExecuteRequest) -> TrialRunExecuteRequest:
+        requires_browser = bool((task_spec.compiled_payload or {}).get("environment_requirements", {}).get("browser_required")) or (
+            "browser" in list(task_spec.preferred_capabilities or [])
+        )
+        if not requires_browser:
+            return payload
+
+        already_has_scene = bool(
+            payload.url
+            or payload.title
+            or payload.page_type
+            or list(payload.observed_entities or [])
+            or list(payload.affordances or [])
+        )
+        if payload.source == "browser" and already_has_scene:
+            return payload
+        if self.browser_client is None:
+            return payload
+
+        try:
+            scene = capture_boss_scene(self.browser_client, limit=8)
+        except BrowserMcpError:
+            return payload
+        if not isinstance(scene, dict):
+            return payload
+
+        scene_metadata = dict(scene.get("runtime_metadata") or {})
+        payload_metadata = dict(payload.runtime_metadata or {})
+        merged_metadata = {
+            **scene_metadata,
+            **payload_metadata,
+            "auto_captured_browser_scene": True,
+            "auto_capture_source": "browser_mcp",
+        }
+        return payload.model_copy(
+            update={
+                "source": "browser",
+                "environment_key": payload.environment_key or scene.get("environment_key"),
+                "url": payload.url or scene.get("url"),
+                "title": payload.title or scene.get("title"),
+                "page_type": payload.page_type or scene.get("page_type"),
+                "observed_entities": list(payload.observed_entities or list(scene.get("observed_entities") or [])),
+                "affordances": list(payload.affordances or list(scene.get("affordances") or [])),
+                "capability_hints": list(payload.capability_hints or list(scene.get("capability_hints") or [])),
+                "runtime_metadata": merged_metadata,
+            }
+        )
+
     def derive_learning_from_episode(self, episode_id: str) -> RuntimeLearningOutcomeRead:
         episode_repo = ExecutionEpisodeRepository(self.session)
         episode = episode_repo.get(episode_id)
@@ -2425,6 +2554,15 @@ class PersistedRuntimeService:
         )
 
     def confirm_episode(self, episode_id: str, payload: EpisodeConfirmRequest) -> RuntimeLearningOutcomeRead:
+        return self.review_episode_confirmation(episode_id, payload, approve=True)
+
+    def review_episode_confirmation(
+        self,
+        episode_id: str,
+        payload: EpisodeConfirmRequest,
+        *,
+        approve: bool,
+    ) -> RuntimeLearningOutcomeRead:
         outcome = self.derive_learning_from_episode(episode_id)
         episode_repo = ExecutionEpisodeRepository(self.session)
         plan_repo = ExecutionPlanRepository(self.session)
@@ -2442,10 +2580,11 @@ class PersistedRuntimeService:
 
         template = None
         template_approval = outcome.template_approval
+        template_model = None
         if outcome.template is not None:
             template_repo = WorkflowTemplateRepository(self.session)
             template_model = template_repo.get(outcome.template.id)
-            if template_model is not None:
+            if approve and template_model is not None:
                 template = template_repo.update(
                     template_model,
                     WorkflowTemplateUpdate(
@@ -2455,43 +2594,56 @@ class PersistedRuntimeService:
                         last_validated_at=utcnow(),
                     ),
                 )
+            elif template_model is not None:
+                template = template_model
             template_approval = self._mark_template_candidate_approval(
                 episode_id=episode.id,
                 reviewer=payload.reviewer,
                 reason=payload.reason,
-                approved=True,
+                approved=approve,
                 template=template_model if template_model is not None else None,
             )
 
+        plan_runtime_metadata = {
+            **dict(plan.runtime_metadata or {}),
+            "reviewed_by": payload.reviewer,
+            "reviewed_reason": payload.reason,
+            "review_decision": "approved" if approve else "rejected",
+        }
+        if approve:
+            plan_runtime_metadata["confirmed_by"] = payload.reviewer
+            plan_runtime_metadata["confirmed_reason"] = payload.reason
         plan_repo.update(
             plan,
             {
-                "status": "active" if payload.activate_template else "validated",
-                "approval_state": "approved",
-                "runtime_metadata": {
-                    **dict(plan.runtime_metadata or {}),
-                    "confirmed_by": payload.reviewer,
-                    "confirmed_reason": payload.reason,
+                "status": "active" if approve and payload.activate_template else "validated",
+                "approval_state": "approved" if approve else "rejected",
+                "runtime_metadata": plan_runtime_metadata,
+            },
+        )
+        if approve:
+            task_repo.update(
+                task,
+                {
+                    "status": "production_ready" if payload.activate_template else "validated",
+                    "active_plan_id": plan.id,
                 },
-            },
-        )
-        task_repo.update(
-            task,
-            {
-                "status": "production_ready" if payload.activate_template else "validated",
-                "active_plan_id": plan.id,
-            },
-        )
+            )
+        episode_runtime_metadata = {
+            **dict(episode.runtime_metadata or {}),
+            "reviewed_by": payload.reviewer,
+            "reviewed_reason": payload.reason,
+            "review_decision": "approved" if approve else "rejected",
+        }
+        if approve:
+            episode_runtime_metadata["confirmed_by"] = payload.reviewer
+            episode_runtime_metadata["confirmed_reason"] = payload.reason
         episode = episode_repo.update(
             episode,
             ExecutionEpisodeUpdate(
-                status="confirmed",
+                status="confirmed" if approve else "rejected",
                 requires_confirmation=False,
-                runtime_metadata={
-                    **dict(episode.runtime_metadata or {}),
-                    "confirmed_by": payload.reviewer,
-                    "confirmed_reason": payload.reason,
-                },
+                runtime_metadata=episode_runtime_metadata,
             ),
         )
 

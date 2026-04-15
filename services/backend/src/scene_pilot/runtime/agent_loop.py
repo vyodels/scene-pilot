@@ -65,13 +65,13 @@ class AgentLoop:
                     capabilities=[active_capability] if active_capability else None,
                     preferred_tool_names=preferred_tools,
                 ),
-                task={
-                    "task_type": getattr(task, "task_type", None),
-                    "payload": getattr(task, "payload", {}) or {},
-                    "execution_contract": execution_contract or {},
-                    "current_capability": active_capability,
-                    "preferred_tools": preferred_tools,
-                },
+                task=self._provider_task_payload(
+                    task=task,
+                    execution_contract=execution_contract,
+                    active_capability=active_capability,
+                    preferred_tools=preferred_tools,
+                    trace=trace,
+                ),
             )
             usage.prompt_tokens += response.usage.prompt_tokens
             usage.completion_tokens += response.usage.completion_tokens
@@ -175,6 +175,23 @@ class AgentLoop:
                         tool_outputs=tool_outputs,
                         metadata=self._result_metadata(trace, extra_context, result_data=result_data),
                     )
+                synthesized_result = self._auto_submit_completed_step(
+                    trace=trace,
+                    tool_calls=response.tool_calls,
+                    tool_outputs=tool_outputs,
+                    extra_context=extra_context,
+                )
+                if synthesized_result is not None:
+                    return AgentResult(
+                        success=True,
+                        status="completed",
+                        content=response.content,
+                        data=synthesized_result,
+                        messages=messages,
+                        usage=usage,
+                        tool_outputs=tool_outputs,
+                        metadata=self._result_metadata(trace, extra_context, result_data=synthesized_result),
+                    )
                 continue
 
             if response.result_data is not None:
@@ -230,6 +247,29 @@ class AgentLoop:
             tool_outputs=tool_outputs,
             metadata=self._result_metadata(trace, extra_context, error="max_turns_reached"),
         )
+
+    def _provider_task_payload(
+        self,
+        *,
+        task: Any,
+        execution_contract: Mapping[str, Any] | None,
+        active_capability: str | None,
+        preferred_tools: list[str],
+        trace: dict[str, Any],
+    ) -> dict[str, Any]:
+        payload = getattr(task, "payload", {}) or {}
+        goal = payload.get("goal") or payload.get("instruction") or (execution_contract or {}).get("goal")
+        domain = payload.get("domain") or (execution_contract or {}).get("domain")
+        return {
+            "task_type": getattr(task, "task_type", None),
+            "goal": goal,
+            "domain": domain,
+            "plan_name": (execution_contract or {}).get("plan_name"),
+            "current_step_id": trace.get("current_step_id") or (execution_contract or {}).get("current_step_id"),
+            "current_capability": active_capability,
+            "preferred_tools": preferred_tools,
+            "blockers": list((execution_contract or {}).get("blockers") or [])[:6],
+        }
 
     def _is_terminal_result_submission(
         self,
@@ -524,6 +564,85 @@ class AgentLoop:
         if error is not None:
             metadata["executor_error"] = error
         return metadata
+
+    def _auto_submit_completed_step(
+        self,
+        *,
+        trace: dict[str, Any],
+        tool_calls: list[ToolCall],
+        tool_outputs: list[Any],
+        extra_context: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        completed_statuses = {"completed", "complete", "done", "success", "passed"}
+        if not any(tool_call.name == "advance_plan_step" for tool_call in tool_calls):
+            return None
+
+        actions = list(trace.get("actions") or [])
+        if not actions:
+            return None
+        last_action = dict(actions[-1] or {})
+        if str(last_action.get("status") or "").strip().lower() not in completed_statuses:
+            return None
+
+        observations = [
+            dict(item)
+            for item in list(trace.get("observations") or [])
+            if str(item.get("step_id") or "") == str(last_action.get("step_id") or "")
+        ]
+        if not observations:
+            return None
+
+        candidate = self._latest_candidate_from_tool_outputs(tool_outputs)
+        if candidate is None:
+            return None
+        execution_contract = self._extract_execution_contract(extra_context)
+        source_scene = None
+        if isinstance(execution_contract, Mapping):
+            scene_type = str(execution_contract.get("scene_type") or "").strip()
+            plan_name = str(execution_contract.get("plan_name") or "").strip()
+            source_scene = " | ".join(part for part in [scene_type, plan_name] if part)
+
+        result: dict[str, Any] = {
+            "status": "step_completed",
+            "step_id": last_action.get("step_id"),
+            "next_step": trace.get("current_step_id"),
+            "notes": str(last_action.get("summary") or observations[-1].get("summary") or "").strip(),
+        }
+        if source_scene:
+            result["source_scene"] = source_scene
+
+        candidate_name = str(candidate.get("name") or candidate.get("candidate_id") or "").strip()
+        candidate_id = str(candidate.get("candidate_id") or candidate.get("platform_candidate_id") or "").strip()
+        identifier = " / ".join(part for part in [candidate_id, candidate_name] if part)
+        evidence = candidate.get("profile_or_resume_evidence") if isinstance(candidate.get("profile_or_resume_evidence"), Mapping) else {}
+        result.update(
+            {
+                "candidate_name_or_identifier": identifier or candidate_name or candidate_id,
+                "profile_or_resume_evidence": str(
+                    evidence.get("summary")
+                    or evidence.get("text_excerpt")
+                    or candidate.get("online_resume_text")
+                    or ""
+                )[:320],
+                "resume_artifact_status": candidate.get("resume_artifact_status") or "profile_evidence_available",
+                "score": candidate.get("score") or "not_scored",
+                "score_rationale": candidate.get("score_rationale") or "Current runtime step completed before formal scoring.",
+                "upload_status": candidate.get("upload_status") or "not_started",
+            }
+        )
+        return result
+
+    def _latest_candidate_from_tool_outputs(self, tool_outputs: list[Any]) -> dict[str, Any] | None:
+        for item in reversed(list(tool_outputs or [])):
+            tool_name = getattr(item, "tool_name", None)
+            output = getattr(item, "output", None)
+            if tool_name == "boss_inspect_candidate" and isinstance(output, Mapping):
+                return dict(output)
+            if tool_name == "boss_discover_candidates" and isinstance(output, list):
+                for candidate in output:
+                    if isinstance(candidate, Mapping):
+                        return dict(candidate)
+        return None
 
 
 def run_agent_loop(

@@ -161,9 +161,10 @@ class ToolExecutionResult:
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     def to_message_content(self) -> str:
-        if isinstance(self.output, str):
-            return self.output
-        return json.dumps(self.output, ensure_ascii=False, sort_keys=True, default=str)
+        compact = _compact_tool_output_for_model(self.tool_name, self.output)
+        if isinstance(compact, str):
+            return compact
+        return json.dumps(compact, ensure_ascii=False, sort_keys=True, default=str)
 
 
 @dataclass(slots=True)
@@ -177,3 +178,134 @@ class AgentResult:
     usage: LLMUsage = field(default_factory=LLMUsage)
     tool_outputs: list[ToolExecutionResult] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
+
+
+def _compact_tool_output_for_model(tool_name: str, output: Any) -> Any:
+    if tool_name == "boss_discover_candidates" and isinstance(output, list):
+        items = [_compact_candidate_output(item, detail=False) for item in output[:4] if isinstance(item, dict)]
+        return {
+            "candidate_count": len(output),
+            "candidates": items,
+            "truncated": len(output) > len(items),
+        }
+    if tool_name == "boss_inspect_candidate" and isinstance(output, dict):
+        return _compact_candidate_output(output, detail=True)
+    if tool_name == "browser_capture_scene" and isinstance(output, dict):
+        observed_entities = [item for item in list(output.get("observed_entities") or []) if isinstance(item, dict)]
+        affordances = [item for item in list(output.get("affordances") or []) if isinstance(item, dict)]
+        candidate_names = [
+            str(item.get("label") or "").strip()
+            for item in observed_entities
+            if str(item.get("kind") or "") == "candidate_card" and str(item.get("label") or "").strip()
+        ]
+        return {
+            "source": output.get("source"),
+            "environment_key": output.get("environment_key"),
+            "url": output.get("url"),
+            "title": output.get("title"),
+            "page_type": output.get("page_type"),
+            "observed_entity_count": len(observed_entities),
+            "affordance_count": len(affordances),
+            "candidate_names": candidate_names[:6],
+            "runtime_metadata": _compact_generic_value(output.get("runtime_metadata"), depth=0),
+        }
+    if tool_name == "record_observation" and isinstance(output, dict):
+        payload = output.get("payload") if isinstance(output.get("payload"), dict) else {}
+        return {
+            "accepted": bool(output.get("accepted")),
+            "step_id": payload.get("step_id"),
+            "capability": payload.get("capability"),
+            "summary": _truncate_text(payload.get("summary"), 200),
+            "signals": list(payload.get("signals") or [])[:4],
+        }
+    if tool_name == "advance_plan_step" and isinstance(output, dict):
+        payload = output.get("payload") if isinstance(output.get("payload"), dict) else {}
+        return {
+            "accepted": bool(output.get("accepted")),
+            "step_id": payload.get("step_id"),
+            "status": payload.get("status"),
+            "summary": _truncate_text(payload.get("summary"), 160),
+        }
+    if tool_name == "submit_result" and isinstance(output, dict):
+        payload = output.get("payload") if isinstance(output.get("payload"), dict) else {}
+        data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+        return {
+            "accepted": bool(output.get("accepted")),
+            "status": payload.get("status"),
+            "data_keys": sorted(data.keys()),
+        }
+    return _compact_generic_value(output, depth=0)
+
+
+def _compact_candidate_output(candidate: dict[str, Any], *, detail: bool) -> dict[str, Any]:
+    evidence = candidate.get("profile_or_resume_evidence") if isinstance(candidate.get("profile_or_resume_evidence"), dict) else {}
+    summary = ""
+    if isinstance(candidate.get("contact_info"), dict):
+        summary = str(candidate["contact_info"].get("summary") or "")
+    if not summary:
+        summary = str(candidate.get("summary") or evidence.get("summary") or "")
+    profile_text = str(candidate.get("online_resume_text") or evidence.get("text_excerpt") or "")
+    compact = {
+        "candidate_id": candidate.get("candidate_id"),
+        "platform_candidate_id": candidate.get("platform_candidate_id"),
+        "name": candidate.get("name"),
+        "platform": candidate.get("platform"),
+        "status": candidate.get("status"),
+        "summary": _truncate_text(summary, 220),
+        "resume_artifact_status": candidate.get("resume_artifact_status"),
+        "upload_status": candidate.get("upload_status"),
+        "source_scene": _compact_generic_value(candidate.get("source_scene"), depth=1),
+    }
+    if detail:
+        compact["profile_or_resume_evidence"] = {
+            "kind": evidence.get("kind"),
+            "summary": _truncate_text(evidence.get("summary"), 220),
+            "text_excerpt": _truncate_text(evidence.get("text_excerpt") or profile_text, 700),
+        }
+    else:
+        compact["profile_or_resume_evidence"] = {
+            "kind": evidence.get("kind"),
+            "summary": _truncate_text(evidence.get("summary"), 180),
+        }
+    if detail:
+        compact["contact_info"] = _compact_generic_value(candidate.get("contact_info"), depth=1)
+        compact["raw_scene_locator"] = _compact_generic_value(candidate.get("raw_scene_locator"), depth=1)
+    return compact
+
+
+def _compact_generic_value(value: Any, *, depth: int) -> Any:
+    if isinstance(value, str):
+        return _truncate_text(value, 320 if depth < 2 else 180)
+    if isinstance(value, (int, float, bool)) or value is None:
+        return value
+    if isinstance(value, list):
+        items = [_compact_generic_value(item, depth=depth + 1) for item in value[:4]]
+        if len(value) > 4:
+            items.append(f"... {len(value) - 4} more items omitted")
+        return items
+    if isinstance(value, dict):
+        compact: dict[str, Any] = {}
+        for key in list(value.keys())[:12]:
+            text_key = str(key)
+            item = value[key]
+            if text_key in {"candidate_cards", "observed_entities", "affordances", "lines", "links", "buttons"}:
+                if isinstance(item, list):
+                    compact[f"{text_key}_count"] = len(item)
+                continue
+            if text_key in {"online_resume_text", "profile_text", "page_text_excerpt"}:
+                compact[text_key] = _truncate_text(item, 220)
+                continue
+            compact[text_key] = _compact_generic_value(item, depth=depth + 1)
+        if len(value) > 12:
+            compact["_truncated_keys"] = len(value) - 12
+        return compact
+    return _truncate_text(str(value), 180)
+
+
+def _truncate_text(value: Any, limit: int) -> str:
+    text = str(value or "")
+    text = text.replace("\xa0", " ")
+    text = "\n".join(part.strip() for part in text.splitlines() if part.strip())
+    if len(text) <= limit:
+        return text
+    return text[: max(limit - 1, 0)].rstrip() + "…"

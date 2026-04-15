@@ -74,25 +74,35 @@ class PromptBuilder:
             if runtime_execution
             else getattr(task, "task_type", None) or getattr(task, "workflow_node_id", None) or "initial_screening"
         )
-        payload_context = dict(getattr(task, "payload", {}) or {})
-        if extra_context and not runtime_execution:
-            payload_context.update(extra_context)
-        if session:
-            payload_context.setdefault("session", session)
-        if skill:
-            payload_context.setdefault("skill", skill)
-
-        system_prompt = self.build_system_prompt(task_type, payload_context)
-        extra_sections: dict[str, Any] = {"task": getattr(task, "payload", {}) or {}}
+        task_payload = dict(getattr(task, "payload", {}) or {})
         if runtime_execution:
             execution_contract = dict(extra_context.get("execution_contract") or {})
             active_step = self._active_runtime_step(execution_contract)
+            payload_context: dict[str, Any] = {}
+            if session:
+                payload_context["session"] = session
+            if skill:
+                payload_context["skill"] = skill
             payload_context["runtime_context"] = self._runtime_execution_payload_context(extra_context, execution_contract, active_step)
-            extra_sections["Execution Contract Summary"] = self._execution_contract_summary(execution_contract, active_step)
+            system_prompt = self.build_system_prompt(task_type, payload_context)
+            extra_sections: dict[str, Any] = {
+                "Task Brief": self._runtime_task_brief(task_payload),
+                "Execution Contract Summary": self._execution_contract_summary(execution_contract, active_step),
+            }
             if extra_context.get("scene_assessment") is not None:
                 extra_sections["Scene Assessment Summary"] = self._scene_assessment_summary(extra_context.get("scene_assessment"))
             if extra_context.get("capability_drivers") is not None:
                 extra_sections["Capability Drivers"] = self._capability_driver_summary(extra_context.get("capability_drivers"))
+        else:
+            payload_context = dict(task_payload)
+            if extra_context:
+                payload_context.update(extra_context)
+            if session:
+                payload_context.setdefault("session", session)
+            if skill:
+                payload_context.setdefault("skill", skill)
+            system_prompt = self.build_system_prompt(task_type, payload_context)
+            extra_sections = {"task": task_payload}
 
         user_prompt = self.build_user_prompt(task_type, context=payload_context, extra_sections=extra_sections)
         if skill:
@@ -162,12 +172,12 @@ class PromptBuilder:
             "goal": execution_contract.get("goal"),
             "scene_type": execution_contract.get("scene_type"),
             "planner_posture": execution_contract.get("planner_posture"),
-            "approval_policy": execution_contract.get("approval_policy"),
-            "output_contract": execution_contract.get("output_contract"),
+            "approval_policy": self._compact_approval_policy(execution_contract.get("approval_policy")),
+            "output_contract": self._compact_output_contract(execution_contract.get("output_contract")),
             "recommended_capabilities": list(execution_contract.get("recommended_capabilities") or []),
             "blockers": list(execution_contract.get("blockers") or []),
             "current_step_id": execution_contract.get("current_step_id"),
-            "active_step": active_step,
+            "active_step": self._compact_step(active_step),
             "remaining_step_ids": [
                 step.get("id")
                 for step in steps
@@ -213,3 +223,83 @@ class PromptBuilder:
             if isinstance(step, Mapping) and step.get("id") == current_step_id:
                 return dict(step)
         return None
+
+    def _runtime_task_brief(self, task_payload: Mapping[str, Any]) -> dict[str, Any]:
+        snapshot = task_payload.get("environment_snapshot") if isinstance(task_payload.get("environment_snapshot"), Mapping) else {}
+        return {
+            "instruction": task_payload.get("instruction"),
+            "goal": task_payload.get("goal"),
+            "domain": task_payload.get("domain"),
+            "plan_name": task_payload.get("plan_name"),
+            "operator_notes": task_payload.get("notes"),
+            "environment_snapshot": self._compact_snapshot(snapshot),
+        }
+
+    def _compact_snapshot(self, snapshot: Mapping[str, Any] | None) -> dict[str, Any]:
+        if not isinstance(snapshot, Mapping):
+            return {}
+        observed_entities = [item for item in list(snapshot.get("observed_entities") or []) if isinstance(item, Mapping)]
+        affordances = [item for item in list(snapshot.get("affordances") or []) if isinstance(item, Mapping)]
+        runtime_metadata = snapshot.get("runtime_metadata") if isinstance(snapshot.get("runtime_metadata"), Mapping) else {}
+        candidates: list[dict[str, Any]] = []
+        for entity in observed_entities:
+            if str(entity.get("kind") or "") != "candidate_card":
+                continue
+            attributes = entity.get("attributes") if isinstance(entity.get("attributes"), Mapping) else {}
+            candidates.append(
+                {
+                    "name": entity.get("label"),
+                    "candidate_id": entity.get("entity_id"),
+                    "summary": str(attributes.get("summary") or "")[:220] or None,
+                }
+            )
+            if len(candidates) >= 4:
+                break
+        affordance_labels = [
+            str(item.get("label") or item.get("action") or "").strip()
+            for item in affordances[:8]
+            if str(item.get("label") or item.get("action") or "").strip()
+        ]
+        return {
+            "source": snapshot.get("source"),
+            "url": snapshot.get("url"),
+            "title": snapshot.get("title"),
+            "page_type": snapshot.get("page_type"),
+            "candidate_count": runtime_metadata.get("candidate_count") or len(candidates),
+            "top_candidates": candidates,
+            "affordances": affordance_labels,
+            "page_excerpt": str(runtime_metadata.get("page_text_excerpt") or "")[:420] or None,
+        }
+
+    def _compact_approval_policy(self, approval_policy: Any) -> dict[str, Any]:
+        if not isinstance(approval_policy, Mapping):
+            return {}
+        return {
+            "mode": approval_policy.get("mode"),
+            "trial_required": approval_policy.get("trial_required"),
+            "requires_environment_snapshot": approval_policy.get("requires_environment_snapshot"),
+            "approval_actions": list(approval_policy.get("approval_actions") or [])[:6],
+            "requires_human_confirmation_before": list(approval_policy.get("requires_human_confirmation_before") or [])[:4],
+            "allowed_without_additional_approval": list(approval_policy.get("allowed_without_additional_approval") or [])[:4],
+        }
+
+    def _compact_output_contract(self, output_contract: Any) -> dict[str, Any]:
+        if not isinstance(output_contract, Mapping):
+            return {}
+        return {
+            "kind": output_contract.get("kind"),
+            "fields": list(output_contract.get("fields") or [])[:8],
+            "final_summary": list((output_contract.get("final_summary") or {}).get("include") or [])[:6]
+            if isinstance(output_contract.get("final_summary"), Mapping)
+            else [],
+        }
+
+    def _compact_step(self, active_step: Mapping[str, Any] | None) -> dict[str, Any] | None:
+        if not isinstance(active_step, Mapping):
+            return None
+        return {
+            "id": active_step.get("id"),
+            "capability": active_step.get("capability"),
+            "summary": active_step.get("summary") or active_step.get("action"),
+            "preferred_tools": list(active_step.get("preferred_tools") or []),
+        }

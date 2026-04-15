@@ -100,12 +100,19 @@ export interface SkillRecord {
 
 export interface ApprovalItem {
   id: string;
-  kind: "skill" | "workflow" | "workflow_patch" | "system_command" | "candidate_override";
+  kind: string;
   title: string;
   detail: string;
   requester: string;
   status: ApprovalStatus;
   createdAt: string;
+  targetType?: string;
+  targetId?: string;
+  reviewedBy?: string | null;
+  reviewedAt?: string | null;
+  payload?: Record<string, unknown>;
+  notes?: string | null;
+  updatedAt?: string;
 }
 
 export interface AgentEvent {

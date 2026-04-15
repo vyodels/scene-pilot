@@ -248,10 +248,137 @@ class ApiRuntimeTests(unittest.TestCase):
             "production_ready",
         )
 
+    def test_generic_approval_endpoint_confirms_template_candidates(self) -> None:
+        compiled_task = self.client.post(
+            "/api/runtime/workflows/compile",
+            json={
+                "instruction": "Open the web and compare PDF tools in a supervised trial.",
+                "title": "Approve template via approval queue",
+            },
+        )
+        self.assertEqual(compiled_task.status_code, 201)
+        task_spec_id = compiled_task.json()["task_spec"]["id"]
+        plan_id = compiled_task.json()["execution_plan"]["id"]
+
+        created_trial = self.client.post(
+            "/api/runtime/workflow-instances",
+            json={
+                "task_spec_id": task_spec_id,
+                "execution_plan_id": plan_id,
+                "requested_by": "desktop-user",
+            },
+        )
+        self.assertEqual(created_trial.status_code, 201)
+        episode_id = created_trial.json()["id"]
+
+        executed_trial = self.client.post(
+            f"/api/runtime/workflow-instances/{episode_id}/execute",
+            json={
+                "source": "browser",
+                "url": "https://example.com/tools",
+                "title": "Example Tools",
+                "page_type": "tool_listing",
+            },
+        )
+        self.assertEqual(executed_trial.status_code, 200)
+        executed_payload = executed_trial.json()
+        template_approval = executed_payload["template_approval"]
+        template_id = executed_payload["template"]["id"]
+
+        approved = self.client.post(
+            f"/api/approvals/{template_approval['id']}/approve",
+            json={"reviewer": "desktop-user", "reason": "Ready for activation"},
+        )
+        self.assertEqual(approved.status_code, 200)
+        self.assertEqual(approved.json()["status"], "approved")
+        self.assertEqual(approved.json()["payload"]["resolution"]["status"], "approved")
+
+        refreshed_episode = self.client.get(f"/api/runtime/workflow-instances/{episode_id}")
+        self.assertEqual(refreshed_episode.status_code, 200)
+        self.assertEqual(refreshed_episode.json()["status"], "confirmed")
+
+        refreshed_templates = self.client.get("/api/runtime/templates")
+        self.assertEqual(refreshed_templates.status_code, 200)
+        refreshed_template = next(item for item in refreshed_templates.json() if item["id"] == template_id)
+        self.assertEqual(refreshed_template["status"], "active")
+
+        refreshed_workflows = self.client.get("/api/runtime/workflows")
+        self.assertEqual(refreshed_workflows.status_code, 200)
+        self.assertEqual(
+            next(item for item in refreshed_workflows.json() if item["id"] == task_spec_id)["status"],
+            "production_ready",
+        )
+
+    def test_generic_approval_endpoint_applies_workflow_patches(self) -> None:
+        created_task = self.client.post(
+            "/api/runtime/task-specs/compile",
+            json={
+                "instruction": "Open GitHub trends, inspect repositories, and propose a safer workflow when divergence happens.",
+                "title": "Queue patch approval through the approval inbox",
+                "domain_hint": "github_trends",
+            },
+        )
+        self.assertEqual(created_task.status_code, 201)
+        task_spec_id = created_task.json()["task_spec"]["id"]
+        plan_id = created_task.json()["execution_plan"]["id"]
+
+        created_trial = self.client.post(
+            "/api/runtime/trial-runs",
+            json={
+                "task_spec_id": task_spec_id,
+                "execution_plan_id": plan_id,
+                "requested_by": "desktop-user",
+            },
+        )
+        self.assertEqual(created_trial.status_code, 201)
+        episode_id = created_trial.json()["id"]
+
+        executed = self.client.post(
+            f"/api/runtime/trial-runs/{episode_id}/execute",
+            json={
+                "source": "browser",
+                "url": "https://github.com/trending",
+                "title": "GitHub Trending",
+                "page_type": "repository_listing",
+                "simulate_divergence": True,
+            },
+        )
+        self.assertEqual(executed.status_code, 200)
+        patch_payload = executed.json()["patch"]
+        self.assertIsNotNone(patch_payload)
+
+        approvals = self.client.get("/api/approvals?pending_only=true")
+        self.assertEqual(approvals.status_code, 200)
+        linked_approval = next(
+            item
+            for item in approvals.json()
+            if item["target_type"] == "workflow_patch" and item["target_id"] == patch_payload["id"]
+        )
+
+        approved = self.client.post(
+            f"/api/approvals/{linked_approval['id']}/approve",
+            json={"reviewer": "desktop-user", "reason": "Apply the patch"},
+        )
+        self.assertEqual(approved.status_code, 200)
+        approved_payload = approved.json()
+        self.assertEqual(approved_payload["status"], "approved")
+        self.assertEqual(approved_payload["payload"]["resolution"]["status"], "applied")
+
+        patches = self.client.get("/api/runtime/workflow-patches")
+        self.assertEqual(patches.status_code, 200)
+        patched = next(item for item in patches.json() if item["id"] == patch_payload["id"])
+        self.assertEqual(patched["status"], "applied")
+        patched_plan_id = patched["runtime_metadata"]["apply_result"]["execution_plan_id"]
+
+        plans = self.client.get(f"/api/runtime/plans?task_spec_id={task_spec_id}")
+        self.assertEqual(plans.status_code, 200)
+        patched_plan = next(item for item in plans.json() if item["id"] == patched_plan_id)
+        self.assertEqual(patched_plan["compiled_from_patch_id"], patch_payload["id"])
+
         listed_snapshots = self.client.get(f"/api/runtime/environment-snapshots?execution_episode_id={episode_id}")
         self.assertEqual(listed_snapshots.status_code, 200)
         self.assertEqual(len(listed_snapshots.json()), 1)
-        self.assertEqual(listed_snapshots.json()[0]["page_type"], "tool_listing")
+        self.assertEqual(listed_snapshots.json()[0]["page_type"], "repository_listing")
         self.assertEqual(self.client.get("/api/runtime/workflow-versions").status_code, 200)
         self.assertEqual(self.client.get("/api/runtime/workflow-adjustments").status_code, 200)
 
@@ -620,6 +747,58 @@ class ApiRuntimeTests(unittest.TestCase):
         self.assertEqual(quality["repair_count"], 1)
         self.assertFalse(quality["fallback_used"])
         self.assertIn("Verify source links before finalizing output", json.dumps(payload["task_spec"]["compiled_payload"]))
+
+    def test_task_compile_normalizes_string_step_outline_and_uses_effective_approval_policy(self) -> None:
+        from scene_pilot.runtime.models import LLMResponse
+
+        self.container.providers.providers["openai_compatible"] = _StaticProvider(
+            "openai_compatible",
+            LLMResponse(
+                result_data={
+                    "title": "Recruiting screening flow",
+                    "description": "Find candidates, capture resumes, and prepare approved handoff output.",
+                    "goal": "Search for candidates, collect resume evidence, score them, and upload approved results.",
+                    "domain": "recruiting",
+                    "constraints": {"requires_supervised_trial": True},
+                    "success_criteria": {
+                        "requires_candidate_evidence": True,
+                        "requires_score": True,
+                        "requires_downstream_write_review": True,
+                    },
+                    "approval_policy": {},
+                    "output_contract": {"kind": "candidate_bundle", "fields": ["resume", "score", "notes"]},
+                    "preferred_capabilities": ["browser", "search", "document", "llm", "api"],
+                    "preferred_domains": ["recruiting", "general"],
+                    "environment_requirements": {"requires_browser": True},
+                    "checkpoints": ["Validate the recruiting scene before searching."],
+                    "step_outline": [
+                        "Confirm screening requirements and candidate criteria.",
+                        "Inspect recruiting pages and gather resume evidence.",
+                        "Upload approved results to the downstream system.",
+                    ],
+                    "compiler_notes": ["The provider returned shorthand step descriptions."],
+                }
+            ),
+        )
+        self.container.providers.fallback_order = ["openai_compatible", "scripted_default"]
+
+        compiled_task = self.client.post(
+            "/api/runtime/task-specs/compile",
+            json={
+                "instruction": "Open the recruiting site, find matching candidates, score them, and upload the approved results.",
+                "domain_hint": "recruiting",
+            },
+        )
+        self.assertEqual(compiled_task.status_code, 201)
+        payload = compiled_task.json()
+        step_outline = payload["task_spec"]["compiled_payload"]["step_outline"]
+        self.assertEqual(step_outline[0]["id"], "step_1")
+        self.assertIn("Confirm screening requirements", step_outline[0]["action"])
+        checkpoints = payload["task_spec"]["compiled_payload"]["checkpoints"]
+        self.assertEqual(checkpoints[0]["kind"], "checkpoint")
+        self.assertIn("Validate the recruiting scene", checkpoints[0]["label"])
+        approval_actions = payload["task_spec"]["approval_policy"]["approval_actions"]
+        self.assertIn("write_to_downstream_system", approval_actions)
 
     def test_templates_and_workflow_patch_review_scaffold(self) -> None:
         created_task = self.client.post(

@@ -8,11 +8,62 @@ from sqlalchemy.orm import Session
 from scene_pilot.api.deps import get_session
 from scene_pilot.db.base import utcnow
 from scene_pilot.repositories import AgentLearningRepository, ApprovalRepository, SkillRepository
-from scene_pilot.schemas import ApprovalCreate, ApprovalDecisionRequest, ApprovalRead, ApprovalUpdate
+from scene_pilot.schemas import (
+    ApprovalCreate,
+    ApprovalDecisionRequest,
+    ApprovalRead,
+    ApprovalUpdate,
+    EpisodeConfirmRequest,
+    WorkflowPatchDecisionRequest,
+)
 from scene_pilot.services.container import AppContainer
+from scene_pilot.services.runtime import PersistedRuntimeService
 from scene_pilot.api.deps import get_container
 
 router = APIRouter(prefix="/api/approvals", tags=["approvals"])
+
+
+def _runtime_service(container: AppContainer, session: Session) -> PersistedRuntimeService:
+    return PersistedRuntimeService(
+        session=session,
+        providers=container.providers,
+        tools=container.tools,
+    )
+
+
+def _apply_runtime_review(
+    *,
+    approval,
+    approve: bool,
+    payload: ApprovalDecisionRequest,
+    container: AppContainer,
+    session: Session,
+) -> ApprovalRead:
+    runtime = _runtime_service(container, session)
+    if approval.target_type == "workflow_patch":
+        runtime.review_workflow_patch(
+            approval.target_id,
+            WorkflowPatchDecisionRequest(
+                reviewer=payload.reviewer,
+                reason=payload.reason,
+                apply_immediately=approve,
+            ),
+            approve=approve,
+        )
+    elif approval.target_type == "template_candidate":
+        runtime.review_episode_confirmation(
+            approval.target_id,
+            EpisodeConfirmRequest(
+                reviewer=payload.reviewer,
+                reason=payload.reason,
+                activate_template=approve,
+            ),
+            approve=approve,
+        )
+    refreshed = ApprovalRepository(session).get(approval.id)
+    if refreshed is None:
+        raise HTTPException(status_code=404, detail="Approval not found")
+    return ApprovalRead.model_validate(refreshed)
 
 
 @router.get("", response_model=list[ApprovalRead])
@@ -58,6 +109,14 @@ def approve_approval(
     item = repo.get(approval_id)
     if item is None:
         raise HTTPException(status_code=404, detail="Approval not found")
+    if item.target_type in {"workflow_patch", "template_candidate"}:
+        return _apply_runtime_review(
+            approval=item,
+            approve=True,
+            payload=payload,
+            container=container,
+            session=session,
+        )
     if item.target_type == "blocked_task":
         item = container.agent_control.apply_approval_resolution(
             session,
@@ -129,6 +188,14 @@ def reject_approval(
     item = repo.get(approval_id)
     if item is None:
         raise HTTPException(status_code=404, detail="Approval not found")
+    if item.target_type in {"workflow_patch", "template_candidate"}:
+        return _apply_runtime_review(
+            approval=item,
+            approve=False,
+            payload=payload,
+            container=container,
+            session=session,
+        )
     if item.target_type == "blocked_task":
         item = container.agent_control.apply_approval_resolution(
             session,

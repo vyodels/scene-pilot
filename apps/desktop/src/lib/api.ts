@@ -239,9 +239,74 @@ function normalizeDashboard(raw: unknown): DashboardSummary {
     candidates: asArray(record.candidates) as CandidateRecord[],
     workflows: asArray(record.workflows) as WorkflowDefinition[],
     skills: asArray(record.skills) as SkillRecord[],
-    approvals: asArray(record.approvals) as ApprovalItem[],
+    approvals: asArray(record.approvals).map(normalizeApprovalItem),
     agent: normalizeAgentSnapshot(record.agent),
     settings: normalizeSettings(record.settings),
+  };
+}
+
+function summarizeApprovalPayload(payload: Record<string, unknown>): string {
+  const lines: string[] = [];
+  const stepId = payload.step_id ?? payload.stepId;
+  const executionPlanId = payload.execution_plan_id ?? payload.executionPlanId;
+  const executionEpisodeId = payload.execution_episode_id ?? payload.executionEpisodeId;
+  const reason = payload.reason;
+  const summary = payload.summary;
+  const candidate =
+    payload.candidate_name_or_identifier ??
+    payload.candidateNameOrIdentifier ??
+    payload.candidate_id ??
+    payload.candidateId;
+  const command = Array.isArray(payload.command) ? payload.command.join(" ") : null;
+
+  if (summary) {
+    lines.push(String(summary));
+  }
+  if (reason) {
+    lines.push(String(reason));
+  }
+  if (candidate) {
+    lines.push(`Candidate: ${String(candidate)}`);
+  }
+  if (stepId) {
+    lines.push(`Step: ${String(stepId)}`);
+  }
+  if (executionPlanId) {
+    lines.push(`Plan: ${String(executionPlanId)}`);
+  }
+  if (executionEpisodeId) {
+    lines.push(`Episode: ${String(executionEpisodeId)}`);
+  }
+  if (command) {
+    lines.push(`Command: ${command}`);
+  }
+  return lines.join(" · ");
+}
+
+function normalizeApprovalItem(raw: unknown): ApprovalItem {
+  const record = asRecord(raw);
+  const payload = asRecord(record.payload);
+  const detail =
+    record.detail != null
+      ? String(record.detail)
+      : record.notes != null
+        ? String(record.notes)
+        : summarizeApprovalPayload(payload) || "Awaiting operator review.";
+  return {
+    id: String(record.id ?? ""),
+    kind: String(record.kind ?? record.targetType ?? record.target_type ?? "workflow"),
+    title: String(record.title ?? humanizeKey(String(record.targetType ?? record.target_type ?? "approval"))),
+    detail,
+    requester: String(record.requester ?? record.requestedBy ?? record.requested_by ?? "system"),
+    status: String(record.status ?? "pending") as ApprovalItem["status"],
+    createdAt: String(record.createdAt ?? record.created_at ?? new Date().toISOString()),
+    targetType: record.targetType ? String(record.targetType) : record.target_type ? String(record.target_type) : undefined,
+    targetId: record.targetId ? String(record.targetId) : record.target_id ? String(record.target_id) : undefined,
+    reviewedBy: record.reviewedBy ? String(record.reviewedBy) : record.reviewed_by ? String(record.reviewed_by) : null,
+    reviewedAt: record.reviewedAt ? String(record.reviewedAt) : record.reviewed_at ? String(record.reviewed_at) : null,
+    payload,
+    notes: record.notes ? String(record.notes) : null,
+    updatedAt: record.updatedAt ? String(record.updatedAt) : record.updated_at ? String(record.updated_at) : undefined,
   };
 }
 
@@ -1203,7 +1268,7 @@ function createFetchClient(baseUrl: string): DesktopApiClient {
     listCandidates: async () => normalizeDashboard(await requestJson<unknown>(baseUrl, "/api/dashboard")).candidates,
     listWorkflows: async () => normalizeDashboard(await requestJson<unknown>(baseUrl, "/api/dashboard")).workflows,
     listSkills: async () => normalizeDashboard(await requestJson<unknown>(baseUrl, "/api/dashboard")).skills,
-    listApprovals: async () => normalizeDashboard(await requestJson<unknown>(baseUrl, "/api/dashboard")).approvals,
+    listApprovals: async () => asArray(await requestJson<unknown>(baseUrl, "/api/approvals")).map(normalizeApprovalItem),
     getSettings: async () => normalizeSettings(await requestJson<unknown>(baseUrl, "/api/settings")),
     getAgentSnapshot: async () => normalizeAgentSnapshot(await requestJson<unknown>(baseUrl, "/api/agent")),
     listAgentQueue: async () => asArray(await requestJson<unknown>(baseUrl, "/api/agent/queue")).map(normalizeAgentQueueItem),

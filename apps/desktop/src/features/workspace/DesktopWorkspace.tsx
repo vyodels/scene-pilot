@@ -20,6 +20,7 @@ import type {
   WorkspaceTab,
 } from "../../lib/types";
 import { ApprovalsView } from "../approvals/ApprovalsView";
+import { HumanAssistDock } from "../approvals/HumanAssistDock";
 import { DashboardView } from "../dashboard/DashboardView";
 import { SettingsView } from "../settings/SettingsView";
 import { SkillsView } from "../skills/SkillsView";
@@ -94,6 +95,7 @@ export function DesktopWorkspace(): JSX.Element {
     desktopRuntimeMock.environmentAssessments[0] ?? null,
   );
   const [lastReplan, setLastReplan] = useState<RuntimePlanReplanResult | null>(desktopRuntimeMock.replans[0] ?? null);
+  const [assistOpen, setAssistOpen] = useState(false);
 
   const appendEvent = (event: AgentEvent) => {
     setEvents((current) => [...current.slice(-39), event]);
@@ -102,16 +104,17 @@ export function DesktopWorkspace(): JSX.Element {
   const loadWorkspace = async (reason?: string) => {
     setRefreshing(true);
     try {
-      const [nextSummary, nextRuntime, nextAgent, nextSyncStatus, nextSyncBacklog, nextQueueItems] = await Promise.all([
+      const [nextSummary, nextRuntime, nextAgent, nextSyncStatus, nextSyncBacklog, nextQueueItems, nextApprovals] = await Promise.all([
         apiClient.getDashboardSummary(),
         apiClient.getRuntimeWorkspaceData(),
         apiClient.getAgentSnapshot(),
         apiClient.getSyncStatus(),
         apiClient.listSyncBacklog(),
         apiClient.listAgentQueue(),
+        apiClient.listApprovals(),
       ]);
       startTransition(() => {
-        setSummary({ ...nextSummary, agent: nextAgent });
+        setSummary({ ...nextSummary, agent: nextAgent, approvals: nextApprovals });
         setRuntimeData((current) => mergeRuntimeWorkspaceData(nextRuntime, current, lastAssessment, lastReplan));
         setSyncStatus(nextSyncStatus);
         setSyncBacklog(nextSyncBacklog);
@@ -154,18 +157,19 @@ export function DesktopWorkspace(): JSX.Element {
     let alive = true;
     void (async () => {
       try {
-        const [nextSummary, nextRuntime, nextAgent, nextSyncStatus, nextSyncBacklog, nextQueueItems] = await Promise.all([
+        const [nextSummary, nextRuntime, nextAgent, nextSyncStatus, nextSyncBacklog, nextQueueItems, nextApprovals] = await Promise.all([
           apiClient.getDashboardSummary(),
           apiClient.getRuntimeWorkspaceData(),
           apiClient.getAgentSnapshot(),
           apiClient.getSyncStatus(),
           apiClient.listSyncBacklog(),
           apiClient.listAgentQueue(),
+          apiClient.listApprovals(),
         ]);
         if (!alive) {
           return;
         }
-        setSummary({ ...nextSummary, agent: nextAgent });
+        setSummary({ ...nextSummary, agent: nextAgent, approvals: nextApprovals });
         setRuntimeData((current) => mergeRuntimeWorkspaceData(nextRuntime, current, lastAssessment, lastReplan));
         setSyncStatus(nextSyncStatus);
         setSyncBacklog(nextSyncBacklog);
@@ -214,6 +218,12 @@ export function DesktopWorkspace(): JSX.Element {
     });
     return unsubscribe;
   }, []);
+
+  useEffect(() => {
+    if (summary.approvals.some((approval) => approval.status === "pending")) {
+      setAssistOpen(true);
+    }
+  }, [summary.approvals]);
 
   useEffect(() => {
     const episodeId = selectedEpisodeId;
@@ -685,6 +695,14 @@ export function DesktopWorkspace(): JSX.Element {
           {content}
         </div>
       </main>
+      <HumanAssistDock
+        approvals={summary.approvals}
+        pendingActionId={approvalActionId}
+        isOpen={assistOpen}
+        onToggle={() => setAssistOpen((current) => !current)}
+        onApprove={handleApprove}
+        onReject={handleReject}
+      />
     </div>
   );
 }

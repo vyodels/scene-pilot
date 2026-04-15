@@ -21,6 +21,7 @@ from scene_pilot.services.agent import AgentControlService
 from scene_pilot.services.dashboard import DashboardService
 from scene_pilot.services.events import EventStreamService
 from scene_pilot.services.feature_flags import FeatureFlagService
+from scene_pilot.services.browser_mcp import BrowserMcpClient, BrowserMcpError, capture_boss_scene, discover_boss_candidates, inspect_boss_candidate
 from scene_pilot.repositories import SettingsRepository, SkillRepository
 from scene_pilot.services.runtime import PersistedRuntimeService
 from scene_pilot.services.skills import SkillHealthSweepService, SkillLifecycleService, SkillSafetyService
@@ -93,6 +94,34 @@ def _build_sync_target(settings: AppSettings) -> dict[str, Any]:
     }
 
 
+def _register_browser_scene_tools(tools: ToolRegistry, browser_client: BrowserMcpClient) -> None:
+    def _capture_scene(arguments: dict[str, Any]) -> dict[str, Any]:
+        scene = capture_boss_scene(browser_client, limit=int(arguments.get("limit") or 8))
+        if scene is None:
+            raise BrowserMcpError("No active Boss browser scene was found in Chrome.")
+        return scene
+
+    tools.register(
+        ToolDefinition(
+            name="browser_capture_scene",
+            description="Capture the current live browser scene and return a structured runtime snapshot.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "limit": {"type": "integer"},
+                },
+                "additionalProperties": True,
+            },
+            handler=_capture_scene,
+            metadata={
+                "capabilities": ["browser"],
+                "scene_runtime": True,
+                "preferred_scene_types": ["listing_surface", "detail_surface"],
+            },
+        )
+    )
+
+
 def _candidate_payload(candidate: Candidate) -> dict[str, Any]:
     candidate_key = candidate.platform_candidate_id or candidate.id
     return {
@@ -123,8 +152,15 @@ def _resolve_candidate(session: Session, candidate_id: str) -> Candidate:
 
 def _build_recruiting_site_adapter(session_factory: sessionmaker[Session], settings: AppSettings) -> PlatformAdapter:
     cooldown_days = settings.provider_runtime_settings().cooldown_days
+    browser_client = BrowserMcpClient()
 
     def _discover(query: dict[str, Any]) -> list[dict[str, Any]]:
+        try:
+            live_candidates = discover_boss_candidates(browser_client, query)
+        except BrowserMcpError:
+            live_candidates = []
+        if live_candidates:
+            return live_candidates
         with session_factory() as session:
             store = {
                 candidate.platform_candidate_id or candidate.id: _candidate_payload(candidate)
@@ -134,6 +170,10 @@ def _build_recruiting_site_adapter(session_factory: sessionmaker[Session], setti
         return [snapshot.raw for snapshot in adapter.discover_candidates(query)]
 
     def _inspect(candidate_id: str) -> dict[str, Any]:
+        try:
+            return inspect_boss_candidate(browser_client, candidate_id)
+        except (BrowserMcpError, KeyError):
+            pass
         with session_factory() as session:
             return _candidate_payload(_resolve_candidate(session, candidate_id))
 
@@ -360,6 +400,7 @@ class AppContainer:
         tools.register(tools.build_step_completion_tool())
         tools.register(tools.build_replan_request_tool())
         tools.register(tools.build_human_checkpoint_tool())
+        _register_browser_scene_tools(tools, BrowserMcpClient())
         tools.register(
             ToolDefinition(
                 name="record_note",

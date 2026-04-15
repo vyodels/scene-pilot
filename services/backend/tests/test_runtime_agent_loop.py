@@ -534,6 +534,81 @@ class AgentLoopTests(unittest.TestCase):
         self.assertEqual(result.metadata["executor_control"]["kind"], "waiting_human")
         self.assertEqual(result.metadata["pending_step_ids"], ["review_write_risk"])
 
+    def test_runtime_execution_auto_submits_when_step_completed_with_observation(self) -> None:
+        provider = ScriptedProvider(
+            provider_name="scripted",
+            responses=[
+                LLMResponse(
+                    content="complete current step",
+                    tool_calls=[
+                        ToolCall(id="discover-1", name="boss_discover_candidates", arguments={}),
+                        ToolCall(
+                            id="obs-1",
+                            name="record_observation",
+                            arguments={
+                                "step_id": "assess_runtime_scene",
+                                "capability": "browser",
+                                "summary": "Candidate listing verified.",
+                                "signals": ["listing_surface"],
+                            },
+                        ),
+                        ToolCall(
+                            id="step-1",
+                            name="advance_plan_step",
+                            arguments={
+                                "step_id": "assess_runtime_scene",
+                                "status": "completed",
+                                "summary": "Scene validated.",
+                            },
+                        ),
+                    ],
+                )
+            ],
+        )
+        registry = ToolRegistry()
+        registry.register(
+            ToolDefinition(
+                name="boss_discover_candidates",
+                description="Discover candidates",
+                parameters={"type": "object"},
+                handler=lambda args: [
+                    {
+                        "candidate_id": "cand-1",
+                        "name": "王利霖",
+                        "profile_or_resume_evidence": {"summary": "embedded profile card"},
+                        "resume_artifact_status": "profile_evidence_available",
+                        "upload_status": "not_started",
+                    }
+                ],
+                metadata={"capabilities": ["browser", "search"]},
+            )
+        )
+        registry.register(registry.build_observation_tool())
+        registry.register(registry.build_plan_progress_tool())
+        loop = AgentLoop(provider=provider, tools=registry)
+        task = SimpleNamespace(task_type="runtime_execution", payload={"goal": "Inspect the browser scene"})
+
+        result = loop.run(
+            task,
+            extra_context={
+                "execution_contract": {
+                    "plan_name": "Runtime plan",
+                    "scene_type": "listing_surface",
+                    "steps": [
+                        {"id": "assess_runtime_scene", "capability": "browser", "summary": "Inspect the scene."},
+                        {"id": "next_step", "capability": "analyze", "summary": "Summarize the scene."},
+                    ],
+                }
+            },
+        )
+
+        self.assertTrue(result.success)
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(result.data["status"], "step_completed")
+        self.assertEqual(result.data["step_id"], "assess_runtime_scene")
+        self.assertEqual(result.data["next_step"], "next_step")
+        self.assertEqual(result.data["candidate_name_or_identifier"], "cand-1 / 王利霖")
+
 
 if __name__ == "__main__":
     unittest.main()

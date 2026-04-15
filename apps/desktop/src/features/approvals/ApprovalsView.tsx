@@ -53,6 +53,21 @@ export function ApprovalsView({ approvals, pendingActionId, onApprove, onReject 
             <div style={{ marginTop: "10px", color: "rgba(233,239,255,0.56)", fontSize: "12px" }}>
               {copy("Requester", "提交方")} {translateUiToken(approval.requester, copy)} · {translateUiToken(approval.kind, copy)} · {translateUiToken(approval.createdAt, copy)}
             </div>
+            {approval.notes ? (
+              <div style={{ marginTop: "10px", padding: "10px 12px", borderRadius: "14px", background: "rgba(255,255,255,0.04)", color: "rgba(233,239,255,0.72)", fontSize: "12px", lineHeight: 1.6 }}>
+                {copy("Background", "背景信息")} · {approval.notes}
+              </div>
+            ) : null}
+            {approval.payload && Object.keys(approval.payload).length ? (
+              <details style={{ marginTop: "10px", borderRadius: "14px", background: "rgba(8,12,20,0.7)", padding: "10px 12px" }}>
+                <summary style={{ cursor: "pointer", fontSize: "12px", fontWeight: 700 }}>
+                  {copy("Context payload", "上下文载荷")}
+                </summary>
+                <pre style={{ margin: "10px 0 0", whiteSpace: "pre-wrap", wordBreak: "break-word", color: "rgba(233,239,255,0.72)", fontSize: "11px", lineHeight: 1.6 }}>
+                  {JSON.stringify(approval.payload, null, 2)}
+                </pre>
+              </details>
+            ) : null}
             {approval.status === "pending" ? (
               <div style={{ display: "flex", gap: "10px", marginTop: "12px" }}>
                 <button
