@@ -26,7 +26,6 @@ from scene_pilot.services.runtime_control import RuntimeControlService
 from scene_pilot.services.skills import SkillHealthSweepService, SkillLifecycleService, SkillSafetyService
 from scene_pilot.services.sync import SyncService
 from scene_pilot.services.system_commands import SystemCommandService
-from scene_pilot.workflows.engine import WorkflowEngine
 
 
 @dataclass(slots=True)
@@ -117,7 +116,6 @@ class AppContainer:
     flags: FeatureFlagService
     providers: ProviderRegistry
     tools: ToolRegistry
-    workflow_engine: WorkflowEngine
     scheduler: SerialScheduler
     events: EventStreamService
     agent_control: AgentControlService
@@ -188,9 +186,8 @@ class AppContainer:
         )
         mcp_registry = McpRegistryService(session_factory=session_factory)
         tools = _build_runtime_tools(system_commands, mcp_registry)
-        workflow_engine = WorkflowEngine(session_factory=session_factory)
         agent_loop = AgentLoop(provider=runtime_provider, tools=tools, prompt_builder=PromptBuilder())
-        scheduler = SerialScheduler(queue=SqlAlchemyQueue(session_factory), follow_up_factory=workflow_engine.build_follow_up_factory())
+        scheduler = SerialScheduler(queue=SqlAlchemyQueue(session_factory))
         sync = SyncService(
             intranet_enabled=resolved_settings.feature_flags.enable_intranet_sync,
             session_factory=session_factory,
@@ -198,7 +195,6 @@ class AppContainer:
         )
         agent_control = AgentControlService(
             scheduler=scheduler,
-            workflow_engine=workflow_engine,
             settings=resolved_settings,
             agent_loop=agent_loop,
             events=events,
@@ -211,6 +207,7 @@ class AppContainer:
                 tools=tools,
             ),
         )
+        scheduler.follow_up_factory = agent_control.build_follow_up_factory()
         scheduler.runner = agent_control.build_runner()
         dashboard = DashboardService(resolved_settings, events, sync)
         skill_lifecycle = SkillLifecycleService(flags=flags)
@@ -222,7 +219,6 @@ class AppContainer:
             flags=flags,
             providers=providers,
             tools=tools,
-            workflow_engine=workflow_engine,
             scheduler=scheduler,
             events=events,
             agent_control=agent_control,

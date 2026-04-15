@@ -837,15 +837,21 @@ UI 形态：
 
 当前状态：
 
-- 已完成第一轮最小闭环
+- 已完成从旧 workflow-first 主链到 E 主链的切换
 - `GoalSpec / ExecutionTrace / StrategyFragment / ExecutionGraphProjection` 已落库并接入 API
 - `Workbench` 已支持直接创建目标驱动任务
 - 运行结果会自动沉淀 trace、策略片段和面向用户的执行图投影
-- 当前仍是“并行接入现有 runtime”，还没有彻底替换底层 `task / run` 主链路
+- `goal_intake / exploration_trial / candidate_probe / candidate_outreach / resume_collection / candidate_scoring / strategy_distill / scale_execution` 已成为主执行阶段
+- 旧 workflow 引擎已退出主执行链路，不再作为运行时骨架或 follow-up 生成依据
+- 旧流程中可复用的阶段知识，已改写为默认执行蓝图和自适应阶段配置，而不是继续驱动 runtime
 
 开始这一轮前，先在当前稳定分支上做一次备份分支或 tag，避免探索式改动跨度过大时难以快速回退。
 
-下一轮不再把“预先编排完整 workflow”作为 runtime 的主要执行依据，而是转向：
+当前这一步已经按该原则执行过，备份分支：
+
+- `backup-goal-driven-cutover-20260415`
+
+当前 runtime 已不再把“预先编排完整 workflow”作为主要执行依据，而是转向：
 
 - 用户描述目标与约束
 - LLM 自主探索完成路径
@@ -858,7 +864,7 @@ UI 形态：
 
 - `workflow-first runtime`
 
-逐步过渡到：
+切换为：
 
 - `goal-driven adaptive runtime`
 

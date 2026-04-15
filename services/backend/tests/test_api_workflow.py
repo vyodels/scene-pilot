@@ -229,7 +229,7 @@ class ApiWorkflowTests(unittest.TestCase):
         skills = self.client.get("/api/skills")
         self.assertEqual(skills.status_code, 200)
         promoted_skill = next(item for item in skills.json() if item["id"] == promoted_skill_id)
-        self.assertEqual(promoted_skill["bound_to_workflow_node"], "initial_screening")
+        self.assertEqual(promoted_skill["bound_to_workflow_node"], "candidate_probe")
         self.assertEqual(promoted_skill["status"], "approved")
         self.assertEqual(promoted_skill["platform"], "runtime-scene")
 
@@ -251,7 +251,7 @@ class ApiWorkflowTests(unittest.TestCase):
         self.assertEqual(promoted_skill["status"], "approved")
 
     def test_runtime_persists_session_skill_and_workflow_run(self) -> None:
-        from scene_pilot.models import CandidateSession, DecisionLog, WorkflowRun
+        from scene_pilot.models import CandidateSession, DecisionLog, ExecutionTrace
         from scene_pilot.runtime.models import LLMResponse
         from scene_pilot.runtime.providers import ScriptedProvider
 
@@ -280,35 +280,6 @@ class ApiWorkflowTests(unittest.TestCase):
         )
         self.assertEqual(created_skill.status_code, 201)
 
-        created_workflow = self.client.post(
-            PLAYBOOKS_API_BASE,
-            json={
-                "name": "Persisted Screening Flow",
-                "status": "active",
-                "version": 2,
-                "config": {
-                    "start_node_id": "initial_screening",
-                    "nodes": [
-                        {
-                            "id": "initial_screening",
-                            "name": "Initial Screening",
-                            "kind": "screen",
-                            "task_type": "initial_screening",
-                            "transitions": [{"condition": "pass", "target": "request_resume"}],
-                        },
-                        {
-                            "id": "request_resume",
-                            "name": "Request Resume",
-                            "kind": "resume",
-                            "task_type": "request_resume",
-                        },
-                    ],
-                },
-            },
-        )
-        self.assertEqual(created_workflow.status_code, 201)
-        workflow_id = created_workflow.json()["id"]
-
         dashboard = self.client.get("/api/dashboard")
         candidate_id = dashboard.json()["candidates"][0]["id"]
 
@@ -318,8 +289,6 @@ class ApiWorkflowTests(unittest.TestCase):
                 "task_type": "initial_screening",
                 "priority": 240,
                 "candidate_id": candidate_id,
-                "workflow_id": workflow_id,
-                "workflow_node_id": "initial_screening",
                 "payload": {"jd_criteria": "Distributed systems"},
             },
         )
@@ -339,14 +308,13 @@ class ApiWorkflowTests(unittest.TestCase):
         self.assertEqual(second_run.json()["status"], "failed")
 
         with container.session_factory() as session:
-            workflow_runs = session.query(WorkflowRun).filter(WorkflowRun.workflow_id == workflow_id).all()
-            workflow_run = next((item for item in workflow_runs if item.context.get("task_id") == task_id), None)
-            self.assertIsNotNone(workflow_run)
-            self.assertEqual(workflow_run.status, "completed")
-            self.assertEqual(workflow_run.current_node, "initial_screening")
-            self.assertEqual(workflow_run.context["task_id"], task_id)
-            self.assertEqual(workflow_run.context["skill"]["skill_id"], "screening_active_v1")
-            self.assertEqual(workflow_run.context["session"]["candidate"]["id"], candidate_id)
+            traces = session.query(ExecutionTrace).filter(ExecutionTrace.candidate_id == candidate_id).all()
+            trace = next((item for item in traces if (item.raw_trace or {}).get("task_snapshot", {}).get("task_id") == task_id), None)
+            self.assertIsNotNone(trace)
+            self.assertEqual(trace.status, "completed")
+            self.assertEqual(trace.raw_trace["task_snapshot"]["task_id"], task_id)
+            self.assertEqual(trace.distilled_trace["attempt"]["task_type"], "initial_screening")
+            self.assertEqual(trace.raw_trace["session_context"]["candidate"]["id"], candidate_id)
 
             candidate_session = session.query(CandidateSession).filter(CandidateSession.candidate_id == candidate_id).first()
             self.assertIsNotNone(candidate_session)
@@ -354,7 +322,8 @@ class ApiWorkflowTests(unittest.TestCase):
             self.assertEqual(candidate_session.facts["active_skill"]["skill_id"], "screening_active_v1")
             self.assertEqual(candidate_session.facts["last_result_status"], "pass")
             self.assertEqual(candidate_session.facts["last_execution_status"], "completed")
-            self.assertEqual(workflow_run.context["result"]["business_status"], "pass")
+            self.assertEqual(candidate_session.facts["adaptive_stage"], "candidate_probe")
+            self.assertIsNotNone(candidate_session.facts["goal_spec_id"])
 
             decision_log = session.query(DecisionLog).filter(DecisionLog.task_id == task_id).first()
             self.assertIsNotNone(decision_log)
@@ -502,7 +471,7 @@ class ApiWorkflowTests(unittest.TestCase):
         self.assertLess(global_memory["final_score"], global_memory["base_score"])
 
     def test_runtime_normalizes_provider_business_status_across_persistence(self) -> None:
-        from scene_pilot.models import CandidateSession, DecisionLog, WorkflowRun
+        from scene_pilot.models import CandidateSession, DecisionLog, ExecutionTrace
         from scene_pilot.runtime.models import LLMResponse
         from scene_pilot.runtime.providers import ScriptedProvider
 
@@ -526,41 +495,12 @@ class ApiWorkflowTests(unittest.TestCase):
         dashboard = self.client.get("/api/dashboard")
         candidate_id = dashboard.json()["candidates"][0]["id"]
 
-        created_workflow = self.client.post(
-            PLAYBOOKS_API_BASE,
-            json={
-                "name": "Provider Shape Flow",
-                "status": "active",
-                "config": {
-                    "start_node_id": "initial_screening",
-                    "nodes": [
-                        {
-                            "id": "initial_screening",
-                            "name": "Initial Screening",
-                            "kind": "screen",
-                            "task_type": "initial_screening",
-                            "transitions": [{"condition": "pass", "target": "request_resume"}],
-                        },
-                        {
-                            "id": "request_resume",
-                            "name": "Request Resume",
-                            "kind": "resume",
-                            "task_type": "request_resume",
-                        },
-                    ],
-                },
-            },
-        )
-        workflow_id = created_workflow.json()["id"]
-
         queued = self.client.post(
             "/api/agent/tasks",
             json={
                 "task_type": "initial_screening",
                 "priority": 240,
                 "candidate_id": candidate_id,
-                "workflow_id": workflow_id,
-                "workflow_node_id": "initial_screening",
                 "payload": {"jd_criteria": "Distributed systems"},
             },
         )
@@ -571,12 +511,11 @@ class ApiWorkflowTests(unittest.TestCase):
         self.assertEqual(run_once.json()["status"], "completed")
 
         with container.session_factory() as session:
-            workflow_runs = session.query(WorkflowRun).filter(WorkflowRun.workflow_id == workflow_id).all()
-            workflow_run = next((item for item in workflow_runs if item.context.get("task_id") == task_id), None)
-            self.assertIsNotNone(workflow_run)
-            self.assertEqual(workflow_run.context["result"]["business_status"], "pass")
-            self.assertEqual(workflow_run.context["result"]["data"]["status"], "pass")
-            self.assertEqual(workflow_run.context["result"]["data"]["execution_status"], "completed")
+            traces = session.query(ExecutionTrace).filter(ExecutionTrace.candidate_id == candidate_id).all()
+            trace = next((item for item in traces if (item.raw_trace or {}).get("task_snapshot", {}).get("task_id") == task_id), None)
+            self.assertIsNotNone(trace)
+            outcome = dict(trace.outcome or {})
+            self.assertEqual(outcome["status"], "completed")
 
             candidate_session = session.query(CandidateSession).filter(CandidateSession.candidate_id == candidate_id).first()
             self.assertIsNotNone(candidate_session)

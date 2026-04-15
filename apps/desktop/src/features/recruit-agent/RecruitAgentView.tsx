@@ -306,7 +306,15 @@ export function RecruitAgentView({
   );
 
   const workflowNodes = useMemo(
-    () => (parsedWorkflowDraft && Array.isArray(parsedWorkflowDraft.nodes) ? (parsedWorkflowDraft.nodes as Array<Record<string, unknown>>) : []),
+    () => {
+      if (!parsedWorkflowDraft) {
+        return [];
+      }
+      if (Array.isArray(parsedWorkflowDraft.adaptive_stages)) {
+        return parsedWorkflowDraft.adaptive_stages as Array<Record<string, unknown>>;
+      }
+      return Array.isArray(parsedWorkflowDraft.nodes) ? (parsedWorkflowDraft.nodes as Array<Record<string, unknown>>) : [];
+    },
     [parsedWorkflowDraft],
   );
 
@@ -645,10 +653,10 @@ export function RecruitAgentView({
   const workflowContent = (
     <div style={{ display: "grid", gap: "18px" }}>
       <Panel
-        title={copy("Workflow and state machine", "工作流与状态机")}
-        eyebrow={copy("Configurable stages", "可配置阶段")}
-        description={copy("The workflow is still editable, but now the operator can explicitly see stage groups, repeatable interview phases, and compact thresholds.", "工作流仍然可编辑，但现在操作员可以直接看到阶段组、可重复的面试阶段和 compact 阈值。")}
-        actions={<button type="button" onClick={() => void handleSaveProfile()} style={buttonStyle}>{copy("Save workflow", "保存工作流")}</button>}
+        title={copy("Execution blueprint and state machine", "执行蓝图与状态机")}
+        eyebrow={copy("Adaptive stages", "自适应阶段")}
+        description={copy("The operator edits stage groups and adaptive stages here. They explain goal-driven execution, but no longer hard-code the runtime path.", "这里编辑的是阶段组和自适应阶段，用来解释目标驱动执行，但不再硬编码运行时路径。")}
+        actions={<button type="button" onClick={() => void handleSaveProfile()} style={buttonStyle}>{copy("Save blueprint", "保存执行蓝图")}</button>}
       >
         <div style={{ display: "grid", gap: "14px" }}>
           <div style={{ display: "grid", gridTemplateColumns: "220px minmax(0, 1fr)", gap: "12px", alignItems: "start" }}>
@@ -700,15 +708,15 @@ export function RecruitAgentView({
                   </div>
                 );
               })}
-              {!workflowStageGroups.length ? <div style={{ color: theme.colors.muted, fontSize: "13px" }}>{copy("Workflow JSON is invalid or missing stage groups.", "工作流 JSON 无效，或缺少阶段组。")}</div> : null}
+              {!workflowStageGroups.length ? <div style={{ color: theme.colors.muted, fontSize: "13px" }}>{copy("Blueprint JSON is invalid or missing stage groups.", "执行蓝图 JSON 无效，或缺少阶段组。")}</div> : null}
             </div>
           </div>
           <div style={{ display: "grid", gap: "10px" }}>
             <div style={{ display: "grid", gridTemplateColumns: "180px 140px 120px minmax(0, 1fr)", gap: "8px", color: theme.colors.muted, fontSize: "12px" }}>
-              <span>{copy("Node", "节点")}</span>
+              <span>{copy("Stage", "阶段")}</span>
               <span>{copy("Task type", "任务类型")}</span>
               <span>{copy("Requires skill", "依赖 skill")}</span>
-              <span>{copy("Transitions", "流转目标")}</span>
+              <span>{copy("Purpose / next stage", "用途 / 下一步")}</span>
             </div>
             {workflowNodes.map((node, nodeIndex) => {
               const transitions = Array.isArray(node.transitions) ? (node.transitions as Array<Record<string, unknown>>) : [];
@@ -721,9 +729,11 @@ export function RecruitAgentView({
                     <span>{Boolean(node.requires_skill ?? false) ? copy("Yes", "是") : copy("No", "否")}</span>
                   </label>
                   <div style={{ color: theme.colors.muted, fontSize: "12px", lineHeight: 1.5 }}>
-                    {transitions.length
-                      ? transitions.map((item) => `${String(item.condition ?? "default")} -> ${String(item.target_node_id ?? "")}`).join("\n")
-                      : copy("No transitions", "无流转")}
+                    {String(node.purpose ?? "").trim()
+                      ? `${String(node.purpose ?? "")}${node.next_stage ? `\n${copy("Next", "下一步")}: ${String(node.next_stage)}` : ""}`
+                      : transitions.length
+                        ? transitions.map((item) => `${String(item.condition ?? "default")} -> ${String(item.target_node_id ?? "")}`).join("\n")
+                        : copy("No transitions", "无流转")}
                   </div>
                 </div>
               );
@@ -732,7 +742,7 @@ export function RecruitAgentView({
           <details>
             <summary style={{ cursor: "pointer", color: theme.colors.muted, fontSize: "12px" }}>{copy("Advanced JSON editor", "高级 JSON 编辑器")}</summary>
             <label style={{ display: "grid", gap: "6px", marginTop: "10px" }}>
-              <span>{copy("Workflow definition JSON", "工作流定义 JSON")}</span>
+              <span>{copy("Execution blueprint JSON", "执行蓝图 JSON")}</span>
               <textarea value={workflowJsonDraft} onChange={(event) => setWorkflowJsonDraft(event.target.value)} style={{ ...textAreaStyle, minHeight: "260px" }} />
             </label>
           </details>
@@ -1040,7 +1050,7 @@ export function RecruitAgentView({
       <TopTabPage
         items={[
           { key: "profile", label: copy("Profile", "身份设定") },
-          { key: "workflow", label: copy("Workflow", "执行编排") },
+          { key: "workflow", label: copy("Blueprint", "执行蓝图") },
           { key: "context", label: copy("Context", "上下文策略") },
           { key: "memory", label: copy("Memory", "记忆管理") },
           { key: "skills", label: copy("Skills", "Skill 管理") },

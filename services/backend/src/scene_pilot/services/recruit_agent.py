@@ -15,7 +15,6 @@ from scene_pilot.repositories import (
 )
 from scene_pilot.runtime.models import Message
 from scene_pilot.runtime.providers import ProviderError, ProviderRegistry
-from scene_pilot.workflows.definitions import build_default_recruiting_workflow
 
 
 AUTO_COMPACT_THRESHOLD = 1_000_000
@@ -351,28 +350,125 @@ def validate_evolution_artifact(
         raise ValueError(f"{artifact_kind} 缺少必要字段: {', '.join(missing)}")
 
 
-def _workflow_to_payload() -> dict[str, Any]:
-    workflow = build_default_recruiting_workflow()
+def _adaptive_execution_to_payload() -> dict[str, Any]:
     return {
-        "workflow_id": workflow.workflow_id,
-        "name": workflow.name,
-        "start_node_id": workflow.start_node_id,
-        "version": workflow.version,
+        "blueprint_id": "recruit-goal-driven-v1",
+        "name": "Recruit Goal-Driven Runtime",
+        "initial_stage": "exploration_trial",
+        "version": 1,
         "stage_groups": _workflow_stage_groups(),
         "status_machine": {"default_statuses": DEFAULT_CANDIDATE_STATUSES, "mutable": True},
-        "nodes": [
+        "adaptive_stages": [
             {
-                "id": node.node_id,
-                "name": node.name,
-                "task_type": node.task_type,
-                "requires_skill": node.requires_skill,
-                "metadata": dict(node.metadata),
-                "transitions": [
-                    {"condition": transition.condition, "target_node_id": transition.target_node_id}
-                    for transition in node.transitions
-                ],
+                "id": "goal_intake",
+                "name": "Goal Intake",
+                "task_type": "goal_intake",
+                "requires_skill": False,
+                "kind": "goal",
+                "purpose": "把用户目标、约束和成功标准归一成一次可执行目标。",
+                "next_stage": "exploration_trial",
+            },
+            {
+                "id": "exploration_trial",
+                "name": "Exploration Trial",
+                "task_type": "exploration_trial",
+                "requires_skill": True,
+                "kind": "exploration",
+                "purpose": "先在真实外部环境中做小规模试探，验证入口、筛选器和候选路径。",
+                "next_stage": "strategy_distill",
+            },
+            {
+                "id": "candidate_discovery",
+                "name": "Candidate Discovery",
+                "task_type": "candidate_discovery",
+                "requires_skill": True,
+                "kind": "candidate",
+                "purpose": "在真实站点环境中发现候选人，并记录有效发现入口。",
+                "next_stage": "strategy_distill",
+            },
+            {
+                "id": "candidate_probe",
+                "name": "Candidate Probe",
+                "task_type": "candidate_probe",
+                "requires_skill": True,
+                "kind": "candidate",
+                "purpose": "围绕单个候选人做资料观察、初筛和事实记录。",
+                "next_stage": "strategy_distill",
+            },
+            {
+                "id": "candidate_outreach",
+                "name": "Candidate Outreach",
+                "task_type": "candidate_outreach",
+                "requires_skill": True,
+                "kind": "candidate",
+                "purpose": "在人工确认下推进候选人沟通、接管或纠偏。",
+                "next_stage": "strategy_distill",
+            },
+            {
+                "id": "resume_collection",
+                "name": "Resume Collection",
+                "task_type": "resume_collection",
+                "requires_skill": True,
+                "kind": "candidate",
+                "purpose": "尝试获取简历或补充资料，并保留真实环境证据。",
+                "next_stage": "strategy_distill",
+            },
+            {
+                "id": "candidate_scoring",
+                "name": "Candidate Scoring",
+                "task_type": "candidate_scoring",
+                "requires_skill": True,
+                "kind": "candidate",
+                "purpose": "完成候选人评分与证据化结论，供人工继续判断。",
+                "next_stage": "strategy_distill",
+            },
+            {
+                "id": "strategy_distill",
+                "name": "Strategy Distill",
+                "task_type": "strategy_distill",
+                "requires_skill": False,
+                "kind": "learning",
+                "purpose": "从本次真实执行中提炼 trace、strategy fragment 和图投影。",
+                "next_stage": None,
+            },
+            {
+                "id": "scale_execution",
+                "name": "Scale Execution",
+                "task_type": "scale_execution",
+                "requires_skill": True,
+                "kind": "execution",
+                "purpose": "把已验证的路径扩大到更多候选人或更多目标范围。",
+                "next_stage": "strategy_distill",
+            },
+            {
+                "id": "candidate_archive",
+                "name": "Candidate Archive",
+                "task_type": "candidate_archive",
+                "requires_skill": True,
+                "kind": "candidate",
+                "purpose": "在真实环境中执行归档、冷却或结束动作，并保留结果证据。",
+                "next_stage": "strategy_distill",
             }
-            for node in workflow.nodes.values()
+        ],
+        "goal_modes": [
+            {
+                "key": "candidate_review",
+                "label": "候选人评估",
+                "initial_stage": "candidate_probe",
+                "success_signals": ["screening_passed", "screening_rejected", "human_assessment_completed"],
+            },
+            {
+                "key": "candidate_outreach",
+                "label": "候选人沟通",
+                "initial_stage": "candidate_outreach",
+                "success_signals": ["waiting_reply", "resume_requested", "resume_received"],
+            },
+            {
+                "key": "candidate_discovery",
+                "label": "候选人发现",
+                "initial_stage": "candidate_discovery",
+                "success_signals": ["discovered", "profile_reviewed"],
+            },
         ],
     }
 
@@ -391,7 +487,7 @@ def default_recruit_agent_profile() -> dict[str, Any]:
                 "整理候选人信息并推进当前阶段。",
                 "根据 JD 和证据完成初筛与评分。",
                 "在需要时草拟沟通内容并等待人工确认。",
-                "持续沉淀 skill、memory 和 workflow patch。",
+                "持续沉淀 skill、memory 和 strategy fragment。",
             ],
             "tone": "professional, concise, evidence-driven",
             "boundaries": [
@@ -421,7 +517,7 @@ def default_recruit_agent_profile() -> dict[str, Any]:
                 "separate_fact_from_inference": True,
             },
         },
-        "workflow_definition": _workflow_to_payload(),
+        "workflow_definition": _adaptive_execution_to_payload(),
         "memory_policy": {
             "candidate_memory": {
                 "isolation": "strict_by_candidate",
@@ -441,7 +537,7 @@ def default_recruit_agent_profile() -> dict[str, Any]:
                 "scope": "agent_global",
                 "auto_compact": True,
                 "compact_threshold": AUTO_COMPACT_THRESHOLD,
-                "schema": ["global_strategies", "common_failures", "effective_patterns", "prompt_lessons", "workflow_lessons"],
+                "schema": ["global_strategies", "common_failures", "effective_patterns", "prompt_lessons", "runtime_lessons"],
                 "disclosure": ["preview", "operator_summary", "model_context"],
             },
         },
@@ -597,7 +693,7 @@ def ensure_global_memory(
                 "common_failures": [],
                 "effective_patterns": [],
                 "prompt_lessons": [],
-                "workflow_lessons": [],
+                "runtime_lessons": [],
             },
             "content": {
                 "facts": [],

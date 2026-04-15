@@ -1026,6 +1026,7 @@ def create_goal_spec(
             "success_criteria": dict(goal.success_criteria or {}),
             "context_hints": dict(goal.context_hints or {}),
             "trial_budget": dict(goal.trial_budget or {}),
+            "run_preferences": dict(goal.run_preferences or {}),
         },
         metadata={
             "requested_by": payload.requested_by,

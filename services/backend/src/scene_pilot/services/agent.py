@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from types import SimpleNamespace
 from typing import Any, Callable
 from uuid import uuid4
@@ -27,7 +27,6 @@ from scene_pilot.repositories import (
     DecisionLogRepository,
     SkillRepository,
     StrategyFragmentRepository,
-    WorkflowRunRepository,
 )
 from scene_pilot.runtime.agent_loop import AgentLoop
 from scene_pilot.runtime.models import AgentResult
@@ -41,14 +40,11 @@ from scene_pilot.services.runtime_control import RuntimeControlService
 from scene_pilot.services.skills import SkillHealthCheckService
 from scene_pilot.services.sync import SyncService
 from scene_pilot.services.runtime import PersistedRuntimeService
-from scene_pilot.workflows.definitions import WorkflowDefinition, WorkflowNode
-from scene_pilot.workflows.engine import WorkflowEngine
 
 
 @dataclass(slots=True)
 class AgentControlService:
     scheduler: SerialScheduler
-    workflow_engine: WorkflowEngine
     settings: AppSettings
     agent_loop: AgentLoop | None = None
     events: EventStreamService = field(default_factory=EventStreamService)
@@ -76,7 +72,7 @@ class AgentControlService:
             priority=priority,
             candidate_id=candidate_id,
             workflow_id=workflow_id,
-            workflow_node_id=workflow_node_id or task_type,
+            workflow_node_id=workflow_node_id,
             metadata=metadata or {},
         )
         if self.session_factory is not None:
@@ -98,6 +94,24 @@ class AgentControlService:
         level = "info" if outcome.result.success else "warning"
         self.events.publish(level, "runtime", f"Task {outcome.task.task_type} finished with {outcome.result.status}")
         return outcome
+
+    def build_follow_up_factory(self):
+        def _follow_up(task: TaskEnvelope, result: AgentResult):
+            if not result.success:
+                return []
+            follow_ups = self._next_tasks_for_result(task, result)
+            if self.session_factory is not None:
+                with self.session_factory() as session:
+                    runtime_control = RuntimeControlService(
+                        session,
+                        settings=self.settings,
+                        live_events=self.events,
+                    )
+                    for follow_up in follow_ups:
+                        runtime_control.ensure_run_for_task(follow_up)
+            return follow_ups
+
+        return _follow_up
 
     def apply_approval_resolution(
         self,
@@ -143,10 +157,9 @@ class AgentControlService:
 
     def build_runner(self):
         def _run(task: TaskEnvelope) -> AgentResult:
-            workflow = self.workflow_engine.resolve_workflow(task)
-            workflow_node = self.workflow_engine.resolve_node(task, workflow=workflow)
-            runtime_session = self._build_runtime_session(task, workflow=workflow, workflow_node=workflow_node)
-            runtime_skill = self._build_skill_context(task, workflow_node=workflow_node)
+            adaptive_stage = self._adaptive_stage_for_task(task)
+            runtime_session = self._build_runtime_session(task)
+            runtime_skill = self._build_skill_context(task)
             platform_context = self._build_platform_context(task)
             runtime_state: dict[str, Any] | None = None
             context_manifest: dict[str, Any] | None = None
@@ -195,7 +208,6 @@ class AgentControlService:
                 *,
                 persist_learning: bool = False,
                 session_context_override: dict[str, Any] | None = None,
-                workflow_run_id: str | None,
             ) -> AgentResult:
                 if result.status == "waiting_human":
                     self._persist_blocked_task_approval(task, result)
@@ -203,9 +215,6 @@ class AgentControlService:
                 self._persist_task_artifacts(
                     task,
                     result,
-                    workflow=workflow,
-                    workflow_node=workflow_node,
-                    workflow_run_id=workflow_run_id,
                     session_context=session_context_override if session_context_override is not None else runtime_session,
                     skill_context=runtime_skill,
                 )
@@ -258,14 +267,6 @@ class AgentControlService:
                     }
                     task.metadata["context_manifest"] = context_manifest
 
-                workflow_run_id = self._start_workflow_run(
-                    task,
-                    workflow=workflow,
-                    workflow_node=workflow_node,
-                    session_context=runtime_session,
-                    skill_context=runtime_skill,
-                    platform_context=platform_context,
-                )
                 managed_execution = self._prepare_managed_execution(task)
 
                 if managed_execution is not None:
@@ -288,7 +289,6 @@ class AgentControlService:
                                 "scene_type": managed_execution.assessment.scene_type,
                             },
                         },
-                        workflow_run_id=workflow_run_id,
                     )
 
                 if self.agent_loop is None:
@@ -298,7 +298,7 @@ class AgentControlService:
                         content="未配置可用模型 provider，无法执行真实运行。",
                         metadata={"blocked_reason": "provider_unavailable", "requires_real_environment": True},
                     )
-                    return _complete(result, workflow_run_id=workflow_run_id)
+                    return _complete(result)
 
                 missing_capabilities = self._missing_external_capabilities(task)
                 if missing_capabilities:
@@ -312,11 +312,11 @@ class AgentControlService:
                             "requires_real_environment": True,
                         },
                     )
-                    return _complete(result, workflow_run_id=workflow_run_id)
+                    return _complete(result)
 
                 runtime_task = SimpleNamespace(
                     task_type=task.task_type,
-                    workflow_node_id=task.workflow_node_id,
+                    workflow_node_id=adaptive_stage,
                     payload=task.payload,
                     max_turns=6,
                     token_budget=4096,
@@ -328,7 +328,7 @@ class AgentControlService:
                     extra_context=platform_context or None,
                 )
 
-                return _complete(result, persist_learning=True, workflow_run_id=workflow_run_id)
+                return _complete(result, persist_learning=True)
             except Exception as exc:
                 _finalize_runtime_error(exc)
                 raise
@@ -371,15 +371,20 @@ class AgentControlService:
             result = preflight_block
         elif self.agent_loop is None:
             result = AgentResult(
-                success=True,
-                status="completed",
-                content="Synthetic runtime execution completed without a live provider.",
-                data={"status": "pass", "task_id": task.task_id, "execution_plan_id": managed_execution.execution_plan.id},
+                success=False,
+                status="blocked",
+                content="未配置可用模型 provider，无法执行真实受管运行。",
+                data={
+                    "status": "blocked",
+                    "task_id": task.task_id,
+                    "execution_plan_id": managed_execution.execution_plan.id,
+                },
+                metadata={"blocked_reason": "provider_unavailable", "requires_real_environment": True},
             )
         else:
             runtime_task = SimpleNamespace(
                 task_type="runtime_execution",
-                workflow_node_id=task.workflow_node_id or task.task_type,
+                workflow_node_id=self._adaptive_stage_for_task(task),
                 payload={
                     **dict(task.payload or {}),
                     "goal": managed_execution.task_spec.goal,
@@ -414,7 +419,8 @@ class AgentControlService:
                 runtime_metadata={
                     "task_id": task.task_id,
                     "candidate_id": task.candidate_id,
-                    "workflow_id": task.workflow_id,
+                    "goal_spec_id": str(task.metadata.get("goal_spec_id") or task.payload.get("goal_id") or "") or None,
+                    "adaptive_stage": self._adaptive_stage_for_task(task),
                 },
             )
             result.metadata.update(
@@ -581,13 +587,7 @@ class AgentControlService:
             "requires_real_environment": True,
         }
 
-    def _build_runtime_session(
-        self,
-        task: TaskEnvelope,
-        *,
-        workflow: WorkflowDefinition,
-        workflow_node: WorkflowNode | None,
-    ) -> dict[str, Any]:
+    def _build_runtime_session(self, task: TaskEnvelope) -> dict[str, Any]:
         if self.session_factory is None or not task.candidate_id:
             return {}
 
@@ -611,15 +611,19 @@ class AgentControlService:
             candidate_session.last_active_at = utcnow()
 
             facts = dict(candidate_session.facts or {})
+            adaptive_stage = self._adaptive_stage_for_task(task)
             facts.update(
                 {
                     "candidate_status": candidate.status,
-                    "workflow_id": workflow.workflow_id,
-                    "workflow_node_id": workflow_node.node_id if workflow_node is not None else task.workflow_node_id,
+                    "goal_spec_id": str(task.metadata.get("goal_spec_id") or task.payload.get("goal_id") or "") or None,
                     "task_type": task.task_type,
                     "resume_available": bool(candidate.resume_path or candidate.online_resume_text),
                 }
             )
+            if adaptive_stage == "strategy_distill":
+                facts["last_learning_stage"] = adaptive_stage
+            else:
+                facts["adaptive_stage"] = adaptive_stage
             candidate_session.facts = facts
             session.commit()
 
@@ -649,17 +653,15 @@ class AgentControlService:
                 },
             }
 
-    def _build_skill_context(self, task: TaskEnvelope, *, workflow_node: WorkflowNode | None) -> dict[str, Any] | None:
+    def _build_skill_context(self, task: TaskEnvelope) -> dict[str, Any] | None:
         if self.session_factory is None:
             return None
 
         preferred_skill_id = (
             task.payload.get("skill_id")
             or task.metadata.get("skill_id")
-            or (workflow_node.metadata.get("preferred_skill_id") if workflow_node is not None else None)
-            or (workflow_node.metadata.get("skill_id") if workflow_node is not None else None)
         )
-        workflow_node_id = workflow_node.node_id if workflow_node is not None else task.workflow_node_id
+        adaptive_stage = str(task.metadata.get("adaptive_stage") or "").strip() or self._adaptive_stage_for_task(task)
 
         with self.session_factory() as session:
             repo = SkillRepository(session)
@@ -668,8 +670,12 @@ class AgentControlService:
             if isinstance(preferred_skill_id, str) and preferred_skill_id.strip():
                 skill = repo.by_skill_id(preferred_skill_id.strip()) or repo.get(preferred_skill_id.strip())
 
-            if skill is None and workflow_node_id:
-                candidates = repo.active_for_node(workflow_node_id, platform=task.platform)
+            if skill is None and adaptive_stage:
+                candidates = repo.active_for_node(adaptive_stage, platform=task.platform)
+                skill = candidates[0] if candidates else None
+
+            if skill is None and task.task_type:
+                candidates = repo.active_for_node(task.task_type, platform=task.platform)
                 skill = candidates[0] if candidates else None
 
             if skill is None:
@@ -682,61 +688,17 @@ class AgentControlService:
                 "status": skill.status,
                 "version": skill.version,
                 "platform": skill.platform,
-                "bound_to_workflow_node": skill.bound_to_workflow_node,
+                "bound_to_workflow_node": adaptive_stage,
                 "strategy": dict(skill.strategy or {}),
                 "execution_hints": dict(skill.execution_hints or {}),
                 "last_health_status": skill.last_health_status,
             }
-
-    def _start_workflow_run(
-        self,
-        task: TaskEnvelope,
-        *,
-        workflow: WorkflowDefinition,
-        workflow_node: WorkflowNode | None,
-        session_context: dict[str, Any],
-        skill_context: dict[str, Any] | None,
-        platform_context: dict[str, Any],
-    ) -> str | None:
-        resolved_workflow_id = task.workflow_id
-        if self.session_factory is None or not resolved_workflow_id:
-            return None
-
-        with self.session_factory() as session:
-            candidate_repo = CandidateRepository(session)
-            workflow_run_repo = WorkflowRunRepository(session)
-            candidate = candidate_repo.resolve(task.candidate_id) if task.candidate_id else None
-            if candidate is not None and workflow_node is not None:
-                candidate.current_workflow_node = workflow_node.node_id
-
-            run = workflow_run_repo.create(
-                {
-                    "workflow_id": resolved_workflow_id,
-                    "candidate_id": candidate.id if candidate is not None else None,
-                    "status": "running",
-                    "current_node": workflow_node.node_id if workflow_node is not None else task.workflow_node_id,
-                    "started_at": utcnow(),
-                    "context": {
-                        "task_id": task.task_id,
-                        "task_type": task.task_type,
-                        "payload": dict(task.payload or {}),
-                        "metadata": dict(task.metadata or {}),
-                        "session": session_context,
-                        "skill": skill_context,
-                        "platform": platform_context,
-                    },
-                }
-            )
-            return run.id
 
     def _persist_task_artifacts(
         self,
         task: TaskEnvelope,
         result: AgentResult,
         *,
-        workflow: WorkflowDefinition,
-        workflow_node: WorkflowNode | None,
-        workflow_run_id: str | None,
         session_context: dict[str, Any],
         skill_context: dict[str, Any] | None,
     ) -> None:
@@ -749,75 +711,61 @@ class AgentControlService:
                 session_repo = CandidateSessionRepository(session)
                 decision_repo = DecisionLogRepository(session)
                 communication_repo = CommunicationLogRepository(session)
-                workflow_run_repo = WorkflowRunRepository(session)
 
                 candidate = candidate_repo.resolve(task.candidate_id) if task.candidate_id else None
                 candidate_session = None
+                adaptive_stage = self._adaptive_stage_for_task(task)
+                learning_stage = adaptive_stage == "strategy_distill"
                 if candidate is not None:
                     candidate_session = session_repo.get_or_create(
                         candidate.id,
                         defaults={"status": "active", "facts": {}, "recent_messages": []},
                     )
                     business_status = extract_business_status(result.data) or result.status
-                    candidate.current_workflow_node = workflow_node.node_id if workflow_node is not None else task.workflow_node_id
-                    candidate.ai_reasoning = result.content or candidate.ai_reasoning
+                    if not learning_stage:
+                        candidate.current_workflow_node = adaptive_stage
+                        candidate.ai_reasoning = result.content or candidate.ai_reasoning
 
                     facts = dict(candidate_session.facts or {})
-                    facts.update(
-                        {
-                            "last_task_id": task.task_id,
-                            "last_task_type": task.task_type,
-                            "last_result_status": business_status,
-                            "last_execution_status": result.status,
-                            "last_result_success": result.success,
-                            "workflow_id": task.workflow_id or workflow.workflow_id,
-                            "workflow_node_id": workflow_node.node_id if workflow_node is not None else task.workflow_node_id,
-                        }
-                    )
+                    if learning_stage:
+                        facts.update(
+                            {
+                                "last_learning_task_id": task.task_id,
+                                "last_learning_task_type": task.task_type,
+                                "last_learning_status": result.status,
+                                "last_learning_success": result.success,
+                            }
+                        )
+                    else:
+                        facts.update(
+                            {
+                                "last_task_id": task.task_id,
+                                "last_task_type": task.task_type,
+                                "last_result_status": business_status,
+                                "last_execution_status": result.status,
+                                "last_result_success": result.success,
+                                "goal_spec_id": str(task.metadata.get("goal_spec_id") or task.payload.get("goal_id") or "") or None,
+                                "adaptive_stage": adaptive_stage,
+                            }
+                        )
                     if result.data:
-                        facts["last_result_data"] = dict(result.data)
+                        key = "last_learning_result_data" if learning_stage else "last_result_data"
+                        facts[key] = dict(result.data)
                     if skill_context:
                         facts["active_skill"] = {
                             "skill_id": skill_context.get("skill_id"),
                             "name": skill_context.get("name"),
                         }
                     candidate_session.facts = facts
-                    candidate_session.context_summary = result.content or candidate_session.context_summary
+                    if not learning_stage:
+                        candidate_session.context_summary = result.content or candidate_session.context_summary
                     candidate_session.last_active_at = utcnow()
-                    if result.status == "waiting_human":
+                    if result.status == "waiting_human" and not learning_stage:
                         candidate_session.status = "waiting_human"
                         candidate_session.suspend_reason = result.content or "等待审批。"
                     else:
                         candidate_session.status = "active"
                         candidate_session.suspend_reason = None
-
-                if workflow_run_id is not None:
-                    run = workflow_run_repo.get(workflow_run_id)
-                    if run is not None:
-                        next_tasks = self._next_tasks_for_result(task, result) if result.success else []
-                        if result.status == "waiting_human":
-                            run.status = "blocked"
-                            run.finished_at = None
-                        elif result.success:
-                            run.status = "completed"
-                            run.finished_at = utcnow()
-                        else:
-                            run.status = result.status
-                            run.finished_at = utcnow()
-                        run.current_node = workflow_node.node_id if workflow_node is not None else task.workflow_node_id
-                        run.last_error = None if result.success else result.content
-                        run.context = {
-                            **dict(run.context or {}),
-                            "result": {
-                                "success": result.success,
-                                "status": result.status,
-                                "business_status": extract_business_status(result.data) or result.status,
-                                "content": result.content,
-                                "data": dict(result.data or {}),
-                                "metadata": dict(result.metadata or {}),
-                            },
-                            "next_tasks": [self._task_snapshot(item) for item in next_tasks],
-                        }
 
                 if candidate is not None:
                     if task.task_type == "candidate_scoring" and isinstance(result.data, dict) and result.success:
@@ -859,7 +807,7 @@ class AgentControlService:
                         )
 
                     decision_value = str(extract_business_status(result.data) or result.status or "completed")
-                    if decision_value:
+                    if decision_value and not learning_stage:
                         decision_repo.create(
                             {
                                 "candidate_id": candidate.id,
@@ -897,9 +845,16 @@ class AgentControlService:
         if self.agent_loop is None:
             return ["llm"]
         required: set[str] = set()
-        if task.task_type in {"discover_candidate", "initiate_communication", "request_resume", "archive_candidate"}:
+        adaptive_stage = self._adaptive_stage_for_task(task)
+        if adaptive_stage in {
+            "candidate_discovery",
+            "candidate_probe",
+            "candidate_outreach",
+            "resume_collection",
+            "candidate_archive",
+        }:
             required.add("browser")
-        if task.task_type in {"initiate_communication", "request_resume", "archive_candidate"}:
+        if adaptive_stage in {"candidate_outreach", "resume_collection", "candidate_archive"}:
             required.add("approval")
         missing = [
             capability
@@ -1084,15 +1039,15 @@ class AgentControlService:
         if existing is not None:
             return existing
 
-        skill_name = str(draft.get("skill_name") or draft.get("name") or task.workflow_node_id or task.task_type)
+        skill_name = str(draft.get("skill_name") or draft.get("name") or self._adaptive_stage_for_task(task) or task.task_type)
         title = str(draft.get("approval_title") or f"Review runtime skill draft: {skill_name}")
         approval_payload = {
             "summary": draft.get("summary") or self._build_learning_content(task, draft),
             "task_id": task.task_id,
             "task_type": task.task_type,
             "candidate_id": task.candidate_id,
-            "workflow_id": task.workflow_id,
-            "workflow_node_id": task.workflow_node_id,
+            "goal_spec_id": str(task.metadata.get("goal_spec_id") or task.payload.get("goal_id") or "") or None,
+            "adaptive_stage": self._adaptive_stage_for_task(task),
             "learning_id": learning.id,
             "skill_draft": dict(draft),
         }
@@ -1261,7 +1216,7 @@ class AgentControlService:
                 run = AgentRunRepository(session).get(run_id) if run_id else None
                 goal = GoalSpecRepository(session).get(goal_spec_id) if goal_spec_id else None
 
-                title = goal.title if goal is not None else self._humanize_task_label(task.task_type)
+                title = goal.title if goal is not None else self._humanize_task_label(self._adaptive_stage_for_task(task))
                 summary = result.content or f"{title} 当前状态为 {result.status}。"
                 raw_trace = {
                     "task_snapshot": self._task_snapshot(task),
@@ -1270,7 +1225,7 @@ class AgentControlService:
                         "success": result.success,
                         "content": result.content,
                         "metadata": dict(result.metadata or {}),
-                        "artifacts": list(result.artifacts or []),
+                        "tool_outputs": [asdict(item) for item in list(result.tool_outputs or [])],
                     },
                     "context_manifest": context_manifest,
                     "session_context": {
@@ -1279,7 +1234,7 @@ class AgentControlService:
                     },
                 }
                 distilled_trace = {
-                    "goal": goal.goal_text if goal is not None else str(task.payload.get("goal_text") or task.task_type),
+                    "goal": goal.goal_text if goal is not None else str(task.payload.get("goal_text") or self._adaptive_stage_for_task(task)),
                     "attempt": {
                         "task_type": task.task_type,
                         "lane": str(run.lane if run is not None else task.metadata.get("lane") or "agent"),
@@ -1416,7 +1371,7 @@ class AgentControlService:
                     "lane": str(task.metadata.get("lane") or ("candidate" if task.candidate_id else "agent")),
                     "trace_kind": "adaptive_run",
                     "status": "failed",
-                    "title": self._humanize_task_label(task.task_type),
+                    "title": self._humanize_task_label(self._adaptive_stage_for_task(task)),
                     "summary": error,
                     "raw_trace": {
                         "task_snapshot": self._task_snapshot(task),
@@ -1424,7 +1379,7 @@ class AgentControlService:
                         "context_manifest": context_manifest,
                     },
                     "distilled_trace": {
-                        "goal": str(task.payload.get("goal_text") or task.task_type),
+                        "goal": str(task.payload.get("goal_text") or self._adaptive_stage_for_task(task)),
                         "failure": error,
                     },
                     "outcome": {"status": "failed", "success": False},
@@ -1503,10 +1458,11 @@ class AgentControlService:
     def _build_graph_projection_payload(self, *, task: TaskEnvelope, goal, result: AgentResult) -> dict[str, Any]:
         title = goal.title if goal is not None else self._humanize_task_label(task.task_type)
         blocked = result.status in {"waiting_human", "blocked"}
+        stage_label = self._humanize_task_label(self._adaptive_stage_for_task(task))
         nodes = [
             {"id": "goal", "label": title, "kind": "goal", "state": "active"},
             {"id": "explore", "label": "探索执行路径", "kind": "phase", "state": "completed"},
-            {"id": "execute", "label": self._humanize_task_label(task.task_type), "kind": "phase", "state": "blocked" if blocked else ("completed" if result.success else "failed")},
+            {"id": "execute", "label": stage_label, "kind": "phase", "state": "blocked" if blocked else ("completed" if result.success else "failed")},
         ]
         edges = [
             {"from": "goal", "to": "explore", "label": "意图拆解"},
@@ -1522,7 +1478,7 @@ class AgentControlService:
             [
                 "graph TD",
                 '  goal["目标"] --> explore["探索路径"]',
-                f'  explore --> execute["{self._humanize_task_label(task.task_type)}"]',
+                f'  explore --> execute["{stage_label}"]',
                 '  execute --> operator["人工介入"]' if blocked else '  execute --> distill["策略沉淀"]',
             ]
         )
@@ -1553,7 +1509,7 @@ class AgentControlService:
 
     def _strategy_fragment_summary(self, *, task: TaskEnvelope, result: AgentResult) -> str:
         base = result.content or self._next_step_hint(result.status)
-        return f"{self._humanize_task_label(task.task_type)}：{base}"
+        return f"{self._humanize_task_label(self._adaptive_stage_for_task(task))}：{base}"
 
     def _next_step_hint(self, status: str) -> str:
         if status == "waiting_human":
@@ -1573,6 +1529,7 @@ class AgentControlService:
         return {
             "task_id": task.task_id,
             "task_type": task.task_type,
+            "adaptive_stage": self._adaptive_stage_for_task(task),
             "priority": task.priority,
             "payload": dict(task.payload or {}),
             "metadata": dict(task.metadata or {}),
@@ -1648,13 +1605,50 @@ class AgentControlService:
             return False
 
     def _next_tasks_for_result(self, task: TaskEnvelope, result: AgentResult) -> list[TaskEnvelope]:
-        runtime_managed = bool(task.metadata.get("execution_plan_id") or task.payload.get("execution_plan_id"))
-        if runtime_managed or task.task_type == "runtime_execution":
+        if result.status in {"waiting_human", "waiting_candidate", "blocked"}:
             return []
-        try:
-            return self.workflow_engine.next_tasks(task, result)
-        except Exception:
+        follow_up_stage = self._next_adaptive_stage(task, result)
+        if not follow_up_stage:
             return []
+        payload = {
+            **dict(task.payload or {}),
+            "source_task_id": task.task_id,
+            "source_task_type": task.task_type,
+            "previous_result_status": result.status,
+            "previous_result_success": result.success,
+        }
+        metadata = {
+            **dict(task.metadata or {}),
+            "adaptive_stage": follow_up_stage,
+            "requested_by": task.metadata.get("requested_by") or "runtime",
+            "spawn_new_run": True,
+        }
+        for transient_key in (
+            "agent_run_id",
+            "agent_work_item_id",
+            "context_manifest",
+            "checkpoint_id",
+            "approval_id",
+        ):
+            metadata.pop(transient_key, None)
+        if follow_up_stage == "strategy_distill":
+            payload["strategy_distill"] = {
+                "from_task_type": task.task_type,
+                "from_stage": self._adaptive_stage_for_task(task),
+                "result_status": result.status,
+                "result_summary": result.content,
+            }
+        return [
+            TaskEnvelope(
+                task_id=f"{task.task_id}:{follow_up_stage}",
+                task_type=follow_up_stage,
+                candidate_id=task.candidate_id,
+                priority=max(task.priority - 1, 1),
+                payload=payload,
+                metadata=metadata,
+                platform=task.platform,
+            )
+        ]
 
     def _apply_blocked_session_resolution(
         self,
@@ -1683,7 +1677,50 @@ class AgentControlService:
         candidate_session.last_active_at = utcnow()
 
     def _blocked_task_title(self, task: TaskEnvelope) -> str:
-        node = task.workflow_node_id or task.task_type
+        node = self._adaptive_stage_for_task(task) or task.task_type
         if task.candidate_id:
             return f"Resume blocked task for {task.candidate_id}: {node}"
         return f"Resume blocked task: {node}"
+
+    def _adaptive_stage_for_task(self, task: TaskEnvelope) -> str:
+        explicit = str(task.metadata.get("adaptive_stage") or task.payload.get("adaptive_stage") or "").strip()
+        if explicit:
+            return explicit
+        mapping = {
+            "goal_intake": "goal_intake",
+            "exploration_trial": "exploration_trial",
+            "strategy_distill": "strategy_distill",
+            "scale_execution": "scale_execution",
+            "discover_candidate": "candidate_discovery",
+            "initial_screening": "candidate_probe",
+            "candidate_scoring": "candidate_scoring",
+            "initiate_communication": "candidate_outreach",
+            "request_resume": "resume_collection",
+            "archive_candidate": "candidate_archive",
+            "runtime_execution": "scale_execution",
+        }
+        return mapping.get(task.task_type, task.task_type)
+
+    def _next_adaptive_stage(self, task: TaskEnvelope, result: AgentResult) -> str | None:
+        current = self._adaptive_stage_for_task(task)
+        if current == "goal_intake":
+            run_preferences = dict(task.payload.get("run_preferences") or {})
+            context_hints = dict(task.payload.get("context_hints") or {})
+            preferred = str(
+                run_preferences.get("initial_stage")
+                or context_hints.get("adaptive_stage")
+                or "exploration_trial"
+            ).strip()
+            return preferred or "exploration_trial"
+        if current in {
+            "exploration_trial",
+            "candidate_discovery",
+            "candidate_probe",
+            "candidate_outreach",
+            "resume_collection",
+            "candidate_scoring",
+            "candidate_archive",
+            "scale_execution",
+        }:
+            return "strategy_distill"
+        return None

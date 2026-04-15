@@ -97,6 +97,8 @@ class ContextAssemblerService:
             tier="required",
             content={
                 "task_type": task.task_type,
+                "adaptive_stage": str(task.metadata.get("adaptive_stage") or task.payload.get("adaptive_stage") or task.task_type),
+                "goal_spec_id": str(task.metadata.get("goal_spec_id") or task.payload.get("goal_id") or "") or None,
                 "candidate_id": task.candidate_id,
                 "workflow_id": task.workflow_id,
                 "workflow_node_id": task.workflow_node_id,

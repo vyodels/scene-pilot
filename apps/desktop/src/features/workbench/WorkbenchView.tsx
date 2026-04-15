@@ -196,7 +196,7 @@ export function WorkbenchView({
               {runningAction ? copy("Running...", "执行中...") : copy("Run agent once", "单次运行 Agent")}
             </button>
             <button type="button" onClick={onQueueScreeningTask} disabled={Boolean(runningAction)} style={buttonStyle}>
-              {copy("Queue screening task", "排入初筛任务")}
+              {copy("Start candidate review goal", "启动候选人评估目标")}
             </button>
             <div style={{ display: "grid", gap: "8px", marginTop: "4px" }}>
               <input

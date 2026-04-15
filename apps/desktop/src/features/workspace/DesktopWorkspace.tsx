@@ -345,7 +345,7 @@ export function DesktopWorkspace(): JSX.Element {
       "recruit-agent": {
         eyebrow: copy("Agent configuration", "Agent 配置"),
         title: copy("Recruit Agent", "招聘 Agent"),
-        description: copy("Expose role, prompt, workflow, memory, and skill contracts directly to the operator.", "把角色、提示词、工作流、memory 与 skill 契约直接暴露给操作员。"),
+        description: copy("Expose role, prompt, execution blueprint, memory, and skill contracts directly to the operator.", "把角色、提示词、执行蓝图、memory 与 skill 契约直接暴露给操作员。"),
       },
       workbench: {
         eyebrow: copy("Operations", "运行操作"),
@@ -483,14 +483,31 @@ export function DesktopWorkspace(): JSX.Element {
     setRuntimeActionBusy(true);
     try {
       const firstCandidate = summary.candidates[0];
-      const task = await apiClient.queueTask({
-        taskType: "initial_screening",
-        payload: { jd_criteria: firstCandidate?.jdTitle ?? "前端平台工程师" },
+      if (!firstCandidate) {
+        await loadWorkspace(copy("No candidate available for adaptive review.", "当前没有可用于目标驱动评估的候选人。"));
+        return;
+      }
+      await apiClient.createGoal({
+        title: copy(`Review ${firstCandidate.name}`, `评估 ${firstCandidate.name}`),
+        goalText: copy(
+          `Review candidate ${firstCandidate.name} for ${firstCandidate.jdTitle}. Use real external capabilities to inspect the candidate, assess fit, and distill a reusable screening strategy.`,
+          `围绕候选人 ${firstCandidate.name} 和岗位 ${firstCandidate.jdTitle} 启动一次目标驱动评估。请使用真实外部能力完成候选人查看、匹配判断，并沉淀可复用筛选策略。`,
+        ),
+        summary: copy("Create a goal-driven candidate review run.", "创建一个目标驱动的候选人评估 run。"),
         priority: 180,
-        candidateId: firstCandidate?.id,
-        workflowNodeId: "initial_screening",
+        constraints: {
+          candidate_id: firstCandidate.id,
+          platform: firstCandidate.platform,
+        },
+        contextHints: {
+          candidate_id: firstCandidate.id,
+          adaptive_stage: "candidate_probe",
+        },
+        runPreferences: {
+          initial_stage: "candidate_probe",
+        },
       });
-      await loadWorkspace(copy(`Queued task ${task.taskType}.`, `已将任务 ${task.taskType} 放入队列。`));
+      await loadWorkspace(copy("Adaptive candidate review goal created.", "已创建目标驱动的候选人评估任务。"));
     } finally {
       setRuntimeActionBusy(false);
     }

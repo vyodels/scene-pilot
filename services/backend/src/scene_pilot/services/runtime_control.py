@@ -13,6 +13,7 @@ from scene_pilot.repositories import (
     AgentSessionRepository,
     AgentWorkItemRepository,
     CandidateRepository,
+    GoalSpecRepository,
     RecruitAgentProfileRepository,
     TaskQueueRepository,
 )
@@ -40,14 +41,22 @@ class RuntimeControlService:
     def ensure_run_for_task(self, task: TaskEnvelope) -> dict[str, Any]:
         session_record = self._ensure_session()
         lane = self.resolve_lane(task)
-        goal_spec_id = str(task.metadata.get("goal_spec_id") or task.payload.get("goal_id") or "").strip() or None
         candidate = CandidateRepository(self.session).resolve(task.candidate_id) if task.candidate_id else None
+        adaptive_stage = self._adaptive_stage_for_task(task)
+        task.metadata["adaptive_stage"] = adaptive_stage
+        goal_spec_id = self._ensure_goal_for_task(
+            task,
+            agent_profile_id=session_record.agent_profile_id,
+            candidate=candidate,
+            adaptive_stage=adaptive_stage,
+        )
         run_repo = AgentRunRepository(self.session)
         work_item_repo = AgentWorkItemRepository(self.session)
 
         existing_run_id = str(task.metadata.get("agent_run_id") or "").strip()
         run = run_repo.get(existing_run_id) if existing_run_id else None
-        if run is None and candidate is not None and lane == "candidate":
+        reuse_existing_run = not bool(task.metadata.get("spawn_new_run"))
+        if run is None and candidate is not None and lane == "candidate" and reuse_existing_run:
             run = run_repo.latest_open_for_candidate(session_id=session_record.id, candidate_id=candidate.id, lane=lane)
         if run is None:
             run = run_repo.create(
@@ -58,13 +67,14 @@ class RuntimeControlService:
                     "jd_id": candidate.jd_id if candidate is not None else None,
                     "platform": task.platform or (candidate.platform if candidate is not None else "site"),
                     "lane": lane,
-                    "run_type": task.task_type,
+                    "run_type": adaptive_stage,
                     "status": "queued",
                     "priority": task.priority,
                     "queue_task_id": task.task_id,
                     "runtime_metadata": {
                         "task_ids": [task.task_id],
                         "task_types": [task.task_type],
+                        "adaptive_stage": adaptive_stage,
                         "requested_by": task.metadata.get("requested_by"),
                     },
                 }
@@ -95,7 +105,7 @@ class RuntimeControlService:
                     "candidate_id": candidate.id if candidate is not None else None,
                     "platform": task.platform or (candidate.platform if candidate is not None else "site"),
                     "lane": lane,
-                    "item_type": task.task_type,
+                    "item_type": adaptive_stage,
                     "status": "queued",
                     "priority": task.priority,
                     "dedupe_key": self._work_item_dedupe_key(task=task, candidate_id=candidate.id if candidate is not None else None, lane=lane),
@@ -118,6 +128,7 @@ class RuntimeControlService:
         task.metadata["agent_work_item_id"] = work_item.id
         if goal_spec_id:
             task.metadata["goal_spec_id"] = goal_spec_id
+            task.payload["goal_id"] = goal_spec_id
             session_record.current_goal_id = goal_spec_id
             self.session.commit()
         self.publish_event(
@@ -481,13 +492,14 @@ class RuntimeControlService:
         return max(1, int(config.get("max_concurrent_runs", 1) or 1))
 
     def _work_item_dedupe_key(self, *, task: TaskEnvelope, candidate_id: str | None, lane: str) -> str:
-        parts = [lane, task.task_type, task.workflow_node_id or "", candidate_id or ""]
+        parts = [lane, self._adaptive_stage_for_task(task), task.task_type, candidate_id or ""]
         return ":".join(part for part in parts if part)
 
     def _task_snapshot(self, task: TaskEnvelope) -> dict[str, Any]:
         return {
             "task_id": task.task_id,
             "task_type": task.task_type,
+            "adaptive_stage": self._adaptive_stage_for_task(task),
             "priority": task.priority,
             "payload": dict(task.payload or {}),
             "metadata": dict(task.metadata or {}),
@@ -499,6 +511,93 @@ class RuntimeControlService:
             "due_at": task.due_at.isoformat() if task.due_at else None,
             "created_at": task.created_at.isoformat(),
         }
+
+    def _adaptive_stage_for_task(self, task: TaskEnvelope) -> str:
+        explicit = str(task.metadata.get("adaptive_stage") or task.payload.get("adaptive_stage") or "").strip()
+        if explicit:
+            return explicit
+        mapping = {
+            "goal_intake": "goal_intake",
+            "exploration_trial": "exploration_trial",
+            "strategy_distill": "strategy_distill",
+            "scale_execution": "scale_execution",
+            "discover_candidate": "candidate_discovery",
+            "initial_screening": "candidate_probe",
+            "candidate_scoring": "candidate_scoring",
+            "initiate_communication": "candidate_outreach",
+            "request_resume": "resume_collection",
+            "archive_candidate": "candidate_archive",
+            "runtime_execution": "scale_execution",
+        }
+        return mapping.get(task.task_type, task.task_type)
+
+    def _ensure_goal_for_task(
+        self,
+        task: TaskEnvelope,
+        *,
+        agent_profile_id: str,
+        candidate,
+        adaptive_stage: str,
+    ) -> str:
+        existing = str(task.metadata.get("goal_spec_id") or task.payload.get("goal_id") or "").strip()
+        if existing:
+            return existing
+        title = str(task.payload.get("goal_title") or self._default_goal_title(task=task, candidate=candidate, adaptive_stage=adaptive_stage))
+        goal_text = str(
+            task.payload.get("goal_text")
+            or self._default_goal_text(task=task, candidate=candidate, adaptive_stage=adaptive_stage)
+        )
+        goal = GoalSpecRepository(self.session).create(
+            {
+                "agent_profile_id": agent_profile_id,
+                "title": title,
+                "goal_text": goal_text,
+                "goal_kind": "recruiting",
+                "status": "queued",
+                "source": "system",
+                "source_text": goal_text,
+                "requested_by": str(task.metadata.get("requested_by") or "runtime"),
+                "constraints": {
+                    "candidate_id": candidate.id if candidate is not None else task.candidate_id,
+                    "platform": task.platform,
+                },
+                "context_hints": {
+                    "candidate_id": candidate.id if candidate is not None else task.candidate_id,
+                    "jd_id": getattr(candidate, "jd_id", None),
+                    "adaptive_stage": adaptive_stage,
+                },
+                "summary": f"从 {adaptive_stage} 阶段启动的目标驱动任务。",
+                "last_activity_at": datetime.now(timezone.utc),
+                "goal_metadata": {
+                    "created_from": "task_enqueue",
+                    "legacy_task_type": task.task_type,
+                    "adaptive_stage": adaptive_stage,
+                },
+            }
+        )
+        return goal.id
+
+    def _default_goal_title(self, *, task: TaskEnvelope, candidate, adaptive_stage: str) -> str:
+        if candidate is not None:
+            return f"{self._humanize_stage(adaptive_stage)} · {candidate.name}"
+        return self._humanize_stage(adaptive_stage)
+
+    def _default_goal_text(self, *, task: TaskEnvelope, candidate, adaptive_stage: str) -> str:
+        candidate_name = getattr(candidate, "name", None) or task.candidate_id or "候选人"
+        if adaptive_stage == "candidate_probe":
+            return f"围绕 {candidate_name} 完成一次候选人初筛与判断，并沉淀本次筛选策略。"
+        if adaptive_stage == "candidate_outreach":
+            return f"围绕 {candidate_name} 规划并执行一次外联尝试，并记录可复用沟通策略。"
+        if adaptive_stage == "resume_collection":
+            return f"围绕 {candidate_name} 推进简历获取，并总结本次有效路径。"
+        if adaptive_stage == "candidate_scoring":
+            return f"围绕 {candidate_name} 完成评估打分，并提炼评分依据。"
+        if adaptive_stage == "candidate_discovery":
+            return "在真实环境中探索候选人发现路径，并记录有效入口。"
+        return f"围绕 {self._humanize_stage(adaptive_stage)} 目标启动一次自适应尝试。"
+
+    def _humanize_stage(self, adaptive_stage: str) -> str:
+        return str(adaptive_stage or "goal").replace("_", " ").strip().title()
 
     def _restore_queue_task_for_run(self, *, run, work_items: list[Any]) -> str | None:
         queue_repo = TaskQueueRepository(self.session)

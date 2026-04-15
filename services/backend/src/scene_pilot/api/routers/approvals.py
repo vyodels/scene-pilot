@@ -382,7 +382,7 @@ def _promote_skill_draft(
         "version": next_version,
         "status": status,
         "platform": platform,
-        "bound_to_workflow_node": draft.get("bound_to_workflow_node") or payload.get("workflow_node_id"),
+        "bound_to_workflow_node": draft.get("bound_to_workflow_node") or payload.get("adaptive_stage") or payload.get("workflow_node_id"),
         "strategy": {
             **strategy,
             "version_governance": {
