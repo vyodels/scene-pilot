@@ -1,11 +1,17 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import type { CandidateTransitionPayload, RecruitmentStateMachine, StateNode } from "@scene-pilot/shared";
 import { CandidateTable } from "../kanban-shared/CandidateTable";
 import { CandidateCommunicationPanel } from "../kanban-shared/CandidateCommunicationPanel";
+import {
+  CandidateDateRangeControl,
+  createCandidateDateRangeState,
+  resolveCandidateDateRangeFilter,
+  type CandidateDateRangeState,
+} from "../kanban-shared/CandidateDateRangeControl";
 import { CandidateDetailDrawer } from "../kanban-shared/CandidateDetailDrawer";
 import { ManualStatusOverrideDrawer } from "../kanban-shared/ManualStatusOverrideDrawer";
 import { StatusChain } from "../kanban-shared/StatusChain";
-import { buildCandidateViewModels, nodeTone } from "../kanban-shared/kanbanUtils";
+import { buildCandidateViewModels, isWithinCandidateDateFilter, nodeTone } from "../kanban-shared/kanbanUtils";
 import type { CandidateRecord, CandidateThreadRecord } from "../../lib/types";
 import { useI18n } from "../../lib/i18n";
 
@@ -21,12 +27,6 @@ interface StatusKanbanViewProps {
   onTransition(candidateId: string, payload: CandidateTransitionPayload): Promise<unknown> | void;
 }
 
-const phaseRows = [
-  ["A", "B"],
-  ["C", "D", "E"],
-  ["F", "G", "H"],
-];
-
 function isGlobalTerminal(node: StateNode): boolean {
   return node.phase === "Z";
 }
@@ -36,6 +36,46 @@ function isBranchNode(node: StateNode): boolean {
     return false;
   }
   return (node.isTerminal || node.isSoftTerminal) && !node.isSuccess;
+}
+
+function estimateStatusNodeWidth(label: string): number {
+  const contentWidth = Array.from(label).reduce((total, char) => {
+    if (/[A-Za-z0-9]/.test(char)) {
+      return total + 8;
+    }
+    if (char === "·" || char === "-" || char === " ") {
+      return total + 5;
+    }
+    return total + 12;
+  }, 0);
+  return contentWidth + 30;
+}
+
+function splitMainNodesIntoRows(nodes: StateNode[], availableWidth: number): StateNode[][] {
+  const rows: StateNode[][] = [];
+  let currentRow: StateNode[] = [];
+  let currentWidth = 0;
+  const maxWidth = Math.max(availableWidth, 720);
+  const connectorWidth = 18;
+
+  for (const node of nodes) {
+    const itemWidth = estimateStatusNodeWidth(`${node.label}-0`);
+    const nextWidth = currentRow.length ? currentWidth + connectorWidth + itemWidth : currentWidth + itemWidth;
+    if (currentRow.length && nextWidth > maxWidth) {
+      rows.push(currentRow);
+      currentRow = [node];
+      currentWidth = itemWidth;
+      continue;
+    }
+    currentRow.push(node);
+    currentWidth = nextWidth;
+  }
+
+  if (currentRow.length) {
+    rows.push(currentRow);
+  }
+
+  return rows;
 }
 
 export function StatusKanbanView({
@@ -49,10 +89,13 @@ export function StatusKanbanView({
   const { copy } = useI18n();
   const [jobFilter, setJobFilter] = useState("all");
   const [visibilityFilter, setVisibilityFilter] = useState<"all" | "active" | "human">("all");
+  const [dateRange, setDateRange] = useState<CandidateDateRangeState>(() => createCandidateDateRangeState());
   const [selectedStatus, setSelectedStatus] = useState<string>("all");
   const [activeConversationCandidateId, setActiveConversationCandidateId] = useState<string>();
   const [detailCandidateId, setDetailCandidateId] = useState<string>();
   const [overrideCandidateId, setOverrideCandidateId] = useState<string>();
+  const chainContainerRef = useRef<HTMLDivElement | null>(null);
+  const [chainWidth, setChainWidth] = useState(1200);
 
   const models = useMemo(
     () => buildCandidateViewModels(candidates, threads, stateMachine),
@@ -64,21 +107,39 @@ export function StatusKanbanView({
     [models],
   );
 
-  const filteredModels = useMemo(
+  const effectiveDateFilter = useMemo(() => resolveCandidateDateRangeFilter(dateRange), [dateRange]);
+
+  const baseFilteredModels = useMemo(
     () =>
       models.filter((item) => {
         if (jobFilter !== "all" && item.candidate.jdTitle !== jobFilter) {
           return false;
         }
-        if (visibilityFilter === "human" && !item.humanRequired) {
-          return false;
-        }
-        if (visibilityFilter === "active" && item.currentNode && (item.currentNode.isTerminal || item.currentNode.isSoftTerminal) && !item.currentNode.isSuccess) {
+        if (!isWithinCandidateDateFilter(item.latestActivityAt, effectiveDateFilter)) {
           return false;
         }
         return true;
       }),
-    [jobFilter, models, visibilityFilter],
+    [effectiveDateFilter, jobFilter, models],
+  );
+
+  const filteredModels = useMemo(
+    () =>
+      baseFilteredModels.filter((item) => {
+        if (visibilityFilter === "human" && !item.humanRequired) {
+          return false;
+        }
+        if (
+          visibilityFilter === "active" &&
+          item.currentNode &&
+          (item.currentNode.isTerminal || item.currentNode.isSoftTerminal) &&
+          !item.currentNode.isSuccess
+        ) {
+          return false;
+        }
+        return true;
+      }),
+    [baseFilteredModels, visibilityFilter],
   );
 
   const countByStatus = useMemo(() => {
@@ -88,6 +149,19 @@ export function StatusKanbanView({
     }
     return counts;
   }, [filteredModels]);
+
+  const visibilityCounts = useMemo(
+    () => ({
+      all: baseFilteredModels.length,
+      active: baseFilteredModels.filter(
+        (item) =>
+          !item.currentNode ||
+          ((!item.currentNode.isTerminal && !item.currentNode.isSoftTerminal) || item.currentNode.isSuccess),
+      ).length,
+      human: baseFilteredModels.filter((item) => item.humanRequired).length,
+    }),
+    [baseFilteredModels],
+  );
 
   const mainNodes = useMemo(
     () =>
@@ -113,6 +187,19 @@ export function StatusKanbanView({
     [stateMachine.nodes],
   );
 
+  const transitionsByFromState = useMemo(() => {
+    const map = new Map<string, string[]>();
+    for (const transition of [...stateMachine.transitions, ...stateMachine.globalTransitions]) {
+      if (!transition.fromState || transition.fromState === "*") {
+        continue;
+      }
+      const current = map.get(transition.fromState) ?? [];
+      current.push(transition.toState);
+      map.set(transition.fromState, current);
+    }
+    return map;
+  }, [stateMachine.globalTransitions, stateMachine.transitions]);
+
   const globalTerminalItems = useMemo(
     () =>
       stateMachine.nodes
@@ -122,45 +209,31 @@ export function StatusKanbanView({
           label: node.label,
           count: countByStatus.get(node.id) ?? 0,
           tone: nodeTone(node),
-        }))
-        .filter((item) => item.count > 0),
+        })),
     [countByStatus, stateMachine.nodes],
   );
 
   const rows = useMemo(
     () =>
-      phaseRows
-        .map((phases, index) => {
-          const rowMainNodes = mainNodes.filter((node) => phases.includes(node.phase));
-          const phaseTailNode = new Map<string, string>();
-          for (const node of rowMainNodes) {
-            phaseTailNode.set(node.phase, node.id);
-          }
-          return {
-            key: `row-${index + 1}`,
-            items: rowMainNodes.map((node) => ({
-              statusId: node.id,
-              label: node.label,
-              count: countByStatus.get(node.id) ?? 0,
-              tone: nodeTone(node),
-              emphasized: node.executionConfig?.mode === "human_required",
-              branches:
-                phaseTailNode.get(node.phase) === node.id
-                  ? branchNodes
-                      .filter((branch) => branch.phase === node.phase)
-                      .map((branch) => ({
-                        statusId: branch.id,
-                        label: branch.label,
-                        count: countByStatus.get(branch.id) ?? 0,
-                        tone: nodeTone(branch),
-                      }))
-                      .filter((branch) => branch.count > 0)
-                  : [],
+      splitMainNodesIntoRows(mainNodes, chainWidth - 8).map((nodesInRow, rowIndex) => ({
+        key: `main-${rowIndex + 1}`,
+        items: nodesInRow.map((node) => ({
+          statusId: node.id,
+          label: node.label,
+          count: countByStatus.get(node.id) ?? 0,
+          tone: nodeTone(node),
+          emphasized: node.executionConfig?.mode === "human_required",
+          branches: branchNodes
+            .filter((branch) => (transitionsByFromState.get(node.id) ?? []).includes(branch.id))
+            .map((branch) => ({
+              statusId: branch.id,
+              label: branch.label,
+              count: countByStatus.get(branch.id) ?? 0,
+              tone: nodeTone(branch),
             })),
-          };
-        })
-        .filter((row) => row.items.length > 0),
-    [branchNodes, countByStatus, mainNodes],
+        })),
+      })),
+    [branchNodes, chainWidth, countByStatus, mainNodes, transitionsByFromState],
   );
 
   const tableCandidates = useMemo(
@@ -174,6 +247,20 @@ export function StatusKanbanView({
   const overrideRecord =
     tableCandidates.find((item) => item.candidate.id === overrideCandidateId) ??
     (detailRecord?.candidate.id === overrideCandidateId ? detailRecord : null);
+
+  useEffect(() => {
+    if (!chainContainerRef.current || typeof ResizeObserver === "undefined") {
+      return undefined;
+    }
+    const observer = new ResizeObserver((entries) => {
+      const nextWidth = entries[0]?.contentRect.width ?? 0;
+      if (nextWidth > 0) {
+        setChainWidth(nextWidth);
+      }
+    });
+    observer.observe(chainContainerRef.current);
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
     if (!tableCandidates.length) {
@@ -202,20 +289,35 @@ export function StatusKanbanView({
     <div className="kanban-page">
       <div className="kanban-filter-row">
         <div className="kanban-filter__group">
-          <span className="kanban-filter__label">{copy("View", "显示")}</span>
           {[
-            { key: "all" as const, label: copy("All", "全部") },
-            { key: "active" as const, label: copy("Only active", "只看未淘汰") },
-            { key: "human" as const, label: copy("Needs human", "只看等待人工") },
+            { key: "all" as const, label: copy("All", "全部"), count: visibilityCounts.all },
+            { key: "active" as const, label: copy("Only active", "只看未淘汰"), count: visibilityCounts.active },
+            { key: "human" as const, label: copy("Needs human", "只看等待人工"), count: visibilityCounts.human },
           ].map((option) => (
             <button
               key={option.key}
               type="button"
               className="kanban-filter__toggle"
               data-active={visibilityFilter === option.key}
-              onClick={() => setVisibilityFilter(option.key)}
+              onClick={() => {
+                setVisibilityFilter(option.key);
+                setSelectedStatus("all");
+              }}
             >
-              {option.label}
+              {`${option.label}-${option.count}`}
+            </button>
+          ))}
+        </div>
+        <div className="kanban-filter__group">
+          {globalTerminalItems.map((item) => (
+            <button
+              key={item.statusId}
+              type="button"
+              className="kanban-filter__toggle"
+              data-active={selectedStatus === item.statusId}
+              onClick={() => setSelectedStatus(item.statusId)}
+            >
+              {`${item.label}-${item.count}`}
             </button>
           ))}
         </div>
@@ -230,23 +332,22 @@ export function StatusKanbanView({
             ))}
           </select>
         </label>
+        <CandidateDateRangeControl value={dateRange} onChange={setDateRange} />
       </div>
 
-      <StatusChain
-        rows={rows}
-        globalTerminalItems={globalTerminalItems}
-        activeStatus={selectedStatus}
-        allCount={filteredModels.length}
-        onSelect={setSelectedStatus}
-      />
+      <div ref={chainContainerRef}>
+        <StatusChain
+          rows={rows}
+          globalTerminalItems={[]}
+          activeStatus={selectedStatus}
+          showOverview={false}
+          onSelect={setSelectedStatus}
+        />
+      </div>
 
       <CandidateTable
         title={selectedLabel}
         count={tableCandidates.length}
-        description={copy(
-          "按当前状态展示候选人，人工节点会直接暴露状态机配置的操作按钮。",
-          "按当前状态展示候选人，人工节点会直接暴露状态机配置的操作按钮。",
-        )}
         candidates={tableCandidates}
         stateMachine={stateMachine}
         emptyMessage={copy("No candidates in this status under the current filters.", "当前筛选条件下该状态没有候选人。")}

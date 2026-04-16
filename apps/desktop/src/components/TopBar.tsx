@@ -1,4 +1,5 @@
 import React from "react";
+import type { ReactNode } from "react";
 import { useI18n } from "../lib/i18n";
 import { translateUiToken } from "../lib/uiText";
 import type { AgentSnapshot, SettingsSnapshot } from "../lib/types";
@@ -10,6 +11,8 @@ interface TopBarProps {
   transport: "http" | "offline";
   sectionEyebrow: string;
   sectionTitle: string;
+  hideSectionSummary?: boolean;
+  leadingContent?: ReactNode;
   onRefresh(): void;
   refreshing: boolean;
 }
@@ -20,22 +23,31 @@ export function TopBar({
   transport,
   sectionEyebrow,
   sectionTitle,
+  hideSectionSummary = false,
+  leadingContent,
   onRefresh,
   refreshing,
 }: TopBarProps): JSX.Element {
   const { language, setLanguage, copy } = useI18n();
+  const summaryContent = !hideSectionSummary ? (
+    <>
+      <div className="workspace-topbar__eyebrow">{sectionEyebrow}</div>
+      <div className="workspace-topbar__title-row">
+        <h2 className="workspace-topbar__title">{sectionTitle}</h2>
+        <StatusBadge tone={agent.health === "healthy" ? "positive" : agent.health === "warning" ? "warning" : "critical"}>
+          {translateUiToken(agent.status, copy)}
+        </StatusBadge>
+      </div>
+    </>
+  ) : null;
 
   return (
-    <header className="workspace-topbar">
-      <div className="workspace-topbar__summary">
-        <div className="workspace-topbar__eyebrow">{sectionEyebrow}</div>
-        <div className="workspace-topbar__title-row">
-          <h2 className="workspace-topbar__title">{sectionTitle}</h2>
-          <StatusBadge tone={agent.health === "healthy" ? "positive" : agent.health === "warning" ? "warning" : "critical"}>
-            {translateUiToken(agent.status, copy)}
-          </StatusBadge>
+    <header className="workspace-topbar" data-hide-summary={hideSectionSummary ? "true" : undefined}>
+      {leadingContent || summaryContent ? (
+        <div className="workspace-topbar__summary" data-mode={leadingContent ? "custom" : undefined}>
+          {leadingContent ?? summaryContent}
         </div>
-      </div>
+      ) : null}
 
       <div className="workspace-topbar__actions">
         <div className="workspace-topbar__meta">

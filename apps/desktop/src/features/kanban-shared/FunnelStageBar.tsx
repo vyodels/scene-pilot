@@ -4,7 +4,6 @@ export interface FunnelStageItem {
   milestoneId: string;
   label: string;
   count: number;
-  annotation?: string;
 }
 
 interface FunnelStageBarProps {
@@ -26,11 +25,9 @@ export function FunnelStageBar({ items, activeMilestoneId, onSelect }: FunnelSta
               data-active={selected}
               onClick={() => onSelect(item.milestoneId)}
             >
-              <span className="funnel-stage-bar__label">{item.label}</span>
-              <span className="funnel-stage-bar__count">{item.count}</span>
-              {item.annotation ? <span className="funnel-stage-bar__annotation">{item.annotation}</span> : null}
+              <span className="funnel-stage-bar__text">{item.label}-{item.count}</span>
             </button>
-            {index < items.length - 1 ? <span className="funnel-stage-bar__connector">›</span> : null}
+            {index < items.length - 1 ? <span className="funnel-stage-bar__connector">→</span> : null}
           </React.Fragment>
         );
       })}

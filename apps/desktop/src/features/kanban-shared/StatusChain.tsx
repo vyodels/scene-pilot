@@ -1,5 +1,4 @@
 import React from "react";
-import { StatusBadge } from "../../components";
 
 export interface StatusChainBranchItem {
   statusId: string;
@@ -26,8 +25,9 @@ interface StatusChainProps {
   rows: StatusChainRow[];
   globalTerminalItems: StatusChainBranchItem[];
   activeStatus: string;
-  allCount: number;
+  allCount?: number;
   onSelect(statusId: string): void;
+  showOverview?: boolean;
 }
 
 export function StatusChain({
@@ -36,61 +36,89 @@ export function StatusChain({
   activeStatus,
   allCount,
   onSelect,
+  showOverview = true,
 }: StatusChainProps): JSX.Element {
   return (
     <div className="status-chain">
-      <div className="status-chain__overview">
-        <button
-          type="button"
-          className="status-chain__node"
-          data-active={activeStatus === "all"}
-          onClick={() => onSelect("all")}
-        >
-          <span className="status-chain__label">全部</span>
-          <span className="status-chain__count">{allCount}</span>
-        </button>
-      </div>
+      {showOverview && allCount != null ? (
+        <div className="status-chain__overview">
+          <button
+            type="button"
+            className="status-chain__node"
+            data-active={activeStatus === "all"}
+            onClick={() => onSelect("all")}
+          >
+            <span className="status-chain__text">全部-{allCount}</span>
+          </button>
+        </div>
+      ) : null}
 
       {rows.map((row, rowIndex) => (
         <div key={row.key} className="status-chain__row-block">
-          <div className="status-chain__row">
-            {rowIndex > 0 ? <span className="status-chain__row-prefix">›</span> : null}
-            {row.items.map((item, index) => (
-              <React.Fragment key={item.statusId}>
-                <div className="status-chain__item-group">
-                  <button
-                    type="button"
-                    className="status-chain__node"
-                    data-active={activeStatus === item.statusId}
-                    data-emphasized={item.emphasized ? "true" : undefined}
-                    onClick={() => onSelect(item.statusId)}
+          <div className="status-chain__row-head">
+            {rowIndex > 0 ? <span className="status-chain__row-prefix">→</span> : null}
+            <div className="status-chain__row-grid">
+              {row.items.map((item, index) => (
+                <React.Fragment key={item.statusId}>
+                  <div
+                    className="status-chain__grid-node"
+                    style={{
+                      gridColumn: String(index * 2 + 1),
+                      gridRow: "1",
+                    }}
                   >
-                    <span className="status-chain__label">{item.label}</span>
-                    <span className="status-chain__count" data-tone={item.tone}>
-                      {item.count}
+                    <button
+                      type="button"
+                      className="status-chain__node"
+                      data-active={activeStatus === item.statusId}
+                      data-emphasized={item.emphasized ? "true" : undefined}
+                      onClick={() => onSelect(item.statusId)}
+                    >
+                      <span className="status-chain__text" data-tone={item.tone}>
+                        {item.label}-{item.count}
+                      </span>
+                    </button>
+                  </div>
+                  {index < row.items.length - 1 ? (
+                    <span
+                      className="status-chain__connector"
+                      style={{
+                        gridColumn: String(index * 2 + 2),
+                        gridRow: "1",
+                      }}
+                    >
+                      →
                     </span>
-                  </button>
+                  ) : null}
                   {item.branches?.length ? (
-                    <div className="status-chain__branches">
+                    <div
+                      className="status-chain__grid-branches"
+                      style={{
+                        gridColumn: String(index * 2 + 1),
+                        gridRow: "2",
+                      }}
+                    >
                       {item.branches.map((branch) => (
-                        <button
-                          key={branch.statusId}
-                          type="button"
-                          className="status-chain__branch"
-                          data-active={activeStatus === branch.statusId}
-                          data-tone={branch.tone}
-                          onClick={() => onSelect(branch.statusId)}
-                        >
-                          <span className="status-chain__branch-label">{branch.label}</span>
-                          <span className="status-chain__branch-count">{branch.count}</span>
-                        </button>
+                        <div key={`${item.statusId}:${branch.statusId}`} className="status-chain__branch-item">
+                          <span className="status-chain__branch-connector">└→</span>
+                          <button
+                            type="button"
+                            className="status-chain__branch"
+                            data-active={activeStatus === branch.statusId}
+                            data-tone={branch.tone}
+                            onClick={() => onSelect(branch.statusId)}
+                          >
+                            <span className="status-chain__branch-text">
+                              {branch.label}-{branch.count}
+                            </span>
+                          </button>
+                        </div>
                       ))}
                     </div>
                   ) : null}
-                </div>
-                {index < row.items.length - 1 ? <span className="status-chain__connector">›</span> : null}
-              </React.Fragment>
-            ))}
+                </React.Fragment>
+              ))}
+            </div>
           </div>
         </div>
       ))}
@@ -103,10 +131,10 @@ export function StatusChain({
               type="button"
               className="status-chain__global-pill"
               data-active={activeStatus === item.statusId}
+              data-tone={item.tone}
               onClick={() => onSelect(item.statusId)}
             >
-              <span>{item.label}</span>
-              <StatusBadge tone={item.tone}>{item.count}</StatusBadge>
+              <span className="status-chain__global-text">{item.label}-{item.count}</span>
             </button>
           ))}
         </div>

@@ -3,14 +3,18 @@ import { funnelMilestones } from "@scene-pilot/shared";
 import type { CandidateTransitionPayload, RecruitmentStateMachine } from "@scene-pilot/shared";
 import { CandidateTable } from "../kanban-shared/CandidateTable";
 import { CandidateCommunicationPanel } from "../kanban-shared/CandidateCommunicationPanel";
+import {
+  CandidateDateRangeControl,
+  createCandidateDateRangeState,
+  resolveCandidateDateRangeFilter,
+  type CandidateDateRangeState,
+} from "../kanban-shared/CandidateDateRangeControl";
 import { CandidateDetailDrawer } from "../kanban-shared/CandidateDetailDrawer";
 import { FunnelStageBar } from "../kanban-shared/FunnelStageBar";
 import { ManualStatusOverrideDrawer } from "../kanban-shared/ManualStatusOverrideDrawer";
-import { buildCandidateViewModels, createNodeMap } from "../kanban-shared/kanbanUtils";
+import { buildCandidateViewModels, createNodeMap, isWithinCandidateDateFilter } from "../kanban-shared/kanbanUtils";
 import type { CandidateRecord, CandidateThreadRecord } from "../../lib/types";
 import { useI18n } from "../../lib/i18n";
-
-type TimeWindow = "all" | "7d" | "30d" | "90d";
 
 interface FunnelKanbanViewProps {
   candidates: CandidateRecord[];
@@ -24,18 +28,6 @@ interface FunnelKanbanViewProps {
   onTransition(candidateId: string, payload: CandidateTransitionPayload): Promise<unknown> | void;
 }
 
-function compareByWindow(timestamp: string | undefined, windowKey: TimeWindow): boolean {
-  if (windowKey === "all") {
-    return true;
-  }
-  if (!timestamp) {
-    return false;
-  }
-  const days = windowKey === "7d" ? 7 : windowKey === "30d" ? 30 : 90;
-  const target = Date.now() - days * 24 * 60 * 60 * 1000;
-  return new Date(timestamp).getTime() >= target;
-}
-
 export function FunnelKanbanView({
   candidates,
   threads,
@@ -46,7 +38,7 @@ export function FunnelKanbanView({
 }: FunnelKanbanViewProps): JSX.Element {
   const { copy } = useI18n();
   const [jobFilter, setJobFilter] = useState("all");
-  const [timeWindow, setTimeWindow] = useState<TimeWindow>("all");
+  const [dateRange, setDateRange] = useState<CandidateDateRangeState>(() => createCandidateDateRangeState());
   const visibleMilestones = useMemo(
     () => funnelMilestones.filter((milestone) => milestone.showInFunnel),
     [],
@@ -84,38 +76,23 @@ export function FunnelKanbanView({
   );
 
   const nodeById = useMemo(() => createNodeMap(stateMachine), [stateMachine]);
+  const dateFilter = useMemo(() => resolveCandidateDateRangeFilter(dateRange), [dateRange]);
 
   const stageItems = useMemo(
     () =>
       visibleMilestones.map((milestone) => {
         const count = jobFilteredModels.filter(
-          (item) => item.deepestMilestone === milestone.id && compareByWindow(item.milestoneReachedAt[milestone.id], timeWindow),
+          (item) =>
+            item.deepestMilestone === milestone.id &&
+            isWithinCandidateDateFilter(item.milestoneReachedAt[milestone.id], dateFilter),
         ).length;
-        const phaseNodes = stateMachine.nodes.filter(
-          (node) =>
-            node.phase === milestone.phase &&
-            node.uiConfig?.showInFunnel === false &&
-            (node.isTerminal || node.isSoftTerminal),
-        );
-        const annotationParts = phaseNodes
-          .map((node) => {
-            const nodeCount = jobFilteredModels.filter(
-              (item) => item.currentStatus === node.id && compareByWindow(item.latestActivityAt, timeWindow),
-            ).length;
-            if (!nodeCount) {
-              return null;
-            }
-            return `-${nodeCount} ${node.label}`;
-          })
-          .filter((value): value is string => Boolean(value));
         return {
           milestoneId: milestone.id,
           label: milestone.label,
           count,
-          annotation: annotationParts.join(" · ") || undefined,
         };
       }),
-    [jobFilteredModels, stateMachine.nodes, timeWindow, visibleMilestones],
+    [dateFilter, jobFilteredModels, visibleMilestones],
   );
 
   const selectedNodeLabel =
@@ -126,13 +103,13 @@ export function FunnelKanbanView({
         .filter(
           (item) =>
             item.deepestMilestone === selectedMilestone &&
-            compareByWindow(item.milestoneReachedAt[selectedMilestone], timeWindow),
+            isWithinCandidateDateFilter(item.milestoneReachedAt[selectedMilestone], dateFilter),
         )
         .map((item) => ({
           ...item,
           currentNode: item.currentNode ?? nodeById.get(item.currentStatus),
         })),
-    [jobFilteredModels, nodeById, selectedMilestone, timeWindow],
+    [dateFilter, jobFilteredModels, nodeById, selectedMilestone],
   );
   const detailRecord = selectedCandidates.find((item) => item.candidate.id === detailCandidateId) ?? null;
   const overrideRecord =
@@ -178,25 +155,7 @@ export function FunnelKanbanView({
             ))}
           </select>
         </label>
-        <div className="kanban-filter__group">
-          <span className="kanban-filter__label">{copy("Time window", "时间段")}</span>
-          {[
-            { key: "all" as const, label: copy("All", "全部") },
-            { key: "7d" as const, label: copy("Last 7 days", "近 7 天") },
-            { key: "30d" as const, label: copy("Last 30 days", "近 30 天") },
-            { key: "90d" as const, label: copy("Last 90 days", "近 90 天") },
-          ].map((option) => (
-            <button
-              key={option.key}
-              type="button"
-              className="kanban-filter__toggle"
-              data-active={timeWindow === option.key}
-              onClick={() => setTimeWindow(option.key)}
-            >
-              {option.label}
-            </button>
-          ))}
-        </div>
+        <CandidateDateRangeControl value={dateRange} onChange={setDateRange} />
       </div>
 
       <FunnelStageBar items={stageItems} activeMilestoneId={selectedMilestone} onSelect={setSelectedMilestone} />
@@ -204,10 +163,6 @@ export function FunnelKanbanView({
       <CandidateTable
         title={selectedNodeLabel}
         count={selectedCandidates.length}
-        description={copy(
-          "按候选人当前最深里程碑展示，淘汰分支作为阶段注释显示。",
-          "按候选人当前最深里程碑展示，淘汰分支作为阶段注释显示。",
-        )}
         candidates={selectedCandidates}
         stateMachine={stateMachine}
         emptyMessage={copy("No candidates reached this funnel milestone under the current filters.", "当前筛选条件下该漏斗阶段没有候选人。")}

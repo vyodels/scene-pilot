@@ -112,7 +112,7 @@ export function Sidebar({ active, onChange, counts }: SidebarProps): JSX.Element
     <aside className="workspace-sidebar">
       <div className="workspace-sidebar__brand">
         <div className="workspace-sidebar__logo">RA</div>
-        <div className="workspace-sidebar__eyebrow">{copy("Recruit", "招聘")}</div>
+        <div className="workspace-sidebar__eyebrow">{copy("Recruit workspace", "招聘工作台")}</div>
       </div>
 
       <nav className="workspace-sidebar__nav" aria-label={copy("Workspace sections", "工作区分区")}>

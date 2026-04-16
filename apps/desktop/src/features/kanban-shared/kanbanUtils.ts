@@ -16,6 +16,12 @@ export interface CandidateViewModel {
   milestoneReachedAt: Record<string, string>;
 }
 
+export interface CandidateDateFilter {
+  kind: "all" | "custom";
+  startDate: string;
+  endDate: string;
+}
+
 function asObject(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
 }
@@ -191,4 +197,37 @@ export function nodeTone(node?: StateNode): "positive" | "neutral" | "warning" |
     default:
       return "neutral";
   }
+}
+
+export function isWithinCandidateDateFilter(
+  timestamp: string | undefined,
+  filter: CandidateDateFilter,
+): boolean {
+  if (filter.kind === "all") {
+    return true;
+  }
+  if (!timestamp) {
+    return false;
+  }
+
+  const value = new Date(timestamp).getTime();
+  if (Number.isNaN(value)) {
+    return false;
+  }
+
+  if (filter.startDate) {
+    const start = new Date(`${filter.startDate}T00:00:00`).getTime();
+    if (!Number.isNaN(start) && value < start) {
+      return false;
+    }
+  }
+
+  if (filter.endDate) {
+    const end = new Date(`${filter.endDate}T23:59:59.999`).getTime();
+    if (!Number.isNaN(end) && value > end) {
+      return false;
+    }
+  }
+
+  return true;
 }

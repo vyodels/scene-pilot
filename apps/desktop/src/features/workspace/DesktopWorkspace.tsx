@@ -37,10 +37,11 @@ import type {
   WorkspaceTab,
 } from "../../lib/types";
 import { AgentInboxView } from "../agent-inbox/AgentInboxView";
-import { CandidatesKanbanView } from "../candidates/CandidatesKanbanView";
+import { CandidatesKanbanView, type CandidatesKanbanTab } from "../candidates/CandidatesKanbanView";
 import { CommunicationsView } from "../communications/CommunicationsView";
 import { DashboardView } from "../dashboard/DashboardView";
 import { EvolutionView } from "../evolution/EvolutionView";
+import { buildCandidateViewModels } from "../kanban-shared/kanbanUtils";
 import { RecruitAgentView } from "../recruit-agent/RecruitAgentView";
 import { SettingsView } from "../settings/SettingsView";
 
@@ -492,6 +493,7 @@ export function DesktopWorkspace(): JSX.Element {
   const [agentInboxFocus, setAgentInboxFocus] = useState<{ filter?: string; itemId?: string }>({});
   const [evolutionFocus, setEvolutionFocus] = useState<{ section?: string; itemId?: string }>({});
   const [aiReviewSection, setAiReviewSection] = useState<"queue" | "changes">("queue");
+  const [candidateKanbanTab, setCandidateKanbanTab] = useState<CandidatesKanbanTab>("funnel");
 
   const appendEvent = (event: AgentEvent) => {
     setEvents((current) => [...current.slice(-49), event]);
@@ -730,6 +732,27 @@ export function DesktopWorkspace(): JSX.Element {
       },
     }),
     [copy],
+  );
+
+  const candidateKanbanModels = useMemo(
+    () => (stateMachine ? buildCandidateViewModels(summary.candidates, candidateThreads, stateMachine) : []),
+    [candidateThreads, stateMachine, summary.candidates],
+  );
+
+  const candidateKanbanTabItems = useMemo(
+    () => [
+      {
+        key: "funnel",
+        label: copy("Candidate funnel", "候选人漏斗"),
+        count: summary.candidates.length,
+      },
+      {
+        key: "status",
+        label: copy("Candidate follow-up", "候选人跟进"),
+        count: candidateKanbanModels.filter((item) => item.humanRequired).length,
+      },
+    ],
+    [candidateKanbanModels, copy, summary.candidates.length],
   );
 
   const handleApprove = async (id: string) => {
@@ -1043,6 +1066,7 @@ export function DesktopWorkspace(): JSX.Element {
             candidates={summary.candidates}
             threads={candidateThreads}
             stateMachine={stateMachine}
+            activeTab={candidateKanbanTab}
             onOpenCandidate={(candidateId) => openCommunications("candidate", candidateId)}
             onCreateEntry={handleCreateThreadEntry}
             onTransition={handleTransitionCandidateState}
@@ -1199,6 +1223,17 @@ export function DesktopWorkspace(): JSX.Element {
           transport={transport}
           sectionEyebrow={sectionMeta[tab].eyebrow}
           sectionTitle={sectionMeta[tab].title}
+          hideSectionSummary={tab === "candidates"}
+          leadingContent={
+            tab === "candidates" ? (
+              <SectionTabs
+                variant="topbar"
+                items={candidateKanbanTabItems}
+                active={candidateKanbanTab}
+                onChange={(key) => setCandidateKanbanTab(key as CandidatesKanbanTab)}
+              />
+            ) : undefined
+          }
           onRefresh={() => void loadWorkspace(copy("Manual refresh completed.", "已完成手动刷新。"))}
           refreshing={refreshing}
         />
