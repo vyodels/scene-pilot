@@ -16,7 +16,6 @@ class Candidate(Base, TimestampMixin):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     platform: Mapped[str] = mapped_column(String(64), nullable=False, default="site", index=True)
     platform_candidate_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
-    status: Mapped[str] = mapped_column(String(64), nullable=False, default="discovered", index=True)
     current_status: Mapped[str] = mapped_column(String(64), nullable=False, default="discovered", index=True)
     current_stage_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
     deepest_milestone: Mapped[str | None] = mapped_column(String(16), nullable=True, index=True)

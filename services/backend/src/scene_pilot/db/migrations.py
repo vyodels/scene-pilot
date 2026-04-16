@@ -1220,7 +1220,9 @@ def _create_state_machine_tables(connection: Connection) -> None:
             connection.execute(text("ALTER TABLE candidates ADD COLUMN current_status TEXT NOT NULL DEFAULT 'discovered'"))
         if "deepest_milestone" not in columns:
             connection.execute(text("ALTER TABLE candidates ADD COLUMN deepest_milestone TEXT"))
-        connection.execute(text("UPDATE candidates SET current_status = status WHERE current_status IS NULL OR current_status = ''"))
+        if "status" in columns:
+            connection.execute(text("DROP INDEX IF EXISTS ix_candidates_status"))
+            connection.execute(text("ALTER TABLE candidates DROP COLUMN status"))
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_candidates_current_status ON candidates (current_status)"))
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_candidates_deepest_milestone ON candidates (deepest_milestone)"))
 

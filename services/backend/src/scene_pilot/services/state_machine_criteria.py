@@ -15,6 +15,16 @@ _THRESHOLD_DELTA = 5
 _OVERRIDE_RATE_FOR_THRESHOLD = 0.25
 _OVERRIDE_RATE_FOR_SKILL_SWAP = 0.35
 _HEALTHY_SKILL_STATUSES = {"", "healthy", "approved", "active"}
+_SKILL_SWAP_HEALTH_PRIORITY = {
+    "healthy": 0,
+    "approved": 1,
+    "active": 2,
+    "": 3,
+    "unknown": 3,
+    "warning": 4,
+    "degraded": 5,
+    "critical": 6,
+}
 
 
 def list_state_machine_criteria_suggestions(session: Session) -> list[dict[str, Any]]:
@@ -223,17 +233,19 @@ def _build_skill_swap_suggestion(
     if not should_swap:
         return None
 
-    candidate = alternatives[0]
+    candidate = sorted(alternatives, key=_skill_swap_sort_key)[0]
     proposed = {"type": "skill", "skillId": candidate.skill_id}
     if isinstance(current_skill.skill_metadata, dict):
         pass_threshold = ((current_skill.skill_metadata or {}).get("passThreshold"))
         if isinstance(pass_threshold, (int, float)):
             proposed["passThreshold"] = int(round(float(pass_threshold)))
 
+    candidate_health = str(candidate.last_health_status or "unknown")
     summary = f"当前 Skill「{current_skill.name}」健康度偏低或覆盖率偏高，建议切换到「{candidate.name}」。"
     rationale = (
         f"当前 Skill 状态为 {current_skill.last_health_status or 'unknown'}，"
-        f"最近人工覆盖率约 {round(override_rate * 100)}%，可先尝试更换到最近活跃版本。"
+        f"最近人工覆盖率约 {round(override_rate * 100)}%，"
+        f"候选 Skill 中优先选择健康度更高、版本更稳的「{candidate.name}」（health={candidate_health}，v{candidate.version}）。"
     )
     return {
         "kind": "switch_skill",
@@ -244,6 +256,22 @@ def _build_skill_swap_suggestion(
         "suggested_skill_id": candidate.skill_id,
         "suggested_skill_name": candidate.name,
     }
+
+
+def _skill_swap_sort_key(skill) -> tuple[int, int, int, float, str]:
+    health_status = str(skill.last_health_status or "").strip().lower()
+    health_priority = _SKILL_SWAP_HEALTH_PRIORITY.get(health_status, _SKILL_SWAP_HEALTH_PRIORITY["unknown"])
+    observed_outcomes = (skill.execution_hints or {}).get("observed_outcomes") if isinstance(skill.execution_hints, dict) else []
+    observed_count = len(observed_outcomes) if isinstance(observed_outcomes, list) else 0
+    version = int(skill.version or 0)
+    updated_at = skill.updated_at.timestamp() if getattr(skill, "updated_at", None) is not None else 0.0
+    return (
+        health_priority,
+        -observed_count,
+        -version,
+        -updated_at,
+        str(skill.name or skill.skill_id or ""),
+    )
 
 
 def _build_report_summary(

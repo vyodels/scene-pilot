@@ -1,18 +1,23 @@
 import React from "react";
 import type { CandidateTransitionPayload, RecruitmentStateMachine } from "@scene-pilot/shared";
 import { useI18n } from "../../lib/i18n";
-import type { CandidateRecord, CandidateThreadRecord } from "../../lib/types";
+import type { CandidateFollowUpSummaryDefinition, CandidateRecord, CandidateThreadRecord } from "../../lib/types";
 import { FunnelKanbanView } from "../funnel-kanban/FunnelKanbanView";
 import { StatusKanbanView } from "../status-kanban/StatusKanbanView";
 
-export type CandidatesKanbanTab = "funnel" | "status";
+export type CandidatesKanbanTab = "funnel" | "status" | "jd";
 
 interface CandidatesKanbanViewProps {
   candidates: CandidateRecord[];
   threads: CandidateThreadRecord[];
   stateMachine?: RecruitmentStateMachine | null;
+  summaryDefinitions?: CandidateFollowUpSummaryDefinition[];
   activeTab: CandidatesKanbanTab;
+  jdContent?: React.ReactNode;
+  preferredCandidateId?: string;
+  preferredConversationToken?: number;
   onOpenCandidate(candidateId: string): void;
+  onRefresh?(): Promise<unknown> | void;
   onCreateEntry(
     candidateId: string,
     payload: { direction: string; content: string; messageType?: string; platform?: string },
@@ -24,8 +29,13 @@ export function CandidatesKanbanView({
   candidates,
   threads,
   stateMachine,
+  summaryDefinitions = [],
   activeTab,
+  jdContent,
+  preferredCandidateId,
+  preferredConversationToken,
   onOpenCandidate,
+  onRefresh,
   onCreateEntry,
   onTransition,
 }: CandidatesKanbanViewProps): JSX.Element {
@@ -40,12 +50,17 @@ export function CandidatesKanbanView({
   }
 
   return (
-    activeTab === "funnel" ? (
+    activeTab === "jd" ? (
+      <>{jdContent ?? null}</>
+    ) : activeTab === "funnel" ? (
       <FunnelKanbanView
         candidates={candidates}
         threads={threads}
         stateMachine={stateMachine}
+        preferredCandidateId={preferredCandidateId}
+        preferredConversationToken={preferredConversationToken}
         onOpenCandidate={onOpenCandidate}
+        onRefresh={onRefresh}
         onCreateEntry={onCreateEntry}
         onTransition={onTransition}
       />
@@ -54,7 +69,11 @@ export function CandidatesKanbanView({
         candidates={candidates}
         threads={threads}
         stateMachine={stateMachine}
+        summaryDefinitions={summaryDefinitions}
+        preferredCandidateId={preferredCandidateId}
+        preferredConversationToken={preferredConversationToken}
         onOpenCandidate={onOpenCandidate}
+        onRefresh={onRefresh}
         onCreateEntry={onCreateEntry}
         onTransition={onTransition}
       />

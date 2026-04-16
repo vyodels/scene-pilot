@@ -11,10 +11,7 @@ interface SidebarProps {
 
 const tabs: Array<{ key: WorkspaceTab; labelEn: string; labelZh: string; shortZh: string }> = [
   { key: "home", labelEn: "Home", labelZh: "首页", shortZh: "首页" },
-  { key: "candidates", labelEn: "Candidates", labelZh: "候选人", shortZh: "候选" },
-  { key: "import-center", labelEn: "Import Center", labelZh: "导入中心", shortZh: "导入" },
-  { key: "jd-workspace", labelEn: "JD Workspace", labelZh: "JD 工作区", shortZh: "岗位" },
-  { key: "communications", labelEn: "Cockpit", labelZh: "候选人舱", shortZh: "沟通" },
+  { key: "candidates", labelEn: "Candidates", labelZh: "候选人", shortZh: "工作台" },
   { key: "ai-review", labelEn: "AI Review", labelZh: "AI 审查", shortZh: "审查" },
   { key: "ai-strategy", labelEn: "AI Strategy", labelZh: "AI 策略", shortZh: "策略" },
   { key: "settings", labelEn: "Settings", labelZh: "设置", shortZh: "设置" },
@@ -48,29 +45,6 @@ function SidebarGlyph({ tab }: { tab: WorkspaceTab }): JSX.Element {
           <path d="M4.5 18c.9-2.4 2.8-4 4.5-4s3.6 1.6 4.5 4" />
           <path d="M16 10.5c1.7.4 3 1.8 3.5 3.5" />
           <path d="M16.5 6.5a2.5 2.5 0 0 1 0 5" />
-        </svg>
-      );
-    case "import-center":
-      return (
-        <svg {...shared}>
-          <path d="M12 4v9" />
-          <path d="m8.5 10 3.5 3.5L15.5 10" />
-          <path d="M5 18.5h14" />
-        </svg>
-      );
-    case "jd-workspace":
-      return (
-        <svg {...shared}>
-          <rect x="5" y="4.5" width="14" height="15" rx="2" />
-          <path d="M8.5 8.5h7" />
-          <path d="M8.5 12h7" />
-          <path d="M8.5 15.5h4.5" />
-        </svg>
-      );
-    case "communications":
-      return (
-        <svg {...shared}>
-          <path d="M5 7.5A2.5 2.5 0 0 1 7.5 5h9A2.5 2.5 0 0 1 19 7.5v5A2.5 2.5 0 0 1 16.5 15H10l-3.5 3V15H7.5A2.5 2.5 0 0 1 5 12.5z" />
         </svg>
       );
     case "ai-review":
@@ -112,7 +86,7 @@ export function Sidebar({ active, onChange, counts }: SidebarProps): JSX.Element
     <aside className="workspace-sidebar">
       <div className="workspace-sidebar__brand">
         <div className="workspace-sidebar__logo">RA</div>
-        <div className="workspace-sidebar__eyebrow">{copy("Recruit workspace", "招聘工作台")}</div>
+        <div className="workspace-sidebar__eyebrow">{copy("Smart recruiting", "智能招聘")}</div>
       </div>
 
       <nav className="workspace-sidebar__nav" aria-label={copy("Workspace sections", "工作区分区")}>

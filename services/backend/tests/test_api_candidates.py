@@ -22,7 +22,7 @@ def test_candidate_crud(tmp_path):
                 "name": "Ada Lovelace",
                 "platform": "boss",
                 "platform_candidate_id": "boss-123",
-                "status": "discovered",
+                "current_status": "discovered",
                 "jd_id": "jd-001",
                 "contact_info": {"wechat": "ada"},
                 "ai_scores": {"overall": 92},
@@ -39,10 +39,10 @@ def test_candidate_crud(tmp_path):
 
         patch_response = client.patch(
             f"/api/candidates/{candidate_id}",
-            json={"status": "screening", "last_contacted_at": "2026-04-14T00:00:00Z"},
+            json={"current_status": "screening", "last_contacted_at": "2026-04-14T00:00:00Z"},
         )
         assert patch_response.status_code == 200
-        assert patch_response.json()["status"] == "screening"
+        assert patch_response.json()["current_status"] == "screening"
 
         delete_response = client.delete(f"/api/candidates/{candidate_id}")
         assert delete_response.status_code == 204

@@ -34,7 +34,7 @@ export type CandidateRecord = {
   name: string;
   platform: string;
   jdId: string;
-  status: CandidateStatus;
+  currentStatus: CandidateStatus;
   currentStageKey: string;
   lastContactedAt?: string;
   updatedAt: string;

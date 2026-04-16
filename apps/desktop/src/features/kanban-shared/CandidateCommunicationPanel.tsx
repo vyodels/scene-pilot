@@ -18,6 +18,7 @@ interface CandidateCommunicationPanelProps {
   onSelectCandidate(candidateId: string): void;
   onClose(): void;
   onOpenFullCockpit(candidateId: string): void;
+  onRefresh?(): Promise<unknown> | void;
   onCreateEntry(
     candidateId: string,
     payload: { direction: string; content: string; messageType?: string; platform?: string },
@@ -41,6 +42,7 @@ export function CandidateCommunicationPanel({
   onSelectCandidate,
   onClose,
   onOpenFullCockpit,
+  onRefresh,
   onCreateEntry,
   onTransition,
 }: CandidateCommunicationPanelProps): JSX.Element | null {
@@ -50,6 +52,7 @@ export function CandidateCommunicationPanel({
   const [overrideOpen, setOverrideOpen] = useState(false);
   const [pendingAction, setPendingAction] = useState<PendingActionState | null>(null);
   const [sending, setSending] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [runningActionKey, setRunningActionKey] = useState<string>();
 
   const filteredCandidates = useMemo(() => {
@@ -148,7 +151,22 @@ export function CandidateCommunicationPanel({
                 {selectedRecord.latestActivityAt ? formatCompactDate(selectedRecord.latestActivityAt) : copy("just now", "刚刚")}
               </span>
             </div>
-            <button type="button" className="candidate-communication-panel__refresh">
+            <button
+              type="button"
+              className="candidate-communication-panel__refresh"
+              disabled={refreshing}
+              onClick={async () => {
+                if (!onRefresh) {
+                  return;
+                }
+                setRefreshing(true);
+                try {
+                  await onRefresh();
+                } finally {
+                  setRefreshing(false);
+                }
+              }}
+            >
               ↺
             </button>
           </header>
@@ -297,7 +315,7 @@ export function CandidateCommunicationPanel({
             className="candidate-communication-panel__full-link"
             onClick={() => onOpenFullCockpit(selectedRecord.candidate.id)}
           >
-            {copy("Open in CommunicationsView ↗", "在候选人舱中完整打开 ↗")}
+            {copy("Locate in candidate workspace ↗", "在候选人工作台中定位 ↗")}
           </button>
         </aside>
       </section>

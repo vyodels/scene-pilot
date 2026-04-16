@@ -129,7 +129,7 @@ class ContextAssemblerService:
                 tier="required",
                 content={
                     "candidate_id": candidate.id,
-                    "status": candidate.status,
+                    "current_status": candidate.current_status,
                     "current_stage_key": candidate.current_stage_key,
                     "jd_id": candidate.jd_id,
                     "state_snapshot": dict(candidate.state_snapshot or {}),

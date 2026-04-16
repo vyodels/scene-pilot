@@ -151,7 +151,7 @@ def _ensure_runtime_session(session: Session):
 
 
 def _candidate_state_snapshot(candidate) -> CandidateStateSnapshotRead:
-    current_status = candidate.current_status or candidate.status
+    current_status = candidate.current_status
     payload = dict(candidate.state_snapshot or {})
     if not payload:
         payload = default_candidate_state_snapshot(status=current_status)
@@ -189,7 +189,7 @@ def _build_candidate_thread(session: Session, candidate) -> CandidateThreadRead:
                 id=f"synthetic-ai-{candidate.id}",
                 candidate_id=candidate.id,
                 assessment_type="ai",
-                stage_key=candidate.current_stage_key or candidate.current_status or candidate.status,
+                stage_key=candidate.current_stage_key or candidate.current_status,
                 status="completed",
                 decision=str((candidate.ai_scores or {}).get("decision") or "pending"),
                 score=int((candidate.ai_scores or {}).get("overall") or 0),
@@ -720,7 +720,7 @@ def create_resume_artifact(
             "captured_at": payload.captured_at or _now(),
         }
     )
-    snapshot = dict(candidate.state_snapshot or {}) or default_candidate_state_snapshot(status=candidate.current_status or candidate.status)
+    snapshot = dict(candidate.state_snapshot or {}) or default_candidate_state_snapshot(status=candidate.current_status)
     if payload.artifact_type == "resume":
         snapshot["resume_status"] = "received"
         snapshot["latest_note"] = payload.file_name or snapshot.get("latest_note")
@@ -776,7 +776,7 @@ def create_candidate_assessment(
                 "decided_at": payload.reviewed_at or _now(),
             }
         )
-    snapshot = dict(candidate.state_snapshot or {}) or default_candidate_state_snapshot(status=candidate.current_status or candidate.status)
+    snapshot = dict(candidate.state_snapshot or {}) or default_candidate_state_snapshot(status=candidate.current_status)
     if payload.assessment_type == "ai":
         snapshot["ai_assessment_status"] = payload.status
     if payload.assessment_type == "manual":

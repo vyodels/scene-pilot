@@ -5,6 +5,7 @@ export interface StatusChainBranchItem {
   label: string;
   count: number;
   tone: "positive" | "neutral" | "warning" | "critical";
+  emphasized?: boolean;
 }
 
 export interface StatusChainNodeItem {
@@ -28,6 +29,7 @@ interface StatusChainProps {
   allCount?: number;
   onSelect(statusId: string): void;
   showOverview?: boolean;
+  humanRequiredTooltip?: string;
 }
 
 export function StatusChain({
@@ -37,6 +39,7 @@ export function StatusChain({
   allCount,
   onSelect,
   showOverview = true,
+  humanRequiredTooltip = "This node requires human action.",
 }: StatusChainProps): JSX.Element {
   return (
     <div className="status-chain">
@@ -72,8 +75,17 @@ export function StatusChain({
                       className="status-chain__node"
                       data-active={activeStatus === item.statusId}
                       data-emphasized={item.emphasized ? "true" : undefined}
+                      title={item.emphasized ? humanRequiredTooltip : undefined}
                       onClick={() => onSelect(item.statusId)}
                     >
+                      {item.emphasized ? (
+                        <span className="status-chain__human-marker" aria-hidden="true">
+                          <svg viewBox="0 0 16 16" className="status-chain__human-marker-icon">
+                            <circle cx="8" cy="5" r="2.5" fill="currentColor" />
+                            <path d="M4.5 13.5c.25-2.45 1.75-4 3.5-4s3.25 1.55 3.5 4" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+                          </svg>
+                        </span>
+                      ) : null}
                       <span className="status-chain__text" data-tone={item.tone}>
                         {item.label}-{item.count}
                       </span>
@@ -106,8 +118,18 @@ export function StatusChain({
                             className="status-chain__branch"
                             data-active={activeStatus === branch.statusId}
                             data-tone={branch.tone}
+                            data-emphasized={branch.emphasized ? "true" : undefined}
+                            title={branch.emphasized ? humanRequiredTooltip : undefined}
                             onClick={() => onSelect(branch.statusId)}
                           >
+                            {branch.emphasized ? (
+                              <span className="status-chain__human-marker" aria-hidden="true">
+                                <svg viewBox="0 0 16 16" className="status-chain__human-marker-icon">
+                                  <circle cx="8" cy="5" r="2.5" fill="currentColor" />
+                                  <path d="M4.5 13.5c.25-2.45 1.75-4 3.5-4s3.25 1.55 3.5 4" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+                                </svg>
+                              </span>
+                            ) : null}
                             <span className="status-chain__branch-text">
                               {branch.label}-{branch.count}
                             </span>

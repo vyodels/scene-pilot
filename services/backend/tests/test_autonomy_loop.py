@@ -57,7 +57,7 @@ def test_autonomy_loop_processes_enqueued_task_when_enabled(tmp_path):
             name="Autonomy Candidate",
             platform="boss",
             platform_candidate_id="boss_autonomy_001",
-            status="screening",
+            current_status="screening",
         )
         session.add(candidate)
         session.commit()
@@ -208,7 +208,6 @@ def test_agent_control_prioritizes_high_potential_candidate_for_progression(tmp_
             name="Recent Candidate",
             platform="boss",
             platform_candidate_id="boss_priority_recent",
-            status="discovered",
             current_status="discovered",
             ai_scores={"overall": 62},
         )
@@ -216,7 +215,6 @@ def test_agent_control_prioritizes_high_potential_candidate_for_progression(tmp_
             name="Priority Candidate",
             platform="boss",
             platform_candidate_id="boss_priority_high",
-            status="discovered",
             current_status="discovered",
             ai_scores={"overall": 96},
         )
@@ -273,7 +271,6 @@ def test_agent_control_skips_candidates_that_already_have_open_task(tmp_path):
             name="Blocked Candidate",
             platform="boss",
             platform_candidate_id="boss_priority_blocked",
-            status="discovered",
             current_status="discovered",
             ai_scores={"overall": 99},
         )
@@ -281,7 +278,6 @@ def test_agent_control_skips_candidates_that_already_have_open_task(tmp_path):
             name="Fallback Candidate",
             platform="boss",
             platform_candidate_id="boss_priority_fallback",
-            status="discovered",
             current_status="discovered",
             ai_scores={"overall": 76},
         )
@@ -341,7 +337,6 @@ def test_autonomy_loop_queues_priority_candidate_progression_when_idle(tmp_path)
             name="Autonomy Priority Candidate",
             platform="boss",
             platform_candidate_id="boss_priority_loop",
-            status="discovered",
             current_status="discovered",
             ai_scores={"overall": 91},
         )
@@ -390,7 +385,6 @@ def test_agent_control_queues_waiting_candidate_retry_when_window_elapsed(tmp_pa
             name="Retry Candidate",
             platform="boss",
             platform_candidate_id="boss_retry_candidate",
-            status="outreach_sent",
             current_status="outreach_sent",
             last_contacted_at=utcnow() - timedelta(hours=96),
             state_snapshot={
@@ -433,7 +427,6 @@ def test_agent_control_closes_waiting_candidate_to_no_response_after_retry_exhau
             name="Close Candidate",
             platform="boss",
             platform_candidate_id="boss_retry_close",
-            status="outreach_sent",
             current_status="outreach_sent",
             last_contacted_at=last_contacted_at,
             state_snapshot={
@@ -494,7 +487,7 @@ def test_runtime_recovery_restores_recently_interrupted_run_on_restart(tmp_path)
             name="Recovery Candidate",
             platform="boss",
             platform_candidate_id="boss_recovery_001",
-            status="screening",
+            current_status="screening",
             jd_id="jd-recovery",
         )
         session.add(candidate)

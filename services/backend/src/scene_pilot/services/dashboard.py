@@ -17,6 +17,7 @@ from scene_pilot.repositories import (
 )
 from scene_pilot.schemas.domain import AgentStatusRead, DashboardRead
 from scene_pilot.services.events import EventStreamService
+from scene_pilot.services.state_machine import ensure_latest_state_machine
 from scene_pilot.services.sync import SyncService
 
 
@@ -75,6 +76,125 @@ def _blueprint_nodes_for_dashboard(blueprint: dict[str, Any]) -> list[dict[str, 
     return normalized
 
 
+def _candidate_followup_summary_definitions(session: Session) -> list[dict[str, Any]]:
+    machine = ensure_latest_state_machine(session)
+    node_by_id = {
+        str(node.get("id")): dict(node)
+        for node in machine.get("nodes", [])
+        if node.get("id")
+    }
+
+    def label_for(status_id: str) -> str:
+        node = node_by_id.get(status_id)
+        return str((node or {}).get("label") or status_id)
+
+    visible_statuses = [
+        status_id
+        for status_id, node in node_by_id.items()
+        if node.get("uiConfig", {}).get("showInKanban", True) is not False and not node.get("isTransient")
+    ]
+    closure_statuses = [
+        status_id for status_id in ("no_response", "cooldown", "archived", "candidate_withdrew") if status_id in node_by_id
+    ]
+    active_statuses = [
+        status_id
+        for status_id, node in node_by_id.items()
+        if status_id in visible_statuses
+        and node.get("phase") != "Z"
+        and (((not node.get("isTerminal")) and (not node.get("isSoftTerminal"))) or node.get("isSuccess"))
+        and status_id not in closure_statuses
+    ]
+    human_required_statuses = [
+        status_id
+        for status_id in active_statuses
+        if str((node_by_id.get(status_id) or {}).get("executionConfig", {}).get("mode") or "") == "human_required"
+    ]
+
+    def build_definition(
+        *,
+        key: str,
+        label: str,
+        summary: str,
+        relation: str | None,
+        matching_mode: str,
+        include_statuses: list[str],
+        exclude_statuses: list[str] | None = None,
+    ) -> dict[str, Any]:
+        exclude = list(exclude_statuses or [])
+        return {
+            "key": key,
+            "label": label,
+            "summary": summary,
+            "relation": relation,
+            "matchingMode": matching_mode,
+            "includeStatuses": include_statuses,
+            "excludeStatuses": exclude,
+            "includeLabels": [label_for(status_id) for status_id in include_statuses],
+            "excludeLabels": [label_for(status_id) for status_id in exclude],
+        }
+
+    return [
+        build_definition(
+            key="all",
+            label="全部状态",
+            summary="当前岗位与时间筛选下可见的全部候选人。",
+            relation="基准池",
+            matching_mode="all",
+            include_statuses=visible_statuses,
+        ),
+        build_definition(
+            key="active",
+            label="跟进中",
+            summary="仍在主流程里活跃推进的候选人总池。",
+            relation="主流程总池",
+            matching_mode="status_set",
+            include_statuses=active_statuses,
+            exclude_statuses=closure_statuses,
+        ),
+        build_definition(
+            key="human",
+            label="等待人工",
+            summary="当前停在需要招聘员处理或确认节点的候选人。",
+            relation="跟进中的子集",
+            matching_mode="status_set",
+            include_statuses=human_required_statuses,
+            exclude_statuses=closure_statuses,
+        ),
+        build_definition(
+            key="no_response",
+            label="无回复·可重试",
+            summary="已发送跟进但尚未回复，仍处于可自动重试窗口内的候选人。",
+            relation="独立等待池",
+            matching_mode="status_set",
+            include_statuses=[status_id for status_id in ["no_response"] if status_id in node_by_id],
+        ),
+        build_definition(
+            key="cooldown",
+            label="冷却中",
+            summary="已暂时暂停推进，等待冷却期结束或人工重新激活的候选人。",
+            relation="暂停池",
+            matching_mode="status_set",
+            include_statuses=[status_id for status_id in ["cooldown"] if status_id in node_by_id],
+        ),
+        build_definition(
+            key="archived",
+            label="已归档",
+            summary="流程已收口，仅做记录保留的候选人。",
+            relation="收口态",
+            matching_mode="status_set",
+            include_statuses=[status_id for status_id in ["archived"] if status_id in node_by_id],
+        ),
+        build_definition(
+            key="candidate_withdrew",
+            label="候选人主动放弃",
+            summary="候选人明确表示退出当前流程，不再继续推进。",
+            relation="收口态",
+            matching_mode="status_set",
+            include_statuses=[status_id for status_id in ["candidate_withdrew"] if status_id in node_by_id],
+        ),
+    ]
+
+
 class DashboardService:
     def __init__(
         self,
@@ -123,27 +243,16 @@ class DashboardService:
             "面试/结果": 0,
         }
         for candidate in candidates:
-            status = candidate.status
-            if status in {"discovered", "profile_reviewed"}:
+            status = candidate.current_status
+            if status in {"discovered", "ai_online_pending", "ai_online_passed", "ai_online_rejected", "outreach_pending"}:
                 pipeline_map["发现"] += 1
-            elif status in {"screening", "screening_passed", "screening_rejected"}:
+            elif status in {"offline_scoring", "offline_score_passed", "offline_score_rejected", "human_review_pending", "human_review_passed", "human_review_rejected"}:
                 pipeline_map["初筛"] += 1
-            elif status in {"contact_required", "contact_acquired", "pending_communication", "communicating", "waiting_reply"}:
+            elif status in {"outreach_sent", "in_conversation", "resume_requested", "contact_requested", "contact_acquired", "cooldown", "candidate_withdrew", "no_response"}:
                 pipeline_map["联系方式/沟通"] += 1
-            elif status in {"resume_requested", "resume_received", "scoring", "ai_assessment_completed", "human_assessment_pending", "human_assessment_completed"}:
+            elif status in {"resume_received"}:
                 pipeline_map["简历/评估"] += 1
-            elif status in {
-                "waiting_schedule_round_1",
-                "interview_round_1_scheduled",
-                "waiting_schedule_round_2",
-                "interview_round_2_scheduled",
-                "waiting_schedule_final",
-                "interview_final_scheduled",
-                "offer_review",
-                "passed_to_talent_pool",
-                "hr_review",
-                "team_review",
-            }:
+            elif status in {"interview_pending", "interview_scheduled", "interview_completed", "interview_passed", "interview_rejected", "offer_pending", "offer_sent", "offer_accepted", "offer_declined"}:
                 pipeline_map["面试/结果"] += 1
 
         dashboard_payload: dict[str, Any] = {
@@ -151,14 +260,14 @@ class DashboardService:
                 {
                     "label": "候选人",
                     "value": str(metrics.candidate_count),
-                    "delta": f"{metrics.by_status.get('screening', 0)} 个正在初筛",
+                    "delta": f"{metrics.by_status.get('offline_scoring', 0) + metrics.by_status.get('human_review_pending', 0)} 个正在初筛",
                     "tone": "positive" if metrics.candidate_count else "neutral",
                     "caption": "已记录到本地 SQLite",
                 },
                 {
                     "label": "执行蓝图",
                     "value": str(metrics.playbook_count),
-                    "delta": f"{metrics.by_status.get('passed_to_talent_pool', 0)} 位已进入后续交接",
+                    "delta": f"{metrics.by_status.get('offer_accepted', 0)} 位已进入后续交接",
                     "tone": "neutral",
                     "caption": "Recruit Agent 当前可用的 Playbook 蓝图",
                 },
@@ -230,7 +339,7 @@ class DashboardService:
                     "title": item.contact_info.get("title", "候选人"),
                     "platform": item.platform,
                     "location": item.contact_info.get("location", "未知"),
-                    "status": item.status,
+                    "currentStatus": item.current_status,
                     "stageKey": item.current_stage_key or "candidate_probe",
                     "jdTitle": item.jd_id or "未分配岗位",
                     "matchScore": int(item.ai_scores.get("overall", 0) or 0),
@@ -247,6 +356,7 @@ class DashboardService:
                 }
                 for item in candidates
             ],
+            "candidateFollowUpSummaryDefinitions": _candidate_followup_summary_definitions(session),
             "playbooks": [
                 {
                     "id": item.id,

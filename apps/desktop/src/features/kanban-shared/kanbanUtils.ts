@@ -35,7 +35,7 @@ function pickString(value: unknown): string | undefined {
 }
 
 export function resolveCandidateCurrentStatus(candidate: CandidateRecord): string {
-  return candidate.currentStatus?.trim() || candidate.status?.trim() || "discovered";
+  return candidate.currentStatus.trim() || "discovered";
 }
 
 export function createNodeMap(stateMachine: RecruitmentStateMachine): Map<string, StateNode> {

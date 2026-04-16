@@ -50,7 +50,7 @@ class ApiPlaybookRuntimeTests(unittest.TestCase):
             json={
                 "name": "Baseline Candidate",
                 "platform": "site",
-                "status": "discovered",
+                "current_status": "discovered",
                 "jd_id": "jd-baseline",
             },
         )
@@ -83,7 +83,7 @@ class ApiPlaybookRuntimeTests(unittest.TestCase):
             json={
                 "name": "Test Candidate",
                 "platform": "boss",
-                "status": "discovered",
+                "current_status": "discovered",
                 "jd_id": "jd-test",
             },
         )
@@ -92,10 +92,10 @@ class ApiPlaybookRuntimeTests(unittest.TestCase):
 
         updated = self.client.patch(
             f"/api/candidates/{candidate_id}",
-            json={"status": "screening", "current_stage_key": "candidate_probe"},
+            json={"current_status": "screening", "current_stage_key": "candidate_probe"},
         )
         self.assertEqual(updated.status_code, 200)
-        self.assertEqual(updated.json()["status"], "screening")
+        self.assertEqual(updated.json()["current_status"], "screening")
 
         approvals = self.client.get("/api/approvals")
         self.assertEqual(approvals.status_code, 200)
@@ -746,7 +746,7 @@ class ApiPlaybookRuntimeTests(unittest.TestCase):
             json={
                 "name": "Blocking Candidate",
                 "platform": "site",
-                "status": "screening",
+                "current_status": "screening",
                 "jd_id": "jd-runtime",
             },
         ).json()
@@ -755,7 +755,7 @@ class ApiPlaybookRuntimeTests(unittest.TestCase):
             json={
                 "name": "Queued Candidate",
                 "platform": "site",
-                "status": "discovered",
+                "current_status": "discovered",
                 "jd_id": "jd-runtime",
             },
         ).json()
@@ -879,7 +879,6 @@ class ApiPlaybookRuntimeTests(unittest.TestCase):
             json={
                 "name": "AI Auto Candidate",
                 "platform": "site",
-                "status": "outreach_pending",
                 "current_status": "outreach_pending",
                 "jd_id": "jd-ai-auto",
             },
@@ -919,7 +918,6 @@ class ApiPlaybookRuntimeTests(unittest.TestCase):
             json={
                 "name": "Locked Review Candidate",
                 "platform": "site",
-                "status": "offer_pending",
                 "current_status": "offer_pending",
                 "jd_id": "jd-offer",
             },
@@ -984,7 +982,6 @@ class ApiPlaybookRuntimeTests(unittest.TestCase):
             json={
                 "name": "Offline Score Candidate",
                 "platform": "site",
-                "status": "offline_scoring",
                 "current_status": "offline_scoring",
                 "deepest_milestone": "M06",
                 "jd_id": "jd-offline",
@@ -1048,7 +1045,6 @@ class ApiPlaybookRuntimeTests(unittest.TestCase):
             json={
                 "name": "Retry Follow Up Candidate",
                 "platform": "boss",
-                "status": "outreach_sent",
                 "current_status": "outreach_sent",
                 "jd_id": "jd-retry-follow-up",
                 "last_contacted_at": previous_contacted_at.isoformat(),
@@ -1134,7 +1130,6 @@ class ApiPlaybookRuntimeTests(unittest.TestCase):
             json={
                 "name": "Rollback Candidate",
                 "platform": "boss",
-                "status": "in_conversation",
                 "current_status": "in_conversation",
                 "deepest_milestone": "M04",
                 "jd_id": "jd-rollback",
@@ -1221,7 +1216,6 @@ class ApiPlaybookRuntimeTests(unittest.TestCase):
             json={
                 "name": "Cooldown Candidate",
                 "platform": "boss",
-                "status": "in_conversation",
                 "current_status": "in_conversation",
                 "deepest_milestone": "M04",
                 "jd_id": "jd-cooldown",

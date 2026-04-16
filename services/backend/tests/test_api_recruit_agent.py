@@ -70,7 +70,7 @@ def test_recruit_agent_candidate_thread_state_and_memory(tmp_path):
         )
         assert transition_response.status_code == 200
         thread_payload = transition_response.json()
-        assert thread_payload["candidate"]["status"] == "contact_acquired"
+        assert thread_payload["candidate"]["current_status"] == "contact_acquired"
         assert thread_payload["state_snapshot"]["contact_acquired"] is True
         assert "phone" in thread_payload["state_snapshot"]["contact_channels"]
         assert len(thread_payload["status_transitions"]) >= 1
@@ -458,16 +458,33 @@ def test_state_machine_criteria_suggestions_endpoint(tmp_path):
             json={
                 "skill_id": "resume_scoring_v2",
                 "name": "Resume Scoring V2",
+                "version": 2,
                 "status": "active",
                 "platform": "runtime-scene",
                 "bound_to_stage": "offline_scoring",
                 "strategy": {"instruction": "Use the revised resume scoring rubric."},
-                "execution_hints": {"observed_outcomes": [{"status": "pass"}]},
+                "execution_hints": {"observed_outcomes": [{"status": "pass"}, {"status": "pass"}]},
                 "health_check_config": {"expected_result_status": "pass"},
                 "last_health_status": "healthy",
             },
         )
         assert alternative_skill.status_code == 201
+        lower_ranked_alternative_skill = client.post(
+            "/api/skills",
+            json={
+                "skill_id": "resume_scoring_v3",
+                "name": "Resume Scoring V3",
+                "version": 3,
+                "status": "active",
+                "platform": "runtime-scene",
+                "bound_to_stage": "offline_scoring",
+                "strategy": {"instruction": "Use the experimental resume scoring rubric."},
+                "execution_hints": {"observed_outcomes": [{"status": "pass"}]},
+                "health_check_config": {"expected_result_status": "pass"},
+                "last_health_status": "warning",
+            },
+        )
+        assert lower_ranked_alternative_skill.status_code == 201
 
         for index, payload in enumerate(
             (
@@ -524,3 +541,4 @@ def test_state_machine_criteria_suggestions_endpoint(tmp_path):
         skill_suggestion = next(item for item in offline_report["suggestions"] if item["kind"] == "switch_skill")
         assert skill_suggestion["proposed_criteria_ref"]["skillId"] == "resume_scoring_v2"
         assert skill_suggestion["suggested_skill_id"] == "resume_scoring_v2"
+        assert "health=healthy" in skill_suggestion["rationale"]

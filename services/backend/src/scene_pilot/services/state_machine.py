@@ -172,8 +172,7 @@ def _node_index(state_machine: dict[str, Any]) -> dict[str, dict[str, Any]]:
 
 
 def resolve_candidate_current_status(candidate: Any) -> str:
-    current = getattr(candidate, "current_status", None) or getattr(candidate, "status", None)
-    return str(current or "discovered")
+    return str(getattr(candidate, "current_status", None) or "discovered")
 
 
 def _resolve_actor(payload: CandidateStateTransitionRequest) -> str:
@@ -356,7 +355,6 @@ def transition_candidate(
         candidate.contact_info = contact_info
     updated_candidate = candidate_repo.update_state_snapshot(
         candidate,
-        status=payload.to_status,
         current_status=payload.to_status,
         deepest_milestone=next_deepest_milestone,
         snapshot=snapshot,

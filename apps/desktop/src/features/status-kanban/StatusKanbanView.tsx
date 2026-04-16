@@ -12,14 +12,18 @@ import { CandidateDetailDrawer } from "../kanban-shared/CandidateDetailDrawer";
 import { ManualStatusOverrideDrawer } from "../kanban-shared/ManualStatusOverrideDrawer";
 import { StatusChain } from "../kanban-shared/StatusChain";
 import { buildCandidateViewModels, isWithinCandidateDateFilter, nodeTone } from "../kanban-shared/kanbanUtils";
-import type { CandidateRecord, CandidateThreadRecord } from "../../lib/types";
+import type { CandidateFollowUpSummaryDefinition, CandidateRecord, CandidateThreadRecord } from "../../lib/types";
 import { useI18n } from "../../lib/i18n";
 
 interface StatusKanbanViewProps {
   candidates: CandidateRecord[];
   threads: CandidateThreadRecord[];
   stateMachine: RecruitmentStateMachine;
+  summaryDefinitions?: CandidateFollowUpSummaryDefinition[];
+  preferredCandidateId?: string;
+  preferredConversationToken?: number;
   onOpenCandidate(candidateId: string): void;
+  onRefresh?(): Promise<unknown> | void;
   onCreateEntry(
     candidateId: string,
     payload: { direction: string; content: string; messageType?: string; platform?: string },
@@ -78,11 +82,142 @@ function splitMainNodesIntoRows(nodes: StateNode[], availableWidth: number): Sta
   return rows;
 }
 
+function buildFallbackSummaryDefinitions(
+  stateMachine: RecruitmentStateMachine,
+  copy: (en: string, zh: string) => string,
+): CandidateFollowUpSummaryDefinition[] {
+  const visibleNodes = stateMachine.nodes.filter(
+    (node) => node.uiConfig?.showInKanban !== false && !node.isTransient,
+  );
+  const closureStatuses = visibleNodes
+    .filter((node) => ["no_response", "cooldown", "archived", "candidate_withdrew"].includes(node.id))
+    .map((node) => node.id);
+  const activeStatuses = visibleNodes
+    .filter(
+      (node) =>
+        node.phase !== "Z" &&
+        (((!node.isTerminal && !node.isSoftTerminal) || node.isSuccess)) &&
+        !closureStatuses.includes(node.id),
+    )
+    .map((node) => node.id);
+  const humanRequiredStatuses = visibleNodes
+    .filter((node) => activeStatuses.includes(node.id) && node.executionConfig?.mode === "human_required")
+    .map((node) => node.id);
+  const labelById = new Map(visibleNodes.map((node) => [node.id, node.label]));
+
+  const toLabels = (statusIds: string[]) => statusIds.map((statusId) => labelById.get(statusId) ?? statusId);
+
+  return [
+    {
+      key: "all",
+      label: copy("All statuses", "全部状态"),
+      summary: copy(
+        "All candidates currently visible under the current role and date filters.",
+        "当前岗位与时间筛选下可见的全部候选人。",
+      ),
+      relation: copy("Base pool", "基准池"),
+      matchingMode: "all",
+      includeStatuses: visibleNodes.map((node) => node.id),
+      excludeStatuses: [],
+      includeLabels: toLabels(visibleNodes.map((node) => node.id)),
+      excludeLabels: [],
+    },
+    {
+      key: "active",
+      label: copy("In follow-up", "跟进中"),
+      summary: copy(
+        "Candidates still progressing in the main follow-up workflow.",
+        "仍在主流程里活跃推进的候选人总池。",
+      ),
+      relation: copy("Main workflow pool", "主流程总池"),
+      matchingMode: "status_set",
+      includeStatuses: activeStatuses,
+      excludeStatuses: closureStatuses,
+      includeLabels: toLabels(activeStatuses),
+      excludeLabels: toLabels(closureStatuses),
+    },
+    {
+      key: "human",
+      label: copy("Needs human", "等待人工"),
+      summary: copy(
+        "Candidates currently stopped at a recruiter-operated step.",
+        "当前停在需要招聘员处理或确认节点的候选人。",
+      ),
+      relation: copy("Subset of in follow-up", "跟进中的子集"),
+      matchingMode: "status_set",
+      includeStatuses: humanRequiredStatuses,
+      excludeStatuses: closureStatuses,
+      includeLabels: toLabels(humanRequiredStatuses),
+      excludeLabels: toLabels(closureStatuses),
+    },
+    {
+      key: "no_response",
+      label: copy("Retry pending", "无回复·可重试"),
+      summary: copy(
+        "Candidates still inside the retry window after no response.",
+        "已发送跟进但尚未回复，仍处于可自动重试窗口内的候选人。",
+      ),
+      relation: copy("Independent waiting pool", "独立等待池"),
+      matchingMode: "status_set",
+      includeStatuses: visibleNodes.filter((node) => node.id === "no_response").map((node) => node.id),
+      excludeStatuses: [],
+      includeLabels: toLabels(visibleNodes.filter((node) => node.id === "no_response").map((node) => node.id)),
+      excludeLabels: [],
+    },
+    {
+      key: "cooldown",
+      label: copy("Cooldown", "冷却中"),
+      summary: copy(
+        "Candidates temporarily paused and waiting for manual reactivation or cooldown expiry.",
+        "已暂时暂停推进，等待冷却期结束或人工重新激活的候选人。",
+      ),
+      relation: copy("Paused pool", "暂停池"),
+      matchingMode: "status_set",
+      includeStatuses: visibleNodes.filter((node) => node.id === "cooldown").map((node) => node.id),
+      excludeStatuses: [],
+      includeLabels: toLabels(visibleNodes.filter((node) => node.id === "cooldown").map((node) => node.id)),
+      excludeLabels: [],
+    },
+    {
+      key: "archived",
+      label: copy("Archived", "已归档"),
+      summary: copy(
+        "Candidates already closed and kept only for record.",
+        "流程已收口，仅做记录保留的候选人。",
+      ),
+      relation: copy("Closed state", "收口态"),
+      matchingMode: "status_set",
+      includeStatuses: visibleNodes.filter((node) => node.id === "archived").map((node) => node.id),
+      excludeStatuses: [],
+      includeLabels: toLabels(visibleNodes.filter((node) => node.id === "archived").map((node) => node.id)),
+      excludeLabels: [],
+    },
+    {
+      key: "candidate_withdrew",
+      label: copy("Candidate withdrew", "候选人主动放弃"),
+      summary: copy(
+        "Candidates who explicitly withdrew from the current process.",
+        "候选人明确表示退出当前流程，不再继续推进。",
+      ),
+      relation: copy("Closed state", "收口态"),
+      matchingMode: "status_set",
+      includeStatuses: visibleNodes.filter((node) => node.id === "candidate_withdrew").map((node) => node.id),
+      excludeStatuses: [],
+      includeLabels: toLabels(visibleNodes.filter((node) => node.id === "candidate_withdrew").map((node) => node.id)),
+      excludeLabels: [],
+    },
+  ];
+}
+
 export function StatusKanbanView({
   candidates,
   threads,
   stateMachine,
+  summaryDefinitions = [],
+  preferredCandidateId,
+  preferredConversationToken,
   onOpenCandidate,
+  onRefresh,
   onCreateEntry,
   onTransition,
 }: StatusKanbanViewProps): JSX.Element {
@@ -91,6 +226,8 @@ export function StatusKanbanView({
   const [visibilityFilter, setVisibilityFilter] = useState<"all" | "active" | "human">("all");
   const [dateRange, setDateRange] = useState<CandidateDateRangeState>(() => createCandidateDateRangeState());
   const [selectedStatus, setSelectedStatus] = useState<string>("all");
+  const [hoveredSummaryKey, setHoveredSummaryKey] =
+    useState<CandidateFollowUpSummaryDefinition["key"] | null>(null);
   const [activeConversationCandidateId, setActiveConversationCandidateId] = useState<string>();
   const [detailCandidateId, setDetailCandidateId] = useState<string>();
   const [overrideCandidateId, setOverrideCandidateId] = useState<string>();
@@ -108,6 +245,36 @@ export function StatusKanbanView({
   );
 
   const effectiveDateFilter = useMemo(() => resolveCandidateDateRangeFilter(dateRange), [dateRange]);
+  const effectiveSummaryDefinitions = useMemo(
+    () => (summaryDefinitions.length ? summaryDefinitions : buildFallbackSummaryDefinitions(stateMachine, copy)),
+    [copy, stateMachine, summaryDefinitions],
+  );
+
+  const summaryDefinitionByKey = useMemo(
+    () => new Map(effectiveSummaryDefinitions.map((definition) => [definition.key, definition])),
+    [effectiveSummaryDefinitions],
+  );
+
+  const matchesSummaryDefinition = useMemo(
+    () =>
+      (
+        item: (typeof models)[number],
+        key: CandidateFollowUpSummaryDefinition["key"],
+      ): boolean => {
+        const definition = summaryDefinitionByKey.get(key);
+        if (!definition || definition.matchingMode === "all") {
+          return true;
+        }
+        if (definition.includeStatuses.length && !definition.includeStatuses.includes(item.currentStatus)) {
+          return false;
+        }
+        if (definition.excludeStatuses.includes(item.currentStatus)) {
+          return false;
+        }
+        return true;
+      },
+    [models, summaryDefinitionByKey],
+  );
 
   const baseFilteredModels = useMemo(
     () =>
@@ -126,20 +293,12 @@ export function StatusKanbanView({
   const filteredModels = useMemo(
     () =>
       baseFilteredModels.filter((item) => {
-        if (visibilityFilter === "human" && !item.humanRequired) {
-          return false;
-        }
-        if (
-          visibilityFilter === "active" &&
-          item.currentNode &&
-          (item.currentNode.isTerminal || item.currentNode.isSoftTerminal) &&
-          !item.currentNode.isSuccess
-        ) {
+        if (visibilityFilter !== "all" && !matchesSummaryDefinition(item, visibilityFilter)) {
           return false;
         }
         return true;
       }),
-    [baseFilteredModels, visibilityFilter],
+    [baseFilteredModels, matchesSummaryDefinition, visibilityFilter],
   );
 
   const countByStatus = useMemo(() => {
@@ -150,23 +309,11 @@ export function StatusKanbanView({
     return counts;
   }, [filteredModels]);
 
-  const visibilityCounts = useMemo(
-    () => ({
-      all: baseFilteredModels.length,
-      active: baseFilteredModels.filter(
-        (item) =>
-          !item.currentNode ||
-          ((!item.currentNode.isTerminal && !item.currentNode.isSoftTerminal) || item.currentNode.isSuccess),
-      ).length,
-      human: baseFilteredModels.filter((item) => item.humanRequired).length,
-    }),
-    [baseFilteredModels],
-  );
-
   const mainNodes = useMemo(
     () =>
       stateMachine.nodes.filter(
         (node) =>
+          node.id !== "no_response" &&
           node.uiConfig?.showInKanban !== false &&
           !node.isTransient &&
           !isGlobalTerminal(node) &&
@@ -179,6 +326,7 @@ export function StatusKanbanView({
     () =>
       stateMachine.nodes.filter(
         (node) =>
+          node.id !== "no_response" &&
           node.uiConfig?.showInKanban !== false &&
           !node.isTransient &&
           !isGlobalTerminal(node) &&
@@ -200,18 +348,22 @@ export function StatusKanbanView({
     return map;
   }, [stateMachine.globalTransitions, stateMachine.transitions]);
 
-  const globalTerminalItems = useMemo(
-    () =>
-      stateMachine.nodes
-        .filter((node) => node.uiConfig?.showInKanban !== false && !node.isTransient && isGlobalTerminal(node))
-        .map((node) => ({
-          statusId: node.id,
-          label: node.label,
-          count: countByStatus.get(node.id) ?? 0,
-          tone: nodeTone(node),
-        })),
-    [countByStatus, stateMachine.nodes],
-  );
+  const statusSummaryOptions = useMemo(() => {
+    return effectiveSummaryDefinitions.map((definition) => ({
+      ...definition,
+      label:
+        definition.key === "all"
+          ? copy("All statuses", "全部状态")
+          : definition.label,
+      count:
+        definition.key === "all"
+          ? baseFilteredModels.length
+          : baseFilteredModels.filter((item) => matchesSummaryDefinition(item, definition.key)).length,
+      kind: (
+        definition.key === "all" || definition.key === "active" || definition.key === "human" ? "visibility" : "status"
+      ) as "visibility" | "status",
+    }));
+  }, [baseFilteredModels, copy, effectiveSummaryDefinitions, matchesSummaryDefinition]);
 
   const rows = useMemo(
     () =>
@@ -230,6 +382,7 @@ export function StatusKanbanView({
               label: branch.label,
               count: countByStatus.get(branch.id) ?? 0,
               tone: nodeTone(branch),
+              emphasized: branch.executionConfig?.mode === "human_required",
             })),
         })),
       })),
@@ -280,47 +433,32 @@ export function StatusKanbanView({
     }
   }, [activeConversationCandidateId, detailCandidateId, overrideCandidateId, tableCandidates]);
 
+  useEffect(() => {
+    if (!preferredCandidateId || preferredConversationToken == null) {
+      return;
+    }
+    const target = models.find((item) => item.candidate.id === preferredCandidateId);
+    if (!target) {
+      return;
+    }
+    setJobFilter("all");
+    setVisibilityFilter("all");
+    setSelectedStatus(target.currentStatus);
+    setActiveConversationCandidateId(preferredCandidateId);
+  }, [models, preferredCandidateId, preferredConversationToken]);
+
   const selectedLabel =
     selectedStatus === "all"
       ? copy("All candidates", "全部候选人")
+      : selectedStatus === "cooldown"
+        ? copy("Cooldown candidates", "冷却中候选人")
+        : selectedStatus === "no_response"
+          ? copy("Retry pending candidates", "无回复·可重试候选人")
       : stateMachine.nodes.find((node) => node.id === selectedStatus)?.label ?? selectedStatus;
 
   return (
     <div className="kanban-page">
-      <div className="kanban-filter-row">
-        <div className="kanban-filter__group">
-          {[
-            { key: "all" as const, label: copy("All", "全部"), count: visibilityCounts.all },
-            { key: "active" as const, label: copy("Only active", "只看未淘汰"), count: visibilityCounts.active },
-            { key: "human" as const, label: copy("Needs human", "只看等待人工"), count: visibilityCounts.human },
-          ].map((option) => (
-            <button
-              key={option.key}
-              type="button"
-              className="kanban-filter__toggle"
-              data-active={visibilityFilter === option.key}
-              onClick={() => {
-                setVisibilityFilter(option.key);
-                setSelectedStatus("all");
-              }}
-            >
-              {`${option.label}-${option.count}`}
-            </button>
-          ))}
-        </div>
-        <div className="kanban-filter__group">
-          {globalTerminalItems.map((item) => (
-            <button
-              key={item.statusId}
-              type="button"
-              className="kanban-filter__toggle"
-              data-active={selectedStatus === item.statusId}
-              onClick={() => setSelectedStatus(item.statusId)}
-            >
-              {`${item.label}-${item.count}`}
-            </button>
-          ))}
-        </div>
+      <div className="kanban-filter-row status-kanban__summary-row">
         <label className="kanban-filter">
           <span className="kanban-filter__label">{copy("Role", "岗位")}</span>
           <select value={jobFilter} onChange={(event) => setJobFilter(event.target.value)} className="kanban-filter__select">
@@ -333,14 +471,86 @@ export function StatusKanbanView({
           </select>
         </label>
         <CandidateDateRangeControl value={dateRange} onChange={setDateRange} />
+        <div className="kanban-filter__group">
+          {statusSummaryOptions.map((option) => (
+            <div
+              key={option.key}
+              className="kanban-summary-filter"
+              onMouseEnter={() => setHoveredSummaryKey(option.key)}
+              onMouseLeave={() => setHoveredSummaryKey((current) => (current === option.key ? null : current))}
+            >
+              <button
+                type="button"
+                className="kanban-filter__toggle"
+                data-active={
+                  option.kind === "visibility"
+                    ? visibilityFilter === option.key && selectedStatus === "all"
+                    : selectedStatus === option.key
+                }
+                onFocus={() => setHoveredSummaryKey(option.key)}
+                onBlur={() => setHoveredSummaryKey((current) => (current === option.key ? null : current))}
+                onClick={() => {
+                  if (option.kind === "visibility") {
+                    setVisibilityFilter(option.key as "all" | "active" | "human");
+                    setSelectedStatus("all");
+                  } else {
+                    setVisibilityFilter("all");
+                    setSelectedStatus(option.key);
+                  }
+                }}
+              >
+                {`${option.label}-${option.count}`}
+              </button>
+              {hoveredSummaryKey === option.key ? (
+                <div className="kanban-summary-filter__popover" role="dialog" aria-label={option.label}>
+                  <div className="kanban-summary-filter__title">{option.label}</div>
+                  <div className="kanban-summary-filter__summary">{option.summary}</div>
+                  {option.relation ? (
+                    <div className="kanban-summary-filter__meta">
+                      <span className="kanban-summary-filter__pill">{option.relation}</span>
+                    </div>
+                  ) : null}
+                  {option.includeLabels.length ? (
+                    <div className="kanban-summary-filter__group">
+                      <div className="kanban-summary-filter__group-label">{copy("Includes", "包含")}</div>
+                      <div className="kanban-summary-filter__pill-row">
+                        {option.includeLabels.map((label) => (
+                          <span key={`${option.key}:include:${label}`} className="kanban-summary-filter__pill">
+                            {label}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+                  {option.excludeLabels.length ? (
+                    <div className="kanban-summary-filter__group">
+                      <div className="kanban-summary-filter__group-label">{copy("Excludes", "不包含")}</div>
+                      <div className="kanban-summary-filter__pill-row">
+                        {option.excludeLabels.map((label) => (
+                          <span
+                            key={`${option.key}:exclude:${label}`}
+                            className="kanban-summary-filter__pill kanban-summary-filter__pill--muted"
+                          >
+                            {label}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          ))}
+        </div>
       </div>
 
       <div ref={chainContainerRef}>
         <StatusChain
           rows={rows}
           globalTerminalItems={[]}
-          activeStatus={selectedStatus}
+          activeStatus={selectedStatus === "no_response" ? "cooldown" : selectedStatus}
           showOverview={false}
+          humanRequiredTooltip={copy("This node requires recruiter action.", "这个节点是需要人工操作的节点。")}
           onSelect={setSelectedStatus}
         />
       </div>
@@ -364,6 +574,7 @@ export function StatusKanbanView({
           onSelectCandidate={setActiveConversationCandidateId}
           onClose={() => setActiveConversationCandidateId(undefined)}
           onOpenFullCockpit={onOpenCandidate}
+          onRefresh={onRefresh}
           onCreateEntry={onCreateEntry}
           onTransition={onTransition}
         />

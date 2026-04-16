@@ -1,5 +1,4 @@
 export * from "./agent-inbox/AgentInboxView";
-export * from "./communications/CommunicationsView";
 export * from "./dashboard/DashboardView";
 export * from "./evolution/EvolutionView";
 export * from "./recruit-agent/RecruitAgentView";

@@ -20,7 +20,10 @@ interface FunnelKanbanViewProps {
   candidates: CandidateRecord[];
   threads: CandidateThreadRecord[];
   stateMachine: RecruitmentStateMachine;
+  preferredCandidateId?: string;
+  preferredConversationToken?: number;
   onOpenCandidate(candidateId: string): void;
+  onRefresh?(): Promise<unknown> | void;
   onCreateEntry(
     candidateId: string,
     payload: { direction: string; content: string; messageType?: string; platform?: string },
@@ -32,7 +35,10 @@ export function FunnelKanbanView({
   candidates,
   threads,
   stateMachine,
+  preferredCandidateId,
+  preferredConversationToken,
   onOpenCandidate,
+  onRefresh,
   onCreateEntry,
   onTransition,
 }: FunnelKanbanViewProps): JSX.Element {
@@ -141,9 +147,24 @@ export function FunnelKanbanView({
     }
   }, [activeConversationCandidateId, detailCandidateId, overrideCandidateId, selectedCandidates]);
 
+  useEffect(() => {
+    if (!preferredCandidateId || preferredConversationToken == null) {
+      return;
+    }
+    const target = models.find((item) => item.candidate.id === preferredCandidateId);
+    if (!target) {
+      return;
+    }
+    setJobFilter("all");
+    if (target.deepestMilestone) {
+      setSelectedMilestone(target.deepestMilestone);
+    }
+    setActiveConversationCandidateId(preferredCandidateId);
+  }, [models, preferredCandidateId, preferredConversationToken]);
+
   return (
     <div className="kanban-page">
-      <div className="kanban-filter-row">
+      <div className="kanban-filter-row funnel-kanban__filter-row">
         <label className="kanban-filter">
           <span className="kanban-filter__label">{copy("Role", "岗位")}</span>
           <select value={jobFilter} onChange={(event) => setJobFilter(event.target.value)} className="kanban-filter__select">
@@ -158,7 +179,9 @@ export function FunnelKanbanView({
         <CandidateDateRangeControl value={dateRange} onChange={setDateRange} />
       </div>
 
-      <FunnelStageBar items={stageItems} activeMilestoneId={selectedMilestone} onSelect={setSelectedMilestone} />
+      <div className="funnel-kanban__stage-row">
+        <FunnelStageBar items={stageItems} activeMilestoneId={selectedMilestone} onSelect={setSelectedMilestone} />
+      </div>
 
       <CandidateTable
         title={selectedNodeLabel}
@@ -179,6 +202,7 @@ export function FunnelKanbanView({
           onSelectCandidate={setActiveConversationCandidateId}
           onClose={() => setActiveConversationCandidateId(undefined)}
           onOpenFullCockpit={onOpenCandidate}
+          onRefresh={onRefresh}
           onCreateEntry={onCreateEntry}
           onTransition={onTransition}
         />

@@ -56,8 +56,7 @@ class CandidateBase(BaseModel):
     name: str
     platform: str = "site"
     platform_candidate_id: str | None = None
-    status: str = "discovered"
-    current_status: str | None = None
+    current_status: str = "discovered"
     current_stage_key: str | None = None
     deepest_milestone: str | None = None
     jd_id: str | None = None
@@ -79,7 +78,6 @@ class CandidateUpdate(BaseModel):
     name: str | None = None
     platform: str | None = None
     platform_candidate_id: str | None = None
-    status: str | None = None
     current_status: str | None = None
     current_stage_key: str | None = None
     deepest_milestone: str | None = None
@@ -1667,7 +1665,7 @@ class CandidateDashboardRead(BaseModel):
     title: str
     platform: str
     location: str
-    status: str
+    currentStatus: str
     stageKey: str
     jdTitle: str
     matchScore: int
@@ -1678,6 +1676,18 @@ class CandidateDashboardRead(BaseModel):
     resumeAvailable: bool
     cooldownUntil: str | None = None
     lastContactedAt: str | None = None
+
+
+class CandidateFollowUpSummaryDefinitionRead(BaseModel):
+    key: str
+    label: str
+    summary: str
+    relation: str | None = None
+    matchingMode: str
+    includeStatuses: list[str] = Field(default_factory=list)
+    excludeStatuses: list[str] = Field(default_factory=list)
+    includeLabels: list[str] = Field(default_factory=list)
+    excludeLabels: list[str] = Field(default_factory=list)
 
 
 class BlueprintNodeSummaryRead(BaseModel):
@@ -1741,6 +1751,7 @@ class DashboardRead(BaseModel):
     timeline: list[TimelineEventRead]
     alerts: list[TimelineEventRead]
     candidates: list[CandidateDashboardRead]
+    candidateFollowUpSummaryDefinitions: list[CandidateFollowUpSummaryDefinitionRead] = Field(default_factory=list)
     playbooks: list[PlaybookDashboardRead]
     skills: list[SkillDashboardRead]
     approvals: list[ApprovalDashboardRead]

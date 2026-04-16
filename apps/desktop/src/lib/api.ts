@@ -18,6 +18,7 @@ import type {
   CandidateAssessmentRecord,
   CandidateAssignmentRecord,
   CandidateConversationEntry,
+  CandidateFollowUpSummaryDefinition,
   CandidateMemoryRecord,
   CandidateRecord,
   CandidateReviewDecisionRecord,
@@ -458,11 +459,29 @@ function normalizeDashboard(raw: unknown): DashboardSummary {
     timeline: asArray(record.timeline) as DashboardSummary["timeline"],
     alerts: asArray(record.alerts) as DashboardSummary["alerts"],
     candidates: asArray(record.candidates).map(normalizeCandidateRecord),
+    candidateFollowUpSummaryDefinitions: asArray(
+      record.candidateFollowUpSummaryDefinitions ?? record.candidate_follow_up_summary_definitions,
+    ).map(normalizeCandidateFollowUpSummaryDefinition),
     playbooks: asArray(record.playbooks) as PlaybookDefinition[],
     skills: asArray(record.skills).map(normalizeSkillRecord),
     approvals: asArray(record.approvals).map(normalizeApprovalItem),
     agent: normalizeAgentSnapshot(record.agent),
     settings: normalizeSettings(record.settings),
+  };
+}
+
+function normalizeCandidateFollowUpSummaryDefinition(raw: unknown): CandidateFollowUpSummaryDefinition {
+  const record = asRecord(raw);
+  return {
+    key: String(record.key ?? "all") as CandidateFollowUpSummaryDefinition["key"],
+    label: String(record.label ?? ""),
+    summary: String(record.summary ?? ""),
+    relation: record.relation ? String(record.relation) : null,
+    matchingMode: String(record.matchingMode ?? record.matching_mode ?? "all") as CandidateFollowUpSummaryDefinition["matchingMode"],
+    includeStatuses: asArray<string>(record.includeStatuses ?? record.include_statuses),
+    excludeStatuses: asArray<string>(record.excludeStatuses ?? record.exclude_statuses),
+    includeLabels: asArray<string>(record.includeLabels ?? record.include_labels),
+    excludeLabels: asArray<string>(record.excludeLabels ?? record.exclude_labels),
   };
 }
 
@@ -476,8 +495,7 @@ function normalizeCandidateRecord(raw: unknown): CandidateRecord {
     title: String(record.title ?? contactInfo.title ?? "候选人"),
     platform: String(record.platform ?? "site"),
     location: String(record.location ?? contactInfo.location ?? "未知"),
-    status: String(record.status ?? "discovered") as CandidateRecord["status"],
-    currentStatus: record.currentStatus ? String(record.currentStatus) : record.current_status ? String(record.current_status) : undefined,
+    currentStatus: String(record.currentStatus ?? record.current_status ?? "discovered") as CandidateRecord["currentStatus"],
     stageKey: String(record.stageKey ?? record.stage_key ?? record.currentStageKey ?? record.current_stage_key ?? "candidate_probe"),
     deepestMilestone:
       record.deepestMilestone

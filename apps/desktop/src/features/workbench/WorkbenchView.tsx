@@ -33,7 +33,6 @@ interface WorkbenchViewProps {
   runningAction?: boolean;
   syncingAction?: boolean;
   onOpenCommunications?(filter?: string, candidateId?: string): void;
-  onOpenImportCenter?(): void;
   onOpenJdWorkspace?(): void;
   onOpenAiReview?(): void;
 }
@@ -55,7 +54,7 @@ function normalize(value: string): string {
 }
 
 function classifyCandidate(candidate: DashboardSummary["candidates"][number]): CandidateLane {
-  const status = normalize(`${candidate.status} ${candidate.stageKey} ${candidate.nextAction} ${candidate.summary}`);
+  const status = normalize(`${candidate.currentStatus} ${candidate.stageKey} ${candidate.nextAction} ${candidate.summary}`);
   if (/(rejected|cooldown|blocked|archived)/.test(status)) {
     return "blocked";
   }
@@ -239,7 +238,6 @@ export function WorkbenchView({
   runningAction,
   syncingAction,
   onOpenCommunications,
-  onOpenImportCenter,
   onOpenJdWorkspace,
   onOpenAiReview,
 }: WorkbenchViewProps): JSX.Element {
@@ -346,10 +344,7 @@ export function WorkbenchView({
 
           <div style={{ display: "flex", gap: "var(--space-2)", flexWrap: "wrap", justifyContent: "end" }}>
             <button type="button" style={primaryButtonStyle} onClick={() => onOpenCommunications?.("active")}>
-              {copy("Open cockpit", "打开候选人舱")}
-            </button>
-            <button type="button" style={actionButtonStyle} onClick={onOpenImportCenter}>
-              {copy("Import center", "导入中心")}
+              {copy("Open workspace", "打开候选人工作台")}
             </button>
             <button type="button" style={actionButtonStyle} onClick={onOpenJdWorkspace}>
               {copy("JD workspace", "JD 工作区")}
@@ -548,10 +543,7 @@ export function WorkbenchView({
                 </div>
                 <div style={{ display: "grid", gap: "var(--space-2)" }}>
                   <button type="button" style={primaryButtonStyle} onClick={() => onOpenCommunications?.("candidate", selectedCandidate.id)}>
-                    {copy("Open cockpit", "打开候选人舱")}
-                  </button>
-                  <button type="button" style={actionButtonStyle} onClick={onOpenImportCenter}>
-                    {copy("Open import center", "打开导入中心")}
+                    {copy("Open workspace", "打开候选人工作台")}
                   </button>
                   <button type="button" style={actionButtonStyle} onClick={onOpenJdWorkspace}>
                     {copy("Open JD workspace", "打开 JD 工作区")}
@@ -563,8 +555,8 @@ export function WorkbenchView({
                 <div style={{ color: "var(--text-secondary)", fontSize: "var(--font-size-sm)" }}>{copy("Recruiter notes", "招聘备注")}</div>
                 <div style={{ fontSize: "var(--font-size-sm)", color: "var(--text-regular)", lineHeight: "var(--line-height-base)" }}>
                   {copy(
-                    "Keep the candidate card open in the cockpit if you need to send a message, adjust the state, or add an assessment.",
-                    "如果需要发消息、调整状态或补充评估，请在候选人舱里打开这张卡。",
+                    "Keep the candidate card open in the workspace if you need to send a message, adjust the state, or add an assessment.",
+                    "如果需要发消息、调整状态或补充评估，请在候选人工作台里打开这张卡。",
                   )}
                 </div>
               </div>

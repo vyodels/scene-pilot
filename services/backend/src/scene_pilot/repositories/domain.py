@@ -124,7 +124,7 @@ class CandidateRepository(BaseRepository[Candidate]):
         return self.session.scalars(stmt).first()
 
     def count_by_status(self) -> dict[str, int]:
-        stmt = select(Candidate.status, func.count()).group_by(Candidate.status)
+        stmt = select(Candidate.current_status, func.count()).group_by(Candidate.current_status)
         return {status: count for status, count in self.session.execute(stmt).all()}
 
     def count_by_current_statuses(self, statuses: list[str]) -> int:
@@ -158,17 +158,12 @@ class CandidateRepository(BaseRepository[Candidate]):
         self,
         candidate: Candidate,
         *,
-        status: str | None = None,
         current_status: str | None = None,
         deepest_milestone: str | None = None,
         snapshot: dict[str, Any] | None = None,
     ) -> Candidate:
-        if status is not None:
-            candidate.status = status
         if current_status is not None:
             candidate.current_status = current_status
-        elif status is not None and not candidate.current_status:
-            candidate.current_status = status
         if deepest_milestone is not None:
             candidate.deepest_milestone = deepest_milestone
         if snapshot is not None:
@@ -1492,7 +1487,7 @@ class MetricsRepository:
         by_status = {
             status: count
             for status, count in self.session.execute(
-                select(Candidate.status, func.count()).group_by(Candidate.status)
+                select(Candidate.current_status, func.count()).group_by(Candidate.current_status)
             ).all()
         }
         return MetricsSummary(

@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from "react";
-import type { CandidateTransitionPayload, RecruitmentStateMachine } from "@scene-pilot/shared";
+import type { CandidateTransitionPayload, HumanActionDefinition, RecruitmentStateMachine } from "@scene-pilot/shared";
 import { SectionTabs, StatusBadge } from "../../components";
 import { useI18n } from "../../lib/i18n";
 import { deriveHumanActionsForNode, nodeTone } from "./kanbanUtils";
@@ -17,6 +17,11 @@ interface CandidateDetailDrawerProps {
 
 type DetailTab = "profile" | "resume" | "scores" | "history" | "contact";
 
+interface PendingActionState {
+  action: HumanActionDefinition;
+  note: string;
+}
+
 function asObject(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
 }
@@ -31,6 +36,8 @@ export function CandidateDetailDrawer({
 }: CandidateDetailDrawerProps): JSX.Element | null {
   const { copy } = useI18n();
   const [activeTab, setActiveTab] = useState<DetailTab>("profile");
+  const [pendingAction, setPendingAction] = useState<PendingActionState | null>(null);
+  const [submittingKey, setSubmittingKey] = useState<string>();
 
   const currentNode = record?.currentNode;
   const actions = useMemo(
@@ -43,6 +50,23 @@ export function CandidateDetailDrawer({
   }
 
   const aiScores = asObject(record.candidate.aiScores);
+
+  const submitAction = async (action: HumanActionDefinition, note?: string) => {
+    const key = `${record.candidate.id}:${action.toStatus}:${action.label}`;
+    setSubmittingKey(key);
+    try {
+      await onTransition(record.candidate.id, {
+        actor: "recruiter",
+        toStatus: action.toStatus,
+        trigger: action.label,
+        note: note?.trim() || undefined,
+        metadata: { initiated_from: "candidate_detail_drawer" },
+      });
+      setPendingAction(null);
+    } finally {
+      setSubmittingKey(undefined);
+    }
+  };
 
   return (
     <div className="drawer-backdrop">
@@ -159,20 +183,45 @@ export function CandidateDetailDrawer({
                 type="button"
                 className="drawer__button"
                 data-style={action.style}
-                onClick={() =>
-                  void onTransition(record.candidate.id, {
-                    actor: "recruiter",
-                    toStatus: action.toStatus,
-                    trigger: action.label,
-                    note: action.requiresNote ? copy("Changed from detail drawer.", "从详情抽屉发起。") : undefined,
-                    metadata: { initiated_from: "candidate_detail_drawer" },
-                  })
-                }
+                disabled={submittingKey === `${record.candidate.id}:${action.toStatus}:${action.label}`}
+                onClick={() => {
+                  if (action.requiresNote) {
+                    setPendingAction({ action, note: "" });
+                    return;
+                  }
+                  void submitAction(action);
+                }}
               >
                 {action.label}
               </button>
             ))}
           </div>
+          {pendingAction ? (
+            <div className="drawer__note-box">
+              <strong>{pendingAction.action.label}</strong>
+              <textarea
+                className="drawer__textarea"
+                rows={3}
+                value={pendingAction.note}
+                onChange={(event) => setPendingAction({ ...pendingAction, note: event.target.value })}
+                placeholder={copy("Add the note required by this action.", "请填写该动作要求的备注。")}
+              />
+              <div className="drawer__note-actions">
+                <button type="button" className="drawer__button" onClick={() => setPendingAction(null)}>
+                  {copy("Cancel", "取消")}
+                </button>
+                <button
+                  type="button"
+                  className="drawer__button"
+                  data-style={pendingAction.action.style}
+                  disabled={!pendingAction.note.trim() || submittingKey != null}
+                  onClick={() => void submitAction(pendingAction.action, pendingAction.note)}
+                >
+                  {copy("Confirm", "确认")}
+                </button>
+              </div>
+            </div>
+          ) : null}
           <button type="button" className="drawer__button" onClick={onRequestOverride}>
             {copy("Manual status override…", "人工修改状态…")}
           </button>

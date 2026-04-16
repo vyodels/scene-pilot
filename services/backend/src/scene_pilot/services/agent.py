@@ -1687,7 +1687,6 @@ class AgentControlService:
                     "platform_candidate_id": candidate.platform_candidate_id,
                     "name": candidate.name,
                     "platform": candidate.platform,
-                    "status": candidate.status,
                     "current_status": current_status,
                     "current_stage_key": candidate.current_stage_key,
                     "deepest_milestone": candidate.deepest_milestone,
@@ -2033,7 +2032,6 @@ class AgentControlService:
                         "name": normalized["name"],
                         "platform": normalized["platform"],
                         "platform_candidate_id": normalized.get("platform_candidate_id"),
-                        "status": "discovered",
                         "current_status": "discovered",
                         "current_stage_key": "discovered",
                         "deepest_milestone": initial_milestone,
@@ -2132,8 +2130,7 @@ class AgentControlService:
                 existing.state_snapshot = merged_snapshot
                 session.flush()
             else:
-                existing.status = target_status or existing.status
-                existing.current_status = target_status or existing.current_status or existing.status
+                existing.current_status = target_status or existing.current_status
                 existing.current_stage_key = normalized["current_stage_key"] or existing.current_stage_key
                 existing.state_snapshot = normalized["state_snapshot"] or existing.state_snapshot
                 if created and not existing.deepest_milestone:
@@ -3907,7 +3904,7 @@ class AgentControlService:
         selection = dict(task.payload.get("selection") or {})
         return {
             "candidateId": candidate.get("id") or task.candidate_id,
-            "currentStatus": candidate.get("current_status") or candidate.get("status"),
+            "currentStatus": candidate.get("current_status"),
             "deepestMilestone": candidate.get("deepest_milestone"),
             "jdId": candidate.get("jd_id"),
             "hasResume": bool(candidate.get("resume_path") or candidate.get("online_resume_text")),

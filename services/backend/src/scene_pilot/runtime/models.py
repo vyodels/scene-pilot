@@ -289,7 +289,7 @@ def _compact_candidate_output(candidate: dict[str, Any], *, detail: bool) -> dic
         "platform_candidate_id": candidate.get("platform_candidate_id"),
         "name": candidate.get("name"),
         "platform": candidate.get("platform"),
-        "status": candidate.get("status"),
+        "current_status": candidate.get("current_status"),
         "summary": _truncate_text(summary, 220),
         "resume_artifact_status": candidate.get("resume_artifact_status"),
         "upload_status": candidate.get("upload_status"),

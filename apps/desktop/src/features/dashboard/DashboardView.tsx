@@ -8,7 +8,6 @@ import type { CandidateRecord, DashboardSummary } from "../../lib/types";
 interface DashboardViewProps {
   summary: DashboardSummary;
   onOpenCandidates?(): void;
-  onOpenImportCenter?(): void;
   onOpenJdWorkspace?(): void;
   onOpenCommunications?(filter?: string, candidateId?: string): void;
   onOpenAiReview?(): void;
@@ -154,7 +153,7 @@ function normalize(value: string): string {
 }
 
 function classifyCandidate(candidate: CandidateRecord): CandidateLane {
-  const status = normalize(`${candidate.status} ${candidate.stageKey} ${candidate.nextAction} ${candidate.summary}`);
+  const status = normalize(`${candidate.currentStatus} ${candidate.stageKey} ${candidate.nextAction} ${candidate.summary}`);
   if (/(rejected|cooldown|blocked|archived)/.test(status)) {
     return "blocked";
   }
@@ -221,7 +220,6 @@ function pickPlaybookLabel(playbook: DashboardSummary["playbooks"][number]): str
 export function DashboardView({
   summary,
   onOpenCandidates,
-  onOpenImportCenter,
   onOpenJdWorkspace,
   onOpenCommunications,
   onOpenAiReview,
@@ -342,14 +340,11 @@ export function DashboardView({
             <button type="button" style={primaryButtonStyle} onClick={onOpenCandidates}>
               {copy("Open pipeline", "打开候选人管道")}
             </button>
-            <button type="button" style={actionButtonStyle} onClick={onOpenImportCenter}>
-              {copy("Import center", "导入中心")}
-            </button>
             <button type="button" style={actionButtonStyle} onClick={onOpenJdWorkspace}>
               {copy("JD workspace", "JD 工作区")}
             </button>
             <button type="button" style={actionButtonStyle} onClick={() => onOpenCommunications?.("active")}>
-              {copy("Candidate cockpit", "候选人舱")}
+              {copy("Candidate follow-up", "候选人跟进")}
             </button>
           </div>
         </div>
@@ -392,7 +387,7 @@ export function DashboardView({
             <StatusBadge tone="neutral">{copy(`${summary.candidates.length} total`, `共 ${summary.candidates.length} 人`)}</StatusBadge>
           </div>
           <p style={descriptionStyle}>
-            {copy("Open a candidate from here to continue the review conversation in the cockpit.", "从这里打开候选人，继续在候选人舱里完成审阅与跟进。")}
+            {copy("Open a candidate from here to continue follow-up and communication in the candidate workspace.", "从这里打开候选人，继续在候选人工作台里完成审阅、跟进和沟通。")}
           </p>
 
           <div style={candidateListStyle}>
@@ -524,14 +519,11 @@ export function DashboardView({
             <button type="button" style={actionButtonStyle} onClick={onOpenCandidates}>
               {copy("Open candidate pipeline", "打开候选人管道")}
             </button>
-            <button type="button" style={actionButtonStyle} onClick={onOpenImportCenter}>
-              {copy("Open import center", "打开导入中心")}
-            </button>
             <button type="button" style={actionButtonStyle} onClick={onOpenJdWorkspace}>
               {copy("Open JD workspace", "打开 JD 工作区")}
             </button>
             <button type="button" style={actionButtonStyle} onClick={() => onOpenCommunications?.("active")}>
-              {copy("Open candidate cockpit", "打开候选人舱")}
+              {copy("Open candidate workspace", "打开候选人工作台")}
             </button>
             <button type="button" style={actionButtonStyle} onClick={onOpenAiReview}>
               {copy("Open AI review center", "打开 AI 审查中心")}

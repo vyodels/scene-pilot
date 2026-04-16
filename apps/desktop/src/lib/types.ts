@@ -3,9 +3,6 @@ import type { CandidateStatusTransition } from "@scene-pilot/shared";
 export type WorkspaceTab =
   | "home"
   | "candidates"
-  | "import-center"
-  | "jd-workspace"
-  | "communications"
   | "ai-review"
   | "ai-strategy"
   | "settings";
@@ -44,8 +41,7 @@ export interface CandidateRecord {
   title: string;
   platform: string;
   location: string;
-  status: CandidateStatus;
-  currentStatus?: string;
+  currentStatus: CandidateStatus;
   stageKey: string;
   deepestMilestone?: string | null;
   jdTitle: string;
@@ -638,11 +634,24 @@ export interface DashboardSummary {
   timeline: TimelineEvent[];
   alerts: TimelineEvent[];
   candidates: CandidateRecord[];
+  candidateFollowUpSummaryDefinitions: CandidateFollowUpSummaryDefinition[];
   playbooks: PlaybookDefinition[];
   skills: SkillRecord[];
   approvals: ApprovalItem[];
   agent: AgentSnapshot;
   settings: SettingsSnapshot;
+}
+
+export interface CandidateFollowUpSummaryDefinition {
+  key: "all" | "active" | "human" | "no_response" | "cooldown" | "archived" | "candidate_withdrew";
+  label: string;
+  summary: string;
+  relation?: string | null;
+  matchingMode: "all" | "status_set";
+  includeStatuses: string[];
+  excludeStatuses: string[];
+  includeLabels: string[];
+  excludeLabels: string[];
 }
 
 export interface AgentRunResult {
