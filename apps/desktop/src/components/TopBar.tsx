@@ -10,7 +10,6 @@ interface TopBarProps {
   transport: "http" | "offline";
   sectionEyebrow: string;
   sectionTitle: string;
-  sectionDescription: string;
   onRefresh(): void;
   refreshing: boolean;
 }
@@ -21,7 +20,6 @@ export function TopBar({
   transport,
   sectionEyebrow,
   sectionTitle,
-  sectionDescription,
   onRefresh,
   refreshing,
 }: TopBarProps): JSX.Element {
@@ -37,7 +35,9 @@ export function TopBar({
             {translateUiToken(agent.status, copy)}
           </StatusBadge>
         </div>
-        <div className="workspace-topbar__description">{sectionDescription}</div>
+      </div>
+
+      <div className="workspace-topbar__actions">
         <div className="workspace-topbar__meta">
           <StatusBadge tone={transport === "http" ? "positive" : "critical"}>
             {transport === "http" ? copy("backend connected", "后端已连接") : copy("backend unavailable", "后端不可用")}
@@ -48,9 +48,6 @@ export function TopBar({
           </StatusBadge>
           <StatusBadge tone={settings.desktopApprovalsOnly ? "warning" : "neutral"}>{copy("desktop approvals", "桌面确认")}</StatusBadge>
         </div>
-      </div>
-
-      <div className="workspace-topbar__actions">
         <div className="workspace-topbar__switch" aria-label={copy("Language switch", "语言切换")}>
           {[
             { key: "en", label: "EN" },

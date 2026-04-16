@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { StatusBadge } from "../../components";
+import { Panel, StatusBadge } from "../../components";
 import { useI18n } from "../../lib/i18n";
 import { translateUiToken } from "../../lib/uiText";
 import type { McpPresetTemplateRecord, McpServerRecord, ProviderConfig, SettingsSnapshot } from "../../lib/types";
@@ -79,40 +79,6 @@ const theme = {
   shadow: "var(--shadow-pop)",
 } as const;
 
-interface PanelProps {
-  title?: string;
-  eyebrow?: string;
-  description?: string;
-  actions?: React.ReactNode;
-  children: React.ReactNode;
-  dense?: boolean;
-}
-
-function Panel({ title, eyebrow, description, actions, children, dense }: PanelProps): JSX.Element {
-  return (
-    <section
-      style={{
-        background: theme.colors.panel,
-        border: `1px solid ${theme.colors.border}`,
-        borderRadius: theme.radius.xl,
-        padding: dense ? "var(--space-4)" : "var(--space-5)",
-      }}
-    >
-      {(title || eyebrow || description || actions) && (
-        <header style={{ display: "flex", alignItems: "start", justifyContent: "space-between", gap: "var(--space-4)", marginBottom: "var(--space-4)" }}>
-          <div style={{ minWidth: 0 }}>
-            {eyebrow ? <div style={{ color: theme.colors.accent, fontSize: "12px", letterSpacing: "0.12em", textTransform: "uppercase", fontWeight: 600 }}>{eyebrow}</div> : null}
-            {title ? <h2 style={{ margin: "6px 0 4px", fontSize: "16px", lineHeight: 1.4, fontWeight: 600, color: theme.colors.text }}>{title}</h2> : null}
-            {description ? <p style={{ margin: 0, color: theme.colors.muted, fontSize: "13px", lineHeight: 1.6 }}>{description}</p> : null}
-          </div>
-          {actions ? <div style={{ flexShrink: 0 }}>{actions}</div> : null}
-        </header>
-      )}
-      {children}
-    </section>
-  );
-}
-
 function translateSettingLabel(value: string): string {
   const table: Record<string, string> = {
     "Recruiting scene profile": "招聘场景配置",
@@ -129,13 +95,27 @@ const inputStyle = {
   border: `1px solid ${theme.colors.border}`,
   background: theme.colors.panel,
   color: theme.colors.text,
-  padding: "9px 10px",
+  minHeight: "var(--space-8)",
+  padding: "0 var(--space-3)",
 } as const;
 
 const providerHintStyle = {
   color: theme.colors.muted,
-  fontSize: "12px",
+  fontSize: "var(--font-size-xs)",
   lineHeight: 1.6,
+} as const;
+
+const buttonStyle = {
+  ...inputStyle,
+  cursor: "pointer",
+  padding: "0 var(--space-4)",
+  width: "auto",
+} as const;
+
+const dangerButtonStyle = {
+  ...buttonStyle,
+  border: `1px solid ${theme.colors.critical}`,
+  color: theme.colors.critical,
 } as const;
 
 function providerHostExample(kind: ProviderConfig["kind"]): { example: string; noteEn: string; noteZh: string } {
@@ -208,14 +188,14 @@ export function SettingsView({
   const compactRowStyle = {
     display: "grid",
     gridTemplateColumns: "minmax(0, 1.1fr) minmax(0, 1.4fr) auto auto auto",
-    gap: "10px",
+    gap: "var(--space-3)",
     alignItems: "center",
   } as const;
 
   return (
-    <div style={{ display: "grid", gap: "var(--space-5)", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", minWidth: 0, background: theme.colors.background, padding: "var(--space-5)", borderRadius: theme.radius.xl }}>
+    <div style={{ display: "grid", gap: "var(--space-5)", gridTemplateColumns: "repeat(auto-fit, minmax(var(--layout-right-panel-width), 1fr))", minWidth: 0, background: theme.colors.background, padding: "var(--space-5)", borderRadius: theme.radius.xl }}>
       <Panel title={copy("Workspace settings", "工作台设置")} eyebrow={copy("Local-first", "本地优先")} description={copy("Core workspace settings and review gates.", "工作台核心设置与复核门控。")}>
-        <div style={{ display: "grid", gap: "10px" }}>
+        <div style={{ display: "grid", gap: "var(--space-3)" }}>
           <StatusBadge tone={draft.desktopApprovalsOnly ? "warning" : "neutral"}>{draft.desktopApprovalsOnly ? copy("desktop review only", "仅桌面复核") : copy("mixed review mode", "混合复核模式")}</StatusBadge>
           <StatusBadge tone={draft.intranetEnabled ? "positive" : "neutral"}>{draft.intranetEnabled ? copy("intranet sync enabled", "已启用内网同步") : copy("no intranet sync", "未启用内网同步")}</StatusBadge>
           <StatusBadge tone={draft.skillHealthAutonomyEnabled ? "positive" : "neutral"}>
@@ -223,10 +203,10 @@ export function SettingsView({
               ? copy(`review checks every ${draft.skillHealthAutonomyIntervalSeconds}s`, `复核检查每 ${draft.skillHealthAutonomyIntervalSeconds} 秒执行一次`)
               : copy("review checks idle", "复核检查未启用")}
           </StatusBadge>
-          <div style={{ color: theme.colors.muted, fontSize: "13px" }}>
+          <div style={{ color: theme.colors.muted, fontSize: "var(--font-size-sm)" }}>
             {copy("Locale", "语言区域")} {draft.locale} · {copy("Timezone", "时区")} {draft.timezone}
           </div>
-          <label style={{ display: "flex", alignItems: "center", gap: "10px", fontSize: "14px" }}>
+          <label style={{ display: "flex", alignItems: "center", gap: "var(--space-3)", fontSize: "var(--font-size-base)" }}>
             <input
               type="checkbox"
               checked={draft.intranetEnabled}
@@ -234,7 +214,7 @@ export function SettingsView({
             />
             {copy("Enable intranet sync", "启用内网同步")}
           </label>
-          <label style={{ display: "flex", alignItems: "center", gap: "10px", fontSize: "14px" }}>
+          <label style={{ display: "flex", alignItems: "center", gap: "var(--space-3)", fontSize: "var(--font-size-base)" }}>
             <input
               type="checkbox"
               checked={draft.desktopApprovalsOnly}
@@ -242,7 +222,7 @@ export function SettingsView({
             />
             {copy("Keep reviews desktop-only", "复核仅在桌面端完成")}
           </label>
-          <label style={{ display: "flex", alignItems: "center", gap: "10px", fontSize: "14px" }}>
+          <label style={{ display: "flex", alignItems: "center", gap: "var(--space-3)", fontSize: "var(--font-size-base)" }}>
             <input
               type="checkbox"
               checked={draft.skillHealthAutonomyEnabled}
@@ -255,7 +235,7 @@ export function SettingsView({
             />
             {copy("Enable periodic review checks", "启用周期性复核检查")}
           </label>
-          <label style={{ display: "grid", gap: "6px", fontSize: "13px", color: theme.colors.muted }}>
+          <label style={{ display: "grid", gap: "var(--space-2)", fontSize: "var(--font-size-sm)", color: theme.colors.muted }}>
             {copy("Review check interval (seconds)", "复核检查间隔（秒）")}
             <input
               type="number"
@@ -273,8 +253,8 @@ export function SettingsView({
         </div>
       </Panel>
       <Panel title={copy("Recruiting profile", "招聘配置")} eyebrow={translateSettingLabel(draft.platform.name)} description={copy("Current recruiting account and contact policy.", "当前招聘账号与联络策略。")}>
-        <div style={{ display: "grid", gap: "10px" }}>
-          <label style={{ display: "grid", gap: "6px", fontSize: "13px", color: theme.colors.muted }}>
+        <div style={{ display: "grid", gap: "var(--space-3)" }}>
+          <label style={{ display: "grid", gap: "var(--space-2)", fontSize: "var(--font-size-sm)", color: theme.colors.muted }}>
             {copy("Account", "账号")}
             <input
               type="text"
@@ -288,7 +268,7 @@ export function SettingsView({
               style={inputStyle}
             />
           </label>
-          <label style={{ display: "grid", gap: "6px", fontSize: "13px", color: theme.colors.muted }}>
+          <label style={{ display: "grid", gap: "var(--space-2)", fontSize: "var(--font-size-sm)", color: theme.colors.muted }}>
             {copy("Cooldown days", "冷却天数")}
             <input
               type="number"
@@ -306,7 +286,7 @@ export function SettingsView({
               style={inputStyle}
             />
           </label>
-          <label style={{ display: "grid", gap: "6px", fontSize: "13px", color: theme.colors.muted }}>
+          <label style={{ display: "grid", gap: "var(--space-2)", fontSize: "var(--font-size-sm)", color: theme.colors.muted }}>
             {copy("Max concurrent sessions", "最大并发会话")}
             <input
               type="number"
@@ -327,7 +307,7 @@ export function SettingsView({
           <StatusBadge tone={draft.platform.allowOutboundMessaging ? "positive" : "warning"}>
             {draft.platform.allowOutboundMessaging ? copy("outreach enabled", "外联已启用") : copy("outreach gated", "外联受控")}
           </StatusBadge>
-          <label style={{ display: "flex", alignItems: "center", gap: "10px", fontSize: "14px" }}>
+          <label style={{ display: "flex", alignItems: "center", gap: "var(--space-3)", fontSize: "var(--font-size-base)" }}>
             <input
               type="checkbox"
               checked={draft.platform.allowOutboundMessaging}
@@ -343,17 +323,17 @@ export function SettingsView({
         </div>
       </Panel>
       <Panel title={copy("Model endpoints", "模型接口")} eyebrow={copy("Model routing", "模型路由")} description={copy("Endpoint preferences and local deployment targets.", "接口偏好与本地部署目标。")}>
-        <div style={{ display: "grid", gap: "10px" }}>
+        <div style={{ display: "grid", gap: "var(--space-3)" }}>
           {draft.providers.map((provider, index) => {
             const hint = providerHostExample(provider.kind);
             return (
-              <article key={provider.name} style={{ padding: "14px", borderRadius: theme.radius.xl, background: "var(--bg-page)", border: `1px solid ${theme.colors.border}` }}>
-                <div style={{ display: "flex", justifyContent: "space-between", gap: "8px" }}>
+              <article key={provider.name} style={{ padding: "var(--space-4)", borderRadius: theme.radius.xl, background: "var(--bg-page)", border: `1px solid ${theme.colors.border}` }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: "var(--space-2)" }}>
                   <strong>{translateSettingLabel(provider.name)}</strong>
                   <StatusBadge tone={provider.enabled ? "positive" : "neutral"}>{translateUiToken(provider.kind.replace(/-/g, "_"), copy)}</StatusBadge>
                 </div>
-                <div style={{ display: "grid", gap: "10px", marginTop: "10px" }}>
-                  <label style={{ display: "flex", alignItems: "center", gap: "10px", fontSize: "14px" }}>
+                <div style={{ display: "grid", gap: "var(--space-3)", marginTop: "var(--space-3)" }}>
+                  <label style={{ display: "flex", alignItems: "center", gap: "var(--space-3)", fontSize: "var(--font-size-base)" }}>
                     <input
                       type="checkbox"
                       checked={provider.enabled}
@@ -361,7 +341,7 @@ export function SettingsView({
                     />
                     {copy("Enable this endpoint", "启用该接口")}
                   </label>
-                  <label style={{ display: "grid", gap: "6px", fontSize: "13px", color: theme.colors.muted }}>
+                  <label style={{ display: "grid", gap: "var(--space-2)", fontSize: "var(--font-size-sm)", color: theme.colors.muted }}>
                     {copy("Model", "模型")}
                     <input
                       type="text"
@@ -371,7 +351,7 @@ export function SettingsView({
                       placeholder={provider.kind === "anthropic" ? "claude-sonnet-4" : "gpt-5.4"}
                     />
                   </label>
-                  <label style={{ display: "grid", gap: "6px", fontSize: "13px", color: theme.colors.muted }}>
+                  <label style={{ display: "grid", gap: "var(--space-2)", fontSize: "var(--font-size-sm)", color: theme.colors.muted }}>
                     {copy("Host / Base URL", "Host / Base URL")}
                     <input
                       type="text"
@@ -385,7 +365,7 @@ export function SettingsView({
                     </span>
                     <span style={providerHintStyle}>{copy(hint.noteEn, hint.noteZh)}</span>
                   </label>
-                  <label style={{ display: "grid", gap: "6px", fontSize: "13px", color: theme.colors.muted }}>
+                  <label style={{ display: "grid", gap: "var(--space-2)", fontSize: "var(--font-size-sm)", color: theme.colors.muted }}>
                     {copy("Response wait time (seconds)", "响应等待时间（秒）")}
                     <input
                       type="number"
@@ -406,7 +386,7 @@ export function SettingsView({
                       )}
                     </span>
                   </label>
-                  <label style={{ display: "grid", gap: "6px", fontSize: "13px", color: theme.colors.muted }}>
+                  <label style={{ display: "grid", gap: "var(--space-2)", fontSize: "var(--font-size-sm)", color: theme.colors.muted }}>
                     {copy("Access key", "访问密钥")}
                     <input
                       type="password"
@@ -437,9 +417,9 @@ export function SettingsView({
           "注册外部工具、安装预置模板，并让它们可在工作台中使用。",
         )}
       >
-        <div style={{ display: "grid", gap: "14px" }}>
-          <div style={{ display: "grid", gap: "8px" }}>
-            <strong style={{ fontSize: "13px" }}>{copy("Connection templates", "连接模板")}</strong>
+        <div style={{ display: "grid", gap: "var(--space-4)" }}>
+          <div style={{ display: "grid", gap: "var(--space-2)" }}>
+            <strong style={{ fontSize: "var(--font-size-sm)" }}>{copy("Connection templates", "连接模板")}</strong>
             {mcpPresets.map((preset) => (
               <div key={preset.key} style={{ ...compactRowStyle, gridTemplateColumns: "minmax(0, 1.1fr) minmax(0, 1.4fr) auto" }}>
                 <div>
@@ -458,15 +438,15 @@ export function SettingsView({
                       endpoint: preset.endpointExample,
                     })
                   }
-                  style={{ ...inputStyle, cursor: "pointer", padding: "8px 12px", width: "auto" }}
+                  style={buttonStyle}
                 >
                   {copy("Install", "安装")}
                 </button>
               </div>
             ))}
           </div>
-          <div style={{ display: "grid", gap: "8px" }}>
-            <strong style={{ fontSize: "13px" }}>{copy("Saved connections", "已保存连接")}</strong>
+          <div style={{ display: "grid", gap: "var(--space-2)" }}>
+            <strong style={{ fontSize: "var(--font-size-sm)" }}>{copy("Saved connections", "已保存连接")}</strong>
             {mcpServers.length ? (
               mcpServers.map((server) => {
                 const serverDraft = serverDrafts[server.id] ?? {
@@ -475,7 +455,7 @@ export function SettingsView({
                   enabled: server.enabled,
                 };
                 return (
-                  <div key={server.id} style={{ display: "grid", gap: "8px", padding: "10px 12px", border: `1px solid ${theme.colors.border}`, borderRadius: theme.radius.md, background: "var(--bg-page)" }}>
+                  <div key={server.id} style={{ display: "grid", gap: "var(--space-2)", padding: "var(--space-3)", border: `1px solid ${theme.colors.border}`, borderRadius: theme.radius.md, background: "var(--bg-page)" }}>
                     <div style={compactRowStyle}>
                       <input
                         type="text"
@@ -499,7 +479,7 @@ export function SettingsView({
                         }
                         style={inputStyle}
                       />
-                      <label style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12px" }}>
+                      <label style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", fontSize: "var(--space-3)" }}>
                         <input
                           type="checkbox"
                           checked={serverDraft.enabled}
@@ -515,7 +495,7 @@ export function SettingsView({
                       <StatusBadge tone={server.healthStatus === "healthy" ? "positive" : server.healthStatus === "unhealthy" ? "critical" : "warning"}>
                         {server.healthStatus}
                       </StatusBadge>
-                      <div style={{ display: "flex", gap: "8px", justifyContent: "flex-end" }}>
+                      <div style={{ display: "flex", gap: "var(--space-2)", justifyContent: "flex-end" }}>
                         <button
                           type="button"
                           onClick={() =>
@@ -525,21 +505,21 @@ export function SettingsView({
                               enabled: serverDraft.enabled,
                             })
                           }
-                          style={{ ...inputStyle, cursor: "pointer", padding: "8px 12px", width: "auto" }}
+                          style={buttonStyle}
                         >
                           {copy("Save", "保存")}
                         </button>
                         <button
                           type="button"
                           onClick={() => onHealthcheckMcpServer(server.id)}
-                          style={{ ...inputStyle, cursor: "pointer", padding: "8px 12px", width: "auto" }}
+                          style={buttonStyle}
                         >
                           {copy("Check status", "检查状态")}
                         </button>
                         <button
                           type="button"
                           onClick={() => onDeleteMcpServer(server.id)}
-                          style={{ ...inputStyle, cursor: "pointer", padding: "8px 12px", width: "auto", color: "#ffb4b4" }}
+                          style={dangerButtonStyle}
                         >
                           {copy("Delete", "删除")}
                         </button>
@@ -556,9 +536,9 @@ export function SettingsView({
               <div style={providerHintStyle}>{copy("No tool connections yet.", "当前还没有工具连接。")}</div>
             )}
           </div>
-          <div style={{ display: "grid", gap: "8px" }}>
-            <strong style={{ fontSize: "13px" }}>{copy("Add custom connection", "新增自定义连接")}</strong>
-            <div style={{ display: "grid", gap: "8px", gridTemplateColumns: "repeat(2, minmax(0, 1fr))" }}>
+          <div style={{ display: "grid", gap: "var(--space-2)" }}>
+            <strong style={{ fontSize: "var(--font-size-sm)" }}>{copy("Add custom connection", "新增自定义连接")}</strong>
+            <div style={{ display: "grid", gap: "var(--space-2)", gridTemplateColumns: "repeat(2, minmax(0, 1fr))" }}>
               <input
                 type="text"
                 placeholder={copy("Server key", "服务 key")}
@@ -593,10 +573,10 @@ export function SettingsView({
             <textarea
               value={customServer.toolsJson}
               onChange={(event) => setCustomServer((current) => ({ ...current, toolsJson: event.target.value }))}
-              style={{ ...inputStyle, minHeight: "120px", fontFamily: "monospace" }}
+              style={{ ...inputStyle, minHeight: "calc(var(--space-12) + var(--space-12) + var(--space-6))", fontFamily: "var(--font-mono)", padding: "var(--space-3)" }}
               placeholder='[{"name":"custom_tool","description":"...","parameters":{"type":"object"},"capabilities":["browser"]}]'
             />
-            {mcpError ? <div style={{ ...providerHintStyle, color: "#ffb4b4" }}>{mcpError}</div> : null}
+            {mcpError ? <div style={{ ...providerHintStyle, color: theme.colors.critical }}>{mcpError}</div> : null}
             <div style={{ display: "flex", justifyContent: "flex-end" }}>
               <button
                 type="button"
@@ -626,14 +606,14 @@ export function SettingsView({
                     setMcpError(error instanceof Error ? error.message : copy("Invalid tools JSON.", "工具 JSON 无效。"));
                   }
                 }}
-                style={{ ...inputStyle, cursor: "pointer", padding: "8px 12px", width: "auto" }}
+                style={buttonStyle}
               >
                 {copy("Add connection", "创建连接")}
               </button>
             </div>
           </div>
         </div>
-        <div style={{ marginTop: "14px", display: "flex", justifyContent: "flex-end" }}>
+        <div style={{ marginTop: "var(--space-4)", display: "flex", justifyContent: "flex-end" }}>
           <button
             type="button"
             onClick={() =>
@@ -652,7 +632,7 @@ export function SettingsView({
               borderRadius: theme.radius.sm,
               background: "var(--brand-primary-soft)",
               color: theme.colors.text,
-              padding: "10px 14px",
+              padding: "0 var(--space-4)",
               cursor: "pointer",
               fontWeight: 600,
             }}

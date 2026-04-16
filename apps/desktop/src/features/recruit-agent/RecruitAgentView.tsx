@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { StatusBadge } from "../../components";
+import { Panel, TopTabPage } from "../../components";
 import { formatCompactDate } from "../../lib/format";
 import { useI18n } from "../../lib/i18n";
 import type {
@@ -36,82 +37,6 @@ const theme = {
   shadow: "var(--shadow-pop)",
 } as const;
 
-interface PanelProps {
-  title?: string;
-  eyebrow?: string;
-  description?: string;
-  actions?: React.ReactNode;
-  children: React.ReactNode;
-  dense?: boolean;
-}
-
-function Panel({ title, eyebrow, description, actions, children, dense }: PanelProps): JSX.Element {
-  return (
-    <section
-      style={{
-        background: theme.colors.panel,
-        border: `1px solid ${theme.colors.border}`,
-        borderRadius: theme.radius.xl,
-        padding: dense ? "var(--space-4)" : "var(--space-5)",
-      }}
-    >
-      {(title || eyebrow || description || actions) && (
-        <header style={{ display: "flex", alignItems: "start", justifyContent: "space-between", gap: "var(--space-4)", marginBottom: "var(--space-4)" }}>
-          <div style={{ minWidth: 0 }}>
-            {eyebrow ? <div style={{ color: theme.colors.accent, fontSize: "12px", letterSpacing: "0.12em", textTransform: "uppercase", fontWeight: 600 }}>{eyebrow}</div> : null}
-            {title ? <h2 style={{ margin: "6px 0 4px", fontSize: "16px", lineHeight: 1.4, fontWeight: 600, color: theme.colors.text }}>{title}</h2> : null}
-            {description ? <p style={{ margin: 0, color: theme.colors.muted, fontSize: "13px", lineHeight: 1.6 }}>{description}</p> : null}
-          </div>
-          {actions ? <div style={{ flexShrink: 0 }}>{actions}</div> : null}
-        </header>
-      )}
-      {children}
-    </section>
-  );
-}
-
-interface TopTabPageProps {
-  items: Array<{ key: string; label: string }>;
-  active: string;
-  onChange(key: string): void;
-  children: React.ReactNode;
-}
-
-function TopTabPage({ items, active, onChange, children }: TopTabPageProps): JSX.Element {
-  return (
-    <div style={{ display: "grid", gap: "var(--space-4)", minWidth: 0 }}>
-      <div style={{ position: "sticky", top: "76px", zIndex: 12, alignSelf: "stretch", background: "rgba(245,246,248,0.96)", border: `1px solid ${theme.colors.border}`, borderRadius: theme.radius.xl, padding: "6px", backdropFilter: "blur(10px)" }}>
-        <div style={{ display: "flex", gap: "6px", overflowX: "auto" }}>
-          {items.map((item) => {
-            const selected = item.key === active;
-            return (
-              <button
-                key={item.key}
-                type="button"
-                onClick={() => onChange(item.key)}
-                style={{
-                  border: "none",
-                  borderRadius: theme.radius.sm,
-                  borderBottom: `2px solid ${selected ? "var(--brand-primary)" : "transparent"}`,
-                  background: selected ? "var(--brand-primary-soft)" : "transparent",
-                  color: theme.colors.text,
-                  cursor: "pointer",
-                  padding: "10px 14px",
-                  fontWeight: selected ? 600 : 500,
-                  whiteSpace: "nowrap",
-                }}
-              >
-                {item.label}
-              </button>
-            );
-          })}
-        </div>
-      </div>
-      <div style={{ display: "grid", gap: "var(--space-4)", minWidth: 0 }}>{children}</div>
-    </div>
-  );
-}
-
 interface RecruitAgentViewProps {
   profile: RecruitAgentProfileRecord | null;
   candidates: CandidateRecord[];
@@ -136,19 +61,20 @@ const inputStyle: React.CSSProperties = {
   border: `1px solid ${theme.colors.border}`,
   background: theme.colors.panel,
   color: theme.colors.text,
-  padding: "9px 10px",
-  fontSize: "13px",
+  minHeight: "var(--space-8)",
+  padding: "0 var(--space-3)",
+  fontSize: "var(--font-size-sm)",
 };
 
 const textAreaStyle: React.CSSProperties = {
   width: "100%",
-  minHeight: "120px",
+  minHeight: "calc(var(--space-12) + var(--space-12) + var(--space-6))",
   borderRadius: theme.radius.md,
   border: `1px solid ${theme.colors.border}`,
   background: theme.colors.panel,
   color: theme.colors.text,
-  padding: "10px 12px",
-  fontSize: "13px",
+  padding: "var(--space-3)",
+  fontSize: "var(--font-size-sm)",
   lineHeight: 1.6,
   resize: "vertical",
 };
@@ -158,9 +84,16 @@ const buttonStyle: React.CSSProperties = {
   borderRadius: theme.radius.sm,
   background: theme.colors.panel,
   color: theme.colors.text,
-  padding: "8px 12px",
+  minHeight: "var(--space-8)",
+  padding: "0 var(--space-4)",
   cursor: "pointer",
   fontWeight: 600,
+};
+
+const dangerButtonStyle: React.CSSProperties = {
+  ...buttonStyle,
+  borderColor: theme.colors.critical,
+  color: theme.colors.critical,
 };
 
 function stringifyJson(value: unknown): string {
@@ -667,60 +600,60 @@ export function RecruitAgentView({
   };
 
   const profileContent = (
-    <div style={{ display: "grid", gap: "18px" }}>
+    <div style={{ display: "grid", gap: "var(--space-5)" }}>
       <Panel
         title={copy("AI Strategy", "AI 策略")}
         eyebrow={copy("Role and scope", "角色与边界")}
         description={copy("Define the recruiting voice, role, duties, and prompt sources as structured fields.", "用结构化字段定义招聘语气、角色、职责和提示来源。")}
         actions={
-          <div style={{ display: "flex", gap: "8px" }}>
+          <div style={{ display: "flex", gap: "var(--space-2)" }}>
             <StatusBadge tone={profile?.isPrimary ? "positive" : "neutral"}>{profile?.status ?? "draft"}</StatusBadge>
             <button type="button" onClick={() => void handleSaveProfile()} style={buttonStyle}>{copy("Save", "保存")}</button>
           </div>
         }
       >
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "18px" }}>
-          <div style={{ display: "grid", gap: "12px" }}>
-            <label style={{ display: "grid", gap: "6px" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "var(--space-5)" }}>
+          <div style={{ display: "grid", gap: "var(--space-3)" }}>
+            <label style={{ display: "grid", gap: "var(--space-2)" }}>
               <span>{copy("Overview", "概述")}</span>
-              <textarea value={descriptionDraft} onChange={(event) => setDescriptionDraft(event.target.value)} style={{ ...textAreaStyle, minHeight: "88px" }} />
+              <textarea value={descriptionDraft} onChange={(event) => setDescriptionDraft(event.target.value)} style={{ ...textAreaStyle, minHeight: "calc(var(--space-12) + var(--space-10))" }} />
             </label>
-            <label style={{ display: "grid", gap: "6px" }}>
+            <label style={{ display: "grid", gap: "var(--space-2)" }}>
               <span>{copy("Role identity", "角色身份")}</span>
               <input value={identityDraft} onChange={(event) => setIdentityDraft(event.target.value)} style={inputStyle} />
             </label>
-            <label style={{ display: "grid", gap: "6px" }}>
+            <label style={{ display: "grid", gap: "var(--space-2)" }}>
               <span>{copy("Positioning", "定位")}</span>
-              <textarea value={positioningDraft} onChange={(event) => setPositioningDraft(event.target.value)} style={{ ...textAreaStyle, minHeight: "88px" }} />
+              <textarea value={positioningDraft} onChange={(event) => setPositioningDraft(event.target.value)} style={{ ...textAreaStyle, minHeight: "calc(var(--space-12) + var(--space-10))" }} />
             </label>
-            <label style={{ display: "grid", gap: "6px" }}>
+            <label style={{ display: "grid", gap: "var(--space-2)" }}>
               <span>{copy("Responsibilities", "职责")}</span>
               <textarea value={dutiesDraft} onChange={(event) => setDutiesDraft(event.target.value)} style={textAreaStyle} />
             </label>
-            <label style={{ display: "grid", gap: "6px" }}>
+            <label style={{ display: "grid", gap: "var(--space-2)" }}>
               <span>{copy("Voice", "语气")}</span>
               <input value={toneDraft} onChange={(event) => setToneDraft(event.target.value)} style={inputStyle} />
             </label>
           </div>
 
-          <div style={{ display: "grid", gap: "12px" }}>
-            <label style={{ display: "grid", gap: "6px" }}>
+          <div style={{ display: "grid", gap: "var(--space-3)" }}>
+            <label style={{ display: "grid", gap: "var(--space-2)" }}>
               <span>{copy("Guardrails", "护栏")}</span>
               <textarea value={boundariesDraft} onChange={(event) => setBoundariesDraft(event.target.value)} style={textAreaStyle} />
             </label>
-            <label style={{ display: "grid", gap: "6px" }}>
+            <label style={{ display: "grid", gap: "var(--space-2)" }}>
               <span>{copy("Success signals", "成功信号")}</span>
               <textarea value={successCriteriaDraft} onChange={(event) => setSuccessCriteriaDraft(event.target.value)} style={textAreaStyle} />
             </label>
-            <label style={{ display: "grid", gap: "6px" }}>
+            <label style={{ display: "grid", gap: "var(--space-2)" }}>
               <span>{copy("Never-do list", "禁止事项")}</span>
               <textarea value={forbiddenActionsDraft} onChange={(event) => setForbiddenActionsDraft(event.target.value)} style={textAreaStyle} />
             </label>
-            <label style={{ display: "grid", gap: "6px" }}>
+            <label style={{ display: "grid", gap: "var(--space-2)" }}>
               <span>{copy("Core prompt", "核心提示词")}</span>
               <textarea value={systemPromptDraft} onChange={(event) => setSystemPromptDraft(event.target.value)} style={textAreaStyle} />
             </label>
-            <label style={{ display: "grid", gap: "6px" }}>
+            <label style={{ display: "grid", gap: "var(--space-2)" }}>
               <span>{copy("Context sources", "上下文来源")}</span>
               <input value={contextSlotsDraft} onChange={(event) => setContextSlotsDraft(event.target.value)} style={inputStyle} placeholder={copy("candidate_memory, job_memory, candidate_thread", "candidate_memory, job_memory, candidate_thread")} />
             </label>
@@ -729,16 +662,16 @@ export function RecruitAgentView({
       </Panel>
 
       <Panel title={copy("Supporting configuration", "辅助配置")} eyebrow={copy("Secondary settings", "次级设置")} description={copy("Workspace, channel, and metadata remain editable as supporting controls.", "工作区、渠道和元数据仍可作为辅助配置继续编辑。")}>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: "18px" }}>
-          <label style={{ display: "grid", gap: "6px" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: "var(--space-5)" }}>
+          <label style={{ display: "grid", gap: "var(--space-2)" }}>
             <span>{copy("Workspace config JSON", "工作区配置 JSON")}</span>
             <textarea value={dashboardDraft} onChange={(event) => setDashboardDraft(event.target.value)} style={textAreaStyle} />
           </label>
-          <label style={{ display: "grid", gap: "6px" }}>
+          <label style={{ display: "grid", gap: "var(--space-2)" }}>
             <span>{copy("Delivery config JSON", "消息配置 JSON")}</span>
             <textarea value={channelDraft} onChange={(event) => setChannelDraft(event.target.value)} style={textAreaStyle} />
           </label>
-          <label style={{ display: "grid", gap: "6px" }}>
+          <label style={{ display: "grid", gap: "var(--space-2)" }}>
             <span>{copy("Strategy metadata JSON", "策略元数据 JSON")}</span>
             <textarea value={metadataDraft} onChange={(event) => setMetadataDraft(event.target.value)} style={textAreaStyle} />
           </label>
@@ -748,21 +681,21 @@ export function RecruitAgentView({
   );
 
   const blueprintContent = (
-    <div style={{ display: "grid", gap: "18px" }}>
+    <div style={{ display: "grid", gap: "var(--space-5)" }}>
       <Panel
         title={copy("Strategy map", "策略地图")}
         eyebrow={copy("Adaptive stages", "自适应阶段")}
         description={copy("Define the stage groups and adaptive stages the strategy follows.", "定义策略在各阶段组和自适应阶段中的推进方式。")}
         actions={<button type="button" onClick={() => void handleSaveProfile()} style={buttonStyle}>{copy("Save strategy map", "保存策略地图")}</button>}
       >
-        <div style={{ display: "grid", gap: "14px" }}>
-          <div style={{ display: "grid", gridTemplateColumns: "220px minmax(0, 1fr)", gap: "12px", alignItems: "start" }}>
-            <label style={{ display: "grid", gap: "6px" }}>
+        <div style={{ display: "grid", gap: "var(--space-4)" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "calc(var(--layout-left-list-width) - var(--space-10) - var(--space-5)) minmax(0, 1fr)", gap: "var(--space-3)", alignItems: "start" }}>
+            <label style={{ display: "grid", gap: "var(--space-2)" }}>
               <span>{copy("Default statuses", "默认状态列表")}</span>
-              <textarea value={defaultStatusesDraft} onChange={(event) => setDefaultStatusesDraft(event.target.value)} style={{ ...textAreaStyle, minHeight: "220px" }} />
+              <textarea value={defaultStatusesDraft} onChange={(event) => setDefaultStatusesDraft(event.target.value)} style={{ ...textAreaStyle, minHeight: "calc(var(--space-12) * 3 + var(--space-10) + var(--space-5) + var(--space-4))" }} />
             </label>
-            <div style={{ display: "grid", gap: "10px" }}>
-              <div style={{ display: "grid", gridTemplateColumns: "120px 160px 100px minmax(0, 1fr) auto", gap: "8px", color: theme.colors.muted, fontSize: "12px" }}>
+            <div style={{ display: "grid", gap: "var(--space-3)" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "calc(var(--space-10) * 3) calc(var(--space-10) * 4) calc(var(--space-10) * 2 + var(--space-5)) minmax(0, 1fr) auto", gap: "var(--space-2)", color: theme.colors.muted, fontSize: "var(--font-size-xs)" }}>
                 <span>{copy("Group", "阶段组")}</span>
                 <span>{copy("Stage key", "阶段键")}</span>
                 <span>{copy("Repeatable", "可重复")}</span>
@@ -773,43 +706,43 @@ export function RecruitAgentView({
                 const stages = Array.isArray(group.stages) ? (group.stages as Array<Record<string, unknown>>) : [];
                 const rounds = Array.isArray(group.default_rounds) ? (group.default_rounds as Array<Record<string, unknown>>) : [];
                 return (
-                  <div key={String(group.id ?? groupIndex)} style={{ display: "grid", gap: "6px", borderTop: `1px solid ${theme.colors.border}`, paddingTop: "8px" }}>
-                    <div style={{ display: "grid", gridTemplateColumns: "120px 160px 100px minmax(0, 1fr) auto", gap: "8px", alignItems: "center" }}>
+                  <div key={String(group.id ?? groupIndex)} style={{ display: "grid", gap: "var(--space-2)", borderTop: `1px solid ${theme.colors.border}`, paddingTop: "var(--space-2)" }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "calc(var(--space-10) * 3) calc(var(--space-10) * 4) calc(var(--space-10) * 2 + var(--space-5)) minmax(0, 1fr) auto", gap: "var(--space-2)", alignItems: "center" }}>
                       <input value={String(group.name ?? "")} onChange={(event) => updateStageGroupField(groupIndex, "name", event.target.value)} style={inputStyle} />
                       <input value={String(group.id ?? "")} onChange={(event) => updateStageGroupField(groupIndex, "id", event.target.value)} style={inputStyle} />
-                      <label style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "13px" }}>
+                      <label style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", fontSize: "var(--font-size-sm)" }}>
                         <input type="checkbox" checked={Boolean(group.repeatable ?? false)} onChange={(event) => updateStageGroupField(groupIndex, "repeatable", event.target.checked)} />
                         <span>{Boolean(group.repeatable ?? false) ? copy("Yes", "是") : copy("No", "否")}</span>
                       </label>
-                      <div style={{ color: theme.colors.muted, fontSize: "12px" }}>{String(group.name ?? group.id ?? "")}</div>
+                      <div style={{ color: theme.colors.muted, fontSize: "var(--font-size-xs)" }}>{String(group.name ?? group.id ?? "")}</div>
                       <button type="button" onClick={() => addStageToGroup(groupIndex)} style={buttonStyle}>{copy("Add stage", "加阶段")}</button>
                     </div>
                     {stages.map((stage, stageIndex) => (
-                      <div key={String(stage.key ?? `${groupIndex}-${stageIndex}`)} style={{ display: "grid", gridTemplateColumns: "120px 160px 100px minmax(0, 1fr) auto", gap: "8px", alignItems: "center" }}>
-                        <div style={{ color: theme.colors.muted, fontSize: "12px" }}>{String(group.name ?? group.id ?? "")}</div>
+                      <div key={String(stage.key ?? `${groupIndex}-${stageIndex}`)} style={{ display: "grid", gridTemplateColumns: "calc(var(--space-10) * 3) calc(var(--space-10) * 4) calc(var(--space-10) * 2 + var(--space-5)) minmax(0, 1fr) auto", gap: "var(--space-2)", alignItems: "center" }}>
+                        <div style={{ color: theme.colors.muted, fontSize: "var(--font-size-xs)" }}>{String(group.name ?? group.id ?? "")}</div>
                         <input value={String(stage.key ?? "")} onChange={(event) => updateStageField(groupIndex, stageIndex, "key", event.target.value)} style={inputStyle} />
-                        <div style={{ color: theme.colors.muted, fontSize: "12px" }}>{copy("stage", "阶段")}</div>
+                        <div style={{ color: theme.colors.muted, fontSize: "var(--font-size-xs)" }}>{copy("stage", "阶段")}</div>
                         <input value={String(stage.label ?? "")} onChange={(event) => updateStageField(groupIndex, stageIndex, "label", event.target.value)} style={inputStyle} />
-                        <span style={{ color: theme.colors.muted, fontSize: "12px" }}>{stageIndex + 1}</span>
+                        <span style={{ color: theme.colors.muted, fontSize: "var(--font-size-xs)" }}>{stageIndex + 1}</span>
                       </div>
                     ))}
                     {rounds.map((round, roundIndex) => (
-                      <div key={String(round.round ?? `${groupIndex}-round-${roundIndex}`)} style={{ display: "grid", gridTemplateColumns: "120px 160px 100px minmax(0, 1fr) auto", gap: "8px", alignItems: "center" }}>
-                        <div style={{ color: theme.colors.muted, fontSize: "12px" }}>{copy("Interview", "面试轮次")}</div>
+                      <div key={String(round.round ?? `${groupIndex}-round-${roundIndex}`)} style={{ display: "grid", gridTemplateColumns: "calc(var(--space-10) * 3) calc(var(--space-10) * 4) calc(var(--space-10) * 2 + var(--space-5)) minmax(0, 1fr) auto", gap: "var(--space-2)", alignItems: "center" }}>
+                        <div style={{ color: theme.colors.muted, fontSize: "var(--font-size-xs)" }}>{copy("Interview", "面试轮次")}</div>
                         <input value={String(round.waiting_key ?? "")} onChange={(event) => updateInterviewRoundField(groupIndex, roundIndex, "waiting_key", event.target.value)} style={inputStyle} />
-                        <div style={{ color: theme.colors.muted, fontSize: "12px" }}>{copy(`Round ${String(round.round ?? roundIndex + 1)}`, `第 ${String(round.round ?? roundIndex + 1)} 轮`)}</div>
+                        <div style={{ color: theme.colors.muted, fontSize: "var(--font-size-xs)" }}>{copy(`Round ${String(round.round ?? roundIndex + 1)}`, `第 ${String(round.round ?? roundIndex + 1)} 轮`)}</div>
                         <input value={String(round.scheduled_key ?? "")} onChange={(event) => updateInterviewRoundField(groupIndex, roundIndex, "scheduled_key", event.target.value)} style={inputStyle} />
-                        <span style={{ color: theme.colors.muted, fontSize: "12px" }}>{copy("waiting / scheduled", "待约 / 已约")}</span>
+                        <span style={{ color: theme.colors.muted, fontSize: "var(--font-size-xs)" }}>{copy("waiting / scheduled", "待约 / 已约")}</span>
                       </div>
                     ))}
                   </div>
                 );
               })}
-              {!blueprintStageGroups.length ? <div style={{ color: theme.colors.muted, fontSize: "13px" }}>{copy("Strategy map JSON is invalid or missing stage groups.", "策略地图 JSON 无效，或缺少阶段组。")}</div> : null}
+              {!blueprintStageGroups.length ? <div style={{ color: theme.colors.muted, fontSize: "var(--font-size-sm)" }}>{copy("Strategy map JSON is invalid or missing stage groups.", "策略地图 JSON 无效，或缺少阶段组。")}</div> : null}
             </div>
           </div>
-          <div style={{ display: "grid", gap: "10px" }}>
-            <div style={{ display: "grid", gridTemplateColumns: "180px 140px 120px minmax(0, 1fr)", gap: "8px", color: theme.colors.muted, fontSize: "12px" }}>
+          <div style={{ display: "grid", gap: "var(--space-3)" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "calc(var(--space-10) * 4 + var(--space-5)) calc(var(--space-10) * 3 + var(--space-5)) calc(var(--space-10) * 3) minmax(0, 1fr)", gap: "var(--space-2)", color: theme.colors.muted, fontSize: "var(--font-size-xs)" }}>
               <span>{copy("Stage", "阶段")}</span>
               <span>{copy("Task type", "任务类型")}</span>
               <span>{copy("Needs skill", "需要 skill")}</span>
@@ -818,14 +751,14 @@ export function RecruitAgentView({
             {blueprintStages.map((node, nodeIndex) => {
               const transitions = Array.isArray(node.transitions) ? (node.transitions as Array<Record<string, unknown>>) : [];
               return (
-                <div key={String(node.id ?? nodeIndex)} style={{ display: "grid", gridTemplateColumns: "180px 140px 120px minmax(0, 1fr)", gap: "8px", alignItems: "center" }}>
+                <div key={String(node.id ?? nodeIndex)} style={{ display: "grid", gridTemplateColumns: "calc(var(--space-10) * 4 + var(--space-5)) calc(var(--space-10) * 3 + var(--space-5)) calc(var(--space-10) * 3) minmax(0, 1fr)", gap: "var(--space-2)", alignItems: "center" }}>
                   <input value={String(node.name ?? "")} onChange={(event) => updateBlueprintStageField(nodeIndex, "name", event.target.value)} style={inputStyle} />
                   <input value={String(node.task_type ?? "")} onChange={(event) => updateBlueprintStageField(nodeIndex, "task_type", event.target.value)} style={inputStyle} />
-                  <label style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "13px" }}>
+                  <label style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", fontSize: "var(--font-size-sm)" }}>
                     <input type="checkbox" checked={Boolean(node.requires_skill ?? false)} onChange={(event) => updateBlueprintStageField(nodeIndex, "requires_skill", event.target.checked)} />
                     <span>{Boolean(node.requires_skill ?? false) ? copy("Yes", "是") : copy("No", "否")}</span>
                   </label>
-                  <div style={{ color: theme.colors.muted, fontSize: "12px", lineHeight: 1.5 }}>
+                  <div style={{ color: theme.colors.muted, fontSize: "var(--font-size-xs)", lineHeight: 1.5 }}>
                     {String(node.purpose ?? "").trim()
                       ? `${String(node.purpose ?? "")}${node.next_stage ? `\n${copy("Next", "下一步")}: ${String(node.next_stage)}` : ""}`
                       : transitions.length
@@ -837,46 +770,46 @@ export function RecruitAgentView({
             })}
           </div>
           <details>
-            <summary style={{ cursor: "pointer", color: theme.colors.muted, fontSize: "12px" }}>{copy("Advanced JSON editor", "高级 JSON 编辑器")}</summary>
-            <label style={{ display: "grid", gap: "6px", marginTop: "10px" }}>
+            <summary style={{ cursor: "pointer", color: theme.colors.muted, fontSize: "var(--font-size-xs)" }}>{copy("Advanced JSON editor", "高级 JSON 编辑器")}</summary>
+            <label style={{ display: "grid", gap: "var(--space-2)", marginTop: "var(--space-3)" }}>
               <span>{copy("Strategy map JSON", "策略地图 JSON")}</span>
-              <textarea value={playbookJsonDraft} onChange={(event) => setPlaybookJsonDraft(event.target.value)} style={{ ...textAreaStyle, minHeight: "260px" }} />
+              <textarea value={playbookJsonDraft} onChange={(event) => setPlaybookJsonDraft(event.target.value)} style={{ ...textAreaStyle, minHeight: "calc(var(--space-12) * 3 + var(--space-10) + var(--space-10) + var(--space-5) + var(--space-4))" }} />
             </label>
           </details>
         </div>
       </Panel>
 
       <Panel title={copy("Memory policy", "记忆策略")} eyebrow={copy("Layered compaction", "分层压缩")} description={copy("All memory keeps a summary, an internal view, and a model-facing view. Auto compaction runs when the configured threshold is exceeded.", "所有 memory 都同时保留摘要层、内部视图层和模型可见层。超过阈值时自动压缩。")}>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: "18px" }}>
-          <article style={{ display: "grid", gap: "10px" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: "var(--space-5)" }}>
+          <article style={{ display: "grid", gap: "var(--space-3)" }}>
             <strong>{copy("Candidate memory", "候选人记忆")}</strong>
-            <label style={{ display: "grid", gap: "6px" }}>
+            <label style={{ display: "grid", gap: "var(--space-2)" }}>
               <span>{copy("Compact threshold", "压缩阈值")}</span>
               <input value={candidateCompactThreshold} onChange={(event) => setCandidateCompactThreshold(event.target.value)} style={inputStyle} />
             </label>
-            <label style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+            <label style={{ display: "flex", gap: "var(--space-2)", alignItems: "center" }}>
               <input type="checkbox" checked={candidateAutoCompact} onChange={(event) => setCandidateAutoCompact(event.target.checked)} />
               <span>{copy("Auto compact", "自动 compact")}</span>
             </label>
           </article>
-          <article style={{ display: "grid", gap: "10px" }}>
+          <article style={{ display: "grid", gap: "var(--space-3)" }}>
             <strong>{copy("JD memory", "JD 记忆")}</strong>
-            <label style={{ display: "grid", gap: "6px" }}>
+            <label style={{ display: "grid", gap: "var(--space-2)" }}>
               <span>{copy("Compact threshold", "压缩阈值")}</span>
               <input value={jobCompactThreshold} onChange={(event) => setJobCompactThreshold(event.target.value)} style={inputStyle} />
             </label>
-            <label style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+            <label style={{ display: "flex", gap: "var(--space-2)", alignItems: "center" }}>
               <input type="checkbox" checked={jobAutoCompact} onChange={(event) => setJobAutoCompact(event.target.checked)} />
               <span>{copy("Auto compact", "自动 compact")}</span>
             </label>
           </article>
-          <article style={{ display: "grid", gap: "10px" }}>
+          <article style={{ display: "grid", gap: "var(--space-3)" }}>
             <strong>{copy("Global memory", "全局记忆")}</strong>
-            <label style={{ display: "grid", gap: "6px" }}>
+            <label style={{ display: "grid", gap: "var(--space-2)" }}>
               <span>{copy("Compact threshold", "压缩阈值")}</span>
               <input value={globalCompactThreshold} onChange={(event) => setGlobalCompactThreshold(event.target.value)} style={inputStyle} />
             </label>
-            <label style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+            <label style={{ display: "flex", gap: "var(--space-2)", alignItems: "center" }}>
               <input type="checkbox" checked={globalAutoCompact} onChange={(event) => setGlobalAutoCompact(event.target.checked)} />
               <span>{copy("Auto compact", "自动 compact")}</span>
             </label>
@@ -887,9 +820,9 @@ export function RecruitAgentView({
   );
 
   const memoryContent = (
-    <div style={{ display: "grid", gridTemplateColumns: "320px minmax(0, 1fr)", gap: "18px" }}>
+    <div style={{ display: "grid", gridTemplateColumns: "var(--layout-right-panel-width) minmax(0, 1fr)", gap: "var(--space-5)" }}>
       <Panel title={copy("Memory workspace", "记忆工作区")} eyebrow={copy("Strict isolation", "严格隔离")} description={copy("Candidate memory and JD memory stay isolated. The UI reveals summary, internal view, and model-facing view in order.", "Candidate memory 和 JD memory 保持隔离。界面按顺序展示摘要、内部视图和模型可见视图。")}>
-        <div style={{ display: "grid", gap: "10px" }}>
+        <div style={{ display: "grid", gap: "var(--space-3)" }}>
           {memoryTargets.map((item) => (
             <button
               key={item.key}
@@ -898,15 +831,15 @@ export function RecruitAgentView({
               style={{
                 cursor: "pointer",
                 textAlign: "left",
-                borderRadius: "14px",
-                border: `1px solid ${selectedMemoryKey === item.key ? "rgba(122,167,255,0.36)" : theme.colors.border}`,
+                borderRadius: theme.radius.xl,
+                border: `1px solid ${selectedMemoryKey === item.key ? theme.colors.accent : theme.colors.border}`,
                 background: selectedMemoryKey === item.key ? "var(--brand-primary-soft)" : "var(--bg-page)",
                 color: theme.colors.text,
-                padding: "12px 13px",
+                padding: "var(--space-3)",
               }}
             >
-              <div style={{ fontWeight: 700 }}>{item.label}</div>
-              <div style={{ color: theme.colors.muted, fontSize: "12px", marginTop: "5px" }}>{item.detail}</div>
+              <div style={{ fontWeight: 600 }}>{item.label}</div>
+              <div style={{ color: theme.colors.muted, fontSize: "var(--font-size-xs)", marginTop: "var(--space-1)" }}>{item.detail}</div>
             </button>
           ))}
         </div>
@@ -917,42 +850,42 @@ export function RecruitAgentView({
         eyebrow={copy("Progressive disclosure", "渐进式披露")}
         description={copy("Raw evidence remains preserved. The compacted content and model-ready view are editable separately.", "原始证据会被保留。压缩内容和模型可用视图可以独立编辑。")}
         actions={
-          <div style={{ display: "flex", gap: "8px" }}>
+          <div style={{ display: "flex", gap: "var(--space-2)" }}>
             <button type="button" onClick={() => void handleCompactMemory()} style={buttonStyle} disabled={!selectedMemory}>{copy("Compact", "执行 compact")}</button>
             <button type="button" onClick={() => void handleSaveMemory()} style={buttonStyle} disabled={!selectedMemory}>{copy("Save", "保存")}</button>
           </div>
         }
       >
         {selectedMemory ? (
-          <div style={{ display: "grid", gap: "12px" }}>
-            <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+          <div style={{ display: "grid", gap: "var(--space-3)" }}>
+            <div style={{ display: "flex", gap: "var(--space-2)", flexWrap: "wrap" }}>
               <StatusBadge tone="neutral">{selectedMemory.record.memorySchemaVersion}</StatusBadge>
               <StatusBadge tone="neutral">{copy(`tokens ${selectedMemory.record.tokenEstimate}`, `tokens ${selectedMemory.record.tokenEstimate}`)}</StatusBadge>
               {selectedMemory.record.compactedAt ? <StatusBadge tone="warning">{copy(`last compact ${formatCompactDate(selectedMemory.record.compactedAt)}`, `最近 compact 于 ${formatCompactDate(selectedMemory.record.compactedAt)}`)}</StatusBadge> : null}
             </div>
-            <label style={{ display: "grid", gap: "6px" }}>
+            <label style={{ display: "grid", gap: "var(--space-2)" }}>
               <span>{copy("Summary", "摘要")}</span>
-              <textarea value={memorySummaryDraft} onChange={(event) => setMemorySummaryDraft(event.target.value)} style={{ ...textAreaStyle, minHeight: "88px" }} />
+              <textarea value={memorySummaryDraft} onChange={(event) => setMemorySummaryDraft(event.target.value)} style={{ ...textAreaStyle, minHeight: "calc(var(--space-12) + var(--space-10))" }} />
             </label>
-            <label style={{ display: "grid", gap: "6px" }}>
+            <label style={{ display: "grid", gap: "var(--space-2)" }}>
               <span>{copy("Recruiter preview", "招聘视图")}</span>
               <input value={memoryDisclosurePreviewDraft} onChange={(event) => setMemoryDisclosurePreviewDraft(event.target.value)} style={inputStyle} />
             </label>
-            <label style={{ display: "grid", gap: "6px" }}>
+            <label style={{ display: "grid", gap: "var(--space-2)" }}>
               <span>{copy("Internal summary", "内部摘要")}</span>
-              <textarea value={memoryDisclosureOperatorDraft} onChange={(event) => setMemoryDisclosureOperatorDraft(event.target.value)} style={{ ...textAreaStyle, minHeight: "88px" }} />
+              <textarea value={memoryDisclosureOperatorDraft} onChange={(event) => setMemoryDisclosureOperatorDraft(event.target.value)} style={{ ...textAreaStyle, minHeight: "calc(var(--space-12) + var(--space-10))" }} />
             </label>
-            <label style={{ display: "grid", gap: "6px" }}>
+            <label style={{ display: "grid", gap: "var(--space-2)" }}>
               <span>{copy("Model view", "模型视图")}</span>
-              <textarea value={memoryDisclosureModelDraft} onChange={(event) => setMemoryDisclosureModelDraft(event.target.value)} style={{ ...textAreaStyle, minHeight: "120px" }} />
+              <textarea value={memoryDisclosureModelDraft} onChange={(event) => setMemoryDisclosureModelDraft(event.target.value)} style={{ ...textAreaStyle, minHeight: "calc(var(--space-10) * 3)" }} />
             </label>
             <details>
               <summary style={{ cursor: "pointer", color: theme.colors.muted }}>{copy("Show compacted content JSON", "查看 compact 后内容 JSON")}</summary>
-              <textarea value={memoryCompactDraft} onChange={(event) => setMemoryCompactDraft(event.target.value)} style={{ ...textAreaStyle, minHeight: "220px", marginTop: "10px" }} />
+              <textarea value={memoryCompactDraft} onChange={(event) => setMemoryCompactDraft(event.target.value)} style={{ ...textAreaStyle, minHeight: "calc(var(--space-12) * 3 + var(--space-10) + var(--space-5) + var(--space-4))", marginTop: "var(--space-3)" }} />
             </details>
             <details>
               <summary style={{ cursor: "pointer", color: theme.colors.muted }}>{copy("Show raw record JSON", "查看原始记录 JSON")}</summary>
-              <textarea value={memoryRawDraft} onChange={(event) => setMemoryRawDraft(event.target.value)} style={{ ...textAreaStyle, minHeight: "220px", marginTop: "10px" }} />
+              <textarea value={memoryRawDraft} onChange={(event) => setMemoryRawDraft(event.target.value)} style={{ ...textAreaStyle, minHeight: "calc(var(--space-12) * 3 + var(--space-10) + var(--space-5) + var(--space-4))", marginTop: "var(--space-3)" }} />
             </details>
           </div>
         ) : (
@@ -963,34 +896,34 @@ export function RecruitAgentView({
   );
 
   const contextContent = (
-    <div style={{ display: "grid", gap: "18px" }}>
+    <div style={{ display: "grid", gap: "var(--space-5)" }}>
       <Panel
         title={copy("Context policy", "上下文策略")}
         eyebrow={copy("Code first, user configurable", "代码优先，用户可配")}
         description={copy("Hard constraints stay in code. This page only adjusts preference, budget, and optional LLM rerank behavior for allowed fragments.", "硬边界仍然由代码控制。这个页面只调整允许片段范围内的偏好、预算和可选的 LLM 辅助重排。")}
         actions={<button type="button" onClick={() => void handleSaveContextPolicy()} style={buttonStyle}>{copy("Save policy", "保存策略")}</button>}
       >
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: "12px" }}>
-          <label style={{ display: "grid", gap: "6px" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: "var(--space-3)" }}>
+          <label style={{ display: "grid", gap: "var(--space-2)" }}>
             <span>{copy("Default token budget", "默认 Token 预算")}</span>
             <input value={contextTokenBudgetDraft} onChange={(event) => setContextTokenBudgetDraft(event.target.value)} style={inputStyle} />
           </label>
-          <label style={{ display: "grid", gap: "6px" }}>
+          <label style={{ display: "grid", gap: "var(--space-2)" }}>
             <span>{copy("LLM rerank top K", "LLM 重排 Top K")}</span>
             <input value={contextLlmTopKDraft} onChange={(event) => setContextLlmTopKDraft(event.target.value)} style={inputStyle} />
           </label>
-          <label style={{ display: "grid", gap: "6px" }}>
+          <label style={{ display: "grid", gap: "var(--space-2)" }}>
             <span>{copy("LLM max boost", "LLM 最大加减分")}</span>
             <input value={contextLlmMaxBoostDraft} onChange={(event) => setContextLlmMaxBoostDraft(event.target.value)} style={inputStyle} />
           </label>
-          <label style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "24px" }}>
+          <label style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", marginTop: "var(--space-6)" }}>
             <input type="checkbox" checked={contextLlmRerankEnabled} onChange={(event) => setContextLlmRerankEnabled(event.target.checked)} />
             <span>{copy("Enable LLM rerank", "启用 LLM 辅助重排")}</span>
           </label>
         </div>
-        <label style={{ display: "grid", gap: "6px", marginTop: "12px" }}>
+        <label style={{ display: "grid", gap: "var(--space-2)", marginTop: "var(--space-3)" }}>
           <span>{copy("Drop order", "超预算时优先丢弃顺序")}</span>
-          <textarea value={contextDropOrderDraft} onChange={(event) => setContextDropOrderDraft(event.target.value)} style={{ ...textAreaStyle, minHeight: "110px" }} />
+          <textarea value={contextDropOrderDraft} onChange={(event) => setContextDropOrderDraft(event.target.value)} style={{ ...textAreaStyle, minHeight: "calc(var(--space-12) + var(--space-10) + var(--space-6))" }} />
         </label>
       </Panel>
 
@@ -999,27 +932,27 @@ export function RecruitAgentView({
         eyebrow={copy("Per-lane priority", "按 lane 配置优先级")}
         description={copy("Candidate lane and strategy lane can prefer different fragment classes. Hard safety boundaries still remain enforced in code.", "候选人 lane 和策略 lane 可以偏好不同的片段类型，但硬安全边界仍然由代码强制执行。")}
       >
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "18px" }}>
-          <div style={{ display: "grid", gap: "12px" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "var(--space-5)" }}>
+          <div style={{ display: "grid", gap: "var(--space-3)" }}>
             <strong>{copy("Candidate lane", "候选人 lane")}</strong>
-            <label style={{ display: "grid", gap: "6px" }}>
+            <label style={{ display: "grid", gap: "var(--space-2)" }}>
               <span>{copy("Must include", "必须包含")}</span>
-              <textarea value={candidateMustIncludeDraft} onChange={(event) => setCandidateMustIncludeDraft(event.target.value)} style={{ ...textAreaStyle, minHeight: "110px" }} />
+              <textarea value={candidateMustIncludeDraft} onChange={(event) => setCandidateMustIncludeDraft(event.target.value)} style={{ ...textAreaStyle, minHeight: "calc(var(--space-12) + var(--space-10) + var(--space-6))" }} />
             </label>
-            <label style={{ display: "grid", gap: "6px" }}>
+            <label style={{ display: "grid", gap: "var(--space-2)" }}>
               <span>{copy("Default weights JSON", "默认权重 JSON")}</span>
-              <textarea value={candidateWeightsDraft} onChange={(event) => setCandidateWeightsDraft(event.target.value)} style={{ ...textAreaStyle, minHeight: "220px" }} />
+              <textarea value={candidateWeightsDraft} onChange={(event) => setCandidateWeightsDraft(event.target.value)} style={{ ...textAreaStyle, minHeight: "calc(var(--space-12) * 3 + var(--space-10) + var(--space-5) + var(--space-4))" }} />
             </label>
           </div>
-          <div style={{ display: "grid", gap: "12px" }}>
+          <div style={{ display: "grid", gap: "var(--space-3)" }}>
             <strong>{copy("Strategy lane", "策略 lane")}</strong>
-            <label style={{ display: "grid", gap: "6px" }}>
+            <label style={{ display: "grid", gap: "var(--space-2)" }}>
               <span>{copy("Must include", "必须包含")}</span>
-              <textarea value={agentMustIncludeDraft} onChange={(event) => setAgentMustIncludeDraft(event.target.value)} style={{ ...textAreaStyle, minHeight: "110px" }} />
+              <textarea value={agentMustIncludeDraft} onChange={(event) => setAgentMustIncludeDraft(event.target.value)} style={{ ...textAreaStyle, minHeight: "calc(var(--space-12) + var(--space-10) + var(--space-6))" }} />
             </label>
-            <label style={{ display: "grid", gap: "6px" }}>
+            <label style={{ display: "grid", gap: "var(--space-2)" }}>
               <span>{copy("Default weights JSON", "默认权重 JSON")}</span>
-              <textarea value={agentWeightsDraft} onChange={(event) => setAgentWeightsDraft(event.target.value)} style={{ ...textAreaStyle, minHeight: "220px" }} />
+              <textarea value={agentWeightsDraft} onChange={(event) => setAgentWeightsDraft(event.target.value)} style={{ ...textAreaStyle, minHeight: "calc(var(--space-12) * 3 + var(--space-10) + var(--space-5) + var(--space-4))" }} />
             </label>
           </div>
         </div>
@@ -1030,18 +963,18 @@ export function RecruitAgentView({
         eyebrow={copy("Advanced overrides", "高级覆盖")}
         description={copy("Use this only for task-specific prefer/suppress rules such as outreach, scoring, or resume follow-up.", "这里只用来处理按任务类型的 prefer/suppress 规则，比如外联、评分、催简历。")}
       >
-        <label style={{ display: "grid", gap: "6px" }}>
+        <label style={{ display: "grid", gap: "var(--space-2)" }}>
           <span>{copy("Run type overrides JSON", "任务类型覆盖 JSON")}</span>
-          <textarea value={runTypeOverridesDraft} onChange={(event) => setRunTypeOverridesDraft(event.target.value)} style={{ ...textAreaStyle, minHeight: "260px" }} />
+          <textarea value={runTypeOverridesDraft} onChange={(event) => setRunTypeOverridesDraft(event.target.value)} style={{ ...textAreaStyle, minHeight: "calc(var(--space-12) * 3 + var(--space-10) + var(--space-10) + var(--space-5) + var(--space-4))" }} />
         </label>
       </Panel>
     </div>
   );
 
   const skillContent = (
-    <div style={{ display: "grid", gridTemplateColumns: "320px minmax(0, 1fr)", gap: "18px" }}>
+    <div style={{ display: "grid", gridTemplateColumns: "var(--layout-right-panel-width) minmax(0, 1fr)", gap: "var(--space-5)" }}>
       <Panel title={copy("Skill library", "Skill 库")} eyebrow={copy("Editable items", "可编辑项")} description={copy("Skills remain viewable, editable, and removable. The UI shows a short summary first, then full schemas under details.", "skill 保持可查看、可修改、可删除。界面先展示简短摘要，再在详情中展示完整 schema。")}>
-        <div style={{ display: "grid", gap: "10px" }}>
+        <div style={{ display: "grid", gap: "var(--space-3)" }}>
           {skills.map((skill) => (
             <button
               key={skill.id}
@@ -1050,20 +983,20 @@ export function RecruitAgentView({
               style={{
                 cursor: "pointer",
                 textAlign: "left",
-                borderRadius: "14px",
-                border: `1px solid ${selectedSkillId === skill.id ? "rgba(122,167,255,0.36)" : theme.colors.border}`,
+                borderRadius: theme.radius.xl,
+                border: `1px solid ${selectedSkillId === skill.id ? theme.colors.accent : theme.colors.border}`,
                 background: selectedSkillId === skill.id ? "var(--brand-primary-soft)" : "var(--bg-page)",
                 color: theme.colors.text,
-                padding: "12px 13px",
+                padding: "var(--space-3)",
               }}
             >
-              <div style={{ display: "flex", justifyContent: "space-between", gap: "8px", alignItems: "start" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: "var(--space-2)", alignItems: "start" }}>
                 <strong>{skill.name}</strong>
                 <StatusBadge tone={skill.health === "healthy" ? "positive" : skill.health === "warning" ? "warning" : "critical"}>
                   {skill.status}
                 </StatusBadge>
               </div>
-              <div style={{ color: theme.colors.muted, fontSize: "12px", marginTop: "6px" }}>{skill.skillId} · {skill.category ?? "general"} · {skill.riskLevel ?? "medium"}</div>
+              <div style={{ color: theme.colors.muted, fontSize: "var(--font-size-xs)", marginTop: "var(--space-2)" }}>{skill.skillId} · {skill.category ?? "general"} · {skill.riskLevel ?? "medium"}</div>
             </button>
           ))}
         </div>
@@ -1075,59 +1008,59 @@ export function RecruitAgentView({
         description={selectedSkill?.summary ?? copy("Select a skill to inspect its summary, strategy, and full schema.", "选择一个 skill 查看摘要、策略和完整 schema。")}
         actions={
           selectedSkill ? (
-            <div style={{ display: "flex", gap: "8px" }}>
+            <div style={{ display: "flex", gap: "var(--space-2)" }}>
               <button type="button" onClick={() => void handleSaveSkill()} style={buttonStyle}>{copy("Save skill", "保存 skill")}</button>
-              <button type="button" onClick={() => void onDeleteSkill(selectedSkill.id)} style={{ ...buttonStyle, background: "rgba(255,122,122,0.12)", color: "#ffdede" }}>{copy("Delete", "删除")}</button>
+              <button type="button" onClick={() => void onDeleteSkill(selectedSkill.id)} style={dangerButtonStyle}>{copy("Delete", "删除")}</button>
             </div>
           ) : null
         }
       >
         {selectedSkill ? (
-          <div style={{ display: "grid", gap: "12px" }}>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: "10px" }}>
-              <label style={{ display: "grid", gap: "6px" }}>
+          <div style={{ display: "grid", gap: "var(--space-3)" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: "var(--space-3)" }}>
+              <label style={{ display: "grid", gap: "var(--space-2)" }}>
                 <span>{copy("Name", "名称")}</span>
                 <input value={selectedSkill.name} readOnly style={inputStyle} />
               </label>
-              <label style={{ display: "grid", gap: "6px" }}>
+              <label style={{ display: "grid", gap: "var(--space-2)" }}>
                 <span>{copy("Skill ID", "Skill ID")}</span>
                 <input value={selectedSkill.skillId} readOnly style={inputStyle} />
               </label>
-              <label style={{ display: "grid", gap: "6px" }}>
+              <label style={{ display: "grid", gap: "var(--space-2)" }}>
                 <span>{copy("Bound stage", "绑定阶段")}</span>
                 <input value={selectedSkill.boundStage} readOnly style={inputStyle} />
               </label>
-              <label style={{ display: "grid", gap: "6px" }}>
+              <label style={{ display: "grid", gap: "var(--space-2)" }}>
                 <span>{copy("Risk", "风险等级")}</span>
                 <input value={selectedSkill.riskLevel ?? "medium"} readOnly style={inputStyle} />
               </label>
             </div>
-            <label style={{ display: "grid", gap: "6px" }}>
+            <label style={{ display: "grid", gap: "var(--space-2)" }}>
               <span>{copy("Operator summary", "操作员摘要")}</span>
-              <textarea value={skillDescriptionDraft} onChange={(event) => setSkillDescriptionDraft(event.target.value)} style={{ ...textAreaStyle, minHeight: "88px" }} />
+              <textarea value={skillDescriptionDraft} onChange={(event) => setSkillDescriptionDraft(event.target.value)} style={{ ...textAreaStyle, minHeight: "calc(var(--space-12) + var(--space-10))" }} />
             </label>
-            <label style={{ display: "grid", gap: "6px" }}>
+            <label style={{ display: "grid", gap: "var(--space-2)" }}>
               <span>{copy("Strategy JSON", "策略 JSON")}</span>
               <textarea value={skillStrategyDraft} onChange={(event) => setSkillStrategyDraft(event.target.value)} style={textAreaStyle} />
             </label>
-            <label style={{ display: "grid", gap: "6px" }}>
+            <label style={{ display: "grid", gap: "var(--space-2)" }}>
               <span>{copy("Guidance JSON", "指导 JSON")}</span>
               <textarea value={skillExecutionHintsDraft} onChange={(event) => setSkillExecutionHintsDraft(event.target.value)} style={textAreaStyle} />
             </label>
-            <label style={{ display: "grid", gap: "6px" }}>
+            <label style={{ display: "grid", gap: "var(--space-2)" }}>
               <span>{copy("Skill metadata JSON", "Skill 元数据 JSON")}</span>
               <textarea value={skillMetadataDraft} onChange={(event) => setSkillMetadataDraft(event.target.value)} style={textAreaStyle} />
             </label>
             <details>
               <summary style={{ cursor: "pointer", color: theme.colors.muted }}>{copy("Show input/output schemas", "查看输入/输出 schema")}</summary>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "18px", marginTop: "12px" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "var(--space-5)", marginTop: "var(--space-3)" }}>
                 <textarea value={skillInputDraft} onChange={(event) => setSkillInputDraft(event.target.value)} style={textAreaStyle} />
                 <textarea value={skillOutputDraft} onChange={(event) => setSkillOutputDraft(event.target.value)} style={textAreaStyle} />
               </div>
             </details>
             <details>
               <summary style={{ cursor: "pointer", color: theme.colors.muted }}>{copy("Show health check config", "查看健康检查配置")}</summary>
-              <textarea value={skillHealthConfigDraft} onChange={(event) => setSkillHealthConfigDraft(event.target.value)} style={{ ...textAreaStyle, marginTop: "12px" }} />
+              <textarea value={skillHealthConfigDraft} onChange={(event) => setSkillHealthConfigDraft(event.target.value)} style={{ ...textAreaStyle, marginTop: "var(--space-3)" }} />
             </details>
           </div>
         ) : (
@@ -1140,7 +1073,16 @@ export function RecruitAgentView({
   return (
     <div style={{ display: "grid", gap: "var(--space-5)", minWidth: 0, background: theme.colors.background, padding: "var(--space-5)", borderRadius: theme.radius.xl }}>
       {errorMessage ? (
-        <div style={{ borderRadius: theme.radius.xl, border: `1px solid ${theme.colors.critical}`, background: "rgba(255,77,79,0.08)", color: theme.colors.critical, padding: "12px 14px", fontSize: "13px" }}>
+        <div
+          style={{
+            borderRadius: theme.radius.xl,
+            border: `1px solid ${theme.colors.critical}`,
+            background: "var(--danger-soft)",
+            color: theme.colors.critical,
+            padding: "var(--space-3) var(--space-4)",
+            fontSize: "var(--font-size-sm)",
+          }}
+        >
           {errorMessage}
         </div>
       ) : null}

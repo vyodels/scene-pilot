@@ -42,8 +42,7 @@ const heroStyle: React.CSSProperties = {
   padding: "var(--space-6)",
   border: "1px solid var(--border-line)",
   borderRadius: "var(--radius-lg)",
-  background:
-    "linear-gradient(135deg, color-mix(in srgb, var(--brand-primary-soft) 70%, white) 0%, var(--bg-card) 58%, var(--bg-page) 100%)",
+  background: "var(--bg-card)",
 };
 
 const sectionStyle: React.CSSProperties = {
@@ -79,11 +78,12 @@ const descriptionStyle: React.CSSProperties = {
 };
 
 const actionButtonStyle: React.CSSProperties = {
+  minHeight: "32px",
   border: "1px solid var(--border-input)",
   borderRadius: "var(--radius-sm)",
   background: "var(--bg-card)",
   color: "var(--text-primary)",
-  padding: "10px 14px",
+  padding: "0 var(--space-4)",
   fontWeight: "var(--font-weight-medium)",
   cursor: "pointer",
 };

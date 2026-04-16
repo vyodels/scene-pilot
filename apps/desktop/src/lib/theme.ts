@@ -25,10 +25,10 @@ export const theme = {
     siderActive: "var(--bg-sider-active)",
   },
   radius: {
-    xl: "10px",
-    lg: "8px",
-    md: "6px",
-    sm: "4px",
+    xl: "var(--radius-lg)",
+    lg: "var(--radius-md)",
+    md: "var(--radius-sm)",
+    sm: "var(--radius-xs)",
   },
   shadow: "var(--shadow-pop)",
 };

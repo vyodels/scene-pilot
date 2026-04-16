@@ -9,16 +9,101 @@ interface SidebarProps {
   counts: Partial<Record<WorkspaceTab, number>>;
 }
 
-const tabs: Array<{ key: WorkspaceTab; labelEn: string; labelZh: string; detailEn: string; detailZh: string }> = [
-  { key: "home", labelEn: "Home", labelZh: "首页", detailEn: "Today's recruiting overview", detailZh: "今日招聘总览" },
-  { key: "candidates", labelEn: "Candidates", labelZh: "候选人", detailEn: "Pipeline, progress, and next action", detailZh: "管道、进度与下一步" },
-  { key: "import-center", labelEn: "Import Center", labelZh: "导入中心", detailEn: "Resume intake and source review", detailZh: "简历导入与来源审查" },
-  { key: "jd-workspace", labelEn: "JD Workspace", labelZh: "JD 工作区", detailEn: "Role scope, workflow, and notes", detailZh: "岗位范围、流程与策略笔记" },
-  { key: "communications", labelEn: "Cockpit", labelZh: "候选人舱", detailEn: "Per-candidate threads and context", detailZh: "按候选人隔离的线程与上下文" },
-  { key: "ai-review", labelEn: "AI Review", labelZh: "AI 审查", detailEn: "Approvals, signals, and follow-ups", detailZh: "审批、信号与待办跟进" },
-  { key: "ai-strategy", labelEn: "AI Strategy", labelZh: "AI 策略", detailEn: "Strategy, memory, and hiring rules", detailZh: "策略、记忆与招聘规则" },
-  { key: "settings", labelEn: "Settings", labelZh: "设置", detailEn: "Accounts, sync, and tool setup", detailZh: "账号、同步与工具配置" },
+const tabs: Array<{ key: WorkspaceTab; labelEn: string; labelZh: string; shortZh: string }> = [
+  { key: "home", labelEn: "Home", labelZh: "首页", shortZh: "首页" },
+  { key: "candidates", labelEn: "Candidates", labelZh: "候选人", shortZh: "候选" },
+  { key: "import-center", labelEn: "Import Center", labelZh: "导入中心", shortZh: "导入" },
+  { key: "jd-workspace", labelEn: "JD Workspace", labelZh: "JD 工作区", shortZh: "岗位" },
+  { key: "communications", labelEn: "Cockpit", labelZh: "候选人舱", shortZh: "沟通" },
+  { key: "ai-review", labelEn: "AI Review", labelZh: "AI 审查", shortZh: "审查" },
+  { key: "ai-strategy", labelEn: "AI Strategy", labelZh: "AI 策略", shortZh: "策略" },
+  { key: "settings", labelEn: "Settings", labelZh: "设置", shortZh: "设置" },
 ];
+
+function SidebarGlyph({ tab }: { tab: WorkspaceTab }): JSX.Element {
+  const shared = {
+    width: 22,
+    height: 22,
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: 1.75,
+    strokeLinecap: "round" as const,
+    strokeLinejoin: "round" as const,
+    "aria-hidden": true,
+  };
+
+  switch (tab) {
+    case "home":
+      return (
+        <svg {...shared}>
+          <path d="M4 11.5 12 5l8 6.5" />
+          <path d="M6.5 10.5V19h11v-8.5" />
+        </svg>
+      );
+    case "candidates":
+      return (
+        <svg {...shared}>
+          <circle cx="9" cy="8" r="3" />
+          <path d="M4.5 18c.9-2.4 2.8-4 4.5-4s3.6 1.6 4.5 4" />
+          <path d="M16 10.5c1.7.4 3 1.8 3.5 3.5" />
+          <path d="M16.5 6.5a2.5 2.5 0 0 1 0 5" />
+        </svg>
+      );
+    case "import-center":
+      return (
+        <svg {...shared}>
+          <path d="M12 4v9" />
+          <path d="m8.5 10 3.5 3.5L15.5 10" />
+          <path d="M5 18.5h14" />
+        </svg>
+      );
+    case "jd-workspace":
+      return (
+        <svg {...shared}>
+          <rect x="5" y="4.5" width="14" height="15" rx="2" />
+          <path d="M8.5 8.5h7" />
+          <path d="M8.5 12h7" />
+          <path d="M8.5 15.5h4.5" />
+        </svg>
+      );
+    case "communications":
+      return (
+        <svg {...shared}>
+          <path d="M5 7.5A2.5 2.5 0 0 1 7.5 5h9A2.5 2.5 0 0 1 19 7.5v5A2.5 2.5 0 0 1 16.5 15H10l-3.5 3V15H7.5A2.5 2.5 0 0 1 5 12.5z" />
+        </svg>
+      );
+    case "ai-review":
+      return (
+        <svg {...shared}>
+          <path d="M12 4.5 18 7v5c0 3.5-2 6.4-6 7.5-4-1.1-6-4-6-7.5V7z" />
+          <path d="m9.5 12 1.5 1.5 3.5-3.5" />
+        </svg>
+      );
+    case "ai-strategy":
+      return (
+        <svg {...shared}>
+          <path d="M6.5 16.5 17.5 7.5" />
+          <path d="M8 7h8v8" />
+          <path d="M6 19h12" />
+        </svg>
+      );
+    case "settings":
+      return (
+        <svg {...shared}>
+          <circle cx="12" cy="12" r="3" />
+          <path d="M12 4.5v2" />
+          <path d="M12 17.5v2" />
+          <path d="m18.4 6.6-1.4 1.4" />
+          <path d="m7 18-1.4 1.4" />
+          <path d="M19.5 12h-2" />
+          <path d="M6.5 12h-2" />
+          <path d="m18.4 17.4-1.4-1.4" />
+          <path d="M7 6l-1.4-1.4" />
+        </svg>
+      );
+  }
+}
 
 export function Sidebar({ active, onChange, counts }: SidebarProps): JSX.Element {
   const { copy } = useI18n();
@@ -26,14 +111,8 @@ export function Sidebar({ active, onChange, counts }: SidebarProps): JSX.Element
   return (
     <aside className="workspace-sidebar">
       <div className="workspace-sidebar__brand">
-        <div className="workspace-sidebar__eyebrow">{copy("Recruiter Workspace", "招聘工作台")}</div>
-        <div className="workspace-sidebar__title">{copy("Candidate Operations", "候选人运营")}</div>
-        <p className="workspace-sidebar__description">
-          {copy(
-            "A recruiter workspace for candidate flow, AI review, and coordinated follow-up.",
-            "面向招聘团队的工作台，用来处理候选人流转、AI 审查和协同跟进。",
-          )}
-        </p>
+        <div className="workspace-sidebar__logo">RA</div>
+        <div className="workspace-sidebar__eyebrow">{copy("Recruit", "招聘")}</div>
       </div>
 
       <nav className="workspace-sidebar__nav" aria-label={copy("Workspace sections", "工作区分区")}>
@@ -47,24 +126,21 @@ export function Sidebar({ active, onChange, counts }: SidebarProps): JSX.Element
               type="button"
               className="workspace-sidebar__item"
               data-active={selected}
+              aria-label={copy(tab.labelEn, tab.labelZh)}
               onClick={() => onChange(tab.key)}
             >
-              <div className="workspace-sidebar__item-main">
-                <span className="workspace-sidebar__item-label">{copy(tab.labelEn, tab.labelZh)}</span>
-                {count > 0 ? <StatusBadge tone={selected ? "positive" : "neutral"}>{count}</StatusBadge> : null}
-              </div>
-              <span className="workspace-sidebar__item-detail">{copy(tab.detailEn, tab.detailZh)}</span>
+              <span className="workspace-sidebar__item-icon">
+                <SidebarGlyph tab={tab.key} />
+              </span>
+              <span className="workspace-sidebar__item-label">{copy(tab.labelEn, tab.shortZh)}</span>
+              {count > 0 ? <span className="workspace-sidebar__count">{count > 9 ? "9+" : count}</span> : null}
             </button>
           );
         })}
       </nav>
 
       <div className="workspace-sidebar__footer">
-        <div className="workspace-sidebar__footer-title">{copy("Local-first collaboration", "本地优先协作")}</div>
-        <div className="workspace-sidebar__footer-row">
-          <StatusBadge tone="positive">{copy("offline-ready", "离线可用")}</StatusBadge>
-          <StatusBadge tone="neutral">{copy("desktop approvals", "桌面确认")}</StatusBadge>
-        </div>
+        <StatusBadge tone="positive">{copy("local", "本地")}</StatusBadge>
       </div>
     </aside>
   );

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { StatusBadge } from "../../components";
+import { MetricCard, Panel, StatusBadge } from "../../components";
 import { formatCompactDate } from "../../lib/format";
 import { useI18n } from "../../lib/i18n";
 import { translateUiToken } from "../../lib/uiText";
@@ -102,48 +102,58 @@ const theme = {
   shadow: "var(--shadow-pop)",
 } as const;
 
-interface PanelProps {
-  title?: string;
-  eyebrow?: string;
-  description?: string;
-  actions?: React.ReactNode;
-  children: React.ReactNode;
-  dense?: boolean;
-}
-
-function Panel({ title, eyebrow, description, actions, children, dense }: PanelProps): JSX.Element {
-  return (
-    <section
-      style={{
-        background: theme.colors.panel,
-        border: `1px solid ${theme.colors.border}`,
-        borderRadius: theme.radius.xl,
-        padding: dense ? "var(--space-4)" : "var(--space-5)",
-      }}
-    >
-      {(title || eyebrow || description || actions) && (
-        <header style={{ display: "flex", alignItems: "start", justifyContent: "space-between", gap: "var(--space-4)", marginBottom: "var(--space-4)" }}>
-          <div style={{ minWidth: 0 }}>
-            {eyebrow ? <div style={{ color: theme.colors.accent, fontSize: "12px", letterSpacing: "0.12em", textTransform: "uppercase", fontWeight: 600 }}>{eyebrow}</div> : null}
-            {title ? <h2 style={{ margin: "6px 0 4px", fontSize: "16px", lineHeight: 1.4, fontWeight: 600, color: theme.colors.text }}>{title}</h2> : null}
-            {description ? <p style={{ margin: 0, color: theme.colors.muted, fontSize: "13px", lineHeight: 1.6 }}>{description}</p> : null}
-          </div>
-          {actions ? <div style={{ flexShrink: 0 }}>{actions}</div> : null}
-        </header>
-      )}
-      {children}
-    </section>
-  );
-}
-
 const buttonStyle: React.CSSProperties = {
   border: `1px solid ${theme.colors.border}`,
   borderRadius: theme.radius.sm,
   background: theme.colors.panel,
   color: theme.colors.text,
-  padding: "8px 12px",
+  minHeight: "var(--space-8)",
+  padding: "0 var(--space-4)",
   cursor: "pointer",
   fontWeight: 600,
+};
+
+const dangerButtonStyle: React.CSSProperties = {
+  ...buttonStyle,
+  borderColor: theme.colors.critical,
+  color: theme.colors.critical,
+};
+
+function listCardStyle(active: boolean): React.CSSProperties {
+  return {
+    display: "grid",
+    gap: "var(--space-1)",
+    textAlign: "left",
+    padding: "var(--space-3)",
+    borderRadius: theme.radius.lg,
+    border: `1px solid ${active ? theme.colors.accent : theme.colors.border}`,
+    background: active ? theme.colors.accentSoft : theme.colors.background,
+    color: theme.colors.text,
+    cursor: "pointer",
+  };
+}
+
+function messageBubbleStyle(tone: "accent" | "neutral"): React.CSSProperties {
+  return {
+    maxWidth: "60%",
+    borderRadius: theme.radius.xl,
+    padding: "var(--space-3)",
+    border: `1px solid ${tone === "accent" ? theme.colors.accent : theme.colors.border}`,
+    background: tone === "accent" ? theme.colors.accentSoft : theme.colors.panel,
+  };
+}
+
+const sectionLabelStyle: React.CSSProperties = {
+  fontSize: "var(--font-size-xs)",
+  color: theme.colors.muted,
+  textTransform: "uppercase",
+  letterSpacing: "0.12em",
+};
+
+const detailTextStyle: React.CSSProperties = {
+  color: theme.colors.muted,
+  fontSize: "var(--font-size-sm)",
+  lineHeight: 1.6,
 };
 
 function toneFromSkill(skill: SkillRecord): "positive" | "neutral" | "warning" | "critical" {
@@ -388,26 +398,33 @@ export function AgentInboxView({
       >
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: "var(--space-3)" }}>
           {summaryMetrics.map((metric) => (
-            <div key={metric.label} style={{ border: `1px solid ${theme.colors.border}`, borderRadius: theme.radius.xl, padding: "var(--space-4)", background: "linear-gradient(180deg, #FFFFFF 0%, #F9FBFC 100%)" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", gap: "8px", alignItems: "start" }}>
-                <div style={{ color: theme.colors.muted, fontSize: "13px", lineHeight: 1.4 }}>{metric.label}</div>
-                <StatusBadge tone={metric.tone}>{metric.value}</StatusBadge>
-              </div>
-              <div style={{ marginTop: "8px", fontSize: "22px", lineHeight: 1.2, fontWeight: 600, color: theme.colors.text }}>{metric.value}</div>
-              <div style={{ marginTop: "6px", color: theme.colors.muted, fontSize: "12px", lineHeight: 1.6 }}>{metric.note}</div>
-            </div>
+            <MetricCard
+              key={metric.label}
+              label={metric.label}
+              value={String(metric.value)}
+              delta={String(metric.value)}
+              tone={metric.tone}
+              caption={metric.note}
+            />
           ))}
         </div>
       </Panel>
 
-      <div style={{ display: "grid", gridTemplateColumns: "300px minmax(0, 1fr) 340px", gap: "var(--space-4)", minWidth: 0 }}>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "var(--layout-left-list-width) minmax(0, 1fr) var(--layout-right-panel-width)",
+          gap: "var(--space-4)",
+          minWidth: 0,
+        }}
+      >
       <Panel
         dense
         title={copy("Review queue", "审查队列")}
         eyebrow={copy("Queue and filters", "队列与筛选")}
         description={copy("Use this list to route confirmations, approvals, skills, and artifacts without leaving the review surface.", "通过这里分流确认、审批、skill 和产物，不必离开审查面。")}
       >
-        <div style={{ display: "grid", gap: "8px" }}>
+        <div style={{ display: "grid", gap: "var(--space-2)" }}>
           {[
             { key: "all", label: copy("All", "全部"), count: items.length },
             { key: "interactions", label: copy("Candidate actions", "候选人动作"), count: pendingInteractions },
@@ -424,41 +441,25 @@ export function AgentInboxView({
                 display: "grid",
                 gridTemplateColumns: "1fr auto",
                 alignItems: "center",
-                gap: "8px",
-                textAlign: "left",
-                padding: "9px 10px",
-                borderRadius: "10px",
-                border: `1px solid ${filter === entry.key ? "rgba(122,167,255,0.34)" : theme.colors.border}`,
-                background: filter === entry.key ? "var(--brand-primary-soft)" : "var(--bg-page)",
-                color: theme.colors.text,
-                cursor: "pointer",
+                gap: "var(--space-2)",
+                ...listCardStyle(filter === entry.key),
               }}
             >
-              <span style={{ fontWeight: 700 }}>{entry.label}</span>
+              <span style={{ fontWeight: 600 }}>{entry.label}</span>
               <StatusBadge tone={entry.count ? "warning" : "neutral"}>{entry.count}</StatusBadge>
             </button>
           ))}
         </div>
-        <div style={{ marginTop: "14px", display: "grid", gap: "6px", maxHeight: "62vh", overflowY: "auto" }}>
+        <div style={{ marginTop: "var(--space-4)", display: "grid", gap: "var(--space-2)", maxHeight: "62vh", overflowY: "auto" }}>
           {items.map((item) => (
             <button
               key={item.key}
               type="button"
               onClick={() => setSelectedKey(item.key)}
-              style={{
-                display: "grid",
-                gap: "4px",
-                textAlign: "left",
-                padding: "10px 11px",
-                borderRadius: "10px",
-                border: `1px solid ${selected?.key === item.key ? "rgba(122,167,255,0.34)" : theme.colors.border}`,
-                background: selected?.key === item.key ? "var(--brand-primary-soft)" : "var(--bg-page)",
-                color: theme.colors.text,
-                cursor: "pointer",
-              }}
+              style={listCardStyle(selected?.key === item.key)}
             >
-              <div style={{ display: "flex", justifyContent: "space-between", gap: "8px", alignItems: "start" }}>
-                <strong style={{ fontSize: "13px", lineHeight: 1.4 }}>{item.title}</strong>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: "var(--space-2)", alignItems: "start" }}>
+                <strong style={{ fontSize: "var(--font-size-sm)", lineHeight: 1.4, fontWeight: 600 }}>{item.title}</strong>
                 <StatusBadge tone={item.tone}>
                   {item.kind === "interaction"
                     ? translateUiToken(item.interaction.status, copy)
@@ -469,8 +470,8 @@ export function AgentInboxView({
                         : translateUiToken(item.artifact.status, copy)}
                 </StatusBadge>
               </div>
-              <div style={{ color: theme.colors.muted, fontSize: "12px", lineHeight: 1.5 }}>{item.detail}</div>
-              <div style={{ color: theme.colors.muted, fontSize: "11px" }}>{formatCompactDate(item.at)}</div>
+              <div style={detailTextStyle}>{item.detail}</div>
+              <div style={{ color: theme.colors.muted, fontSize: "var(--font-size-xs)" }}>{formatCompactDate(item.at)}</div>
             </button>
           ))}
         </div>
@@ -487,32 +488,24 @@ export function AgentInboxView({
         }
       >
         {selected ? (
-          <div style={{ display: "grid", gap: "14px", minWidth: 0 }}>
-            <div style={{ display: "grid", gap: "10px" }}>
+          <div style={{ display: "grid", gap: "var(--space-4)", minWidth: 0 }}>
+            <div style={{ display: "grid", gap: "var(--space-3)" }}>
               <div
                 style={{
-                  maxWidth: "78%",
-                  borderRadius: "16px",
-                  padding: "12px 13px",
-                  border: "1px solid rgba(122,167,255,0.18)",
-                  background: "rgba(122,167,255,0.12)",
                   justifySelf: "start",
+                  ...messageBubbleStyle("accent"),
                 }}
               >
-                <div style={{ color: theme.colors.muted, fontSize: "12px", marginBottom: "6px" }}>{copy("AI Review Center", "AI 审查中心")} · {formatCompactDate(selected.at)}</div>
+                <div style={{ ...sectionLabelStyle, marginBottom: "var(--space-2)" }}>{copy("AI Review Center", "AI 审查中心")} · {formatCompactDate(selected.at)}</div>
                 <div style={{ lineHeight: 1.65 }}>{presentRecruitingText(selected.detail, copy)}</div>
               </div>
               <div
                 style={{
-                  maxWidth: "74%",
-                  borderRadius: "16px",
-                  padding: "12px 13px",
-                  border: `1px solid ${theme.colors.border}`,
-                  background: "var(--bg-page)",
                   justifySelf: "end",
+                  ...messageBubbleStyle("neutral"),
                 }}
               >
-                <div style={{ color: theme.colors.muted, fontSize: "12px", marginBottom: "6px" }}>{copy("Operator options", "操作选项")}</div>
+                <div style={{ ...sectionLabelStyle, marginBottom: "var(--space-2)" }}>{copy("Operator options", "操作选项")}</div>
                 <div style={{ lineHeight: 1.65 }}>
                   {selected.kind === "interaction"
                     ? copy("These options are generated for the current review context. Confirm one here, or add your own comment to steer the next attempt.", "这些选项是当前审查上下文下生成的可执行选择。你可以直接确认，也可以补充意见来纠偏下一次尝试。")
@@ -526,7 +519,7 @@ export function AgentInboxView({
             </div>
 
             {selected.kind === "interaction" ? (
-              <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+              <div style={{ display: "flex", gap: "var(--space-2)", flexWrap: "wrap" }}>
                 {(selected.interaction.suggestedOptions.length ? selected.interaction.suggestedOptions : [{ id: "confirm", label: copy("Continue", "继续执行"), action: "confirm" }]).map((option) => {
                   const action = String(option.action ?? option.id ?? "confirm");
                   return (
@@ -550,11 +543,11 @@ export function AgentInboxView({
             ) : null}
 
             {selected.kind === "approval" && selected.approval.status === "pending" ? (
-              <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+              <div style={{ display: "flex", gap: "var(--space-2)", flexWrap: "wrap" }}>
                 <button type="button" onClick={() => void onApprove(selected.approval.id)} disabled={pendingActionId === selected.approval.id} style={buttonStyle}>
                   {pendingActionId === selected.approval.id ? copy("Working...", "处理中...") : copy("Approve here", "直接批准")}
                 </button>
-                <button type="button" onClick={() => void onReject(selected.approval.id)} disabled={pendingActionId === selected.approval.id} style={{ ...buttonStyle, background: "rgba(255,122,122,0.10)", color: "#ffdede" }}>
+                <button type="button" onClick={() => void onReject(selected.approval.id)} disabled={pendingActionId === selected.approval.id} style={dangerButtonStyle}>
                   {copy("Reject here", "直接拒绝")}
                 </button>
                 <button type="button" onClick={() => onOpenEvolution("approvals", selected.approval.id)} style={buttonStyle}>
@@ -564,7 +557,7 @@ export function AgentInboxView({
             ) : null}
 
             {selected.kind === "artifact" ? (
-              <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+              <div style={{ display: "flex", gap: "var(--space-2)", flexWrap: "wrap" }}>
                 <button type="button" onClick={() => onOpenEvolution("inbox", selected.artifact.id)} style={buttonStyle}>
                   {copy("Review in strategy view", "在策略视图中审查")}
                 </button>
@@ -577,17 +570,17 @@ export function AgentInboxView({
             ) : null}
 
             {selected.kind === "skill" ? (
-              <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+              <div style={{ display: "flex", gap: "var(--space-2)", flexWrap: "wrap" }}>
                 <button type="button" onClick={() => onOpenEvolution("skills", selected.skill.id)} style={buttonStyle}>
                   {copy("Manage in strategy view", "在策略视图中管理")}
                 </button>
               </div>
             ) : null}
 
-            <div style={{ borderTop: `1px solid ${theme.colors.border}`, paddingTop: "12px", display: "grid", gap: "8px" }}>
-              <div style={{ fontSize: "12px", color: theme.colors.muted, textTransform: "uppercase", letterSpacing: "0.12em" }}>{copy("Context", "上下文")}</div>
+            <div style={{ borderTop: `1px solid ${theme.colors.border}`, paddingTop: "var(--space-3)", display: "grid", gap: "var(--space-2)" }}>
+              <div style={sectionLabelStyle}>{copy("Context", "上下文")}</div>
               {selected.kind === "interaction" ? (
-                <div style={{ display: "grid", gap: "6px", fontSize: "13px", lineHeight: 1.6 }}>
+                <div style={{ display: "grid", gap: "var(--space-2)", fontSize: "var(--font-size-sm)", lineHeight: 1.6 }}>
                   <div>{copy("Lane", "执行通道")}: {translateUiToken(selected.interaction.lane, copy)}</div>
                   <div>{copy("Type", "类型")}: {translateUiToken(selected.interaction.interactionType, copy)}</div>
                   <div>{copy("Scope", "影响范围")}: {translateUiToken(selected.interaction.scope, copy)}</div>
@@ -595,20 +588,20 @@ export function AgentInboxView({
               ) : null}
               {selected.kind === "approval"
                 ? summarizePayload(selected.approval.payload).map((line) => (
-                    <div key={line} style={{ fontSize: "13px", lineHeight: 1.6 }}>
+                    <div key={line} style={{ fontSize: "var(--font-size-sm)", lineHeight: 1.6 }}>
                       {line}
                     </div>
                   ))
                 : null}
               {selected.kind === "skill" ? (
-                <div style={{ display: "grid", gap: "6px", fontSize: "13px" }}>
+                <div style={{ display: "grid", gap: "var(--space-2)", fontSize: "var(--font-size-sm)" }}>
                   <div>{copy("Bound stage", "绑定阶段")}: {selected.skill.boundStage}</div>
                   <div>{copy("Version", "版本")}: {selected.skill.version}</div>
                   <div>{copy("Risk", "风险")}: {selected.skill.riskLevel ?? "medium"}</div>
                 </div>
               ) : null}
               {selected.kind === "artifact" ? (
-                <div style={{ display: "grid", gap: "6px", fontSize: "13px" }}>
+                <div style={{ display: "grid", gap: "var(--space-2)", fontSize: "var(--font-size-sm)" }}>
                   <div>{copy("Kind", "类型")}: {selected.artifact.artifactKind}</div>
                   <div>{copy("Status", "状态")}: {translateUiToken(selected.artifact.status, copy)}</div>
                   <div>{copy("Source", "来源")}: {String(selected.artifact.artifactMetadata.source ?? "unknown")}</div>
@@ -622,31 +615,31 @@ export function AgentInboxView({
       </Panel>
 
       <Panel dense title={copy("Context rail", "上下文侧栏")} eyebrow={copy("Recent context", "最近上下文")} description={copy("Keep the right rail short: scope, risk, recent goals, and the latest trace snapshot.", "右侧只保留范围、风险、最近目标和最新 trace 快照。")}>
-        <div style={{ display: "grid", gap: "10px" }}>
+        <div style={{ display: "grid", gap: "var(--space-3)" }}>
           {latestGoal ? (
-            <div style={{ display: "grid", gap: "6px", fontSize: "13px" }}>
-              <div style={{ fontSize: "12px", color: theme.colors.muted, textTransform: "uppercase", letterSpacing: "0.12em" }}>{copy("Latest goal", "最近目标")}</div>
+            <div style={{ display: "grid", gap: "var(--space-2)", fontSize: "var(--font-size-sm)" }}>
+              <div style={sectionLabelStyle}>{copy("Latest goal", "最近目标")}</div>
               <strong>{presentRecruitingText(latestGoal.title, copy)}</strong>
               <div style={{ color: theme.colors.muted, lineHeight: 1.5 }}>{presentRecruitingText(latestGoal.summary ?? latestGoal.goalText, copy)}</div>
             </div>
           ) : null}
           {latestTrace ? (
-            <div style={{ display: "grid", gap: "6px", fontSize: "13px" }}>
-              <div style={{ fontSize: "12px", color: theme.colors.muted, textTransform: "uppercase", letterSpacing: "0.12em" }}>{copy("Latest trace", "最近轨迹")}</div>
+            <div style={{ display: "grid", gap: "var(--space-2)", fontSize: "var(--font-size-sm)" }}>
+              <div style={sectionLabelStyle}>{copy("Latest trace", "最近轨迹")}</div>
               <div>{presentRecruitingText(latestTrace.summary ?? latestTrace.status, copy)}</div>
             </div>
           ) : null}
           {latestGraph?.renderedText ? (
-            <div style={{ display: "grid", gap: "6px", fontSize: "12px" }}>
-              <div style={{ fontSize: "12px", color: theme.colors.muted, textTransform: "uppercase", letterSpacing: "0.12em" }}>{copy("Graph projection", "执行图投影")}</div>
-              <pre style={{ margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word", fontSize: "12px", lineHeight: 1.5, color: theme.colors.text }}>
+            <div style={{ display: "grid", gap: "var(--space-2)", fontSize: "var(--font-size-xs)" }}>
+              <div style={sectionLabelStyle}>{copy("Graph projection", "执行图投影")}</div>
+              <pre style={{ margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word", fontSize: "var(--font-size-xs)", lineHeight: 1.5, color: theme.colors.text }}>
                 {latestGraph.renderedText}
               </pre>
             </div>
           ) : null}
           {selected?.kind === "approval" ? (
             <>
-              <div style={{ display: "grid", gap: "6px", fontSize: "13px" }}>
+              <div style={{ display: "grid", gap: "var(--space-2)", fontSize: "var(--font-size-sm)" }}>
                 <div>{copy("Requester", "请求方")}: {selected.approval.requester}</div>
                 <div>{copy("Target", "目标")}: {selected.approval.targetType ?? selected.approval.kind}</div>
                 <div>{copy("Status", "状态")}: {translateUiToken(selected.approval.status, copy)}</div>
@@ -659,18 +652,18 @@ export function AgentInboxView({
             </>
           ) : null}
           {selected?.kind === "interaction" ? (
-            <div style={{ display: "grid", gap: "6px", fontSize: "13px" }}>
+            <div style={{ display: "grid", gap: "var(--space-2)", fontSize: "var(--font-size-sm)" }}>
               <div>{copy("Status", "状态")}: {translateUiToken(selected.interaction.status, copy)}</div>
               <div>{copy("Suggested actions", "建议操作数")}: {selected.interaction.suggestedOptions.length}</div>
             </div>
           ) : null}
 
-          <div style={{ borderTop: `1px solid ${theme.colors.border}`, paddingTop: "10px", display: "grid", gap: "8px" }}>
-            <div style={{ fontSize: "12px", color: theme.colors.muted, textTransform: "uppercase", letterSpacing: "0.12em" }}>{copy("Recent signals", "最近信号")}</div>
+          <div style={{ borderTop: `1px solid ${theme.colors.border}`, paddingTop: "var(--space-3)", display: "grid", gap: "var(--space-2)" }}>
+            <div style={sectionLabelStyle}>{copy("Recent signals", "最近信号")}</div>
             {recentSignals.map((event) => (
-              <div key={event.id} style={{ display: "grid", gap: "4px", fontSize: "13px" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", gap: "8px" }}>
-                  <strong>{translateUiToken(event.source, copy)}</strong>
+              <div key={event.id} style={{ display: "grid", gap: "var(--space-1)", fontSize: "var(--font-size-sm)" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: "var(--space-2)" }}>
+                  <strong style={{ fontWeight: 600 }}>{translateUiToken(event.source, copy)}</strong>
                   <StatusBadge tone={event.level === "error" ? "critical" : event.level === "warning" ? "warning" : "positive"}>
                     {translateUiToken(event.level, copy)}
                   </StatusBadge>

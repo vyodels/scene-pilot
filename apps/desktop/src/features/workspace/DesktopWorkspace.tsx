@@ -1,5 +1,5 @@
 import React, { startTransition, useEffect, useMemo, useState } from "react";
-import { Panel, SectionTabs, Sidebar, StatusBadge, TopBar } from "../../components";
+import { AppLayout, MetricCard, Panel, SectionTabs, Sidebar, StatusBadge, TopBar } from "../../components";
 import { apiClient } from "../../lib/api";
 import { formatCompactDate } from "../../lib/format";
 import { useI18n } from "../../lib/i18n";
@@ -97,6 +97,37 @@ function macroStageTone(stage: string): "positive" | "neutral" | "warning" | "cr
   return "neutral";
 }
 
+const primaryActionStyle: React.CSSProperties = {
+  border: `1px solid ${theme.colors.accent}`,
+  borderRadius: "var(--radius-sm)",
+  background: theme.colors.accent,
+  color: "var(--text-inverse)",
+  minHeight: "var(--space-8)",
+  padding: "0 var(--space-4)",
+  cursor: "pointer",
+  fontWeight: 600,
+};
+
+const defaultActionStyle: React.CSSProperties = {
+  border: "1px solid var(--border-input)",
+  borderRadius: "var(--radius-sm)",
+  background: "var(--bg-card)",
+  color: "var(--text-primary)",
+  minHeight: "var(--space-8)",
+  padding: "0 var(--space-4)",
+  cursor: "pointer",
+  fontWeight: 500,
+};
+
+const surfaceRowButtonStyle: React.CSSProperties = {
+  textAlign: "left",
+  padding: "var(--space-4)",
+  borderRadius: "var(--radius-md)",
+  border: "1px solid var(--border-line)",
+  background: "var(--bg-card)",
+  cursor: "pointer",
+};
+
 function ImportCenterSurface({
   candidates,
   goals,
@@ -129,7 +160,7 @@ function ImportCenterSurface({
     .slice(0, 5);
 
   return (
-    <div style={{ display: "grid", gap: "16px" }}>
+    <div style={{ display: "grid", gap: "var(--space-4)" }}>
       <Panel
         title={copy("Import Center", "导入中心")}
         eyebrow={copy("Source and stage", "来源与入库")}
@@ -138,7 +169,7 @@ function ImportCenterSurface({
           "采集当前 sourcing 页面、暂存导入候选人，并在候选人进入后续漏斗前清晰展示简历获取状态。",
         )}
         actions={
-          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: "var(--space-2)", flexWrap: "wrap" }}>
             <button
               type="button"
               onClick={() =>
@@ -153,15 +184,7 @@ function ImportCenterSurface({
                   priority: 180,
                 })
               }
-              style={{
-                border: `1px solid ${theme.colors.accent}`,
-                borderRadius: "var(--radius-sm)",
-                background: theme.colors.accent,
-                color: "var(--text-inverse)",
-                padding: "8px 14px",
-                cursor: "pointer",
-                fontWeight: 600,
-              }}
+              style={primaryActionStyle}
             >
               {copy("Capture page", "采集页面")}
             </button>
@@ -179,82 +202,67 @@ function ImportCenterSurface({
                   priority: 160,
                 })
               }
-              style={{
-                border: "1px solid var(--border-input)",
-                borderRadius: "var(--radius-sm)",
-                background: "var(--bg-card)",
-                color: "var(--text-primary)",
-                padding: "8px 14px",
-                cursor: "pointer",
-                fontWeight: 500,
-              }}
+              style={defaultActionStyle}
             >
               {copy("Request resume", "请求简历")}
             </button>
           </div>
         }
       >
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "12px" }}>
-          <article style={{ padding: "14px", borderRadius: "var(--radius-md)", background: "var(--bg-hover)", border: "1px solid var(--border-line)" }}>
-            <div style={{ fontSize: "13px", color: "var(--text-secondary)" }}>{copy("Staged candidates", "暂存候选人")}</div>
-            <div style={{ marginTop: "6px", fontSize: "28px", fontWeight: 600, color: "var(--text-primary)" }}>{stagedCandidates.length}</div>
-            <div style={{ marginTop: "6px", fontSize: "13px", color: "var(--text-secondary)" }}>
-              {copy("Ready for recruiter review and triage.", "已准备好进入招聘方审阅与分流。")}
-            </div>
-          </article>
-          <article style={{ padding: "14px", borderRadius: "var(--radius-md)", background: "var(--bg-hover)", border: "1px solid var(--border-line)" }}>
-            <div style={{ fontSize: "13px", color: "var(--text-secondary)" }}>{copy("Open import tasks", "进行中的导入任务")}</div>
-            <div style={{ marginTop: "6px", fontSize: "28px", fontWeight: 600, color: "var(--text-primary)" }}>{importQueue.length}</div>
-            <div style={{ marginTop: "6px", fontSize: "13px", color: "var(--text-secondary)" }}>
-              {copy("Recent capture, extraction, and resume acquisition requests.", "最近的采集、提取和简历获取请求。")}
-            </div>
-          </article>
-          <article style={{ padding: "14px", borderRadius: "var(--radius-md)", background: "var(--bg-hover)", border: "1px solid var(--border-line)" }}>
-            <div style={{ fontSize: "13px", color: "var(--text-secondary)" }}>{copy("Resume-ready records", "已有简历记录")}</div>
-            <div style={{ marginTop: "6px", fontSize: "28px", fontWeight: 600, color: "var(--text-primary)" }}>{candidates.filter((candidate) => candidate.resumeAvailable).length}</div>
-            <div style={{ marginTop: "6px", fontSize: "13px", color: "var(--text-secondary)" }}>
-              {copy("Candidates with visible resume artifacts already stored.", "已经可见并落库简历制品的候选人。")}
-            </div>
-          </article>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(calc(var(--layout-left-list-width) - var(--space-10)), 1fr))", gap: "var(--space-3)" }}>
+          <MetricCard
+            label={copy("Staged candidates", "暂存候选人")}
+            value={String(stagedCandidates.length)}
+            delta={copy("review", "待审")}
+            tone={stagedCandidates.length ? "warning" : "neutral"}
+            caption={copy("Ready for recruiter review and triage.", "已准备好进入招聘方审阅与分流。")}
+          />
+          <MetricCard
+            label={copy("Open import tasks", "进行中的导入任务")}
+            value={String(importQueue.length)}
+            delta={copy("active", "进行中")}
+            tone={importQueue.length ? "warning" : "neutral"}
+            caption={copy("Recent capture, extraction, and resume acquisition requests.", "最近的采集、提取和简历获取请求。")}
+          />
+          <MetricCard
+            label={copy("Resume-ready records", "已有简历记录")}
+            value={String(candidates.filter((candidate) => candidate.resumeAvailable).length)}
+            delta={copy("stored", "已落库")}
+            tone={candidates.some((candidate) => candidate.resumeAvailable) ? "positive" : "neutral"}
+            caption={copy("Candidates with visible resume artifacts already stored.", "已经可见并落库简历制品的候选人。")}
+          />
         </div>
       </Panel>
 
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.2fr) minmax(320px, 0.8fr)", gap: "16px" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.2fr) var(--layout-right-panel-width)", gap: "var(--space-4)" }}>
         <Panel
           title={copy("Staging Queue", "暂存队列")}
           eyebrow={copy("Recruiter review", "招聘方审阅")}
           description={copy("Candidates recently captured or enriched before they move into the main pipeline.", "最近完成采集或补充资料、等待进入主漏斗的候选人。")}
         >
-          <div style={{ display: "grid", gap: "10px" }}>
+          <div style={{ display: "grid", gap: "var(--space-3)" }}>
             {stagedCandidates.slice(0, 6).map((candidate) => (
               <button
                 key={candidate.id}
                 type="button"
                 onClick={() => onOpenCommunications?.("candidate", candidate.id)}
-                style={{
-                  textAlign: "left",
-                  padding: "14px",
-                  borderRadius: "var(--radius-md)",
-                  border: "1px solid var(--border-line)",
-                  background: "var(--bg-card)",
-                  cursor: "pointer",
-                }}
+                style={surfaceRowButtonStyle}
               >
-                <div style={{ display: "flex", justifyContent: "space-between", gap: "10px", alignItems: "start" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: "var(--space-3)", alignItems: "start" }}>
                   <div>
                     <div style={{ fontWeight: 600, color: "var(--text-primary)" }}>{candidate.name}</div>
-                    <div style={{ marginTop: "4px", fontSize: "13px", color: "var(--text-secondary)" }}>
+                    <div style={{ marginTop: "var(--space-1)", fontSize: "var(--font-size-sm)", color: "var(--text-secondary)" }}>
                       {candidate.title} · {candidate.jdTitle} · {candidate.location}
                     </div>
                   </div>
-                  <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", justifyContent: "end" }}>
+                  <div style={{ display: "flex", gap: "var(--space-2)", flexWrap: "wrap", justifyContent: "end" }}>
                     <StatusBadge tone={macroStageTone(resolveMacroStage(candidate.status, candidate.stageKey, candidate.resumeAvailable))}>
                       {resolveMacroStage(candidate.status, candidate.stageKey, candidate.resumeAvailable)}
                     </StatusBadge>
                     {candidate.resumeAvailable ? <StatusBadge tone="positive">{copy("resume ready", "已有简历")}</StatusBadge> : null}
                   </div>
                 </div>
-                <div style={{ marginTop: "8px", fontSize: "13px", color: "var(--text-regular)", lineHeight: 1.6 }}>{candidate.nextAction}</div>
+                <div style={{ marginTop: "var(--space-2)", fontSize: "var(--font-size-sm)", color: "var(--text-regular)", lineHeight: 1.6 }}>{candidate.nextAction}</div>
               </button>
             ))}
           </div>
@@ -264,25 +272,25 @@ function ImportCenterSurface({
           eyebrow={copy("Execution notes", "执行记录")}
           description={copy("Latest capture and import execution notes that affect the sourcing funnel.", "影响 sourcing 漏斗的最新采集与导入执行记录。")}
         >
-          <div style={{ display: "grid", gap: "10px" }}>
+          <div style={{ display: "grid", gap: "var(--space-3)" }}>
             {importQueue.map((goal) => (
-              <article key={goal.id} style={{ padding: "12px 0", borderBottom: "1px solid var(--border-line)" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", gap: "8px", alignItems: "start" }}>
+              <article key={goal.id} style={{ padding: "var(--space-3) 0", borderBottom: "1px solid var(--border-line)" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: "var(--space-2)", alignItems: "start" }}>
                   <div style={{ fontWeight: 600, color: "var(--text-primary)" }}>{goal.title}</div>
                   <StatusBadge tone={/completed|approved/i.test(goal.status) ? "positive" : /failed|rejected/i.test(goal.status) ? "critical" : "warning"}>
                     {translateUiToken(goal.status, copy)}
                   </StatusBadge>
                 </div>
-                <div style={{ marginTop: "6px", fontSize: "13px", color: "var(--text-secondary)", lineHeight: 1.6 }}>
+                <div style={{ marginTop: "var(--space-2)", fontSize: "var(--font-size-sm)", color: "var(--text-secondary)", lineHeight: 1.6 }}>
                   {goal.summary || goal.goalText}
                 </div>
-                <div style={{ marginTop: "6px", fontSize: "12px", color: "var(--text-placeholder)" }}>{formatCompactDate(goal.updatedAt)}</div>
+                <div style={{ marginTop: "var(--space-2)", fontSize: "var(--font-size-xs)", color: "var(--text-placeholder)" }}>{formatCompactDate(goal.updatedAt)}</div>
               </article>
             ))}
             {executionNotes.map((trace) => (
-              <article key={trace.id} style={{ padding: "12px 0", borderBottom: "1px solid var(--border-line)" }}>
+              <article key={trace.id} style={{ padding: "var(--space-3) 0", borderBottom: "1px solid var(--border-line)" }}>
                 <div style={{ fontWeight: 600, color: "var(--text-primary)" }}>{trace.title}</div>
-                <div style={{ marginTop: "6px", fontSize: "13px", color: "var(--text-secondary)", lineHeight: 1.6 }}>
+                <div style={{ marginTop: "var(--space-2)", fontSize: "var(--font-size-sm)", color: "var(--text-secondary)", lineHeight: 1.6 }}>
                   {trace.summary || copy("Execution note captured for recruiter review.", "已记录一条供招聘方查看的执行说明。")}
                 </div>
               </article>
@@ -311,7 +319,7 @@ function JdWorkspaceSurface({
   ).sort((left, right) => right[1].length - left[1].length);
 
   return (
-    <div style={{ display: "grid", gap: "16px" }}>
+    <div style={{ display: "grid", gap: "var(--space-4)" }}>
       <Panel
         title={copy("JD Workspace", "岗位工作区")}
         eyebrow={copy("Role-centered view", "岗位中心视角")}
@@ -320,7 +328,7 @@ function JdWorkspaceSurface({
           "以岗位为中心查看漏斗规模、阶段分布和下一步动作，而不暴露原始 runtime 诊断信息。",
         )}
       >
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: "12px" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(calc(var(--space-12) * 3 + var(--space-10) + var(--space-10) + var(--space-5) + var(--space-4)), 1fr))", gap: "var(--space-3)" }}>
           {jdGroups.slice(0, 4).map(([jdTitle, jdCandidates]) => {
             const macroCounts = jdCandidates.reduce<Record<string, number>>((accumulator, candidate) => {
               const stage = resolveMacroStage(candidate.status, candidate.stageKey, candidate.resumeAvailable);
@@ -328,12 +336,12 @@ function JdWorkspaceSurface({
               return accumulator;
             }, {});
             return (
-              <article key={jdTitle} style={{ padding: "14px", borderRadius: "var(--radius-md)", background: "var(--bg-card)", border: "1px solid var(--border-line)" }}>
+              <article key={jdTitle} style={{ padding: "var(--space-4)", borderRadius: "var(--radius-md)", background: "var(--bg-card)", border: "1px solid var(--border-line)" }}>
                 <div style={{ fontWeight: 600, color: "var(--text-primary)" }}>{jdTitle}</div>
-                <div style={{ marginTop: "6px", fontSize: "13px", color: "var(--text-secondary)" }}>
+                <div style={{ marginTop: "var(--space-2)", fontSize: "var(--font-size-sm)", color: "var(--text-secondary)" }}>
                   {copy(`${jdCandidates.length} candidates in this funnel.`, `该漏斗下共有 ${jdCandidates.length} 位候选人。`)}
                 </div>
-                <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", marginTop: "10px" }}>
+                <div style={{ display: "flex", gap: "var(--space-2)", flexWrap: "wrap", marginTop: "var(--space-3)" }}>
                   {Object.entries(macroCounts).map(([label, count]) => (
                     <StatusBadge key={label} tone={macroStageTone(label)}>
                       {label} · {count}
@@ -346,7 +354,7 @@ function JdWorkspaceSurface({
         </div>
       </Panel>
 
-      <div style={{ display: "grid", gap: "12px" }}>
+      <div style={{ display: "grid", gap: "var(--space-3)" }}>
         {jdGroups.map(([jdTitle, jdCandidates]) => (
           <Panel
             key={jdTitle}
@@ -354,7 +362,7 @@ function JdWorkspaceSurface({
             eyebrow={copy("Role funnel", "岗位漏斗")}
             description={copy("Candidates currently grouped under this role.", "当前归属到该岗位的候选人。")}
           >
-            <div style={{ display: "grid", gap: "10px" }}>
+            <div style={{ display: "grid", gap: "var(--space-3)" }}>
               {jdCandidates.map((candidate) => {
                 const macroStage = resolveMacroStage(candidate.status, candidate.stageKey, candidate.resumeAvailable);
                 return (
@@ -362,28 +370,21 @@ function JdWorkspaceSurface({
                     key={candidate.id}
                     type="button"
                     onClick={() => onOpenCommunications?.("candidate", candidate.id)}
-                    style={{
-                      textAlign: "left",
-                      padding: "14px",
-                      borderRadius: "var(--radius-md)",
-                      border: "1px solid var(--border-line)",
-                      background: "var(--bg-card)",
-                      cursor: "pointer",
-                    }}
+                    style={surfaceRowButtonStyle}
                   >
-                    <div style={{ display: "flex", justifyContent: "space-between", gap: "10px", alignItems: "start" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: "var(--space-3)", alignItems: "start" }}>
                       <div>
                         <div style={{ fontWeight: 600, color: "var(--text-primary)" }}>{candidate.name}</div>
-                        <div style={{ marginTop: "4px", fontSize: "13px", color: "var(--text-secondary)" }}>
+                        <div style={{ marginTop: "var(--space-1)", fontSize: "var(--font-size-sm)", color: "var(--text-secondary)" }}>
                           {candidate.title} · {candidate.location}
                         </div>
                       </div>
-                      <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", justifyContent: "end" }}>
+                      <div style={{ display: "flex", gap: "var(--space-2)", flexWrap: "wrap", justifyContent: "end" }}>
                         <StatusBadge tone={macroStageTone(macroStage)}>{macroStage}</StatusBadge>
                         <StatusBadge tone="neutral">{copy(`score ${candidate.matchScore}`, `分数 ${candidate.matchScore}`)}</StatusBadge>
                       </div>
                     </div>
-                    <div style={{ marginTop: "8px", fontSize: "13px", color: "var(--text-regular)", lineHeight: 1.6 }}>{candidate.nextAction}</div>
+                    <div style={{ marginTop: "var(--space-2)", fontSize: "var(--font-size-sm)", color: "var(--text-regular)", lineHeight: 1.6 }}>{candidate.nextAction}</div>
                   </button>
                 );
               })}
@@ -1104,7 +1105,7 @@ export function DesktopWorkspace(): JSX.Element {
         );
       case "ai-review":
         return (
-          <div style={{ display: "grid", gap: "16px" }}>
+          <div style={{ display: "grid", gap: "var(--space-4)" }}>
             <SectionTabs
               items={[
                 {
@@ -1195,45 +1196,36 @@ export function DesktopWorkspace(): JSX.Element {
   })();
 
   return (
-    <div
-      style={{
-        minHeight: "100vh",
-        display: "grid",
-        gridTemplateColumns: "280px minmax(0, 1fr)",
-        background: "var(--bg-page)",
-        color: theme.colors.text,
-      }}
-    >
-      <Sidebar active={tab} onChange={setTab} counts={counts} />
-      <main style={{ display: "grid", gridTemplateRows: "auto 1fr", minWidth: 0 }}>
+    <AppLayout
+      sidebar={<Sidebar active={tab} onChange={setTab} counts={counts} />}
+      topbar={
         <TopBar
           agent={summary.agent}
           settings={summary.settings}
           transport={transport}
           sectionEyebrow={sectionMeta[tab].eyebrow}
           sectionTitle={sectionMeta[tab].title}
-          sectionDescription={sectionMeta[tab].description}
           onRefresh={() => void loadWorkspace(copy("Manual refresh completed.", "已完成手动刷新。"))}
           refreshing={refreshing}
         />
-        <div style={{ padding: "20px", minWidth: 0, display: "grid", gap: "16px" }}>
-          {errorMessage ? (
-            <div
-              style={{
-                borderRadius: "var(--radius-md)",
-                border: "1px solid var(--danger)",
-                background: "var(--danger-soft)",
-                color: "var(--danger)",
-                padding: "12px 14px",
-                fontSize: "13px",
-              }}
-            >
-              {errorMessage}
-            </div>
-          ) : null}
-          {content}
+      }
+    >
+      {errorMessage ? (
+        <div
+          style={{
+            borderRadius: "var(--radius-md)",
+            border: "1px solid var(--danger)",
+            background: "var(--danger-soft)",
+            color: "var(--danger)",
+            padding: "var(--space-3) var(--space-4)",
+            fontSize: "var(--font-size-sm)",
+            lineHeight: "var(--line-height-base)",
+          }}
+        >
+          {errorMessage}
         </div>
-      </main>
-    </div>
+      ) : null}
+      {content}
+    </AppLayout>
   );
 }

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { StatusBadge } from "../../components";
+import { MetricCard, Panel, StatusBadge } from "../../components";
 import { formatCompactDate } from "../../lib/format";
 import { useI18n } from "../../lib/i18n";
 import { translateUiToken } from "../../lib/uiText";
@@ -65,40 +65,6 @@ const theme = {
   shadow: "var(--shadow-pop)",
 } as const;
 
-interface PanelProps {
-  title?: string;
-  eyebrow?: string;
-  description?: string;
-  actions?: React.ReactNode;
-  children: React.ReactNode;
-  dense?: boolean;
-}
-
-function Panel({ title, eyebrow, description, actions, children, dense }: PanelProps): JSX.Element {
-  return (
-    <section
-      style={{
-        background: theme.colors.panel,
-        border: `1px solid ${theme.colors.border}`,
-        borderRadius: theme.radius.xl,
-        padding: dense ? "var(--space-4)" : "var(--space-5)",
-      }}
-    >
-      {(title || eyebrow || description || actions) && (
-        <header style={{ display: "flex", alignItems: "start", justifyContent: "space-between", gap: "var(--space-4)", marginBottom: "var(--space-4)" }}>
-          <div style={{ minWidth: 0 }}>
-            {eyebrow ? <div style={{ color: theme.colors.accent, fontSize: "12px", letterSpacing: "0.12em", textTransform: "uppercase", fontWeight: 600 }}>{eyebrow}</div> : null}
-            {title ? <h2 style={{ margin: "6px 0 4px", fontSize: "16px", lineHeight: 1.4, fontWeight: 600, color: theme.colors.text }}>{title}</h2> : null}
-            {description ? <p style={{ margin: 0, color: theme.colors.muted, fontSize: "13px", lineHeight: 1.6 }}>{description}</p> : null}
-          </div>
-          {actions ? <div style={{ flexShrink: 0 }}>{actions}</div> : null}
-        </header>
-      )}
-      {children}
-    </section>
-  );
-}
-
 type SelectionKey = string;
 
 type ListRow = {
@@ -116,13 +82,15 @@ const inputStyle: React.CSSProperties = {
   border: `1px solid ${theme.colors.border}`,
   background: theme.colors.panel,
   color: theme.colors.text,
-  padding: "9px 10px",
-  fontSize: "13px",
+  minHeight: "var(--space-8)",
+  padding: "0 var(--space-3)",
+  fontSize: "var(--font-size-sm)",
 };
 
 const textAreaStyle: React.CSSProperties = {
   ...inputStyle,
-  minHeight: "108px",
+  minHeight: "calc(var(--space-12) + var(--space-12) + var(--space-3))",
+  padding: "var(--space-3)",
   lineHeight: 1.6,
   resize: "vertical",
 };
@@ -132,10 +100,38 @@ const buttonStyle: React.CSSProperties = {
   borderRadius: theme.radius.sm,
   background: theme.colors.panel,
   color: theme.colors.text,
-  padding: "8px 12px",
+  minHeight: "var(--space-8)",
+  padding: "0 var(--space-4)",
   cursor: "pointer",
   fontWeight: 600,
 };
+
+const dangerButtonStyle: React.CSSProperties = {
+  ...buttonStyle,
+  borderColor: theme.colors.critical,
+  color: theme.colors.critical,
+};
+
+const sectionLabelStyle: React.CSSProperties = {
+  fontSize: "var(--font-size-xs)",
+  color: theme.colors.muted,
+  textTransform: "uppercase",
+  letterSpacing: "0.12em",
+};
+
+function selectableRowStyle(active: boolean): React.CSSProperties {
+  return {
+    display: "grid",
+    gap: "var(--space-2)",
+    textAlign: "left",
+    padding: "var(--space-3)",
+    borderRadius: theme.radius.lg,
+    border: `1px solid ${active ? theme.colors.accent : theme.colors.border}`,
+    background: active ? theme.colors.accentSoft : theme.colors.background,
+    color: theme.colors.text,
+    cursor: "pointer",
+  };
+}
 
 function stringifyJson(value: unknown): string {
   return JSON.stringify(value ?? {}, null, 2);
@@ -424,12 +420,33 @@ export function EvolutionView({
   const reviewMetrics: Array<{
     label: string;
     value: number;
+    note: string;
     tone: "positive" | "neutral" | "warning";
   }> = [
-    { label: copy("Open decisions", "待处理决策"), value: evolutionApprovals.filter((item) => item.status === "pending").length, tone: evolutionApprovals.some((item) => item.status === "pending") ? "warning" : "positive" },
-    { label: copy("Skill rules", "Skill 规则"), value: skillRows.length, tone: skillRows.length ? "neutral" : "positive" },
-    { label: copy("Memory scopes", "记忆范围"), value: memoryRows.length, tone: memoryRows.length ? "neutral" : "positive" },
-    { label: copy("Review assets", "审查资产"), value: historyRows.length, tone: historyRows.length ? "neutral" : "positive" },
+    {
+      label: copy("Open decisions", "待处理决策"),
+      value: evolutionApprovals.filter((item) => item.status === "pending").length,
+      note: copy("Approvals and review items still waiting for a final decision.", "仍在等待最终决策的审批和审查项。"),
+      tone: evolutionApprovals.some((item) => item.status === "pending") ? "warning" : "positive",
+    },
+    {
+      label: copy("Skill rules", "Skill 规则"),
+      value: skillRows.length,
+      note: copy("Published and pending skill rules currently visible in the strategy registry.", "当前在策略注册表里可见的已发布和待处理 skill 规则。"),
+      tone: skillRows.length ? "neutral" : "positive",
+    },
+    {
+      label: copy("Memory scopes", "记忆范围"),
+      value: memoryRows.length,
+      note: copy("Candidate, JD, and global memory scopes managed from the same review plane.", "在同一审查面里管理的候选人、JD 和全局记忆范围。"),
+      tone: memoryRows.length ? "neutral" : "positive",
+    },
+    {
+      label: copy("Review assets", "审查资产"),
+      value: historyRows.length,
+      note: copy("Historical review artifacts that can be audited or reopened.", "可供审计或重新查看的历史审查资产。"),
+      tone: historyRows.length ? "neutral" : "positive",
+    },
   ];
 
   useEffect(() => {
@@ -758,8 +775,17 @@ export function EvolutionView({
   };
 
   const renderList = () => (
-    <div style={{ display: "grid", gap: "4px", maxHeight: "70vh", overflowY: "auto" }}>
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) 92px 88px", gap: "8px", padding: "0 10px 6px", color: theme.colors.muted, fontSize: "12px" }}>
+    <div style={{ display: "grid", gap: "var(--space-1)", maxHeight: "70vh", overflowY: "auto" }}>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "minmax(0, 1fr) calc(var(--space-10) + var(--space-10) + var(--space-3)) calc(var(--space-10) + var(--space-10) + var(--space-2))",
+          gap: "var(--space-2)",
+          padding: "0 var(--space-3) var(--space-2)",
+          color: theme.colors.muted,
+          fontSize: "var(--font-size-xs)",
+        }}
+      >
         <span>{copy("Item", "项目")}</span>
         <span>{copy("Status", "状态")}</span>
         <span>{copy("Updated", "更新时间")}</span>
@@ -770,53 +796,45 @@ export function EvolutionView({
           type="button"
           onClick={() => setSelectedKey(row.key)}
           style={{
-            display: "grid",
-            gridTemplateColumns: "minmax(0, 1fr) 92px 88px",
-            gap: "8px",
+            gridTemplateColumns: "minmax(0, 1fr) calc(var(--space-10) * 2 + var(--space-3)) calc(var(--space-10) * 2 + var(--space-2))",
             alignItems: "start",
-            textAlign: "left",
-            padding: "9px 10px",
-            borderRadius: "10px",
-            border: `1px solid ${selectedKey === row.key ? "rgba(122,167,255,0.34)" : theme.colors.border}`,
-            background: selectedKey === row.key ? "var(--brand-primary-soft)" : "var(--bg-page)",
-            color: theme.colors.text,
-            cursor: "pointer",
+            ...selectableRowStyle(selectedKey === row.key),
           }}
         >
           <div style={{ minWidth: 0 }}>
-            <div style={{ fontWeight: 700, fontSize: "13px", lineHeight: 1.4 }}>{row.label}</div>
-            <div style={{ color: theme.colors.muted, fontSize: "12px", lineHeight: 1.5, marginTop: "3px" }}>{row.detail}</div>
+            <div style={{ fontWeight: 600, fontSize: "var(--font-size-sm)", lineHeight: 1.4 }}>{row.label}</div>
+            <div style={{ color: theme.colors.muted, fontSize: "var(--font-size-xs)", lineHeight: 1.5, marginTop: "var(--space-1)" }}>{row.detail}</div>
           </div>
-          <div style={{ paddingTop: "2px" }}>
+          <div style={{ paddingTop: "calc(var(--space-1) / 2)" }}>
             <StatusBadge tone={row.tone}>{translateUiToken(row.status, copy)}</StatusBadge>
           </div>
-          <div style={{ color: theme.colors.muted, fontSize: "11px", paddingTop: "4px" }}>{formatCompactDate(row.updatedAt)}</div>
+          <div style={{ color: theme.colors.muted, fontSize: "var(--font-size-xs)", paddingTop: "var(--space-1)" }}>{formatCompactDate(row.updatedAt)}</div>
         </button>
       ))}
-      {!currentRows.length ? <div style={{ color: theme.colors.muted, padding: "10px" }}>{copy("No items.", "当前没有记录。")}</div> : null}
+      {!currentRows.length ? <div style={{ color: theme.colors.muted, padding: "var(--space-3)" }}>{copy("No items.", "当前没有记录。")}</div> : null}
     </div>
   );
 
   const renderDetail = () => {
     if (selectedApproval) {
       return (
-        <div style={{ display: "grid", gap: "12px" }}>
-          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+        <div style={{ display: "grid", gap: "var(--space-3)" }}>
+          <div style={{ display: "flex", gap: "var(--space-2)", flexWrap: "wrap" }}>
             <StatusBadge tone={toneFromStatus(selectedApproval.status)}>{translateUiToken(selectedApproval.status, copy)}</StatusBadge>
             <StatusBadge tone="neutral">{selectedApproval.targetType ?? selectedApproval.kind}</StatusBadge>
           </div>
           <div style={{ lineHeight: 1.65 }}>{selectedApproval.detail}</div>
           {selectedApproval.payload ? (
-            <pre style={{ margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word", fontSize: "12px", lineHeight: 1.6, color: theme.colors.text }}>
+            <pre style={{ margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word", fontSize: "var(--font-size-xs)", lineHeight: 1.6, color: theme.colors.text }}>
               {JSON.stringify(selectedApproval.payload, null, 2)}
             </pre>
           ) : null}
           {selectedApproval.status === "pending" ? (
-            <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+            <div style={{ display: "flex", gap: "var(--space-2)", flexWrap: "wrap" }}>
               <button type="button" onClick={() => void onApprove(selectedApproval.id)} disabled={pendingActionId === selectedApproval.id} style={buttonStyle}>
                 {pendingActionId === selectedApproval.id ? copy("Working...", "处理中...") : copy("Approve", "批准")}
               </button>
-              <button type="button" onClick={() => void onReject(selectedApproval.id)} disabled={pendingActionId === selectedApproval.id} style={{ ...buttonStyle, background: "rgba(255,122,122,0.10)", color: "#ffdede" }}>
+              <button type="button" onClick={() => void onReject(selectedApproval.id)} disabled={pendingActionId === selectedApproval.id} style={dangerButtonStyle}>
                 {copy("Reject", "拒绝")}
               </button>
             </div>
@@ -827,31 +845,31 @@ export function EvolutionView({
 
     if (selectedSkill) {
       return (
-        <div style={{ display: "grid", gap: "12px" }}>
-          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+        <div style={{ display: "grid", gap: "var(--space-3)" }}>
+          <div style={{ display: "flex", gap: "var(--space-2)", flexWrap: "wrap" }}>
             <StatusBadge tone={toneFromStatus(selectedSkill.health)}>{selectedSkill.health}</StatusBadge>
             <StatusBadge tone="neutral">{selectedSkill.boundStage}</StatusBadge>
             <StatusBadge tone="neutral">{selectedSkill.version}</StatusBadge>
           </div>
-          <label style={{ display: "grid", gap: "6px" }}>
+          <label style={{ display: "grid", gap: "var(--space-2)" }}>
             <span>{copy("Description", "说明")}</span>
             <textarea value={skillDescriptionDraft} onChange={(event) => setSkillDescriptionDraft(event.target.value)} style={textAreaStyle} />
           </label>
-          <label style={{ display: "grid", gap: "6px" }}>
+          <label style={{ display: "grid", gap: "var(--space-2)" }}>
             <span>{copy("Strategy JSON", "策略 JSON")}</span>
             <textarea value={skillStrategyDraft} onChange={(event) => setSkillStrategyDraft(event.target.value)} style={textAreaStyle} />
           </label>
-          <label style={{ display: "grid", gap: "6px" }}>
+          <label style={{ display: "grid", gap: "var(--space-2)" }}>
             <span>{copy("Execution hints JSON", "执行提示 JSON")}</span>
             <textarea value={skillExecutionHintsDraft} onChange={(event) => setSkillExecutionHintsDraft(event.target.value)} style={textAreaStyle} />
           </label>
-          <label style={{ display: "grid", gap: "6px" }}>
+          <label style={{ display: "grid", gap: "var(--space-2)" }}>
             <span>{copy("Metadata JSON", "元数据 JSON")}</span>
             <textarea value={skillMetadataDraft} onChange={(event) => setSkillMetadataDraft(event.target.value)} style={textAreaStyle} />
           </label>
-          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: "var(--space-2)", flexWrap: "wrap" }}>
             <button type="button" onClick={() => void saveSkill()} style={buttonStyle}>{copy("Save skill", "保存 skill")}</button>
-            <button type="button" onClick={() => void onDeleteSkill(selectedSkill.id)} style={{ ...buttonStyle, background: "rgba(255,122,122,0.10)", color: "#ffdede" }}>{copy("Delete", "删除")}</button>
+            <button type="button" onClick={() => void onDeleteSkill(selectedSkill.id)} style={dangerButtonStyle}>{copy("Delete", "删除")}</button>
           </div>
         </div>
       );
@@ -859,39 +877,39 @@ export function EvolutionView({
 
     if (selectedMemoryRecord) {
       return (
-        <div style={{ display: "grid", gap: "12px" }}>
-          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+        <div style={{ display: "grid", gap: "var(--space-3)" }}>
+          <div style={{ display: "flex", gap: "var(--space-2)", flexWrap: "wrap" }}>
             <StatusBadge tone="neutral">{selectedMemoryRecord.record.memorySchemaVersion}</StatusBadge>
             <StatusBadge tone="neutral">{copy(`tokens ${selectedMemoryRecord.record.tokenEstimate}`, `tokens ${selectedMemoryRecord.record.tokenEstimate}`)}</StatusBadge>
             {selectedMemoryRecord.record.compactedAt ? <StatusBadge tone="warning">{copy(`last compact ${formatCompactDate(selectedMemoryRecord.record.compactedAt)}`, `最近 compact 于 ${formatCompactDate(selectedMemoryRecord.record.compactedAt)}`)}</StatusBadge> : null}
           </div>
-          <label style={{ display: "grid", gap: "6px" }}>
+          <label style={{ display: "grid", gap: "var(--space-2)" }}>
             <span>{copy("Summary", "摘要")}</span>
             <textarea value={memorySummaryDraft} onChange={(event) => setMemorySummaryDraft(event.target.value)} style={textAreaStyle} />
           </label>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: "10px" }}>
-            <label style={{ display: "grid", gap: "6px" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: "var(--space-3)" }}>
+            <label style={{ display: "grid", gap: "var(--space-2)" }}>
               <span>{copy("Preview", "预览层")}</span>
               <input value={memoryDisclosurePreviewDraft} onChange={(event) => setMemoryDisclosurePreviewDraft(event.target.value)} style={inputStyle} />
             </label>
-            <label style={{ display: "grid", gap: "6px" }}>
+            <label style={{ display: "grid", gap: "var(--space-2)" }}>
               <span>{copy("Operator", "操作员层")}</span>
               <input value={memoryDisclosureOperatorDraft} onChange={(event) => setMemoryDisclosureOperatorDraft(event.target.value)} style={inputStyle} />
             </label>
-            <label style={{ display: "grid", gap: "6px" }}>
+            <label style={{ display: "grid", gap: "var(--space-2)" }}>
               <span>{copy("Model", "模型层")}</span>
               <input value={memoryDisclosureModelDraft} onChange={(event) => setMemoryDisclosureModelDraft(event.target.value)} style={inputStyle} />
             </label>
           </div>
-          <label style={{ display: "grid", gap: "6px" }}>
+          <label style={{ display: "grid", gap: "var(--space-2)" }}>
             <span>{copy("Raw JSON", "原始 JSON")}</span>
-            <textarea value={memoryRawDraft} onChange={(event) => setMemoryRawDraft(event.target.value)} style={{ ...textAreaStyle, minHeight: "140px" }} />
+            <textarea value={memoryRawDraft} onChange={(event) => setMemoryRawDraft(event.target.value)} style={{ ...textAreaStyle, minHeight: "calc(var(--space-12) + var(--space-12) + var(--space-10) + var(--space-3))" }} />
           </label>
-          <label style={{ display: "grid", gap: "6px" }}>
+          <label style={{ display: "grid", gap: "var(--space-2)" }}>
             <span>{copy("Compacted JSON", "压缩后 JSON")}</span>
-            <textarea value={memoryCompactDraft} onChange={(event) => setMemoryCompactDraft(event.target.value)} style={{ ...textAreaStyle, minHeight: "140px" }} />
+            <textarea value={memoryCompactDraft} onChange={(event) => setMemoryCompactDraft(event.target.value)} style={{ ...textAreaStyle, minHeight: "calc(var(--space-12) + var(--space-12) + var(--space-10) + var(--space-3))" }} />
           </label>
-          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: "var(--space-2)", flexWrap: "wrap" }}>
             <button type="button" onClick={() => void saveMemory()} style={buttonStyle}>{copy("Save memory", "保存 memory")}</button>
             <button type="button" onClick={() => void compactMemory()} style={buttonStyle}>{copy("Compact now", "立即 compact")}</button>
           </div>
@@ -901,16 +919,16 @@ export function EvolutionView({
 
     if (selectedPolicyKey && profile) {
       return (
-        <div style={{ display: "grid", gap: "12px" }}>
-          <label style={{ display: "grid", gap: "6px" }}>
+        <div style={{ display: "grid", gap: "var(--space-3)" }}>
+          <label style={{ display: "grid", gap: "var(--space-2)" }}>
             <span>{copy("Compact threshold", "压缩阈值")}</span>
             <input value={policyThresholdDraft} onChange={(event) => setPolicyThresholdDraft(event.target.value)} style={inputStyle} />
           </label>
-          <label style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+          <label style={{ display: "flex", gap: "var(--space-2)", alignItems: "center" }}>
             <input type="checkbox" checked={policyAutoCompact} onChange={(event) => setPolicyAutoCompact(event.target.checked)} />
             <span>{copy("Auto compact", "自动 compact")}</span>
           </label>
-          <label style={{ display: "grid", gap: "6px" }}>
+          <label style={{ display: "grid", gap: "var(--space-2)" }}>
             <span>{copy("Disclosure tiers", "披露层级")}</span>
             <textarea value={policyDisclosureDraft} onChange={(event) => setPolicyDisclosureDraft(event.target.value)} style={textAreaStyle} />
           </label>
@@ -921,17 +939,17 @@ export function EvolutionView({
 
     if (selectedArtifact) {
       return (
-        <div style={{ display: "grid", gap: "12px" }}>
-          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+        <div style={{ display: "grid", gap: "var(--space-3)" }}>
+          <div style={{ display: "flex", gap: "var(--space-2)", flexWrap: "wrap" }}>
             <StatusBadge tone={toneFromStatus(selectedArtifact.status)}>{translateUiToken(selectedArtifact.status, copy)}</StatusBadge>
             <StatusBadge tone="neutral">{selectedArtifact.artifactKind}</StatusBadge>
             {selectedArtifact.relatedCandidateId ? <StatusBadge tone="warning">{candidateNameById.get(selectedArtifact.relatedCandidateId) ?? selectedArtifact.relatedCandidateId}</StatusBadge> : null}
           </div>
-          <label style={{ display: "grid", gap: "6px" }}>
+          <label style={{ display: "grid", gap: "var(--space-2)" }}>
             <span>{copy("Summary", "摘要")}</span>
             <textarea value={artifactSummaryDraft} onChange={(event) => setArtifactSummaryDraft(event.target.value)} style={textAreaStyle} />
           </label>
-          <label style={{ display: "grid", gap: "6px" }}>
+          <label style={{ display: "grid", gap: "var(--space-2)" }}>
             <span>{copy("Status", "状态")}</span>
             <select value={artifactStatusDraft} onChange={(event) => setArtifactStatusDraft(event.target.value as EvolutionArtifactRecord["status"])} style={inputStyle}>
               <option value="draft">{copy("Draft", "草稿")}</option>
@@ -941,15 +959,15 @@ export function EvolutionView({
               <option value="rejected">{copy("Rejected", "已拒绝")}</option>
             </select>
           </label>
-          <label style={{ display: "grid", gap: "6px" }}>
+          <label style={{ display: "grid", gap: "var(--space-2)" }}>
             <span>{copy("Artifact body JSON", "产物内容 JSON")}</span>
-            <textarea value={artifactBodyDraft} onChange={(event) => setArtifactBodyDraft(event.target.value)} style={{ ...textAreaStyle, minHeight: "180px" }} />
+            <textarea value={artifactBodyDraft} onChange={(event) => setArtifactBodyDraft(event.target.value)} style={{ ...textAreaStyle, minHeight: "calc(var(--space-12) + var(--space-12) + var(--space-12) + var(--space-10) + var(--space-3))" }} />
           </label>
-          <label style={{ display: "grid", gap: "6px" }}>
+          <label style={{ display: "grid", gap: "var(--space-2)" }}>
             <span>{copy("Artifact metadata JSON", "产物元数据 JSON")}</span>
-            <textarea value={artifactMetadataDraft} onChange={(event) => setArtifactMetadataDraft(event.target.value)} style={{ ...textAreaStyle, minHeight: "120px" }} />
+            <textarea value={artifactMetadataDraft} onChange={(event) => setArtifactMetadataDraft(event.target.value)} style={{ ...textAreaStyle, minHeight: "calc(var(--space-12) + var(--space-12) + var(--space-6))" }} />
           </label>
-          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: "var(--space-2)", flexWrap: "wrap" }}>
             <button type="button" onClick={() => void saveArtifact()} style={buttonStyle}>{copy("Save artifact", "保存产物")}</button>
             {selectedArtifact.relatedCandidateId ? (
               <button type="button" onClick={() => onOpenCandidate(selectedArtifact.relatedCandidateId!)} style={buttonStyle}>
@@ -963,36 +981,36 @@ export function EvolutionView({
 
     if (section === "prompts" && profile) {
       return (
-        <div style={{ display: "grid", gap: "12px" }}>
-          <label style={{ display: "grid", gap: "6px" }}>
+        <div style={{ display: "grid", gap: "var(--space-3)" }}>
+          <label style={{ display: "grid", gap: "var(--space-2)" }}>
             <span>{copy("Identity", "身份")}</span>
             <input value={identityDraft} onChange={(event) => setIdentityDraft(event.target.value)} style={inputStyle} />
           </label>
-          <label style={{ display: "grid", gap: "6px" }}>
+          <label style={{ display: "grid", gap: "var(--space-2)" }}>
             <span>{copy("Positioning", "定位")}</span>
             <textarea value={positioningDraft} onChange={(event) => setPositioningDraft(event.target.value)} style={textAreaStyle} />
           </label>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "10px" }}>
-            <label style={{ display: "grid", gap: "6px" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "var(--space-3)" }}>
+            <label style={{ display: "grid", gap: "var(--space-2)" }}>
               <span>{copy("Tone", "口吻")}</span>
               <input value={toneDraft} onChange={(event) => setToneDraft(event.target.value)} style={inputStyle} />
             </label>
-            <label style={{ display: "grid", gap: "6px" }}>
+            <label style={{ display: "grid", gap: "var(--space-2)" }}>
               <span>{copy("Context slots", "上下文槽位")}</span>
               <textarea value={contextSlotsDraft} onChange={(event) => setContextSlotsDraft(event.target.value)} style={textAreaStyle} />
             </label>
           </div>
-          <label style={{ display: "grid", gap: "6px" }}>
+          <label style={{ display: "grid", gap: "var(--space-2)" }}>
             <span>{copy("Duties", "职责")}</span>
             <textarea value={dutiesDraft} onChange={(event) => setDutiesDraft(event.target.value)} style={textAreaStyle} />
           </label>
-          <label style={{ display: "grid", gap: "6px" }}>
+          <label style={{ display: "grid", gap: "var(--space-2)" }}>
             <span>{copy("Boundaries", "边界")}</span>
             <textarea value={boundariesDraft} onChange={(event) => setBoundariesDraft(event.target.value)} style={textAreaStyle} />
           </label>
-          <label style={{ display: "grid", gap: "6px" }}>
+          <label style={{ display: "grid", gap: "var(--space-2)" }}>
             <span>{copy("System prompt", "系统提示词")}</span>
-            <textarea value={systemPromptDraft} onChange={(event) => setSystemPromptDraft(event.target.value)} style={{ ...textAreaStyle, minHeight: "160px" }} />
+            <textarea value={systemPromptDraft} onChange={(event) => setSystemPromptDraft(event.target.value)} style={{ ...textAreaStyle, minHeight: "calc(var(--space-12) + var(--space-12) + var(--space-12) + var(--space-4))" }} />
           </label>
           <button type="button" onClick={() => void savePrompts()} style={buttonStyle}>{copy("Save prompts", "保存提示词")}</button>
         </div>
@@ -1001,14 +1019,14 @@ export function EvolutionView({
 
     if (section === "playbook" && profile) {
       return (
-        <div style={{ display: "grid", gap: "12px" }}>
-          <label style={{ display: "grid", gap: "6px" }}>
+        <div style={{ display: "grid", gap: "var(--space-3)" }}>
+          <label style={{ display: "grid", gap: "var(--space-2)" }}>
             <span>{copy("Default statuses", "默认状态")}</span>
             <textarea value={defaultStatusesDraft} onChange={(event) => setDefaultStatusesDraft(event.target.value)} style={textAreaStyle} />
           </label>
-          <label style={{ display: "grid", gap: "6px" }}>
+          <label style={{ display: "grid", gap: "var(--space-2)" }}>
             <span>{copy("Execution blueprint JSON", "执行蓝图 JSON")}</span>
-            <textarea value={playbookJsonDraft} onChange={(event) => setPlaybookJsonDraft(event.target.value)} style={{ ...textAreaStyle, minHeight: "260px" }} />
+            <textarea value={playbookJsonDraft} onChange={(event) => setPlaybookJsonDraft(event.target.value)} style={{ ...textAreaStyle, minHeight: "calc(var(--space-12) * 3 + var(--space-10) + var(--space-10) + var(--space-5) + var(--space-4))" }} />
           </label>
           <button type="button" onClick={() => void savePlaybook()} style={buttonStyle}>{copy("Save workflow blueprint", "保存工作流蓝图")}</button>
         </div>
@@ -1027,20 +1045,28 @@ export function EvolutionView({
       >
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: "var(--space-3)" }}>
           {reviewMetrics.map((metric) => (
-            <div key={metric.label} style={{ border: `1px solid ${theme.colors.border}`, borderRadius: theme.radius.xl, padding: "var(--space-4)", background: "linear-gradient(180deg, #FFFFFF 0%, #F9FBFC 100%)" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", gap: "8px", alignItems: "start" }}>
-                <div style={{ color: theme.colors.muted, fontSize: "13px", lineHeight: 1.4 }}>{metric.label}</div>
-                <StatusBadge tone={metric.tone}>{metric.value}</StatusBadge>
-              </div>
-              <div style={{ marginTop: "8px", fontSize: "22px", lineHeight: 1.2, fontWeight: 600, color: theme.colors.text }}>{metric.value}</div>
-            </div>
+            <MetricCard
+              key={metric.label}
+              label={metric.label}
+              value={String(metric.value)}
+              delta={String(metric.value)}
+              tone={metric.tone}
+              caption={metric.note}
+            />
           ))}
         </div>
       </Panel>
 
-    <div style={{ display: "grid", gridTemplateColumns: "220px minmax(0, 1fr) 420px", gap: "var(--space-4)", minWidth: 0 }}>
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "calc(var(--layout-left-list-width) - var(--space-10)) minmax(0, 1fr) var(--layout-right-panel-width)",
+        gap: "var(--space-4)",
+        minWidth: 0,
+      }}
+    >
       <Panel dense title={copy("Review map", "审查地图")} eyebrow={copy("Registry", "注册表")} description={copy("Choose the review surface you want to adjust.", "选择你要调整的审查面。")}>
-        <div style={{ display: "grid", gap: "6px" }}>
+        <div style={{ display: "grid", gap: "var(--space-2)" }}>
           {([
             ["inbox", inboxRows.length],
             ["skills", skillRows.length],
@@ -1055,20 +1081,12 @@ export function EvolutionView({
               type="button"
               onClick={() => setSection(key)}
               style={{
-                display: "grid",
                 gridTemplateColumns: "1fr auto",
                 alignItems: "center",
-                gap: "8px",
-                textAlign: "left",
-                padding: "9px 10px",
-                borderRadius: "10px",
-                border: `1px solid ${section === key ? "rgba(122,167,255,0.34)" : theme.colors.border}`,
-                background: section === key ? "var(--brand-primary-soft)" : "var(--bg-page)",
-                color: theme.colors.text,
-                cursor: "pointer",
+                ...selectableRowStyle(section === key),
               }}
             >
-              <span style={{ fontWeight: 700 }}>{sectionMeta[key].title}</span>
+              <span style={{ fontWeight: 600 }}>{sectionMeta[key].title}</span>
               <StatusBadge tone={count ? "warning" : "neutral"}>{count}</StatusBadge>
             </button>
           ))}
@@ -1077,7 +1095,17 @@ export function EvolutionView({
 
       <Panel dense title={sectionMeta[section].title} eyebrow={copy("Registry", "注册表")} description={sectionMeta[section].description}>
         {errorMessage ? (
-          <div style={{ marginBottom: "10px", borderRadius: "10px", border: "1px solid rgba(255,122,122,0.18)", background: "rgba(255,122,122,0.08)", color: "#ffdede", padding: "8px 10px", fontSize: "12px" }}>
+          <div
+            style={{
+              marginBottom: "var(--space-3)",
+              borderRadius: theme.radius.lg,
+              border: `1px solid ${theme.colors.critical}`,
+              background: "var(--danger-soft)",
+              color: theme.colors.critical,
+              padding: "var(--space-2) var(--space-3)",
+              fontSize: "var(--font-size-xs)",
+            }}
+          >
             {errorMessage}
           </div>
         ) : null}

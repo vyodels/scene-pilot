@@ -70,14 +70,13 @@ const heroStyle: React.CSSProperties = {
   padding: "var(--space-6)",
   border: "1px solid var(--border-line)",
   borderRadius: "var(--radius-lg)",
-  background:
-    "linear-gradient(135deg, color-mix(in srgb, var(--brand-primary-soft) 58%, white) 0%, var(--bg-card) 60%, var(--bg-page) 100%)",
+  background: "var(--bg-card)",
 };
 
 const layoutStyle: React.CSSProperties = {
   display: "grid",
   gap: "var(--space-4)",
-  gridTemplateColumns: "300px minmax(0, 1.1fr) minmax(320px, 0.95fr)",
+  gridTemplateColumns: "var(--layout-left-list-width) minmax(0, 1.1fr) var(--layout-right-panel-width)",
   alignItems: "start",
 };
 
@@ -88,7 +87,7 @@ const fieldGridStyle: React.CSSProperties = {
 
 const controlLabelStyle: React.CSSProperties = {
   display: "grid",
-  gap: "6px",
+  gap: "var(--space-2)",
   fontSize: "var(--font-size-sm)",
   color: "var(--text-secondary)",
 };
@@ -96,27 +95,30 @@ const controlLabelStyle: React.CSSProperties = {
 const inputStyle: React.CSSProperties = {
   width: "100%",
   minWidth: 0,
+  minHeight: "32px",
   borderRadius: "var(--radius-sm)",
   border: "1px solid var(--border-input)",
   background: "var(--bg-card)",
   color: "var(--text-primary)",
-  padding: "10px 12px",
+  padding: "0 var(--space-3)",
   fontSize: "var(--font-size-sm)",
 };
 
 const textareaStyle: React.CSSProperties = {
   ...inputStyle,
   minHeight: "92px",
+  padding: "var(--space-3)",
   resize: "vertical",
   lineHeight: "var(--line-height-base)",
 };
 
 const buttonStyle: React.CSSProperties = {
+  minHeight: "32px",
   border: "1px solid var(--border-input)",
   borderRadius: "var(--radius-sm)",
   background: "var(--bg-card)",
   color: "var(--text-primary)",
-  padding: "10px 14px",
+  padding: "0 var(--space-4)",
   cursor: "pointer",
   fontWeight: "var(--font-weight-medium)",
 };
@@ -157,11 +159,11 @@ const metricCardStyle: React.CSSProperties = {
 };
 
 const bubbleBaseStyle: React.CSSProperties = {
-  maxWidth: "88%",
-  borderRadius: "var(--radius-md)",
-  padding: "10px 12px",
+  maxWidth: "60%",
+  borderRadius: "var(--radius-lg)",
+  padding: "var(--space-3)",
   display: "grid",
-  gap: "4px",
+  gap: "var(--space-1)",
   border: "1px solid var(--border-line)",
 };
 
@@ -216,16 +218,16 @@ function conversationBubbleStyle(direction: string): React.CSSProperties {
     return {
       ...bubbleBaseStyle,
       justifySelf: "end",
-      background: "color-mix(in srgb, var(--brand-primary-soft) 42%, white)",
-      borderColor: "color-mix(in srgb, var(--brand-primary) 22%, var(--border-line))",
+      background: "var(--brand-primary)",
+      borderColor: "var(--brand-primary)",
+      color: "var(--text-inverse)",
     };
   }
   if (direction === "inbound") {
     return {
       ...bubbleBaseStyle,
       justifySelf: "start",
-      background: "color-mix(in srgb, var(--success-soft) 40%, white)",
-      borderColor: "color-mix(in srgb, var(--success) 18%, var(--border-line))",
+      background: "var(--bg-card)",
     };
   }
   return {
@@ -683,7 +685,12 @@ export function CommunicationsView({
                 {selectedThread.communicationLogs.length ? (
                   selectedThread.communicationLogs.map((log) => (
                     <article key={log.id} style={conversationBubbleStyle(log.direction)}>
-                      <div style={{ fontSize: "var(--font-size-xs)", color: "var(--text-secondary)" }}>
+                      <div
+                        style={{
+                          fontSize: "var(--font-size-xs)",
+                          color: log.direction === "outbound" ? "color-mix(in srgb, var(--text-inverse) 72%, transparent)" : "var(--text-secondary)",
+                        }}
+                      >
                         {translateUiToken(log.direction, copy)} · {log.timestamp ? formatCompactDate(log.timestamp) : copy("now", "刚刚")}
                       </div>
                       <div style={{ fontSize: "var(--font-size-sm)", lineHeight: "var(--line-height-base)" }}>{log.content}</div>
