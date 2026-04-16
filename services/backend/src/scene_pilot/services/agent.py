@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import json
 import re
+import time
 import traceback
 from dataclasses import asdict, dataclass, field
+from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Callable
@@ -26,25 +28,45 @@ from scene_pilot.repositories import (
     ApprovalRepository,
     CandidateRepository,
     CandidateSessionRepository,
-    CandidateStageEventRepository,
     CommunicationLogRepository,
     DecisionLogRepository,
+    EvolutionArtifactRepository,
     SkillRepository,
     ResumeArtifactRepository,
     StrategyFragmentRepository,
+    TaskQueueRepository,
 )
 from scene_pilot.runtime.agent_loop import AgentLoop
 from scene_pilot.runtime.models import AgentResult, ToolExecutionResult
 from scene_pilot.runtime.result_semantics import extract_business_status
 from scene_pilot.scheduler.queue import TaskEnvelope
 from scene_pilot.scheduler.scheduler import ScheduledOutcome, SerialScheduler
-from scene_pilot.schemas import TaskCompileRequest
+from scene_pilot.schemas import CandidateStateTransitionRequest, TaskCompileRequest
 from scene_pilot.services.context_assembler import ContextAssemblerService
+from scene_pilot.services.candidate_progression_selector import (
+    CandidateProgressionTarget,
+    select_next_candidate_progression,
+)
+from scene_pilot.services.candidate_waiting_retry_selector import (
+    CandidateWaitingRetryPolicy,
+    CandidateWaitingRetryTarget,
+    select_waiting_candidate_retry_action,
+)
 from scene_pilot.services.events import EventStreamService
 from scene_pilot.services.feature_flags import FeatureFlagService
 from scene_pilot.services.adaptive_runtime import resolve_adaptive_stage
-from scene_pilot.services.recruit_agent import default_candidate_state_snapshot, ensure_primary_recruit_agent_profile
+from scene_pilot.services.recruit_agent import (
+    default_candidate_state_snapshot,
+    ensure_primary_recruit_agent_profile,
+    validate_evolution_artifact,
+)
 from scene_pilot.services.runtime_control import RuntimeControlService
+from scene_pilot.services.state_machine import (
+    StateMachineValidationError,
+    ensure_latest_state_machine,
+    resolve_candidate_current_status,
+    transition_candidate,
+)
 from scene_pilot.services.skills import SkillHealthCheckService
 from scene_pilot.services.sync import SyncService
 from scene_pilot.services.runtime import PersistedRuntimeService
@@ -71,6 +93,9 @@ class AgentControlService:
     sync_service: SyncService | None = None
     session_factory: sessionmaker[Session] | None = None
     runtime_service_factory: Callable[[Session], PersistedRuntimeService] | None = None
+    _state_machine_cache: dict[str, Any] | None = None
+    _autonomy_sourcing_backoff_until: float = field(default=0.0, init=False, repr=False)
+    _autonomy_candidate_backoff_until: float = field(default=0.0, init=False, repr=False)
 
     def enqueue_task(
         self,
@@ -113,6 +138,598 @@ class AgentControlService:
         level = "info" if outcome.result.success else "warning"
         self.events.publish(level, "runtime", f"Task {outcome.task.task_type} finished with {outcome.result.status}")
         return outcome
+
+    def _autonomy_min_funnel_candidates(self) -> int:
+        raw_value = dict(self.settings.provider_config or {}).get("autonomy_min_funnel_candidates", 0)
+        try:
+            return max(int(raw_value or 0), 0)
+        except (TypeError, ValueError):
+            return 0
+
+    def _autonomy_sourcing_cooldown_seconds(self) -> float:
+        raw_value = dict(self.settings.provider_config or {}).get("autonomy_sourcing_cooldown_seconds", 60)
+        try:
+            return max(float(raw_value or 60), 1.0)
+        except (TypeError, ValueError):
+            return 60.0
+
+    def _autonomy_candidate_cooldown_seconds(self) -> float:
+        raw_value = dict(self.settings.provider_config or {}).get("autonomy_candidate_progress_cooldown_seconds", 10)
+        try:
+            return max(float(raw_value or 10), 1.0)
+        except (TypeError, ValueError):
+            return 10.0
+
+    def _autonomy_funnel_status_ids(self, state_machine: dict[str, Any] | None) -> list[str]:
+        if not state_machine:
+            return []
+        status_ids: list[str] = []
+        for node in list(state_machine.get("nodes") or []):
+            if not isinstance(node, dict):
+                continue
+            node_id = str(node.get("id") or "").strip()
+            if not node_id:
+                continue
+            ui_config = dict(node.get("uiConfig") or node.get("ui_config") or {})
+            if not bool(ui_config.get("showInFunnel")):
+                continue
+            if bool(node.get("isTerminal")) or bool(node.get("isSoftTerminal")) or bool(node.get("isTransient")):
+                continue
+            status_ids.append(node_id)
+        return status_ids
+
+    def _autonomy_candidate_progression_task_types(self) -> list[str]:
+        return [
+            "candidate_probe",
+            "candidate_outreach",
+            "resume_collection",
+            "candidate_scoring",
+            "candidate_archive",
+        ]
+
+    def maybe_enqueue_autonomous_sourcing(self) -> TaskEnvelope | None:
+        minimum_candidates = self._autonomy_min_funnel_candidates()
+        if minimum_candidates <= 0 or self.session_factory is None:
+            return None
+
+        now = time.monotonic()
+        if now < self._autonomy_sourcing_backoff_until:
+            return None
+
+        candidate_count = 0
+        with self.session_factory() as session:
+            state_machine = ensure_latest_state_machine(session)
+            funnel_status_ids = self._autonomy_funnel_status_ids(state_machine)
+            if not funnel_status_ids:
+                return None
+            candidate_count = CandidateRepository(session).count_by_current_statuses(funnel_status_ids)
+            if candidate_count >= minimum_candidates:
+                return None
+            if TaskQueueRepository(session).has_open_task_types(["candidate_discovery"]):
+                return None
+
+        discovery_task = TaskEnvelope(
+            task_id=uuid4().hex,
+            task_type="candidate_discovery",
+            priority=180,
+            payload={
+                "autonomy_source": "low_funnel_supply",
+                "minimum_candidates": minimum_candidates,
+                "observed_funnel_candidates": candidate_count,
+            },
+            metadata={
+                "adaptive_stage": "candidate_discovery",
+                "autonomy_trigger": "low_funnel_supply",
+                "minimum_candidates": minimum_candidates,
+                "observed_funnel_candidates": candidate_count,
+            },
+        )
+        missing_capabilities = self._missing_external_capabilities(discovery_task)
+        if missing_capabilities:
+            self._autonomy_sourcing_backoff_until = now + self._autonomy_sourcing_cooldown_seconds()
+            self.events.publish(
+                "warning",
+                "autonomy",
+                "Autonomous sourcing skipped because required capabilities are unavailable.",
+                missing_capabilities=missing_capabilities,
+                minimum_candidates=minimum_candidates,
+                observed_funnel_candidates=candidate_count,
+            )
+            return None
+
+        queued_task = self.enqueue_task(
+            "candidate_discovery",
+            payload=dict(discovery_task.payload),
+            metadata=dict(discovery_task.metadata),
+            priority=discovery_task.priority,
+        )
+        self._autonomy_sourcing_backoff_until = now + self._autonomy_sourcing_cooldown_seconds()
+        self.events.publish(
+            "info",
+            "autonomy",
+            "Autonomous sourcing queued because funnel supply is below threshold.",
+            minimum_candidates=minimum_candidates,
+            observed_funnel_candidates=candidate_count,
+            task_id=queued_task.task_id,
+        )
+        return queued_task
+
+    def maybe_enqueue_priority_candidate_progression(self) -> TaskEnvelope | None:
+        if self.session_factory is None:
+            return None
+
+        now = time.monotonic()
+        if now < self._autonomy_candidate_backoff_until:
+            return None
+
+        selection = None
+        selected_candidate_id = ""
+        selected_status = ""
+        candidate_name = ""
+        with self.session_factory() as session:
+            queue_repo = TaskQueueRepository(session)
+            state_machine = ensure_latest_state_machine(session)
+            nodes = list(state_machine.get("nodes") or [])
+            node_by_id = {
+                str(node.get("id") or "").strip(): dict(node)
+                for node in nodes
+                if str(node.get("id") or "").strip()
+            }
+            open_candidate_ids = queue_repo.open_candidate_ids_for_task_types(self._autonomy_candidate_progression_task_types())
+            targets: list[CandidateProgressionTarget] = []
+            candidate_names: dict[str, str] = {}
+            for candidate in CandidateRepository(session).list(limit=500):
+                current_status = resolve_candidate_current_status(candidate)
+                node = node_by_id.get(current_status)
+                if node is None:
+                    continue
+                execution_config = dict(node.get("executionConfig") or {})
+                candidate_names[candidate.id] = str(getattr(candidate, "name", "") or "")
+                targets.append(
+                    CandidateProgressionTarget(
+                        candidate_id=candidate.id,
+                        current_status=current_status,
+                        node_id=str(node.get("id") or current_status),
+                        node_label=str(node.get("label") or current_status),
+                        phase=str(node.get("phase") or ""),
+                        default_waiting_party=str(node.get("defaultWaitingParty") or ""),
+                        sort_order=int(node.get("sortOrder") or node.get("sort_order") or 0),
+                        ai_scores=dict(getattr(candidate, "ai_scores", None) or {}),
+                        is_terminal=bool(node.get("isTerminal")),
+                        is_soft_terminal=bool(node.get("isSoftTerminal")),
+                        is_transient=bool(node.get("isTransient")),
+                        effective_execution_mode=str(execution_config.get("mode") or "none").strip() or "none",
+                        locked=bool(execution_config.get("locked")),
+                        created_at=getattr(candidate, "created_at", None),
+                        updated_at=getattr(candidate, "updated_at", None),
+                        last_contacted_at=getattr(candidate, "last_contacted_at", None),
+                        cooldown_until=getattr(candidate, "cooldown_until", None),
+                        has_open_task=candidate.id in open_candidate_ids,
+                    )
+                )
+            selection = select_next_candidate_progression(targets)
+            if selection is None:
+                return None
+            selected_candidate_id = selection.candidate_id
+            selected_status = selection.current_status
+            candidate_name = candidate_names.get(selection.candidate_id, "")
+
+        if selection is None:
+            return None
+
+        task_type = selection.selected_task_type
+        priority = 140 + int(round(float(selection.score_breakdown.total) * 100))
+        score_breakdown = asdict(selection.score_breakdown)
+        task = TaskEnvelope(
+            task_id=uuid4().hex,
+            task_type=task_type,
+            candidate_id=selected_candidate_id,
+            priority=priority,
+            payload={
+                "autonomy_source": "candidate_priority_queue",
+                "current_status": selected_status,
+                "selection": {
+                    "candidateId": selection.candidate_id,
+                    "selectedTaskType": selection.selected_task_type,
+                    "scoreBreakdown": score_breakdown,
+                    "reason": selection.reason,
+                },
+            },
+            metadata={
+                "adaptive_stage": task_type,
+                "autonomy_trigger": "candidate_priority_queue",
+                "candidate_priority_score": round(float(selection.score_breakdown.total), 4),
+                "candidate_priority_components": score_breakdown,
+                "candidate_priority_reason": selection.reason,
+                "state_machine_current_status": selected_status,
+                "state_machine_node_label": selection.node_label,
+                "state_machine_node_id": selection.node_id,
+            },
+        )
+        missing_capabilities = self._missing_external_capabilities(task)
+        if missing_capabilities:
+            self._autonomy_candidate_backoff_until = now + self._autonomy_candidate_cooldown_seconds()
+            self.events.publish(
+                "warning",
+                "autonomy",
+                "Candidate priority scheduling skipped because required capabilities are unavailable.",
+                missing_capabilities=missing_capabilities,
+                candidate_id=selected_candidate_id,
+                task_type=task_type,
+                reason=selection.reason,
+            )
+            return None
+
+        queued_task = self.enqueue_task(
+            task_type,
+            candidate_id=selected_candidate_id,
+            payload=dict(task.payload),
+            metadata=dict(task.metadata),
+            priority=priority,
+        )
+        self._autonomy_candidate_backoff_until = now + self._autonomy_candidate_cooldown_seconds()
+        self.events.publish(
+            "info",
+            "autonomy",
+            "Queued priority candidate progression task.",
+            candidate_id=selected_candidate_id,
+            candidate_name=candidate_name,
+            task_type=task_type,
+            priority=priority,
+            candidate_priority_score=round(float(selection.score_breakdown.total), 4),
+            candidate_priority_reason=selection.reason,
+            score_breakdown=score_breakdown,
+        )
+        return queued_task
+
+    def maybe_process_waiting_candidate_retry(self) -> TaskEnvelope | dict[str, Any] | None:
+        if self.session_factory is None:
+            return None
+
+        now = time.monotonic()
+        if now < self._autonomy_candidate_backoff_until:
+            return None
+
+        selected_action = None
+        selected_candidate_name = ""
+        selected_policy: dict[str, int] | None = None
+        with self.session_factory() as session:
+            queue_repo = TaskQueueRepository(session)
+            candidate_repo = CandidateRepository(session)
+            state_machine = ensure_latest_state_machine(session)
+            nodes = list(state_machine.get("nodes") or [])
+            node_by_id = {
+                str(node.get("id") or "").strip(): dict(node)
+                for node in nodes
+                if str(node.get("id") or "").strip()
+            }
+            waiting_status_ids = [
+                node_id
+                for node_id, node in node_by_id.items()
+                if str(node.get("defaultWaitingParty") or "").strip() == "CANDIDATE"
+                and not bool(node.get("isTerminal"))
+                and not bool(node.get("isSoftTerminal"))
+                and not bool(node.get("isTransient"))
+                and self._state_machine_retry_policy(node) is not None
+            ]
+            if not waiting_status_ids:
+                return None
+
+            open_candidate_ids = queue_repo.open_candidate_ids_for_task_types(self._autonomy_candidate_progression_task_types())
+            targets: list[CandidateWaitingRetryTarget] = []
+            candidate_names: dict[str, str] = {}
+            for candidate in candidate_repo.by_current_statuses(waiting_status_ids, limit=500):
+                current_status = resolve_candidate_current_status(candidate)
+                node = node_by_id.get(current_status)
+                retry_policy = self._state_machine_retry_policy(node)
+                if node is None or retry_policy is None:
+                    continue
+                candidate_names[candidate.id] = str(getattr(candidate, "name", "") or "")
+                retry_state = self._candidate_retry_state(candidate, current_status=current_status)
+                try:
+                    retry_count = max(int(retry_state.get("retry_count") or 0), 0)
+                except (TypeError, ValueError):
+                    retry_count = 0
+                targets.append(
+                    CandidateWaitingRetryTarget(
+                        candidate_id=candidate.id,
+                        current_status=current_status,
+                        node_id=str(node.get("id") or current_status),
+                        node_label=str(node.get("label") or current_status),
+                        retry_policy=CandidateWaitingRetryPolicy(
+                            max_retries=int(retry_policy["maxRetries"]),
+                            retry_after_hours=int(retry_policy["retryAfterHours"]),
+                            close_after_hours=int(retry_policy["closeAfterHours"]),
+                        ),
+                        current_retry_count=retry_count,
+                        is_terminal=bool(node.get("isTerminal")),
+                        is_soft_terminal=bool(node.get("isSoftTerminal")),
+                        is_transient=bool(node.get("isTransient")),
+                        has_open_task=candidate.id in open_candidate_ids,
+                        created_at=getattr(candidate, "created_at", None),
+                        updated_at=getattr(candidate, "updated_at", None),
+                        last_contacted_at=getattr(candidate, "last_contacted_at", None),
+                    )
+                )
+
+            selected_action = select_waiting_candidate_retry_action(targets)
+            if selected_action is None:
+                return None
+
+            selected_candidate_name = candidate_names.get(selected_action.candidate_id, "")
+            selected_policy = self._state_machine_retry_policy(node_by_id.get(selected_action.current_status))
+            if selected_action.action_kind == "close":
+                candidate = candidate_repo.resolve(selected_action.candidate_id)
+                if candidate is None:
+                    return None
+                transition_result = transition_candidate(
+                    session,
+                    candidate=candidate,
+                    payload=CandidateStateTransitionRequest(
+                        to_status="no_response",
+                        note="超过重试上限且在配置时限内仍未收到回复，自动关闭为无回复。",
+                        source="agent",
+                        actor="agent",
+                        actor_id="runtime",
+                        trigger="retry_policy_timeout",
+                        metadata={
+                            "retry_policy": dict(selected_policy or {}),
+                            "retry_state": {
+                                "current_retry_count": selected_action.current_retry_count,
+                                "hours_since_contact": selected_action.hours_since_contact,
+                            },
+                        },
+                    ),
+                )
+                candidate = candidate_repo.resolve(transition_result.candidate_id) or candidate
+                self._set_candidate_retry_state(
+                    candidate,
+                    status="no_response",
+                    retry_count=selected_action.current_retry_count,
+                    last_outbound_at=getattr(candidate, "last_contacted_at", None),
+                    policy=selected_policy,
+                    closed_at=utcnow(),
+                    close_reason="retry_policy_timeout",
+                )
+                session.commit()
+                session.refresh(candidate)
+
+        if selected_action is None:
+            return None
+
+        if selected_action.action_kind == "close":
+            self._autonomy_candidate_backoff_until = now + self._autonomy_candidate_cooldown_seconds()
+            self.events.publish(
+                "info",
+                "autonomy",
+                "Closed waiting candidate into no_response after retry policy exhaustion.",
+                candidate_id=selected_action.candidate_id,
+                candidate_name=selected_candidate_name,
+                current_status=selected_action.current_status,
+                reason=selected_action.reason,
+                current_retry_count=selected_action.current_retry_count,
+                hours_since_contact=selected_action.hours_since_contact,
+            )
+            return {
+                "action": "close_to_no_response",
+                "candidate_id": selected_action.candidate_id,
+                "current_status": selected_action.current_status,
+                "reason": selected_action.reason,
+            }
+
+        task_type = str(selected_action.selected_task_type or "").strip()
+        if not task_type:
+            return None
+        priority = 220 + int(selected_action.next_retry_count or 0) * 10
+        retry_payload = {
+            "autonomy_source": "waiting_candidate_retry",
+            "current_status": selected_action.current_status,
+            "retryContext": {
+                "sourceStatus": selected_action.current_status,
+                "retryCount": int(selected_action.next_retry_count or 0),
+                "maxRetries": int((selected_policy or {}).get("maxRetries") or 0),
+                "retryAfterHours": int((selected_policy or {}).get("retryAfterHours") or 0),
+                "closeAfterHours": int((selected_policy or {}).get("closeAfterHours") or 0),
+                "reason": selected_action.reason,
+            },
+        }
+        retry_metadata = {
+            "adaptive_stage": task_type,
+            "autonomy_trigger": "waiting_candidate_retry",
+            "state_machine_current_status": selected_action.current_status,
+            "state_machine_node_label": selected_action.node_label,
+            "state_machine_node_id": selected_action.node_id,
+            "retry_policy_reason": selected_action.reason,
+            "retry_policy_retry_count": int(selected_action.next_retry_count or 0),
+        }
+        queued_task = self.enqueue_task(
+            task_type,
+            candidate_id=selected_action.candidate_id,
+            payload=retry_payload,
+            metadata=retry_metadata,
+            priority=priority,
+        )
+        self._autonomy_candidate_backoff_until = now + self._autonomy_candidate_cooldown_seconds()
+        self.events.publish(
+            "info",
+            "autonomy",
+            "Queued waiting candidate retry task.",
+            candidate_id=selected_action.candidate_id,
+            candidate_name=selected_candidate_name,
+            task_type=task_type,
+            current_status=selected_action.current_status,
+            reason=selected_action.reason,
+            retry_count=int(selected_action.next_retry_count or 0),
+            hours_since_contact=selected_action.hours_since_contact,
+        )
+        return queued_task
+
+    def _load_state_machine_snapshot(self) -> dict[str, Any] | None:
+        cached_snapshot = dict((self._state_machine_cache or {}).get("payload") or {})
+        if self.session_factory is None:
+            return cached_snapshot or None
+        with self.session_factory() as session:
+            snapshot = ensure_latest_state_machine(session)
+        normalized = _json_ready(snapshot)
+        version = int(normalized.get("version") or 0)
+        cached_version = int((self._state_machine_cache or {}).get("version") or 0)
+        if self._state_machine_cache is None or cached_version != version:
+            self._state_machine_cache = {
+                "version": version,
+                "payload": normalized,
+            }
+        return dict((self._state_machine_cache or {}).get("payload") or {})
+
+    def _state_machine_node(self, state_machine: dict[str, Any] | None, status: str | None) -> dict[str, Any] | None:
+        if not state_machine or not status:
+            return None
+        for node in list(state_machine.get("nodes") or []):
+            if str(node.get("id") or "").strip() == str(status).strip():
+                return dict(node)
+        return None
+
+    def _state_machine_criteria_ref(self, session_context: dict[str, Any] | None) -> dict[str, Any] | None:
+        state_machine = dict((session_context or {}).get("state_machine") or {})
+        criteria_ref = dict(state_machine.get("criteria_ref") or {})
+        return criteria_ref or None
+
+    def _state_machine_execution_mode(self, session_context: dict[str, Any] | None) -> str | None:
+        state_machine = dict((session_context or {}).get("state_machine") or {})
+        execution_mode = str(state_machine.get("execution_mode") or "").strip()
+        return execution_mode or None
+
+    def _state_machine_human_actions(self, session_context: dict[str, Any] | None) -> list[dict[str, Any]]:
+        state_machine = dict((session_context or {}).get("state_machine") or {})
+        actions = []
+        for action in list(state_machine.get("human_actions") or []):
+            if not isinstance(action, dict):
+                continue
+            actions.append(dict(action))
+        return actions
+
+    def _sync_task_state_machine_metadata(
+        self,
+        task: TaskEnvelope,
+        *,
+        session_context: dict[str, Any] | None,
+    ) -> None:
+        state_machine = dict((session_context or {}).get("state_machine") or {})
+        if not state_machine:
+            return
+        task.metadata["state_machine_version"] = state_machine.get("version")
+        task.metadata["state_machine_current_status"] = state_machine.get("current_status")
+        current_node = dict(state_machine.get("current_node") or {})
+        if current_node.get("label"):
+            task.metadata["state_machine_node_label"] = current_node.get("label")
+        if state_machine.get("execution_mode"):
+            task.metadata["state_machine_execution_mode"] = state_machine.get("execution_mode")
+        task.metadata["state_machine_locked"] = bool(current_node.get("executionConfig", {}).get("locked"))
+        if state_machine.get("criteria_ref"):
+            task.metadata["state_machine_criteria_ref"] = dict(state_machine.get("criteria_ref") or {})
+        task.metadata["state_machine_human_actions"] = list(state_machine.get("human_actions") or [])
+
+    def _state_machine_milestone_for_status(self, state_machine: dict[str, Any] | None, status: str | None) -> str | None:
+        node = self._state_machine_node(state_machine, status)
+        if node is None:
+            return None
+        milestone_id = str(node.get("milestoneId") or node.get("milestone_id") or "").strip()
+        return milestone_id or None
+
+    def _agent_transition_candidate(
+        self,
+        session: Session,
+        *,
+        task: TaskEnvelope,
+        candidate: Any,
+        to_status: str,
+        stage_key: str | None = None,
+        stage_label: str | None = None,
+        note: str | None = None,
+        trigger: str | None = None,
+        override_reason: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        contact_channels: list[str] | None = None,
+        interview_round: int | None = None,
+    ):
+        criteria_ref = dict(task.metadata.get("state_machine_criteria_ref") or {})
+        trigger_fallback = str(task.task_type or self._adaptive_stage_for_task(task) or "").strip() or "agent_transition"
+        transition_metadata = {
+            **dict(metadata or {}),
+            "task_id": task.task_id,
+            "task_type": task.task_type,
+            "adaptive_stage": self._adaptive_stage_for_task(task),
+            "state_machine_version": task.metadata.get("state_machine_version"),
+        }
+        if criteria_ref:
+            transition_metadata["criteria_ref"] = criteria_ref
+        payload = CandidateStateTransitionRequest(
+            to_status=to_status,
+            stage_key=stage_key,
+            stage_label=stage_label,
+            note=note,
+            source="agent",
+            actor="agent_override" if override_reason else "agent",
+            actor_id="runtime",
+            trigger=trigger,
+            override_reason=override_reason,
+            metadata=transition_metadata,
+            interview_round=interview_round,
+            contact_channels=contact_channels,
+        )
+        transition_result = transition_candidate(session, candidate=candidate, payload=payload)
+        matched_transition = dict(transition_result.matched_transition or {})
+        transition_record = transition_result.transition_record
+        transition_record.trigger = str(
+            trigger
+            or matched_transition.get("label")
+            or matched_transition.get("condition")
+            or trigger_fallback
+        )
+        transition_record.transition_metadata = {
+            **{
+                key: value
+                for key, value in dict(transition_record.transition_metadata or {}).items()
+                if value is not None
+            },
+            **({"criteria_ref": criteria_ref} if criteria_ref else {}),
+        }
+        session.commit()
+        session.refresh(transition_record)
+        return transition_result
+
+    def _candidate_waiting_result(self, task: TaskEnvelope, *, session_context: dict[str, Any] | None) -> AgentResult | None:
+        state_machine = dict((session_context or {}).get("state_machine") or {})
+        execution_mode = str(state_machine.get("execution_mode") or "").strip()
+        if execution_mode != "human_required":
+            return None
+        current_node = dict(state_machine.get("current_node") or {})
+        label = str(current_node.get("label") or state_machine.get("current_status") or task.task_type)
+        description = str(current_node.get("description") or "").strip()
+        waiting_message = f"{label} 节点要求人工处理。"
+        if description:
+            waiting_message = f"{waiting_message} {description}"
+        if current_node.get("executionConfig", {}).get("locked"):
+            waiting_message = f"{waiting_message} 当前节点已锁定，Agent 不会直接执行。"
+        return AgentResult(
+            success=False,
+            status="waiting_human",
+            content=waiting_message,
+            data={
+                "status": str(state_machine.get("current_status") or ""),
+                "state_machine_version": state_machine.get("version"),
+                "execution_mode": execution_mode,
+            },
+            metadata={
+                "state_machine_gate": {
+                    "current_status": state_machine.get("current_status"),
+                    "node_label": current_node.get("label"),
+                    "execution_mode": execution_mode,
+                    "locked": bool(current_node.get("executionConfig", {}).get("locked")),
+                    "description": description or None,
+                },
+                "state_machine_human_actions": self._state_machine_human_actions(session_context),
+            },
+        )
 
     def build_follow_up_factory(self):
         def _follow_up(task: TaskEnvelope, result: AgentResult):
@@ -177,8 +794,10 @@ class AgentControlService:
     def build_runner(self):
         def _run(task: TaskEnvelope) -> AgentResult:
             adaptive_stage = self._adaptive_stage_for_task(task)
-            runtime_session = self._build_runtime_session(task)
-            runtime_skill = self._build_skill_context(task)
+            state_machine_snapshot = self._load_state_machine_snapshot()
+            runtime_session = self._build_runtime_session(task, state_machine=state_machine_snapshot)
+            self._sync_task_state_machine_metadata(task, session_context=runtime_session)
+            runtime_skill = self._build_skill_context(task, session_context=runtime_session)
             platform_context = self._build_platform_context(task)
             runtime_state: dict[str, Any] | None = None
             context_manifest: dict[str, Any] | None = None
@@ -243,6 +862,12 @@ class AgentControlService:
                     context_manifest=context_manifest or {},
                     session_context=session_context_override if session_context_override is not None else runtime_session,
                 )
+                self._persist_candidate_progression_evolution_artifact(
+                    task,
+                    result,
+                    session_context=session_context_override if session_context_override is not None else runtime_session,
+                    skill_context=runtime_skill,
+                )
                 if persist_learning:
                     self._persist_runtime_learning(task, result)
                 _finalize_runtime_state(result)
@@ -289,6 +914,10 @@ class AgentControlService:
                 goal_intake_result = self._run_goal_intake(task)
                 if goal_intake_result is not None:
                     return _complete(goal_intake_result)
+
+                waiting_result = self._candidate_waiting_result(task, session_context=runtime_session)
+                if waiting_result is not None:
+                    return _complete(waiting_result)
 
                 managed_execution = self._prepare_managed_execution(task)
 
@@ -989,7 +1618,12 @@ class AgentControlService:
             "requires_real_environment": True,
         }
 
-    def _build_runtime_session(self, task: TaskEnvelope) -> dict[str, Any]:
+    def _build_runtime_session(
+        self,
+        task: TaskEnvelope,
+        *,
+        state_machine: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         if self.session_factory is None or not task.candidate_id:
             return {}
 
@@ -999,12 +1633,25 @@ class AgentControlService:
             if candidate is None:
                 return {}
 
+            state_machine_snapshot = dict(state_machine or self._load_state_machine_snapshot() or {})
+            current_status = resolve_candidate_current_status(candidate)
+            current_node = self._state_machine_node(state_machine_snapshot, current_status)
+            execution_config = dict((current_node or {}).get("executionConfig") or {})
+            execution_mode = str(execution_config.get("mode") or "").strip() or None
+            criteria_ref = dict(execution_config.get("criteriaRef") or {})
+            raw_human_actions = (current_node or {}).get("humanActions") or execution_config.get("humanActions") or []
+            human_actions = [
+                dict(action)
+                for action in list(raw_human_actions)
+                if isinstance(action, dict)
+            ]
+
             session_repo = CandidateSessionRepository(session)
             candidate_session = session_repo.get_or_create(
                 candidate.id,
                 defaults={
                     "status": "active",
-                    "context_summary": candidate.ai_reasoning or f"{candidate.name} is currently in {candidate.status}.",
+                    "context_summary": candidate.ai_reasoning or f"{candidate.name} is currently in {current_status}.",
                     "facts": {},
                     "recent_messages": [],
                     "last_active_at": utcnow(),
@@ -1016,12 +1663,17 @@ class AgentControlService:
             adaptive_stage = self._adaptive_stage_for_task(task)
             facts.update(
                 {
-                    "candidate_status": candidate.status,
+                    "candidate_status": current_status,
+                    "current_status": current_status,
                     "goal_spec_id": str(task.metadata.get("goal_spec_id") or task.payload.get("goal_id") or "") or None,
                     "task_type": task.task_type,
                     "resume_available": bool(candidate.resume_path or candidate.online_resume_text),
+                    "state_machine_version": state_machine_snapshot.get("version"),
+                    "execution_mode": execution_mode,
                 }
             )
+            if criteria_ref:
+                facts["criteria_ref"] = criteria_ref
             if adaptive_stage == "strategy_distill":
                 facts["last_learning_stage"] = adaptive_stage
             else:
@@ -1036,7 +1688,9 @@ class AgentControlService:
                     "name": candidate.name,
                     "platform": candidate.platform,
                     "status": candidate.status,
+                    "current_status": current_status,
                     "current_stage_key": candidate.current_stage_key,
+                    "deepest_milestone": candidate.deepest_milestone,
                     "jd_id": candidate.jd_id,
                     "contact_info": dict(candidate.contact_info or {}),
                     "resume_path": candidate.resume_path,
@@ -1053,15 +1707,29 @@ class AgentControlService:
                     "suspend_reason": candidate_session.suspend_reason,
                     "last_active_at": candidate_session.last_active_at.isoformat() if candidate_session.last_active_at else None,
                 },
+                "state_machine": {
+                    "version": state_machine_snapshot.get("version"),
+                    "current_status": current_status,
+                    "current_node": current_node or {},
+                    "execution_mode": execution_mode,
+                    "criteria_ref": criteria_ref or None,
+                    "human_actions": human_actions,
+                },
             }
 
-    def _build_skill_context(self, task: TaskEnvelope) -> dict[str, Any] | None:
+    def _build_skill_context(self, task: TaskEnvelope, *, session_context: dict[str, Any] | None = None) -> dict[str, Any] | None:
         if self.session_factory is None:
             return None
 
         preferred_skill_id = (
             task.payload.get("skill_id")
             or task.metadata.get("skill_id")
+        )
+        criteria_ref = self._state_machine_criteria_ref(session_context) or {}
+        criteria_skill_id = (
+            str(criteria_ref.get("skillId") or "").strip()
+            if str(criteria_ref.get("type") or "").strip() == "skill"
+            else ""
         )
         adaptive_stage = str(task.metadata.get("adaptive_stage") or "").strip() or self._adaptive_stage_for_task(task)
 
@@ -1071,6 +1739,9 @@ class AgentControlService:
 
             if isinstance(preferred_skill_id, str) and preferred_skill_id.strip():
                 skill = repo.by_skill_id(preferred_skill_id.strip()) or repo.get(preferred_skill_id.strip())
+
+            if skill is None and criteria_skill_id:
+                skill = repo.by_skill_id(criteria_skill_id) or repo.get(criteria_skill_id)
 
             if skill is None and adaptive_stage:
                 candidates = repo.active_for_stage(adaptive_stage, platform=task.platform)
@@ -1180,28 +1851,70 @@ class AgentControlService:
                         candidate_session.suspend_reason = None
 
                 if candidate is not None:
+                    candidate = self._maybe_apply_candidate_rollback_signal(
+                        session,
+                        task=task,
+                        result=result,
+                        candidate=candidate,
+                    )
                     if task.task_type == "candidate_scoring" and isinstance(result.data, dict) and result.success:
                         candidate.ai_scores = dict(result.data)
-                    if task.task_type == "candidate_outreach":
-                        communication_repo.create(
+                        self._append_progression_action(
+                            result,
                             {
+                                "kind": "score_update",
+                                "task_type": task.task_type,
                                 "candidate_id": candidate.id,
-                                "direction": "outbound",
-                                "content": str(result.metadata.get("platform_result", {}).get("message") or task.payload.get("message") or result.content),
-                                "message_type": "text",
-                                "platform": task.platform,
-                                "timestamp": utcnow(),
-                            }
+                                "score": result.data.get("overall") or result.data.get("score"),
+                                "decision": result.data.get("decision") or result.data.get("status"),
+                            },
                         )
-                        session_repo.append_recent_message(
-                            candidate_session,
-                            direction="outbound",
-                            content=str(result.metadata.get("platform_result", {}).get("message") or task.payload.get("message") or result.content),
-                            metadata={"task_id": task.task_id, "task_type": task.task_type},
-                        )
+                    if task.task_type == "candidate_outreach":
+                        outbound_message = self._candidate_outreach_outbound_message(task=task, result=result)
+                        if outbound_message:
+                            candidate = self._record_waiting_candidate_outbound(
+                                session,
+                                task=task,
+                                result=result,
+                                candidate=candidate,
+                                outbound_message=outbound_message,
+                            )
+                            communication_repo.create(
+                                {
+                                    "candidate_id": candidate.id,
+                                    "direction": "outbound",
+                                    "content": outbound_message,
+                                    "message_type": "text",
+                                    "platform": task.platform,
+                                    "timestamp": utcnow(),
+                                }
+                            )
+                            session_repo.append_recent_message(
+                                candidate_session,
+                                direction="outbound",
+                                content=outbound_message,
+                                metadata={"task_id": task.task_id, "task_type": task.task_type},
+                            )
+                            self._append_progression_action(
+                                result,
+                                {
+                                    "kind": "outbound_message",
+                                    "task_type": task.task_type,
+                                    "candidate_id": candidate.id,
+                                    "message_type": "text",
+                                    "message": outbound_message,
+                                },
+                            )
                     elif task.task_type == "resume_collection":
                         resume_request_message = self._resume_collection_outbound_message(task=task, result=result)
                         if resume_request_message:
+                            candidate = self._record_waiting_candidate_outbound(
+                                session,
+                                task=task,
+                                result=result,
+                                candidate=candidate,
+                                outbound_message=resume_request_message,
+                            )
                             communication_repo.create(
                                 {
                                     "candidate_id": candidate.id,
@@ -1218,6 +1931,16 @@ class AgentControlService:
                                 content=resume_request_message,
                                 message_type="resume_request",
                                 metadata={"task_id": task.task_id, "task_type": task.task_type},
+                            )
+                            self._append_progression_action(
+                                result,
+                                {
+                                    "kind": "outbound_message",
+                                    "task_type": task.task_type,
+                                    "candidate_id": candidate.id,
+                                    "message_type": "resume_request",
+                                    "message": resume_request_message,
+                                },
                             )
 
                     decision_value = str(extract_business_status(result.data) or result.status or "completed")
@@ -1274,10 +1997,10 @@ class AgentControlService:
 
         candidate_repo = CandidateRepository(session)
         session_repo = CandidateSessionRepository(session)
-        stage_repo = CandidateStageEventRepository(session)
         resume_repo = ResumeArtifactRepository(session)
         persisted_ids: list[str] = []
         goal_spec_id = str(task.metadata.get("goal_spec_id") or task.payload.get("goal_id") or "").strip() or None
+        state_machine_snapshot = self._load_state_machine_snapshot()
 
         for payload in payloads:
             normalized = self._normalize_discovered_candidate_payload(
@@ -1302,19 +2025,21 @@ class AgentControlService:
                         break
 
             created = False
-            previous_status = existing.status if existing is not None else None
-            previous_stage = existing.current_stage_key if existing is not None else None
+            target_status = str(normalized["status"] or "discovered").strip() or "discovered"
+            initial_milestone = self._state_machine_milestone_for_status(state_machine_snapshot, "discovered")
             if existing is None:
                 existing = candidate_repo.create(
                     {
                         "name": normalized["name"],
                         "platform": normalized["platform"],
                         "platform_candidate_id": normalized.get("platform_candidate_id"),
-                        "status": normalized["status"],
-                        "current_stage_key": normalized["current_stage_key"],
+                        "status": "discovered",
+                        "current_status": "discovered",
+                        "current_stage_key": "discovered",
+                        "deepest_milestone": initial_milestone,
                         "jd_id": normalized.get("jd_id"),
                         "contact_info": normalized["contact_info"],
-                        "state_snapshot": normalized["state_snapshot"],
+                        "state_snapshot": default_candidate_state_snapshot(status="discovered"),
                         "resume_path": normalized.get("resume_path"),
                         "online_resume_text": normalized.get("online_resume_text"),
                         "ai_scores": normalized.get("ai_scores", {}),
@@ -1328,15 +2053,17 @@ class AgentControlService:
                 existing.name = normalized["name"] or existing.name
                 existing.platform = normalized["platform"] or existing.platform
                 existing.platform_candidate_id = normalized.get("platform_candidate_id") or existing.platform_candidate_id
-                existing.status = normalized["status"] or existing.status
-                existing.current_stage_key = normalized["current_stage_key"] or existing.current_stage_key
                 existing.jd_id = normalized.get("jd_id") or existing.jd_id
                 existing.contact_info = merged_contact
-                existing.state_snapshot = normalized["state_snapshot"] or existing.state_snapshot
                 existing.resume_path = normalized.get("resume_path") or existing.resume_path
                 existing.online_resume_text = normalized.get("online_resume_text") or existing.online_resume_text
                 existing.ai_scores = normalized.get("ai_scores") or existing.ai_scores
                 existing.ai_reasoning = normalized.get("ai_reasoning") or existing.ai_reasoning
+                if not existing.deepest_milestone:
+                    existing.deepest_milestone = self._state_machine_milestone_for_status(
+                        state_machine_snapshot,
+                        resolve_candidate_current_status(existing),
+                    )
                 session.flush()
 
             candidate_session = session_repo.get_or_create(
@@ -1372,29 +2099,46 @@ class AgentControlService:
                 adaptive_stage=adaptive_stage,
             )
 
-            if created or previous_status != existing.status or previous_stage != existing.current_stage_key:
-                stage_repo.create(
+            current_status = resolve_candidate_current_status(existing)
+            if target_status != current_status:
+                transition_result = self._agent_transition_candidate(
+                    session,
+                    task=task,
+                    candidate=existing,
+                    to_status=target_status,
+                    stage_key=normalized["current_stage_key"],
+                    stage_label=str((normalized["state_snapshot"] or {}).get("current_stage_label") or ""),
+                    note=normalized.get("ai_reasoning"),
+                    metadata={
+                        "goal_spec_id": goal_spec_id,
+                        "source_scene": normalized["state_snapshot"].get("snapshot_metadata", {}).get("source_scene"),
+                        "raw_scene_locator": normalized["state_snapshot"].get("snapshot_metadata", {}).get("raw_scene_locator"),
+                        "platform_candidate_id": normalized.get("platform_candidate_id"),
+                        "trigger_fallback": task.task_type or adaptive_stage,
+                    },
+                )
+                existing = candidate_repo.resolve(transition_result.candidate_id) or existing
+                merged_snapshot = dict(existing.state_snapshot or {})
+                merged_snapshot["latest_note"] = normalized.get("ai_reasoning") or merged_snapshot.get("latest_note")
+                merged_metadata = dict(merged_snapshot.get("snapshot_metadata") or {})
+                merged_metadata.update(
                     {
-                        "candidate_id": existing.id,
-                        "event_type": "stage_transition" if not created else "candidate_discovered",
-                        "from_status": previous_status,
-                        "to_status": existing.status,
-                        "phase_key": str((existing.state_snapshot or {}).get("current_phase_key") or "discovery_and_screening"),
-                        "phase_label": str((existing.state_snapshot or {}).get("current_phase_label") or "发现与初筛"),
-                        "stage_key": existing.current_stage_key or adaptive_stage,
-                        "stage_label": str((existing.state_snapshot or {}).get("current_stage_label") or existing.current_stage_key or adaptive_stage),
-                        "actor": "agent",
-                        "source": "runtime",
-                        "note": normalized.get("ai_reasoning"),
-                        "payload": {
-                            "task_id": task.task_id,
-                            "task_type": task.task_type,
-                            "goal_spec_id": goal_spec_id,
-                            "source_scene": normalized["state_snapshot"].get("snapshot_metadata", {}).get("source_scene"),
-                        },
-                        "occurred_at": utcnow(),
+                        key: value
+                        for key, value in dict((normalized["state_snapshot"] or {}).get("snapshot_metadata") or {}).items()
+                        if value not in (None, "", [], {})
                     }
                 )
+                merged_snapshot["snapshot_metadata"] = merged_metadata
+                existing.state_snapshot = merged_snapshot
+                session.flush()
+            else:
+                existing.status = target_status or existing.status
+                existing.current_status = target_status or existing.current_status or existing.status
+                existing.current_stage_key = normalized["current_stage_key"] or existing.current_stage_key
+                existing.state_snapshot = normalized["state_snapshot"] or existing.state_snapshot
+                if created and not existing.deepest_milestone:
+                    existing.deepest_milestone = self._state_machine_milestone_for_status(state_machine_snapshot, target_status)
+                session.flush()
 
             if existing.id not in persisted_ids:
                 persisted_ids.append(existing.id)
@@ -1969,6 +2713,7 @@ class AgentControlService:
     def _extract_learning_drafts(self, result: AgentResult) -> list[dict[str, Any]]:
         drafts: list[dict[str, Any]] = []
         seen: set[str] = set()
+        skip_skill_draft = bool(result.metadata.get("skip_runtime_skill_draft_learning"))
 
         def _append(payload: dict[str, Any] | str | None, *, kind: str, requires_review: bool = False) -> None:
             if payload is None:
@@ -1985,7 +2730,8 @@ class AgentControlService:
             seen.add(marker)
             drafts.append(item)
 
-        _append(result.skill_draft, kind="skill_draft", requires_review=True)
+        if not skip_skill_draft:
+            _append(result.skill_draft, kind="skill_draft", requires_review=True)
 
         if isinstance(result.data, dict):
             _append(result.data.get("learning"), kind="learning")
@@ -2143,6 +2889,23 @@ class AgentControlService:
         if self.session_factory is None:
             return
 
+        execution_mode = str(
+            task.metadata.get("state_machine_execution_mode")
+            or (result.metadata.get("state_machine_gate") or {}).get("execution_mode")
+            or ""
+        ).strip()
+        if execution_mode == "ai_auto":
+            self.events.publish(
+                "warning",
+                "operator_interaction",
+                "AI 自动节点意外进入 waiting_human，已跳过 OperatorInteraction 创建。",
+                task_id=task.task_id,
+                task_type=task.task_type,
+                candidate_id=task.candidate_id,
+                current_status=task.metadata.get("state_machine_current_status"),
+            )
+            return
+
         try:
             with self.session_factory() as session:
                 approval = (
@@ -2170,6 +2933,9 @@ class AgentControlService:
                                 **dict(existing.interaction_metadata or {}),
                                 "task_type": task.task_type,
                                 "candidate_id": task.candidate_id,
+                                "execution_mode": execution_mode or None,
+                                "current_status": task.metadata.get("state_machine_current_status"),
+                                "state_machine_version": task.metadata.get("state_machine_version"),
                             },
                         },
                     )
@@ -2196,6 +2962,9 @@ class AgentControlService:
                             "task_type": task.task_type,
                             "approval_id": approval.id,
                             "candidate_id": task.candidate_id,
+                            "execution_mode": execution_mode or None,
+                            "current_status": task.metadata.get("state_machine_current_status"),
+                            "state_machine_version": task.metadata.get("state_machine_version"),
                         },
                     }
                 )
@@ -2446,6 +3215,34 @@ class AgentControlService:
         return f"{task_label} 暂时无法继续。当前问题：{result.content or '需要你确认下一步处理方式。'}"
 
     def _build_operator_options(self, task: TaskEnvelope, result: AgentResult) -> list[dict[str, Any]]:
+        configured_actions = result.metadata.get("state_machine_human_actions") or task.metadata.get("state_machine_human_actions") or []
+        if isinstance(configured_actions, list) and configured_actions:
+            options: list[dict[str, Any]] = []
+            for index, raw_action in enumerate(configured_actions, start=1):
+                if not isinstance(raw_action, dict):
+                    continue
+                label = str(raw_action.get("label") or "").strip()
+                to_status = str(raw_action.get("toStatus") or raw_action.get("to_status") or "").strip()
+                style = str(raw_action.get("style") or "default").strip() or "default"
+                requires_note = bool(raw_action.get("requiresNote") or raw_action.get("requires_note"))
+                option_id = str(raw_action.get("id") or to_status or f"human-action-{index}").strip() or f"human-action-{index}"
+                description = str(raw_action.get("description") or "").strip()
+                if not description:
+                    description = f"按状态机配置流转到 {to_status}。" if to_status else "按状态机配置执行人工处理。"
+                options.append(
+                    {
+                        "id": option_id,
+                        "label": label or to_status or f"选项 {index}",
+                        "action": "transition",
+                        "description": description,
+                        "to_status": to_status or None,
+                        "style": style,
+                        "requires_note": requires_note,
+                    }
+                )
+            if options:
+                return options
+
         options = [
             {
                 "id": "confirm",
@@ -2683,6 +3480,8 @@ class AgentControlService:
         return candidate_ids
 
     def _resume_collection_outbound_message(self, *, task: TaskEnvelope, result: AgentResult) -> str | None:
+        if bool(result.metadata.get("rollback_signal_applied")):
+            return None
         platform_result = dict(result.metadata.get("platform_result") or {})
         result_data = dict(result.data or {}) if isinstance(result.data, dict) else {}
         action_tokens = {
@@ -2702,6 +3501,325 @@ class AgentControlService:
             str(platform_result.get("message") or result_data.get("message") or task.payload.get("message") or "").strip()
             or "Requested resume submission."
         )
+
+    def _candidate_outreach_outbound_message(self, *, task: TaskEnvelope, result: AgentResult) -> str | None:
+        if bool(result.metadata.get("rollback_signal_applied")):
+            return None
+        platform_result = dict(result.metadata.get("platform_result") or {})
+        result_data = dict(result.data or {}) if isinstance(result.data, dict) else {}
+        action_tokens = {
+            str(platform_result.get("action") or "").strip().lower(),
+            str(result_data.get("action") or "").strip().lower(),
+            str(result_data.get("outreach_action") or "").strip().lower(),
+        }
+        message = str(
+            platform_result.get("message")
+            or result_data.get("message")
+            or task.payload.get("message")
+            or ""
+        ).strip()
+        message_sent = bool(result_data.get("message_sent")) or bool(result_data.get("outreach_sent")) or any(
+            token in {"message_sent", "outreach_sent", "send_message", "send_outreach", "outreach"}
+            for token in action_tokens
+            if token
+        )
+        if not message:
+            return None
+        if message_sent or str(task.payload.get("message") or "").strip():
+            return message
+        return None
+
+    def _configured_cooldown_days(self) -> int:
+        try:
+            return max(int(self.settings.provider_runtime_settings().cooldown_days or 30), 1)
+        except (TypeError, ValueError):
+            return 30
+
+    def _state_machine_retry_policy(self, node: dict[str, Any] | None) -> dict[str, int] | None:
+        raw_policy = dict((node or {}).get("retryPolicy") or (node or {}).get("retry_policy") or {})
+        if not raw_policy:
+            return None
+        try:
+            max_retries = max(int(raw_policy.get("maxRetries", raw_policy.get("max_retries", 0)) or 0), 0)
+            retry_after_hours = max(int(raw_policy.get("retryAfterHours", raw_policy.get("retry_after_hours", 0)) or 0), 0)
+            close_after_hours = max(int(raw_policy.get("closeAfterHours", raw_policy.get("close_after_hours", 0)) or 0), 0)
+        except (TypeError, ValueError):
+            return None
+        if retry_after_hours <= 0 or close_after_hours <= 0:
+            return None
+        return {
+            "maxRetries": max_retries,
+            "retryAfterHours": retry_after_hours,
+            "closeAfterHours": close_after_hours,
+        }
+
+    def _candidate_retry_state(self, candidate: Any, *, current_status: str) -> dict[str, Any]:
+        snapshot_metadata = dict(dict(getattr(candidate, "state_snapshot", {}) or {}).get("snapshot_metadata") or {})
+        retry_state = dict(snapshot_metadata.get("waiting_retry") or {})
+        if str(retry_state.get("status") or "").strip() != current_status:
+            return {}
+        return retry_state
+
+    def _set_candidate_retry_state(
+        self,
+        candidate: Any,
+        *,
+        status: str,
+        retry_count: int,
+        last_outbound_at: Any,
+        policy: dict[str, int] | None,
+        closed_at: Any = None,
+        close_reason: str | None = None,
+    ) -> None:
+        snapshot = dict(getattr(candidate, "state_snapshot", {}) or {}) or default_candidate_state_snapshot(status=status)
+        snapshot_metadata = dict(snapshot.get("snapshot_metadata") or {})
+        state = {
+            "status": status,
+            "retry_count": max(int(retry_count or 0), 0),
+            "last_outbound_at": getattr(last_outbound_at, "isoformat", lambda: str(last_outbound_at))() if last_outbound_at else None,
+        }
+        if policy:
+            state.update(
+                {
+                    "max_retries": int(policy.get("maxRetries") or 0),
+                    "retry_after_hours": int(policy.get("retryAfterHours") or 0),
+                    "close_after_hours": int(policy.get("closeAfterHours") or 0),
+                }
+            )
+        if retry_count > 0 and last_outbound_at is not None:
+            state["last_retry_at"] = getattr(last_outbound_at, "isoformat", lambda: str(last_outbound_at))()
+        if closed_at is not None:
+            state["closed_at"] = getattr(closed_at, "isoformat", lambda: str(closed_at))()
+        if close_reason:
+            state["close_reason"] = close_reason
+        snapshot_metadata["waiting_retry"] = {key: value for key, value in state.items() if value is not None}
+        snapshot["snapshot_metadata"] = snapshot_metadata
+        candidate.state_snapshot = snapshot
+
+    def _clear_candidate_retry_state(self, candidate: Any) -> None:
+        snapshot = dict(getattr(candidate, "state_snapshot", {}) or {})
+        if not snapshot:
+            return
+        snapshot_metadata = dict(snapshot.get("snapshot_metadata") or {})
+        if "waiting_retry" not in snapshot_metadata:
+            return
+        snapshot_metadata.pop("waiting_retry", None)
+        snapshot["snapshot_metadata"] = snapshot_metadata
+        candidate.state_snapshot = snapshot
+
+    def _extract_candidate_rollback_signal(self, result: AgentResult) -> dict[str, Any] | None:
+        if not isinstance(result.data, dict):
+            return None
+        raw_signal = result.data.get("rollback_signal") or result.data.get("rollbackSignal")
+        if not isinstance(raw_signal, dict):
+            return None
+
+        to_status = str(raw_signal.get("to_status") or raw_signal.get("toStatus") or "").strip()
+        if to_status not in {"candidate_withdrew", "cooldown"}:
+            return None
+
+        reason = str(
+            raw_signal.get("reason")
+            or raw_signal.get("override_reason")
+            or raw_signal.get("overrideReason")
+            or raw_signal.get("summary")
+            or result.content
+            or ""
+        ).strip()
+        if not reason:
+            return None
+
+        evidence_excerpt = str(
+            raw_signal.get("evidence_excerpt")
+            or raw_signal.get("evidenceExcerpt")
+            or raw_signal.get("evidence")
+            or ""
+        ).strip()
+        summary = str(raw_signal.get("summary") or result.data.get("summary") or result.content or reason).strip() or reason
+        signal_kind = str(
+            raw_signal.get("signal_kind")
+            or raw_signal.get("signalKind")
+            or raw_signal.get("kind")
+            or "conversation_signal"
+        ).strip() or "conversation_signal"
+
+        cooldown_days: int | None = None
+        if to_status == "cooldown":
+            raw_days = raw_signal.get("cooldown_days", raw_signal.get("cooldownDays"))
+            try:
+                parsed_days = int(raw_days)
+            except (TypeError, ValueError):
+                parsed_days = 0
+            cooldown_days = parsed_days if parsed_days > 0 else self._configured_cooldown_days()
+
+        note_parts = [summary]
+        if evidence_excerpt and evidence_excerpt not in summary:
+            note_parts.append(f"证据：{evidence_excerpt}")
+
+        return {
+            "to_status": to_status,
+            "reason": reason,
+            "summary": summary,
+            "signal_kind": signal_kind,
+            "evidence_excerpt": evidence_excerpt or None,
+            "cooldown_days": cooldown_days,
+            "note": "\n".join(part for part in note_parts if part).strip(),
+            "raw_signal": dict(raw_signal),
+        }
+
+    def _maybe_apply_candidate_rollback_signal(
+        self,
+        session: Session,
+        *,
+        task: TaskEnvelope,
+        result: AgentResult,
+        candidate: Any,
+    ):
+        signal = self._extract_candidate_rollback_signal(result)
+        if signal is None:
+            return candidate
+
+        current_status = resolve_candidate_current_status(candidate)
+        target_status = str(signal["to_status"]).strip()
+        candidate_repo = CandidateRepository(session)
+        try:
+            if current_status != target_status:
+                transition_result = self._agent_transition_candidate(
+                    session,
+                    task=task,
+                    candidate=candidate,
+                    to_status=target_status,
+                    note=str(signal["note"] or "").strip() or None,
+                    trigger="conversation_signal",
+                    override_reason=str(signal["reason"] or "").strip(),
+                    metadata={
+                        "signal_kind": signal["signal_kind"],
+                        "conversation_signal": {
+                            "to_status": target_status,
+                            "reason": signal["reason"],
+                            "summary": signal["summary"],
+                            "evidence_excerpt": signal["evidence_excerpt"],
+                            "cooldown_days": signal["cooldown_days"],
+                            "raw_signal": signal["raw_signal"],
+                        },
+                    },
+                )
+                candidate = candidate_repo.resolve(transition_result.candidate_id) or candidate
+                transition_record = transition_result.transition_record
+                result.metadata["candidate_transition"] = {
+                    "kind": "rollback_signal",
+                    "candidate_id": candidate.id,
+                    "from_status": transition_result.from_status,
+                    "to_status": transition_result.to_status,
+                    "actor": transition_record.actor,
+                    "trigger": transition_record.trigger,
+                    "override_reason": transition_record.override_reason,
+                    "note": transition_record.note,
+                }
+            if target_status == "cooldown":
+                candidate.cooldown_until = utcnow() + timedelta(days=int(signal["cooldown_days"] or self._configured_cooldown_days()))
+            else:
+                candidate.cooldown_until = None
+            session.commit()
+            session.refresh(candidate)
+        except StateMachineValidationError as exc:
+            self.events.publish(
+                "warning",
+                "runtime",
+                "Ignored runtime rollback signal because the target transition was invalid.",
+                task_id=task.task_id,
+                candidate_id=getattr(candidate, "id", None),
+                to_status=target_status,
+                error=str(exc),
+            )
+            return candidate
+
+        result.metadata["rollback_signal_applied"] = True
+        self._clear_candidate_retry_state(candidate)
+        self._append_progression_action(
+            result,
+            {
+                "kind": "rollback_signal",
+                "task_type": task.task_type,
+                "candidate_id": candidate.id,
+                "to_status": target_status,
+                "reason": signal["reason"],
+                "signal_kind": signal["signal_kind"],
+            },
+        )
+        return candidate
+
+    def _waiting_status_for_outbound_task(self, *, task: TaskEnvelope, current_status: str) -> str | None:
+        if task.task_type == "candidate_outreach":
+            if current_status in {"outreach_pending", "outreach_sent", "no_response"}:
+                return "outreach_sent"
+            if current_status in {"resume_requested", "contact_requested", "interview_scheduled", "offer_sent"}:
+                return current_status
+            return None
+        if task.task_type == "resume_collection":
+            if current_status in {"in_conversation", "resume_requested"}:
+                return "resume_requested"
+        return None
+
+    def _record_waiting_candidate_outbound(
+        self,
+        session: Session,
+        *,
+        task: TaskEnvelope,
+        result: AgentResult,
+        candidate: Any,
+        outbound_message: str,
+    ):
+        current_status = resolve_candidate_current_status(candidate)
+        waiting_status = self._waiting_status_for_outbound_task(task=task, current_status=current_status)
+        if waiting_status is None:
+            return candidate
+
+        retry_context = dict(task.payload.get("retryContext") or task.payload.get("retry_context") or {})
+        state_machine = self._load_state_machine_snapshot() or ensure_latest_state_machine(session)
+        retry_policy = self._state_machine_retry_policy(self._state_machine_node(state_machine, waiting_status))
+        retry_count = 0
+        raw_retry_count = retry_context.get("retryCount", retry_context.get("retry_count"))
+        try:
+            retry_count = max(int(raw_retry_count or 0), 0)
+        except (TypeError, ValueError):
+            retry_count = 0
+        if retry_count == 0:
+            retry_state = self._candidate_retry_state(candidate, current_status=waiting_status)
+            try:
+                retry_count = max(int(retry_state.get("retry_count") or 0), 0)
+            except (TypeError, ValueError):
+                retry_count = 0
+
+        if current_status != waiting_status:
+            try:
+                transition_result = self._agent_transition_candidate(
+                    session,
+                    task=task,
+                    candidate=candidate,
+                    to_status=waiting_status,
+                    note=outbound_message,
+                    trigger="retry_policy_retry" if retry_count > 0 else None,
+                    metadata={
+                        "retry_context": retry_context,
+                        "outbound_message": outbound_message,
+                    },
+                )
+                candidate = CandidateRepository(session).resolve(transition_result.candidate_id) or candidate
+            except StateMachineValidationError:
+                return candidate
+
+        contacted_at = utcnow()
+        candidate.last_contacted_at = contacted_at
+        self._set_candidate_retry_state(
+            candidate,
+            status=waiting_status,
+            retry_count=retry_count,
+            last_outbound_at=contacted_at,
+            policy=retry_policy,
+        )
+        session.flush()
+        return candidate
 
     def _strategy_fragment_summary(self, *, task: TaskEnvelope, result: AgentResult) -> str:
         base = result.content or self._next_step_hint(result.status)
@@ -2735,6 +3853,294 @@ class AgentControlService:
             "due_at": task.due_at.isoformat() if task.due_at else None,
             "created_at": task.created_at.isoformat(),
         }
+
+    def _append_progression_action(self, result: AgentResult, action: dict[str, Any]) -> None:
+        normalized = _json_ready(action)
+        actions = list(result.metadata.get("progression_actions") or [])
+        marker = json.dumps(normalized, ensure_ascii=False, sort_keys=True, default=str)
+        markers = {
+            json.dumps(_json_ready(item), ensure_ascii=False, sort_keys=True, default=str)
+            for item in actions
+            if isinstance(item, dict)
+        }
+        if marker in markers:
+            return
+        actions.append(normalized)
+        result.metadata["progression_actions"] = actions[-10:]
+
+    def _candidate_progression_action_snapshots(self, result: AgentResult) -> list[dict[str, Any]]:
+        actions = [dict(item) for item in list(result.metadata.get("progression_actions") or []) if isinstance(item, dict)]
+        transition = result.metadata.get("candidate_transition")
+        if isinstance(transition, dict):
+            actions.append(dict(transition))
+        deduped: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for item in actions:
+            marker = json.dumps(_json_ready(item), ensure_ascii=False, sort_keys=True, default=str)
+            if marker in seen:
+                continue
+            seen.add(marker)
+            deduped.append(item)
+        return deduped
+
+    def _should_persist_candidate_progression_evolution_artifact(self, task: TaskEnvelope, result: AgentResult) -> bool:
+        if self.session_factory is None or not task.candidate_id:
+            return False
+        if not result.success:
+            return False
+        if task.task_type not in self._autonomy_candidate_progression_task_types():
+            return False
+        if result.metadata.get("candidate_progression_artifact_id"):
+            return False
+        if result.status in {"waiting_human", "waiting_candidate", "blocked", "failed"}:
+            return False
+        return bool(self._candidate_progression_action_snapshots(result))
+
+    def _build_candidate_progression_feature_snapshot(
+        self,
+        task: TaskEnvelope,
+        *,
+        session_context: dict[str, Any],
+    ) -> dict[str, Any]:
+        candidate = dict((session_context or {}).get("candidate") or {})
+        ai_scores = dict(candidate.get("ai_scores") or {})
+        selection = dict(task.payload.get("selection") or {})
+        return {
+            "candidateId": candidate.get("id") or task.candidate_id,
+            "currentStatus": candidate.get("current_status") or candidate.get("status"),
+            "deepestMilestone": candidate.get("deepest_milestone"),
+            "jdId": candidate.get("jd_id"),
+            "hasResume": bool(candidate.get("resume_path") or candidate.get("online_resume_text")),
+            "hasContactInfo": bool(dict(candidate.get("contact_info") or {})),
+            "aiScore": ai_scores.get("overall") or ai_scores.get("score"),
+            "aiDecision": ai_scores.get("decision") or ai_scores.get("status"),
+            "selectionReason": selection.get("reason"),
+            "selectionScoreBreakdown": dict(selection.get("scoreBreakdown") or {}),
+        }
+
+    def _build_candidate_progression_instruction(
+        self,
+        task: TaskEnvelope,
+        *,
+        session_context: dict[str, Any],
+        actions: list[dict[str, Any]],
+        result: AgentResult,
+    ) -> str:
+        candidate = dict((session_context or {}).get("candidate") or {})
+        candidate_name = str(candidate.get("name") or "candidate").strip()
+        stage_label = self._humanize_task_label(self._adaptive_stage_for_task(task) or task.task_type)
+        action_labels = [str(item.get("kind") or item.get("message_type") or item.get("task_type") or "action") for item in actions[:3]]
+        outcome = str(extract_business_status(result.data, fallback=result.status) or result.status or "completed").strip()
+        summary = str(result.data.get("summary") or result.content or "").strip()
+        action_phrase = "、".join(action_labels) if action_labels else stage_label
+        instruction = f"在 {stage_label} 阶段，依据候选人信号选择 {action_phrase} 并记录结果为 {outcome}。"
+        if candidate_name:
+            instruction = f"针对 {candidate_name}，{instruction}"
+        if summary:
+            instruction = f"{instruction} 关键信息：{summary[:240]}"
+        return instruction
+
+    def _merge_generated_skill_contract(
+        self,
+        base_contract: dict[str, Any],
+        draft: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        if not isinstance(draft, dict):
+            return base_contract
+
+        merged = _json_ready(base_contract)
+        draft_contract = dict(draft.get("skill_contract") or {}) if isinstance(draft.get("skill_contract"), dict) else {}
+
+        candidate_name = str(draft.get("skill_name") or draft_contract.get("name") or "").strip()
+        if candidate_name:
+            merged["name"] = candidate_name
+        description = str(draft_contract.get("description") or draft.get("summary") or draft.get("description") or "").strip()
+        if description:
+            merged["description"] = description
+
+        for field_name in ("category", "platform", "bound_to_stage", "risk_level"):
+            value = draft_contract.get(field_name)
+            if value not in (None, "", [], {}):
+                merged[field_name] = value
+
+        for field_name in ("input_schema", "output_schema", "strategy", "execution_hints", "health_check_config", "skill_metadata"):
+            existing = dict(merged.get(field_name) or {})
+            incoming = dict(draft_contract.get(field_name) or {})
+            if field_name == "strategy":
+                content = str(draft.get("content") or "").strip()
+                if content:
+                    incoming.setdefault("instruction", content)
+            if field_name == "skill_metadata":
+                summary = str(draft.get("summary") or "").strip()
+                if summary:
+                    incoming.setdefault("model_summary", summary)
+            merged[field_name] = {
+                **existing,
+                **incoming,
+            }
+
+        return merged
+
+    def _build_candidate_progression_skill_contract(
+        self,
+        task: TaskEnvelope,
+        *,
+        session_context: dict[str, Any],
+        skill_context: dict[str, Any] | None,
+        actions: list[dict[str, Any]],
+        result: AgentResult,
+    ) -> dict[str, Any]:
+        adaptive_stage = self._adaptive_stage_for_task(task) or task.task_type
+        skill_key = str((skill_context or {}).get("skill_id") or f"{adaptive_stage}_progression").strip()
+        platform = str((skill_context or {}).get("platform") or task.platform or "runtime-scene").strip() or "runtime-scene"
+        criteria_ref = dict(task.metadata.get("state_machine_criteria_ref") or {})
+        features = self._build_candidate_progression_feature_snapshot(task, session_context=session_context)
+        outcome_status = str(extract_business_status(result.data, fallback=result.status) or result.status or "completed").strip()
+        contract = {
+            "skill_id": skill_key,
+            "name": str((skill_context or {}).get("name") or f"{self._humanize_task_label(adaptive_stage)} Runtime Skill").strip(),
+            "description": f"自动沉淀的 {adaptive_stage} 候选人推进策略。",
+            "category": "candidate_progression",
+            "platform": platform,
+            "bound_to_stage": str((skill_context or {}).get("bound_to_stage") or adaptive_stage).strip() or adaptive_stage,
+            "input_schema": {"candidateId": "string", "currentStatus": "string", "taskType": "string"},
+            "output_schema": {"status": "string", "summary": "string"},
+            "strategy": {
+                "instruction": self._build_candidate_progression_instruction(
+                    task,
+                    session_context=session_context,
+                    actions=actions,
+                    result=result,
+                ),
+                "learned_patterns": [features],
+                "observed_actions": actions,
+            },
+            "execution_hints": {
+                "domain": task.platform,
+                "observed_outcomes": [
+                    {
+                        "status": outcome_status,
+                        "summary": str(result.data.get("summary") or result.content or "").strip() or None,
+                        "success": result.success,
+                    }
+                ],
+                "criteria_ref": criteria_ref or None,
+            },
+            "risk_level": "medium",
+            "health_check_config": {"expected_result_status": outcome_status or "completed"},
+            "skill_metadata": {
+                "artifact_origin": "candidate_progression",
+                "source_task_id": task.task_id,
+                "source_task_type": task.task_type,
+                "candidate_id": task.candidate_id,
+                "state_machine_version": task.metadata.get("state_machine_version"),
+                "criteria_ref": criteria_ref or None,
+            },
+        }
+        return self._merge_generated_skill_contract(contract, result.skill_draft)
+
+    def _persist_candidate_progression_evolution_artifact(
+        self,
+        task: TaskEnvelope,
+        result: AgentResult,
+        *,
+        session_context: dict[str, Any],
+        skill_context: dict[str, Any] | None,
+    ) -> None:
+        if not self._should_persist_candidate_progression_evolution_artifact(task, result):
+            return
+
+        try:
+            with self.session_factory() as session:
+                repo = EvolutionArtifactRepository(session)
+                existing = repo.find_by_source_task_id(source_task_id=task.task_id, artifact_kind="skill_draft")
+                if existing is not None:
+                    result.metadata["candidate_progression_artifact_id"] = existing.id
+                    result.metadata["skip_runtime_skill_draft_learning"] = True
+                    return
+
+                profile = ensure_primary_recruit_agent_profile(session)
+                adaptive_stage = self._adaptive_stage_for_task(task) or task.task_type
+                actions = self._candidate_progression_action_snapshots(result)
+                features = self._build_candidate_progression_feature_snapshot(task, session_context=session_context)
+                skill_contract = self._build_candidate_progression_skill_contract(
+                    task,
+                    session_context=session_context,
+                    skill_context=skill_context,
+                    actions=actions,
+                    result=result,
+                )
+                artifact_body = {
+                    "skill_contract": skill_contract,
+                    "decision_trace": {
+                        "candidate_features": features,
+                        "action": actions,
+                        "result": {
+                            "status": str(extract_business_status(result.data, fallback=result.status) or result.status or "completed"),
+                            "success": result.success,
+                            "summary": str(result.data.get("summary") or result.content or "").strip() or None,
+                            "data": _json_ready(result.data or {}),
+                        },
+                    },
+                }
+                if isinstance(result.skill_draft, dict) and result.skill_draft:
+                    artifact_body["model_skill_draft"] = _json_ready(result.skill_draft)
+
+                validate_evolution_artifact(
+                    artifact_kind="skill_draft",
+                    status="pending_review",
+                    artifact_body=artifact_body,
+                )
+
+                candidate = dict((session_context or {}).get("candidate") or {})
+                candidate_name = str(candidate.get("name") or task.candidate_id or "candidate").strip()
+                title = f"{candidate_name} · {self._humanize_task_label(adaptive_stage)} 技能草案"
+                summary = str(result.data.get("summary") or result.content or "").strip() or "自动沉淀了一次候选人推进策略。"
+                metadata = {
+                    "source_task_id": task.task_id,
+                    "task_type": task.task_type,
+                    "adaptive_stage": adaptive_stage,
+                    "candidate_id": task.candidate_id,
+                    "goal_spec_id": str(task.metadata.get("goal_spec_id") or task.payload.get("goal_id") or "").strip() or None,
+                    "state_machine_version": task.metadata.get("state_machine_version"),
+                    "promotion_fallback_platform": str((skill_context or {}).get("platform") or task.platform or "runtime-scene"),
+                    "promotion_fallback_stage": str((skill_context or {}).get("bound_to_stage") or adaptive_stage),
+                    "selection": _json_ready(task.payload.get("selection") or {}),
+                }
+                item = repo.create(
+                    {
+                        "agent_profile_id": profile.id,
+                        "artifact_kind": "skill_draft",
+                        "title": title,
+                        "summary": summary,
+                        "status": "pending_review",
+                        "related_candidate_id": task.candidate_id,
+                        "related_skill_id": (skill_context or {}).get("id"),
+                        "proposed_by": "runtime",
+                        "artifact_body": artifact_body,
+                        "artifact_metadata": metadata,
+                    }
+                )
+                result.metadata["candidate_progression_artifact_id"] = item.id
+                result.metadata["skip_runtime_skill_draft_learning"] = True
+                self.events.publish(
+                    "info",
+                    "evolution",
+                    "Captured candidate progression skill draft for review.",
+                    artifact_id=item.id,
+                    task_id=task.task_id,
+                    candidate_id=task.candidate_id,
+                )
+        except Exception as exc:  # pragma: no cover - defensive guard
+            result.metadata["candidate_progression_artifact_error"] = str(exc)
+            self.events.publish(
+                "error",
+                "evolution",
+                "Failed to persist candidate progression skill draft artifact.",
+                task_id=task.task_id,
+                candidate_id=task.candidate_id,
+                error=str(exc),
+            )
 
     def _requires_runtime_review(self, draft: dict[str, Any]) -> bool:
         if "requires_review" in draft:

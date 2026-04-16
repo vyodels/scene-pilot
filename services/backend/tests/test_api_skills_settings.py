@@ -173,3 +173,36 @@ def test_settings_platform_concurrency_limits_are_persisted(tmp_path):
         assert settings_response.status_code == 200
         payload = settings_response.json()
         assert payload["platform"]["maxConcurrentRuns"] == 2
+
+
+def test_settings_autonomous_sourcing_threshold_and_runtime_toggle(tmp_path):
+    with make_client(tmp_path) as client:
+        autonomy = client.app.state.autonomy_loop
+        assert autonomy.enabled is False
+        assert autonomy.is_running() is False
+
+        update_response = client.patch(
+            "/api/settings",
+            json={
+                "autonomyEnabled": True,
+                "platform": {
+                    "minFunnelCandidates": 6,
+                },
+            },
+        )
+        assert update_response.status_code == 200
+        payload = update_response.json()
+        assert payload["autonomyEnabled"] is True
+        assert payload["feature_flags"]["enable_autonomy"] is True
+        assert payload["platform"]["minFunnelCandidates"] == 6
+
+        updated_autonomy = client.app.state.autonomy_loop
+        assert updated_autonomy.enabled is True
+        assert updated_autonomy.is_running() is True
+
+    with make_client(tmp_path) as restarted_client:
+        settings_response = restarted_client.get("/api/settings")
+        assert settings_response.status_code == 200
+        payload = settings_response.json()
+        assert payload["autonomyEnabled"] is True
+        assert payload["platform"]["minFunnelCandidates"] == 6

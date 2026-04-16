@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy.orm import Session
 
 from scene_pilot.api.deps import get_container, get_session
@@ -31,6 +31,7 @@ def _to_desktop_settings(settings: AppSettings) -> SettingsSnapshotRead:
             "timezone": "Asia/Shanghai",
             "intranetEnabled": settings.feature_flags.enable_intranet_sync,
             "desktopApprovalsOnly": settings.approval_source == "desktop_app",
+            "autonomyEnabled": settings.feature_flags.enable_autonomy,
             "skill_health_autonomy_interval_seconds": settings.skill_health_autonomy_interval_seconds,
             "approval_source": settings.approval_source,
             "feature_flags": settings.feature_flags.model_dump(),
@@ -69,9 +70,24 @@ def _to_desktop_settings(settings: AppSettings) -> SettingsSnapshotRead:
                 "cooldownDays": settings.provider_config.get("cooldown_days", 30),
                 "allowOutboundMessaging": settings.feature_flags.enable_outbound_messaging,
                 "maxConcurrentRuns": settings.provider_config.get("max_concurrent_runs", 1),
+                "minFunnelCandidates": settings.provider_config.get("autonomy_min_funnel_candidates", 0),
             },
         }
     )
+
+
+async def _sync_autonomy_runtime(request: Request, settings: AppSettings) -> None:
+    autonomy = getattr(request.app.state, "autonomy_loop", None)
+    if autonomy is None:
+        return
+    autonomy.enabled = settings.feature_flags.enable_autonomy
+    autonomy.health_sweep_enabled = settings.feature_flags.enable_skill_health_autonomy
+    autonomy.health_sweep_interval = float(settings.skill_health_autonomy_interval_seconds)
+    if autonomy.enabled and not autonomy.is_running():
+        await autonomy.start()
+        return
+    if not autonomy.enabled and autonomy.is_running():
+        await autonomy.stop()
 
 
 @router.get("", response_model=SettingsSnapshotRead)
@@ -85,8 +101,9 @@ def get_settings(
 
 
 @router.patch("", response_model=SettingsSnapshotRead)
-def update_settings(
+async def update_settings(
     payload: SettingsSnapshotUpdate,
+    request: Request,
     container: AppContainer = Depends(get_container),
     session: Session = Depends(get_session),
 ) -> SettingsSnapshotRead:
@@ -107,6 +124,8 @@ def update_settings(
             intranet_sync["timeout_seconds"] = sync_data["timeoutSeconds"]
     if payload.desktopApprovalsOnly is not None:
         data["approval_source"] = "desktop_app" if payload.desktopApprovalsOnly else "hybrid"
+    if payload.autonomyEnabled is not None:
+        data["feature_flags"]["enable_autonomy"] = payload.autonomyEnabled
     if payload.skill_health_autonomy_interval_seconds is not None:
         data["skill_health_autonomy_interval_seconds"] = payload.skill_health_autonomy_interval_seconds
     if payload.platform is not None:
@@ -120,6 +139,8 @@ def update_settings(
             data["feature_flags"]["enable_outbound_messaging"] = platform_data["allowOutboundMessaging"]
         if "maxConcurrentRuns" in platform_data:
             provider_config["max_concurrent_runs"] = max(int(platform_data["maxConcurrentRuns"]), 1)
+        if "minFunnelCandidates" in platform_data:
+            provider_config["autonomy_min_funnel_candidates"] = max(int(platform_data["minFunnelCandidates"]), 0)
     if payload.providers is not None:
         provider_config = data.setdefault("provider_config", {})
         for provider in payload.providers:
@@ -148,7 +169,7 @@ def update_settings(
     if payload.approval_source is not None:
         data["approval_source"] = payload.approval_source
     if payload.feature_flags is not None:
-        data["feature_flags"] = payload.feature_flags.model_dump()
+        data["feature_flags"].update(payload.feature_flags.model_dump(exclude_unset=True))
     if payload.provider_config is not None:
         data["provider_config"] = payload.provider_config
         intranet_sync = data.setdefault("intranet_sync", {})
@@ -162,13 +183,15 @@ def update_settings(
     saved = SettingsRepository(session).save(data)
     resolved = AppSettings.model_validate(saved.model_dump())
     container.reload_settings(resolved)
+    await _sync_autonomy_runtime(request, resolved)
     return _to_desktop_settings(resolved)
 
 
 @router.put("", response_model=SettingsSnapshotRead)
-def replace_settings(
+async def replace_settings(
     payload: SettingsSnapshotUpdate,
+    request: Request,
     container: AppContainer = Depends(get_container),
     session: Session = Depends(get_session),
 ) -> SettingsSnapshotRead:
-    return update_settings(payload, container=container, session=session)
+    return await update_settings(payload, request=request, container=container, session=session)

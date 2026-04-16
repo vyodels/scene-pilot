@@ -57,7 +57,9 @@ class CandidateBase(BaseModel):
     platform: str = "site"
     platform_candidate_id: str | None = None
     status: str = "discovered"
+    current_status: str | None = None
     current_stage_key: str | None = None
+    deepest_milestone: str | None = None
     jd_id: str | None = None
     contact_info: dict[str, Any] = Field(default_factory=dict)
     state_snapshot: dict[str, Any] = Field(default_factory=dict)
@@ -78,7 +80,9 @@ class CandidateUpdate(BaseModel):
     platform: str | None = None
     platform_candidate_id: str | None = None
     status: str | None = None
+    current_status: str | None = None
     current_stage_key: str | None = None
+    deepest_milestone: str | None = None
     jd_id: str | None = None
     contact_info: dict[str, Any] | None = None
     state_snapshot: dict[str, Any] | None = None
@@ -308,40 +312,45 @@ class CandidateStateSnapshotRead(BaseModel):
 
 
 class CandidateStateTransitionRequest(BaseModel):
-    to_status: str
-    phase_key: str | None = None
-    phase_label: str | None = None
-    stage_key: str | None = None
-    stage_label: str | None = None
+    model_config = ConfigDict(populate_by_name=True)
+
+    to_status: str = Field(validation_alias=AliasChoices("to_status", "toStatus"))
+    phase_key: str | None = Field(default=None, validation_alias=AliasChoices("phase_key", "phaseKey"))
+    phase_label: str | None = Field(default=None, validation_alias=AliasChoices("phase_label", "phaseLabel"))
+    stage_key: str | None = Field(default=None, validation_alias=AliasChoices("stage_key", "stageKey"))
+    stage_label: str | None = Field(default=None, validation_alias=AliasChoices("stage_label", "stageLabel"))
     note: str | None = None
     source: str = "operator"
     actor: str | None = "desktop-user"
+    actor_id: str | None = Field(default=None, validation_alias=AliasChoices("actor_id", "actorId"))
+    trigger: str | None = None
+    override_reason: str | None = Field(default=None, validation_alias=AliasChoices("override_reason", "overrideReason"))
     metadata: dict[str, Any] = Field(default_factory=dict)
-    interview_round: int | None = None
-    contact_channels: list[str] | None = None
+    interview_round: int | None = Field(default=None, validation_alias=AliasChoices("interview_round", "interviewRound"))
+    contact_channels: list[str] | None = Field(default=None, validation_alias=AliasChoices("contact_channels", "contactChannels"))
 
 
-class CandidateStageEventBase(BaseModel):
+class CandidateStatusTransitionBase(BaseModel):
     candidate_id: str
-    event_type: str = "stage_transition"
-    from_status: str | None = None
+    from_status: str
     to_status: str
-    phase_key: str | None = None
-    phase_label: str | None = None
-    stage_key: str | None = None
-    stage_label: str | None = None
-    actor: str | None = None
-    source: str = "agent"
+    from_status_label: str
+    to_status_label: str
+    actor: Literal["agent", "agent_override", "system", "recruiter", "recruiter_override"]
+    actor_id: str | None = None
+    trigger: str
     note: str | None = None
-    payload: dict[str, Any] = Field(default_factory=dict)
-    occurred_at: datetime | None = None
+    override_reason: str | None = None
+    is_override: bool = False
+    milestone_updated: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict, validation_alias=AliasChoices("transition_metadata", "metadata"))
 
 
-class CandidateStageEventCreate(CandidateStageEventBase):
+class CandidateStatusTransitionCreate(CandidateStatusTransitionBase):
     pass
 
 
-class CandidateStageEventRead(CandidateStageEventBase):
+class CandidateStatusTransitionRead(CandidateStatusTransitionBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
@@ -557,7 +566,7 @@ class CandidateThreadRead(BaseModel):
     recent_messages: list[dict[str, Any]] = Field(default_factory=list)
     communication_logs: list[CandidateConversationEntryRead] = Field(default_factory=list)
     state_snapshot: CandidateStateSnapshotRead = Field(default_factory=CandidateStateSnapshotRead)
-    stage_events: list[CandidateStageEventRead] = Field(default_factory=list)
+    status_transitions: list[CandidateStatusTransitionRead] = Field(default_factory=list)
     assessments: list[CandidateAssessmentRead] = Field(default_factory=list)
     assignments: list[CandidateAssignmentRead] = Field(default_factory=list)
     resume_artifacts: list[ResumeArtifactRead] = Field(default_factory=list)
@@ -567,6 +576,83 @@ class CandidateThreadRead(BaseModel):
     available_statuses: list[str] = Field(default_factory=list)
     runtime_approvals: list["ApprovalRead"] = Field(default_factory=list)
     runtime_interactions: list["OperatorInteractionRead"] = Field(default_factory=list)
+
+
+class RecruitmentStateMachineBase(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    updated_by: str = Field(validation_alias=AliasChoices("updated_by", "updatedBy"))
+    change_summary: str | None = Field(default=None, validation_alias=AliasChoices("change_summary", "changeSummary"))
+    nodes: list[dict[str, Any]]
+    transitions: list[dict[str, Any]]
+    global_transitions: list[dict[str, Any]] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("global_transitions", "globalTransitions"),
+    )
+    version_metadata: dict[str, Any] = Field(
+        default_factory=dict,
+        validation_alias=AliasChoices("version_metadata", "versionMetadata"),
+    )
+
+
+class RecruitmentStateMachineUpdate(RecruitmentStateMachineBase):
+    pass
+
+
+class RecruitmentStateMachineRead(RecruitmentStateMachineBase):
+    version: int
+    published_at: datetime = Field(validation_alias=AliasChoices("published_at", "publishedAt"))
+    created_at: datetime = Field(validation_alias=AliasChoices("created_at", "createdAt"))
+    updated_at: datetime = Field(validation_alias=AliasChoices("updated_at", "updatedAt"))
+
+
+class StateCriteriaOptimizationMetricsRead(BaseModel):
+    sample_size: int = Field(validation_alias=AliasChoices("sample_size", "sampleSize"))
+    ai_decision_count: int = Field(validation_alias=AliasChoices("ai_decision_count", "aiDecisionCount"))
+    recruiter_override_count: int = Field(
+        validation_alias=AliasChoices("recruiter_override_count", "recruiterOverrideCount"),
+    )
+    accuracy_rate: float | None = Field(default=None, validation_alias=AliasChoices("accuracy_rate", "accuracyRate"))
+    override_rate: float | None = Field(default=None, validation_alias=AliasChoices("override_rate", "overrideRate"))
+    deeper_override_count: int = Field(
+        validation_alias=AliasChoices("deeper_override_count", "deeperOverrideCount"),
+    )
+    shallower_override_count: int = Field(
+        validation_alias=AliasChoices("shallower_override_count", "shallowerOverrideCount"),
+    )
+
+
+class StateCriteriaOptimizationSuggestionRead(BaseModel):
+    kind: Literal["adjust_threshold", "switch_skill"]
+    summary: str
+    rationale: str
+    confidence: Literal["low", "medium", "high"] = "medium"
+    proposed_criteria_ref: dict[str, Any] = Field(
+        default_factory=dict,
+        validation_alias=AliasChoices("proposed_criteria_ref", "proposedCriteriaRef"),
+    )
+    suggested_skill_id: str | None = Field(default=None, validation_alias=AliasChoices("suggested_skill_id", "suggestedSkillId"))
+    suggested_skill_name: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("suggested_skill_name", "suggestedSkillName"),
+    )
+
+
+class StateCriteriaOptimizationReportRead(BaseModel):
+    node_id: str = Field(validation_alias=AliasChoices("node_id", "nodeId"))
+    node_label: str = Field(validation_alias=AliasChoices("node_label", "nodeLabel"))
+    current_criteria_ref: dict[str, Any] | None = Field(
+        default=None,
+        validation_alias=AliasChoices("current_criteria_ref", "currentCriteriaRef"),
+    )
+    current_skill_id: str | None = Field(default=None, validation_alias=AliasChoices("current_skill_id", "currentSkillId"))
+    current_skill_name: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("current_skill_name", "currentSkillName"),
+    )
+    metrics: StateCriteriaOptimizationMetricsRead
+    suggestions: list[StateCriteriaOptimizationSuggestionRead] = Field(default_factory=list)
+    summary: str
 
 
 class PlaybookBase(BaseModel):
@@ -1419,6 +1505,7 @@ class PlatformSettingsRead(BaseModel):
     cooldownDays: int
     allowOutboundMessaging: bool
     maxConcurrentRuns: int = 1
+    minFunnelCandidates: int = 0
 
 
 class PlatformSettingsUpdate(BaseModel):
@@ -1427,6 +1514,7 @@ class PlatformSettingsUpdate(BaseModel):
     cooldownDays: int | None = None
     allowOutboundMessaging: bool | None = None
     maxConcurrentRuns: int | None = None
+    minFunnelCandidates: int | None = None
 
 
 class SettingsSnapshotRead(BaseModel):
@@ -1434,6 +1522,7 @@ class SettingsSnapshotRead(BaseModel):
     timezone: str
     intranetEnabled: bool
     desktopApprovalsOnly: bool
+    autonomyEnabled: bool = False
     skill_health_autonomy_interval_seconds: int | None = None
     providers: list[ProviderConfigRead]
     intranetSync: IntranetSyncConfigRead
@@ -1448,6 +1537,7 @@ class SettingsSnapshotUpdate(BaseModel):
     timezone: str | None = None
     intranetEnabled: bool | None = None
     desktopApprovalsOnly: bool | None = None
+    autonomyEnabled: bool | None = None
     skill_health_autonomy_interval_seconds: int | None = None
     approval_source: str | None = None
     feature_flags: FeatureFlags | None = None

@@ -51,6 +51,36 @@ class AutonomyLoopService:
                 self.events.publish("error", "autonomy", "Autonomy loop iteration failed.", error=str(exc))
                 outcome = None
 
+            if outcome is None:
+                try:
+                    maybe_enqueue = getattr(self.agent_control, "maybe_enqueue_autonomous_sourcing", None)
+                    if callable(maybe_enqueue):
+                        queued = maybe_enqueue()
+                        if queued is not None:
+                            outcome = queued
+                except Exception as exc:  # pragma: no cover - defensive guard
+                    self.events.publish("error", "autonomy", "Autonomous sourcing trigger failed.", error=str(exc))
+
+            if outcome is None:
+                try:
+                    maybe_retry = getattr(self.agent_control, "maybe_process_waiting_candidate_retry", None)
+                    if callable(maybe_retry):
+                        activity = maybe_retry()
+                        if activity is not None:
+                            outcome = activity
+                except Exception as exc:  # pragma: no cover - defensive guard
+                    self.events.publish("error", "autonomy", "Waiting candidate retry processing failed.", error=str(exc))
+
+            if outcome is None:
+                try:
+                    maybe_enqueue = getattr(self.agent_control, "maybe_enqueue_priority_candidate_progression", None)
+                    if callable(maybe_enqueue):
+                        queued = maybe_enqueue()
+                        if queued is not None:
+                            outcome = queued
+                except Exception as exc:  # pragma: no cover - defensive guard
+                    self.events.publish("error", "autonomy", "Candidate priority scheduling failed.", error=str(exc))
+
             self._maybe_run_skill_health_sweep()
 
             interval = self.active_poll_interval if outcome is not None else self.idle_poll_interval

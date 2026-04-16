@@ -64,6 +64,7 @@ def test_recruit_agent_candidate_thread_state_and_memory(tmp_path):
                 "stage_label": "已拿到联系方式",
                 "note": "已拿到手机号和微信。",
                 "source": "operator",
+                "override_reason": "测试中直接跳转到获取联系方式后的状态。",
                 "contact_channels": ["phone", "wechat"],
             },
         )
@@ -72,7 +73,8 @@ def test_recruit_agent_candidate_thread_state_and_memory(tmp_path):
         assert thread_payload["candidate"]["status"] == "contact_acquired"
         assert thread_payload["state_snapshot"]["contact_acquired"] is True
         assert "phone" in thread_payload["state_snapshot"]["contact_channels"]
-        assert len(thread_payload["stage_events"]) >= 1
+        assert len(thread_payload["status_transitions"]) >= 1
+        assert thread_payload["status_transitions"][-1]["is_override"] is True
 
         assessment_response = client.post(
             f"/api/recruit-agent/candidates/{candidate_id}/assessments",
@@ -185,6 +187,89 @@ def test_recruit_agent_evolution_artifacts_validate_kind_schema(tmp_path):
             },
         )
         assert response.status_code == 422
+
+
+def test_recruit_agent_skill_draft_artifact_promotes_skill_idempotently(tmp_path):
+    with make_client(tmp_path) as client:
+        create_response = client.post(
+            "/api/recruit-agent/evolution-artifacts",
+            json={
+                "artifact_kind": "skill_draft",
+                "title": "Outreach skill draft",
+                "summary": "沉淀一条更稳的首轮外联策略。",
+                "status": "pending_review",
+                "artifact_body": {
+                    "skill_contract": {
+                        "skill_id": "candidate_outreach_runtime",
+                        "name": "Candidate Outreach Runtime",
+                        "description": "更稳的候选人首轮外联。",
+                        "category": "candidate_progression",
+                        "platform": "runtime-scene",
+                        "bound_to_stage": "candidate_outreach",
+                        "strategy": {"instruction": "先确认 owner 证据，再索要简历。"},
+                        "execution_hints": {"observed_outcomes": [{"status": "pass"}]},
+                        "health_check_config": {"expected_result_status": "pass"},
+                        "skill_metadata": {"artifact_origin": "candidate_progression"},
+                    },
+                    "decision_trace": {
+                        "candidate_features": {"currentStatus": "outreach_pending"},
+                        "action": [{"kind": "outbound_message"}],
+                        "result": {"status": "pass", "success": True},
+                    },
+                },
+                "artifact_metadata": {
+                    "promotion_fallback_platform": "runtime-scene",
+                    "promotion_fallback_stage": "candidate_outreach",
+                },
+            },
+        )
+        assert create_response.status_code == 201
+        artifact_id = create_response.json()["id"]
+
+        first_apply = client.patch(
+            f"/api/recruit-agent/evolution-artifacts/{artifact_id}",
+            json={
+                "status": "approved",
+                "reviewed_by": "desktop-user",
+                "artifact_metadata": {"review_reason": "符合当前流程"},
+            },
+        )
+        assert first_apply.status_code == 200
+        first_payload = first_apply.json()
+        assert first_payload["status"] == "applied"
+        assert first_payload["related_skill_id"]
+        promoted_skill = first_payload["artifact_metadata"]["promoted_skill"]
+        first_skill_id = promoted_skill["id"]
+        first_skill_key = promoted_skill["skill_id"]
+        assert promoted_skill["version"] == 1
+
+        skills_response = client.get("/api/skills")
+        assert skills_response.status_code == 200
+        promoted = next(item for item in skills_response.json() if item["id"] == first_payload["related_skill_id"])
+        assert promoted["version"] == 1
+        assert promoted["skill_metadata"]["promotion_source"] == "evolution_artifact"
+        assert promoted["skill_metadata"]["promotion_source_kind"] == "evolution_artifact"
+        assert promoted["skill_metadata"]["promotion_source_id"] == artifact_id
+
+        second_apply = client.patch(
+            f"/api/recruit-agent/evolution-artifacts/{artifact_id}",
+            json={"status": "approved", "reviewed_by": "desktop-user-2"},
+        )
+        assert second_apply.status_code == 200
+        second_payload = second_apply.json()
+        assert second_payload["status"] == "applied"
+        assert second_payload["related_skill_id"] == first_payload["related_skill_id"]
+        assert second_payload["artifact_metadata"]["promoted_skill"]["version"] == 1
+        assert second_payload["artifact_metadata"]["promoted_skill"]["id"] == first_skill_id
+        assert second_payload["artifact_metadata"]["promoted_skill"]["skill_id"] == first_skill_key
+
+        refreshed_skills = client.get("/api/skills")
+        assert refreshed_skills.status_code == 200
+        matching = [item for item in refreshed_skills.json() if item["skill_id"] == first_skill_key]
+        assert len(matching) == 1
+        promoted = matching[0]
+        assert promoted["version"] == 1
+        assert promoted["id"] == first_skill_id
 
 
 def test_recruit_agent_context_policy_profile_persistence(tmp_path):
@@ -305,3 +390,137 @@ def test_recruit_agent_goal_creation_and_operator_interaction_resolution(tmp_pat
         assert resolved_payload["status"] == "resolved"
         assert resolved_payload["operator_response"]["action"] == "confirm"
         assert "记录" in (resolved_payload["effect_summary"] or "")
+
+
+def test_state_machine_version_history_endpoints(tmp_path):
+    with make_client(tmp_path) as client:
+        current_response = client.get("/api/state-machine")
+        assert current_response.status_code == 200
+        current_payload = current_response.json()
+        current_version = current_payload["version"]
+
+        list_response = client.get("/api/state-machine/versions")
+        assert list_response.status_code == 200
+        versions = list_response.json()
+        assert len(versions) >= 1
+        assert versions[0]["version"] == current_version
+
+        updated_nodes = current_payload["nodes"]
+        updated_nodes[0]["label"] = "已发现·待评估（测试版）"
+
+        update_response = client.put(
+            "/api/state-machine",
+            json={
+                "updated_by": "desktop-user",
+                "change_summary": "测试版本历史",
+                "nodes": updated_nodes,
+                "transitions": current_payload["transitions"],
+                "global_transitions": current_payload.get("globalTransitions", current_payload["global_transitions"]),
+                "version_metadata": {"source": "pytest"},
+            },
+        )
+        assert update_response.status_code == 200
+        assert update_response.json()["version"] == current_version + 1
+
+        latest_versions_response = client.get("/api/state-machine/versions")
+        assert latest_versions_response.status_code == 200
+        latest_versions = latest_versions_response.json()
+        assert latest_versions[0]["version"] == current_version + 1
+        assert latest_versions[0]["change_summary"] == "测试版本历史"
+
+        detail_response = client.get(f"/api/state-machine/versions/{current_version + 1}")
+        assert detail_response.status_code == 200
+        assert detail_response.json()["nodes"][0]["label"] == "已发现·待评估（测试版）"
+
+        missing_response = client.get("/api/state-machine/versions/999")
+        assert missing_response.status_code == 404
+
+
+def test_state_machine_criteria_suggestions_endpoint(tmp_path):
+    with make_client(tmp_path) as client:
+        current_skill = client.post(
+            "/api/skills",
+            json={
+                "skill_id": "resume_scoring_v1",
+                "name": "Resume Scoring V1",
+                "status": "active",
+                "platform": "runtime-scene",
+                "bound_to_stage": "offline_scoring",
+                "strategy": {"instruction": "Use the current resume scoring rubric."},
+                "execution_hints": {"observed_outcomes": [{"status": "pass"}]},
+                "health_check_config": {"expected_result_status": "pass"},
+                "last_health_status": "degraded",
+            },
+        )
+        assert current_skill.status_code == 201
+        alternative_skill = client.post(
+            "/api/skills",
+            json={
+                "skill_id": "resume_scoring_v2",
+                "name": "Resume Scoring V2",
+                "status": "active",
+                "platform": "runtime-scene",
+                "bound_to_stage": "offline_scoring",
+                "strategy": {"instruction": "Use the revised resume scoring rubric."},
+                "execution_hints": {"observed_outcomes": [{"status": "pass"}]},
+                "health_check_config": {"expected_result_status": "pass"},
+                "last_health_status": "healthy",
+            },
+        )
+        assert alternative_skill.status_code == 201
+
+        for index, payload in enumerate(
+            (
+                {"source": "agent", "to_status": "offline_score_passed", "note": "Agent passed candidate."},
+                {"source": "agent", "to_status": "offline_score_passed", "note": "Agent passed another candidate."},
+                {
+                    "source": "operator",
+                    "to_status": "offline_score_rejected",
+                    "override_reason": "人工认为线下简历没有达到要求。",
+                    "note": "Recruiter rejected after review.",
+                },
+                {
+                    "source": "operator",
+                    "to_status": "offline_score_rejected",
+                    "override_reason": "人工补充判断后改为不通过。",
+                    "note": "Recruiter rejected second candidate.",
+                },
+            ),
+            start=1,
+        ):
+            candidate_response = client.post(
+                "/api/candidates",
+                json={
+                    "name": f"Criteria Candidate {index}",
+                    "platform": "boss",
+                    "status": "offline_scoring",
+                    "current_status": "offline_scoring",
+                    "current_stage_key": "offline_scoring",
+                    "jd_id": "jd-backend",
+                },
+            )
+            assert candidate_response.status_code == 201
+            candidate_id = candidate_response.json()["id"]
+            transition_response = client.post(
+                f"/api/recruit-agent/candidates/{candidate_id}/transition",
+                json=payload,
+            )
+            assert transition_response.status_code == 200
+
+        suggestions_response = client.get("/api/state-machine/criteria-suggestions")
+        assert suggestions_response.status_code == 200
+        reports = suggestions_response.json()
+        offline_report = next(item for item in reports if item["node_id"] == "offline_scoring")
+        assert offline_report["metrics"]["sample_size"] == 4
+        assert offline_report["metrics"]["recruiter_override_count"] == 2
+        assert offline_report["current_skill_id"] == "resume_scoring_v1"
+        suggestion_kinds = {item["kind"] for item in offline_report["suggestions"]}
+        assert "adjust_threshold" in suggestion_kinds
+        assert "switch_skill" in suggestion_kinds
+
+        threshold_suggestion = next(item for item in offline_report["suggestions"] if item["kind"] == "adjust_threshold")
+        assert threshold_suggestion["proposed_criteria_ref"]["passThreshold"] == 75
+
+        skill_suggestion = next(item for item in offline_report["suggestions"] if item["kind"] == "switch_skill")
+        assert skill_suggestion["proposed_criteria_ref"]["skillId"] == "resume_scoring_v2"
+        assert skill_suggestion["suggested_skill_id"] == "resume_scoring_v2"

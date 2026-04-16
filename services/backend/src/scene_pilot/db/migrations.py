@@ -1208,6 +1208,90 @@ def _cut_over_playbook_version_storage(connection: Connection) -> None:
         connection.execute(text("DROP TABLE workflow_patches"))
 
 
+def _create_state_machine_tables(connection: Connection) -> None:
+    tables = {
+        row[0]
+        for row in connection.execute(text("SELECT name FROM sqlite_master WHERE type='table'")).fetchall()
+    }
+
+    if "candidates" in tables:
+        columns = {row[1] for row in connection.execute(text("PRAGMA table_info(candidates)")).fetchall()}
+        if "current_status" not in columns:
+            connection.execute(text("ALTER TABLE candidates ADD COLUMN current_status TEXT NOT NULL DEFAULT 'discovered'"))
+        if "deepest_milestone" not in columns:
+            connection.execute(text("ALTER TABLE candidates ADD COLUMN deepest_milestone TEXT"))
+        connection.execute(text("UPDATE candidates SET current_status = status WHERE current_status IS NULL OR current_status = ''"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_candidates_current_status ON candidates (current_status)"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_candidates_deepest_milestone ON candidates (deepest_milestone)"))
+
+    if "recruitment_state_machine_versions" not in tables:
+        connection.execute(
+            text(
+                """
+                CREATE TABLE recruitment_state_machine_versions (
+                    version INTEGER PRIMARY KEY NOT NULL,
+                    updated_by TEXT NOT NULL,
+                    change_summary TEXT,
+                    nodes_json TEXT NOT NULL DEFAULT '[]',
+                    transitions_json TEXT NOT NULL DEFAULT '[]',
+                    global_transitions_json TEXT NOT NULL DEFAULT '[]',
+                    published_at TEXT NOT NULL,
+                    version_metadata TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+        )
+        connection.execute(
+            text("CREATE INDEX IF NOT EXISTS ix_recruitment_state_machine_versions_published_at ON recruitment_state_machine_versions (published_at)")
+        )
+
+    if "candidate_status_transitions" not in tables:
+        connection.execute(
+            text(
+                """
+                CREATE TABLE candidate_status_transitions (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    candidate_id TEXT NOT NULL REFERENCES candidates(id) ON DELETE CASCADE,
+                    from_status TEXT NOT NULL,
+                    to_status TEXT NOT NULL,
+                    from_status_label TEXT NOT NULL,
+                    to_status_label TEXT NOT NULL,
+                    actor TEXT NOT NULL,
+                    actor_id TEXT,
+                    trigger TEXT NOT NULL,
+                    note TEXT,
+                    override_reason TEXT,
+                    is_override INTEGER NOT NULL DEFAULT 0,
+                    milestone_updated TEXT,
+                    metadata TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+        )
+        connection.execute(
+            text("CREATE INDEX IF NOT EXISTS ix_candidate_status_transitions_candidate_id ON candidate_status_transitions (candidate_id)")
+        )
+        connection.execute(
+            text("CREATE INDEX IF NOT EXISTS ix_candidate_status_transitions_actor ON candidate_status_transitions (actor)")
+        )
+        connection.execute(
+            text("CREATE INDEX IF NOT EXISTS ix_candidate_status_transitions_trigger ON candidate_status_transitions (trigger)")
+        )
+        connection.execute(
+            text("CREATE INDEX IF NOT EXISTS ix_candidate_status_transitions_is_override ON candidate_status_transitions (is_override)")
+        )
+        connection.execute(
+            text("CREATE INDEX IF NOT EXISTS ix_candidate_status_transitions_candidate_created_at ON candidate_status_transitions (candidate_id, created_at)")
+        )
+
+    if "candidate_stage_events" in tables:
+        connection.execute(text("DROP TABLE candidate_stage_events"))
+
+
 MIGRATIONS: tuple[SchemaMigration, ...] = (
     SchemaMigration(
         version=1,
@@ -1283,6 +1367,11 @@ MIGRATIONS: tuple[SchemaMigration, ...] = (
         version=15,
         name="cut_over_playbook_version_storage",
         apply=_cut_over_playbook_version_storage,
+    ),
+    SchemaMigration(
+        version=16,
+        name="create_state_machine_tables",
+        apply=_create_state_machine_tables,
     ),
 )
 

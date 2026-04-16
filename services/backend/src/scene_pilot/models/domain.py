@@ -17,7 +17,9 @@ class Candidate(Base, TimestampMixin):
     platform: Mapped[str] = mapped_column(String(64), nullable=False, default="site", index=True)
     platform_candidate_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     status: Mapped[str] = mapped_column(String(64), nullable=False, default="discovered", index=True)
+    current_status: Mapped[str] = mapped_column(String(64), nullable=False, default="discovered", index=True)
     current_stage_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    deepest_milestone: Mapped[str | None] = mapped_column(String(16), nullable=True, index=True)
     jd_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     contact_info: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     state_snapshot: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
@@ -56,26 +58,26 @@ class CommunicationLog(Base):
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
-class CandidateStageEvent(Base, TimestampMixin):
-    __tablename__ = "candidate_stage_events"
+class CandidateStatusTransition(Base, TimestampMixin):
+    __tablename__ = "candidate_status_transitions"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=generate_id)
     candidate_id: Mapped[str] = mapped_column(ForeignKey("candidates.id", ondelete="CASCADE"), nullable=False, index=True)
-    event_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True, default="stage_transition")
-    from_status: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    from_status: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     to_status: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
-    phase_key: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
-    phase_label: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    stage_key: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
-    stage_label: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    actor: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    source: Mapped[str] = mapped_column(String(64), nullable=False, default="agent", index=True)
+    from_status_label: Mapped[str] = mapped_column(String(255), nullable=False)
+    to_status_label: Mapped[str] = mapped_column(String(255), nullable=False)
+    actor: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    actor_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    trigger: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
-    payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
-    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow, index=True)
+    override_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_override: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, index=True)
+    milestone_updated: Mapped[str | None] = mapped_column(String(16), nullable=True, index=True)
+    transition_metadata: Mapped[dict[str, Any]] = mapped_column("metadata", JSON, nullable=False, default=dict)
 
     __table_args__ = (
-        Index("ix_candidate_stage_events_candidate_occurred_at", "candidate_id", "occurred_at"),
+        Index("ix_candidate_status_transitions_candidate_created_at", "candidate_id", "created_at"),
     )
 
 
@@ -851,6 +853,19 @@ class AppSetting(Base, TimestampMixin):
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default="singleton")
     payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+
+
+class RecruitmentStateMachineVersion(Base, TimestampMixin):
+    __tablename__ = "recruitment_state_machine_versions"
+
+    version: Mapped[int] = mapped_column(Integer, primary_key=True)
+    updated_by: Mapped[str] = mapped_column(String(255), nullable=False)
+    change_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    nodes_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
+    transitions_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
+    global_transitions_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
+    published_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow, index=True)
+    version_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
 
 
 class DecisionLog(Base):

@@ -1,4 +1,12 @@
 import type {
+  CandidateStatusTransition,
+  CandidateTransitionPayload,
+  RecruitmentStateMachine,
+  StateCriteriaOptimizationReport,
+  RecruitmentStateMachineVersionRecord,
+  RecruitmentStateMachineUpdatePayload,
+} from "@scene-pilot/shared";
+import type {
   AgentGlobalMemoryRecord,
   ApprovalItem,
   AgentEvent,
@@ -119,8 +127,14 @@ export interface DesktopApiClient {
   compactAgentGlobalMemory(reason?: string, force?: boolean): Promise<AgentGlobalMemoryRecord>;
   listCandidateThreads(): Promise<CandidateThreadRecord[]>;
   getCandidateThread(candidateId: string): Promise<CandidateThreadRecord>;
+  getStateMachine(): Promise<RecruitmentStateMachine>;
+  listStateMachineCriteriaSuggestions(): Promise<StateCriteriaOptimizationReport[]>;
+  listStateMachineVersions(limit?: number): Promise<RecruitmentStateMachineVersionRecord[]>;
+  getStateMachineVersion(version: number): Promise<RecruitmentStateMachineVersionRecord>;
+  updateStateMachine(payload: RecruitmentStateMachineUpdatePayload): Promise<RecruitmentStateMachine>;
+  listCandidateTransitions(candidateId: string): Promise<CandidateStatusTransition[]>;
   createCandidateThreadEntry(candidateId: string, payload: { direction: string; content: string; messageType?: string; platform?: string }): Promise<CandidateConversationEntry>;
-  transitionCandidateState(candidateId: string, payload: { toStatus: string; phaseKey?: string; phaseLabel?: string; stageKey?: string; stageLabel?: string; note?: string; source?: string; actor?: string; metadata?: Record<string, unknown>; interviewRound?: number; contactChannels?: string[] }): Promise<CandidateThreadRecord>;
+  transitionCandidateState(candidateId: string, payload: CandidateTransitionPayload): Promise<CandidateThreadRecord>;
   createCandidateAssessment(candidateId: string, payload: { assessmentType: string; stageKey?: string; status?: string; decision?: string; score?: number; summary?: string; evidenceRefs?: unknown[]; metadata?: Record<string, unknown>; createdBy?: string; reviewedBy?: string }): Promise<CandidateAssessmentRecord>;
   listEvolutionArtifacts(): Promise<EvolutionArtifactRecord[]>;
   updateEvolutionArtifact(artifactId: string, payload: Partial<EvolutionArtifactRecord>): Promise<EvolutionArtifactRecord>;
@@ -327,6 +341,13 @@ function normalizeSettings(raw: unknown): SettingsSnapshot {
     timezone: String(record.timezone ?? "Asia/Shanghai"),
     intranetEnabled: Boolean(record.intranetEnabled ?? record.intranet_enabled ?? false),
     desktopApprovalsOnly: Boolean(record.desktopApprovalsOnly ?? (record.approval_source ?? "desktop_app") === "desktop_app"),
+    autonomyEnabled: Boolean(
+      record.autonomyEnabled ??
+        record.autonomy_enabled ??
+        asRecord(record.featureFlags ?? record.feature_flags).enableAutonomy ??
+        asRecord(record.featureFlags ?? record.feature_flags).enable_autonomy ??
+        false,
+    ),
     skillHealthAutonomyEnabled: Boolean(
       asRecord(record.featureFlags ?? record.feature_flags).enableSkillHealthAutonomy ??
         asRecord(record.featureFlags ?? record.feature_flags).enable_skill_health_autonomy ??
@@ -359,6 +380,7 @@ function normalizeSettings(raw: unknown): SettingsSnapshot {
       cooldownDays: Number(platform.cooldownDays ?? platform.cooldown_days ?? 30),
       allowOutboundMessaging: Boolean(platform.allowOutboundMessaging ?? platform.allow_outbound_messaging ?? false),
       maxConcurrentRuns: Number(platform.maxConcurrentRuns ?? platform.max_concurrent_runs ?? 1),
+      minFunnelCandidates: Number(platform.minFunnelCandidates ?? platform.min_funnel_candidates ?? 0),
     },
   };
 }
@@ -455,7 +477,14 @@ function normalizeCandidateRecord(raw: unknown): CandidateRecord {
     platform: String(record.platform ?? "site"),
     location: String(record.location ?? contactInfo.location ?? "未知"),
     status: String(record.status ?? "discovered") as CandidateRecord["status"],
+    currentStatus: record.currentStatus ? String(record.currentStatus) : record.current_status ? String(record.current_status) : undefined,
     stageKey: String(record.stageKey ?? record.stage_key ?? record.currentStageKey ?? record.current_stage_key ?? "candidate_probe"),
+    deepestMilestone:
+      record.deepestMilestone
+        ? String(record.deepestMilestone)
+        : record.deepest_milestone
+          ? String(record.deepest_milestone)
+          : null,
     jdTitle: String(record.jdTitle ?? record.jd_title ?? record.jdId ?? record.jd_id ?? "未分配岗位"),
     matchScore: Number(record.matchScore ?? record.match_score ?? aiScores.overall ?? 0),
     experienceYears: Number(record.experienceYears ?? record.experience_years ?? contactInfo.experience_years ?? 0),
@@ -881,6 +910,107 @@ function normalizeCandidateStageEvent(raw: unknown): CandidateStageEventRecord {
   };
 }
 
+function normalizeCandidateStatusTransition(raw: unknown): CandidateStatusTransition {
+  const record = asRecord(raw);
+  return {
+    id: String(record.id ?? ""),
+    candidateId: String(record.candidateId ?? record.candidate_id ?? ""),
+    fromStatus: String(record.fromStatus ?? record.from_status ?? ""),
+    toStatus: String(record.toStatus ?? record.to_status ?? ""),
+    fromStatusLabel: String(record.fromStatusLabel ?? record.from_status_label ?? ""),
+    toStatusLabel: String(record.toStatusLabel ?? record.to_status_label ?? ""),
+    actor: String(record.actor ?? "system") as CandidateStatusTransition["actor"],
+    actorId: record.actorId ? String(record.actorId) : record.actor_id ? String(record.actor_id) : undefined,
+    trigger: String(record.trigger ?? ""),
+    note: record.note ? String(record.note) : undefined,
+    overrideReason: record.overrideReason ? String(record.overrideReason) : record.override_reason ? String(record.override_reason) : undefined,
+    isOverride: Boolean(record.isOverride ?? record.is_override ?? false),
+    milestoneUpdated:
+      record.milestoneUpdated
+        ? String(record.milestoneUpdated)
+        : record.milestone_updated
+          ? String(record.milestone_updated)
+          : undefined,
+    metadata: asRecord(record.metadata ?? record.transition_metadata),
+    createdAt: String(record.createdAt ?? record.created_at ?? new Date().toISOString()),
+  };
+}
+
+function normalizeRecruitmentStateMachine(raw: unknown): RecruitmentStateMachine {
+  const record = asRecord(raw);
+  return {
+    version: Number(record.version ?? 1),
+    updatedAt: String(record.updatedAt ?? record.updated_at ?? new Date().toISOString()),
+    updatedBy: String(record.updatedBy ?? record.updated_by ?? "system"),
+    nodes: asArray<Record<string, unknown>>(record.nodes).map(
+      (item) => item as unknown as RecruitmentStateMachine["nodes"][number],
+    ),
+    transitions: asArray<Record<string, unknown>>(record.transitions).map(
+      (item) => item as unknown as RecruitmentStateMachine["transitions"][number],
+    ),
+    globalTransitions: asArray<Record<string, unknown>>(record.globalTransitions ?? record.global_transitions).map(
+      (item) => item as unknown as RecruitmentStateMachine["globalTransitions"][number],
+    ),
+  };
+}
+
+function normalizeStateCriteriaOptimizationReport(raw: unknown): StateCriteriaOptimizationReport {
+  const record = asRecord(raw);
+  const metrics = asRecord(record.metrics);
+  return {
+    nodeId: String(record.nodeId ?? record.node_id ?? ""),
+    nodeLabel: String(record.nodeLabel ?? record.node_label ?? ""),
+    currentCriteriaRef: Object.keys(asRecord(record.currentCriteriaRef ?? record.current_criteria_ref)).length
+      ? (asRecord(record.currentCriteriaRef ?? record.current_criteria_ref) as unknown as StateCriteriaOptimizationReport["currentCriteriaRef"])
+      : undefined,
+    currentSkillId: record.currentSkillId ? String(record.currentSkillId) : record.current_skill_id ? String(record.current_skill_id) : undefined,
+    currentSkillName: record.currentSkillName ? String(record.currentSkillName) : record.current_skill_name ? String(record.current_skill_name) : undefined,
+    metrics: {
+      sampleSize: Number(metrics.sampleSize ?? metrics.sample_size ?? 0),
+      aiDecisionCount: Number(metrics.aiDecisionCount ?? metrics.ai_decision_count ?? 0),
+      recruiterOverrideCount: Number(metrics.recruiterOverrideCount ?? metrics.recruiter_override_count ?? 0),
+      accuracyRate:
+        metrics.accuracyRate != null || metrics.accuracy_rate != null
+          ? Number(metrics.accuracyRate ?? metrics.accuracy_rate)
+          : undefined,
+      overrideRate:
+        metrics.overrideRate != null || metrics.override_rate != null
+          ? Number(metrics.overrideRate ?? metrics.override_rate)
+          : undefined,
+      deeperOverrideCount: Number(metrics.deeperOverrideCount ?? metrics.deeper_override_count ?? 0),
+      shallowerOverrideCount: Number(metrics.shallowerOverrideCount ?? metrics.shallower_override_count ?? 0),
+    },
+    suggestions: asArray(record.suggestions).map((item) => {
+      const suggestion = asRecord(item);
+      return {
+        kind: String(suggestion.kind ?? "adjust_threshold") as StateCriteriaOptimizationReport["suggestions"][number]["kind"],
+        summary: String(suggestion.summary ?? ""),
+        rationale: String(suggestion.rationale ?? ""),
+        confidence: String(suggestion.confidence ?? "medium") as StateCriteriaOptimizationReport["suggestions"][number]["confidence"],
+        proposedCriteriaRef: asRecord(
+          suggestion.proposedCriteriaRef ?? suggestion.proposed_criteria_ref,
+        ) as unknown as StateCriteriaOptimizationReport["suggestions"][number]["proposedCriteriaRef"],
+        suggestedSkillId:
+          suggestion.suggestedSkillId ? String(suggestion.suggestedSkillId) : suggestion.suggested_skill_id ? String(suggestion.suggested_skill_id) : undefined,
+        suggestedSkillName:
+          suggestion.suggestedSkillName ? String(suggestion.suggestedSkillName) : suggestion.suggested_skill_name ? String(suggestion.suggested_skill_name) : undefined,
+      };
+    }),
+    summary: String(record.summary ?? ""),
+  };
+}
+
+function normalizeRecruitmentStateMachineVersion(raw: unknown): RecruitmentStateMachineVersionRecord {
+  const record = asRecord(raw);
+  return {
+    ...normalizeRecruitmentStateMachine(raw),
+    changeSummary: record.changeSummary ? String(record.changeSummary) : record.change_summary ? String(record.change_summary) : null,
+    versionMetadata: asRecord(record.versionMetadata ?? record.version_metadata),
+    publishedAt: String(record.publishedAt ?? record.published_at ?? new Date().toISOString()),
+    createdAt: String(record.createdAt ?? record.created_at ?? new Date().toISOString()),
+  };
+}
+
 function normalizeCandidateAssessment(raw: unknown): CandidateAssessmentRecord {
   const record = asRecord(raw);
   return {
@@ -1025,6 +1155,7 @@ function normalizeCandidateThread(raw: unknown): CandidateThreadRecord {
     communicationLogs: asArray(record.communicationLogs ?? record.communication_logs).map(normalizeConversationEntry),
     stateSnapshot: normalizeCandidateStateSnapshot(record.stateSnapshot ?? record.state_snapshot),
     stageEvents: asArray(record.stageEvents ?? record.stage_events).map(normalizeCandidateStageEvent),
+    statusTransitions: asArray(record.statusTransitions ?? record.status_transitions).map(normalizeCandidateStatusTransition),
     assessments: asArray(record.assessments).map(normalizeCandidateAssessment),
     assignments: asArray(record.assignments).map(normalizeCandidateAssignment),
     resumeArtifacts: asArray(record.resumeArtifacts ?? record.resume_artifacts).map(normalizeResumeArtifact),
@@ -2140,6 +2271,36 @@ function createFetchClient(baseUrl: string): DesktopApiClient {
       asArray(await requestJson<unknown>(baseUrl, "/api/recruit-agent/candidate-threads")).map(normalizeCandidateThread),
     getCandidateThread: async (candidateId) =>
       normalizeCandidateThread(await requestJson<unknown>(baseUrl, `/api/recruit-agent/candidate-threads/${candidateId}`)),
+    getStateMachine: async () =>
+      normalizeRecruitmentStateMachine(await requestJson<unknown>(baseUrl, "/api/state-machine")),
+    listStateMachineCriteriaSuggestions: async () =>
+      asArray(await requestJson<unknown>(baseUrl, "/api/state-machine/criteria-suggestions")).map(
+        normalizeStateCriteriaOptimizationReport,
+      ),
+    listStateMachineVersions: async (limit = 50) =>
+      asArray(await requestJson<unknown>(baseUrl, `/api/state-machine/versions?limit=${limit}`)).map(
+        normalizeRecruitmentStateMachineVersion,
+      ),
+    getStateMachineVersion: async (version) =>
+      normalizeRecruitmentStateMachineVersion(await requestJson<unknown>(baseUrl, `/api/state-machine/versions/${version}`)),
+    updateStateMachine: async (payload) =>
+      normalizeRecruitmentStateMachine(
+        await requestJson<unknown>(baseUrl, "/api/state-machine", {
+          method: "PUT",
+          body: JSON.stringify({
+            updated_by: payload.updatedBy,
+            change_summary: payload.changeSummary,
+            nodes: payload.nodes,
+            transitions: payload.transitions,
+            global_transitions: payload.globalTransitions,
+            version_metadata: payload.versionMetadata ?? {},
+          }),
+        }),
+      ),
+    listCandidateTransitions: async (candidateId) =>
+      asArray(await requestJson<unknown>(baseUrl, `/api/recruit-agent/candidates/${candidateId}/transitions`)).map(
+        normalizeCandidateStatusTransition,
+      ),
     createCandidateThreadEntry: async (candidateId, payload) =>
       normalizeConversationEntry(
         await requestJson<unknown>(baseUrl, `/api/recruit-agent/candidate-threads/${candidateId}/entries`, {
@@ -2164,8 +2325,11 @@ function createFetchClient(baseUrl: string): DesktopApiClient {
             stage_key: payload.stageKey,
             stage_label: payload.stageLabel,
             note: payload.note,
-            source: payload.source ?? "operator",
-            actor: payload.actor ?? "desktop-user",
+            source: "operator",
+            actor: payload.actor,
+            actor_id: payload.actorId,
+            trigger: payload.trigger,
+            override_reason: "overrideReason" in payload ? payload.overrideReason : undefined,
             metadata: payload.metadata ?? {},
             interview_round: payload.interviewRound,
             contact_channels: payload.contactChannels ?? [],
@@ -2340,11 +2504,20 @@ function createFetchClient(baseUrl: string): DesktopApiClient {
     },
     updateSettings: async (settings) => {
       const payload: Record<string, unknown> = { ...settings };
+      const featureFlags: Record<string, unknown> = {};
+      if ("autonomyEnabled" in payload) {
+        featureFlags.enable_autonomy = Boolean(payload.autonomyEnabled);
+        delete payload.autonomyEnabled;
+      }
       if ("skillHealthAutonomyEnabled" in payload) {
-        payload.feature_flags = {
-          enable_skill_health_autonomy: Boolean(payload.skillHealthAutonomyEnabled),
-        };
+        featureFlags.enable_skill_health_autonomy = Boolean(payload.skillHealthAutonomyEnabled);
         delete payload.skillHealthAutonomyEnabled;
+      }
+      if (Object.keys(featureFlags).length > 0) {
+        payload.feature_flags = {
+          ...(asRecord(payload.feature_flags) as Record<string, unknown>),
+          ...featureFlags,
+        };
       }
       if ("skillHealthAutonomyIntervalSeconds" in payload) {
         payload.skill_health_autonomy_interval_seconds = payload.skillHealthAutonomyIntervalSeconds;

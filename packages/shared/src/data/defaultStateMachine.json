@@ -1,0 +1,901 @@
+{
+  "version": 1,
+  "updatedAt": "2026-04-16T00:00:00.000Z",
+  "updatedBy": "spec:2026-04-16-recruitment-kanban-design",
+  "nodes": [
+    {
+      "id": "discovered",
+      "label": "已发现·待评估",
+      "phase": "A",
+      "phaseLabel": "发现与 AI 在线评估",
+      "defaultWaitingParty": "AI",
+      "isTerminal": false,
+      "isSuccess": false,
+      "isSoftTerminal": false,
+      "isTransient": false,
+      "milestoneId": "M01",
+      "sortOrder": 10,
+      "description": "Agent 在平台扫描到候选人，进入评估队列。",
+      "uiConfig": { "color": "default", "showInKanban": true, "showInFunnel": true }
+    },
+    {
+      "id": "ai_online_screening",
+      "label": "AI 在线评估中",
+      "phase": "A",
+      "phaseLabel": "发现与 AI 在线评估",
+      "defaultWaitingParty": "AI",
+      "isTerminal": false,
+      "isSuccess": false,
+      "isSoftTerminal": false,
+      "isTransient": false,
+      "sortOrder": 20,
+      "description": "AI 读取在线简历或主页，生成匹配分与摘要。",
+      "uiConfig": { "color": "info", "showInKanban": true, "showInFunnel": false }
+    },
+    {
+      "id": "ai_online_passed",
+      "label": "AI 在线评估通过",
+      "phase": "A",
+      "phaseLabel": "发现与 AI 在线评估",
+      "defaultWaitingParty": "AUTO",
+      "isTerminal": false,
+      "isSuccess": false,
+      "isSoftTerminal": false,
+      "isTransient": true,
+      "milestoneId": "M03",
+      "sortOrder": 30,
+      "description": "AI 在线评估通过，短暂停留后自动进入待发起沟通。",
+      "uiConfig": { "color": "success", "showInKanban": false, "showInFunnel": true }
+    },
+    {
+      "id": "ai_online_rejected",
+      "label": "AI 在线评估未通过",
+      "phase": "A",
+      "phaseLabel": "发现与 AI 在线评估",
+      "defaultWaitingParty": "AUTO",
+      "isTerminal": true,
+      "isSuccess": false,
+      "isSoftTerminal": false,
+      "isTransient": false,
+      "milestoneId": "M02",
+      "sortOrder": 40,
+      "description": "候选人不符合岗位要求，直接终止。",
+      "uiConfig": { "color": "danger", "showInKanban": true, "showInFunnel": false }
+    },
+    {
+      "id": "outreach_pending",
+      "label": "待发起沟通",
+      "phase": "B",
+      "phaseLabel": "发起沟通与建立对话",
+      "defaultWaitingParty": "AI",
+      "isTerminal": false,
+      "isSuccess": false,
+      "isSoftTerminal": false,
+      "isTransient": false,
+      "sortOrder": 50,
+      "description": "评估通过，排队等待 Agent 发出第一条消息。",
+      "executionConfig": {
+        "mode": "ai_auto",
+        "criteriaRef": {
+          "type": "prompt",
+          "promptText": "依据岗位要求、候选人画像与历史上下文，决定是否现在发起首条沟通，并生成开场消息。"
+        },
+        "humanActions": [
+          { "label": "确认发起沟通", "toStatus": "outreach_sent", "style": "primary" },
+          { "label": "归档", "toStatus": "archived", "style": "danger", "requiresNote": true }
+        ]
+      },
+      "uiConfig": { "color": "default", "showInKanban": true, "showInFunnel": false }
+    },
+    {
+      "id": "outreach_sent",
+      "label": "已发消息·等候选人回复",
+      "phase": "B",
+      "phaseLabel": "发起沟通与建立对话",
+      "defaultWaitingParty": "CANDIDATE",
+      "isTerminal": false,
+      "isSuccess": false,
+      "isSoftTerminal": false,
+      "isTransient": false,
+      "milestoneId": "M04",
+      "sortOrder": 60,
+      "description": "AI 已发出打招呼消息，等待候选人响应。",
+      "retryPolicy": {
+        "maxRetries": 2,
+        "retryAfterHours": 72,
+        "closeAfterHours": 168
+      },
+      "uiConfig": { "color": "default", "showInKanban": true, "showInFunnel": false }
+    },
+    {
+      "id": "no_response",
+      "label": "无回复·可重试",
+      "phase": "B",
+      "phaseLabel": "发起沟通与建立对话",
+      "defaultWaitingParty": "CANDIDATE",
+      "isTerminal": false,
+      "isSuccess": false,
+      "isSoftTerminal": true,
+      "isTransient": false,
+      "sortOrder": 70,
+      "description": "超时未回复的软终止状态，默认不再自动推进，只能通过明确恢复路径或人工重新激活。",
+      "uiConfig": { "color": "warning", "showInKanban": true, "showInFunnel": false }
+    },
+    {
+      "id": "in_conversation",
+      "label": "对话进行中",
+      "phase": "B",
+      "phaseLabel": "发起沟通与建立对话",
+      "defaultWaitingParty": "AI",
+      "isTerminal": false,
+      "isSuccess": false,
+      "isSoftTerminal": false,
+      "isTransient": false,
+      "milestoneId": "M05",
+      "sortOrder": 80,
+      "description": "候选人已回复，AI 持续沟通并推进下一步动作。",
+      "executionConfig": {
+        "mode": "ai_auto",
+        "criteriaRef": {
+          "type": "prompt",
+          "promptText": "结合岗位、候选人兴趣与历史消息，决定下一轮对话目标并生成回复。"
+        },
+        "humanActions": [
+          { "label": "请求简历", "toStatus": "resume_requested", "style": "primary" },
+          { "label": "转人工接管", "toStatus": "in_conversation", "style": "default", "requiresNote": true },
+          { "label": "归档", "toStatus": "archived", "style": "danger", "requiresNote": true }
+        ]
+      },
+      "uiConfig": { "color": "success", "showInKanban": true, "showInFunnel": true }
+    },
+    {
+      "id": "resume_requested",
+      "label": "沟通中·待获取简历",
+      "phase": "C",
+      "phaseLabel": "获取线下简历",
+      "defaultWaitingParty": "CANDIDATE",
+      "isTerminal": false,
+      "isSuccess": false,
+      "isSoftTerminal": false,
+      "isTransient": false,
+      "sortOrder": 90,
+      "description": "AI 已请求简历，等待候选人发送 PDF 或 Word 文件。",
+      "retryPolicy": {
+        "maxRetries": 2,
+        "retryAfterHours": 48,
+        "closeAfterHours": 120
+      },
+      "uiConfig": { "color": "default", "showInKanban": true, "showInFunnel": false }
+    },
+    {
+      "id": "resume_received",
+      "label": "已收到简历·待 AI 评分",
+      "phase": "C",
+      "phaseLabel": "获取线下简历",
+      "defaultWaitingParty": "AUTO",
+      "isTerminal": false,
+      "isSuccess": false,
+      "isSoftTerminal": false,
+      "isTransient": true,
+      "milestoneId": "M06",
+      "sortOrder": 100,
+      "description": "简历文件已入库，自动触发 AI 线下评分。",
+      "uiConfig": { "color": "success", "showInKanban": false, "showInFunnel": true }
+    },
+    {
+      "id": "offline_scoring",
+      "label": "AI 线下评分中",
+      "phase": "D",
+      "phaseLabel": "AI 线下简历评分",
+      "defaultWaitingParty": "AI",
+      "isTerminal": false,
+      "isSuccess": false,
+      "isSoftTerminal": false,
+      "isTransient": false,
+      "sortOrder": 110,
+      "description": "AI 解析线下简历内容并生成结构化评分报告。",
+      "executionConfig": {
+        "mode": "ai_auto",
+        "criteriaRef": {
+          "type": "skill",
+          "skillId": "resume_scoring_v1",
+          "passThreshold": 70
+        },
+        "humanActions": [
+          { "label": "确认评分通过", "toStatus": "offline_score_passed", "style": "primary" },
+          { "label": "标记未通过", "toStatus": "offline_score_rejected", "style": "danger" }
+        ]
+      },
+      "uiConfig": { "color": "info", "showInKanban": true, "showInFunnel": false }
+    },
+    {
+      "id": "offline_score_passed",
+      "label": "AI 线下评分通过",
+      "phase": "D",
+      "phaseLabel": "AI 线下简历评分",
+      "defaultWaitingParty": "AUTO",
+      "isTerminal": false,
+      "isSuccess": false,
+      "isSoftTerminal": false,
+      "isTransient": true,
+      "milestoneId": "M08",
+      "sortOrder": 120,
+      "description": "线下评分通过，自动进入人工初筛节点。",
+      "uiConfig": { "color": "success", "showInKanban": false, "showInFunnel": true }
+    },
+    {
+      "id": "offline_score_rejected",
+      "label": "AI 线下评分未通过",
+      "phase": "D",
+      "phaseLabel": "AI 线下简历评分",
+      "defaultWaitingParty": "AUTO",
+      "isTerminal": true,
+      "isSuccess": false,
+      "isSoftTerminal": false,
+      "isTransient": false,
+      "milestoneId": "M07",
+      "sortOrder": 130,
+      "description": "线下评分未达到阈值，流程终止。",
+      "uiConfig": { "color": "danger", "showInKanban": true, "showInFunnel": false }
+    },
+    {
+      "id": "pending_human_review",
+      "label": "待人工初筛",
+      "phase": "E",
+      "phaseLabel": "人工初筛",
+      "defaultWaitingParty": "HUMAN",
+      "isTerminal": false,
+      "isSuccess": false,
+      "isSoftTerminal": false,
+      "isTransient": false,
+      "sortOrder": 140,
+      "description": "默认需要招聘员人工确认，也可切换为 AI 自动决策。",
+      "executionConfig": {
+        "mode": "human_required",
+        "humanActions": [
+          { "label": "通过", "toStatus": "human_review_passed", "style": "primary" },
+          { "label": "淘汰", "toStatus": "human_review_rejected", "style": "danger" },
+          { "label": "暂缓", "toStatus": "pending_human_review", "style": "default", "requiresNote": true }
+        ]
+      },
+      "uiConfig": { "color": "warning", "showInKanban": true, "showInFunnel": false }
+    },
+    {
+      "id": "human_review_passed",
+      "label": "人工初筛通过",
+      "phase": "E",
+      "phaseLabel": "人工初筛",
+      "defaultWaitingParty": "AUTO",
+      "isTerminal": false,
+      "isSuccess": false,
+      "isSoftTerminal": false,
+      "isTransient": true,
+      "milestoneId": "M10",
+      "sortOrder": 150,
+      "description": "人工初筛通过后自动进入待获取联系方式。",
+      "uiConfig": { "color": "success", "showInKanban": false, "showInFunnel": true }
+    },
+    {
+      "id": "human_review_rejected",
+      "label": "人工初筛未通过",
+      "phase": "E",
+      "phaseLabel": "人工初筛",
+      "defaultWaitingParty": "AUTO",
+      "isTerminal": true,
+      "isSuccess": false,
+      "isSoftTerminal": false,
+      "isTransient": false,
+      "milestoneId": "M09",
+      "sortOrder": 160,
+      "description": "人工初筛确认淘汰，流程终止。",
+      "uiConfig": { "color": "danger", "showInKanban": true, "showInFunnel": false }
+    },
+    {
+      "id": "contact_requested",
+      "label": "沟通中·待获取联系方式",
+      "phase": "F",
+      "phaseLabel": "获取联系方式",
+      "defaultWaitingParty": "CANDIDATE",
+      "isTerminal": false,
+      "isSuccess": false,
+      "isSoftTerminal": false,
+      "isTransient": false,
+      "sortOrder": 170,
+      "description": "人工初筛通过后，AI 在对话中索取电话或微信。",
+      "retryPolicy": {
+        "maxRetries": 2,
+        "retryAfterHours": 48,
+        "closeAfterHours": 120
+      },
+      "uiConfig": { "color": "default", "showInKanban": true, "showInFunnel": false }
+    },
+    {
+      "id": "contact_acquired",
+      "label": "已获取联系方式",
+      "phase": "F",
+      "phaseLabel": "获取联系方式",
+      "defaultWaitingParty": "AUTO",
+      "isTerminal": false,
+      "isSuccess": false,
+      "isSoftTerminal": false,
+      "isTransient": true,
+      "milestoneId": "M11",
+      "sortOrder": 180,
+      "description": "联系方式已入库，自动进入待预约面试。",
+      "uiConfig": { "color": "success", "showInKanban": false, "showInFunnel": true }
+    },
+    {
+      "id": "interview_pending",
+      "label": "待预约面试",
+      "phase": "G",
+      "phaseLabel": "面试",
+      "defaultWaitingParty": "HUMAN",
+      "isTerminal": false,
+      "isSuccess": false,
+      "isSoftTerminal": false,
+      "isTransient": false,
+      "sortOrder": 190,
+      "description": "联系方式已具备，待协调面试时间；默认需要人工确认。",
+      "executionConfig": {
+        "mode": "human_required",
+        "humanActions": [
+          { "label": "确认面试时间", "toStatus": "interview_scheduled", "style": "primary" }
+        ]
+      },
+      "uiConfig": { "color": "warning", "showInKanban": true, "showInFunnel": false }
+    },
+    {
+      "id": "interview_scheduled",
+      "label": "面试已预约",
+      "phase": "G",
+      "phaseLabel": "面试",
+      "defaultWaitingParty": "CANDIDATE",
+      "isTerminal": false,
+      "isSuccess": false,
+      "isSoftTerminal": false,
+      "isTransient": false,
+      "milestoneId": "M12",
+      "sortOrder": 200,
+      "description": "时间、形式与地点已确认，等待面试完成。",
+      "retryPolicy": {
+        "maxRetries": 2,
+        "retryAfterHours": 24,
+        "closeAfterHours": 72
+      },
+      "uiConfig": { "color": "success", "showInKanban": true, "showInFunnel": true }
+    },
+    {
+      "id": "interview_completed",
+      "label": "面试已完成·待录入结果",
+      "phase": "G",
+      "phaseLabel": "面试",
+      "defaultWaitingParty": "HUMAN",
+      "isTerminal": false,
+      "isSuccess": false,
+      "isSoftTerminal": false,
+      "isTransient": false,
+      "sortOrder": 210,
+      "description": "面试已结束，等待招聘员录入结果或切换为 AI 自动判断。",
+      "executionConfig": {
+        "mode": "human_required",
+        "humanActions": [
+          { "label": "标记通过", "toStatus": "interview_passed", "style": "primary" },
+          { "label": "标记未通过", "toStatus": "interview_rejected", "style": "danger" }
+        ]
+      },
+      "uiConfig": { "color": "warning", "showInKanban": true, "showInFunnel": false }
+    },
+    {
+      "id": "interview_passed",
+      "label": "面试通过",
+      "phase": "G",
+      "phaseLabel": "面试",
+      "defaultWaitingParty": "AUTO",
+      "isTerminal": false,
+      "isSuccess": false,
+      "isSoftTerminal": false,
+      "isTransient": false,
+      "milestoneId": "M13",
+      "sortOrder": 220,
+      "description": "面试通过，可继续下一轮面试或进入 Offer。",
+      "uiConfig": { "color": "success", "showInKanban": true, "showInFunnel": true }
+    },
+    {
+      "id": "interview_rejected",
+      "label": "面试未通过",
+      "phase": "G",
+      "phaseLabel": "面试",
+      "defaultWaitingParty": "AUTO",
+      "isTerminal": true,
+      "isSuccess": false,
+      "isSoftTerminal": false,
+      "isTransient": false,
+      "sortOrder": 230,
+      "description": "面试未通过，流程终止。",
+      "uiConfig": { "color": "danger", "showInKanban": true, "showInFunnel": false }
+    },
+    {
+      "id": "offer_pending",
+      "label": "待发 Offer",
+      "phase": "H",
+      "phaseLabel": "Offer",
+      "defaultWaitingParty": "HUMAN",
+      "isTerminal": false,
+      "isSuccess": false,
+      "isSoftTerminal": false,
+      "isTransient": false,
+      "sortOrder": 240,
+      "description": "涉及薪资与承诺，不允许 AI 独立执行。",
+      "executionConfig": {
+        "mode": "human_required",
+        "locked": true,
+        "humanActions": [
+          { "label": "确认发出 Offer", "toStatus": "offer_sent", "style": "primary" }
+        ]
+      },
+      "uiConfig": { "color": "warning", "showInKanban": true, "showInFunnel": false }
+    },
+    {
+      "id": "offer_sent",
+      "label": "Offer 已发出·等候候选人回复",
+      "phase": "H",
+      "phaseLabel": "Offer",
+      "defaultWaitingParty": "CANDIDATE",
+      "isTerminal": false,
+      "isSuccess": false,
+      "isSoftTerminal": false,
+      "isTransient": false,
+      "sortOrder": 250,
+      "description": "Offer 已发出，等待候选人接受或拒绝。",
+      "retryPolicy": {
+        "maxRetries": 2,
+        "retryAfterHours": 48,
+        "closeAfterHours": 168
+      },
+      "uiConfig": { "color": "default", "showInKanban": true, "showInFunnel": false }
+    },
+    {
+      "id": "offer_accepted",
+      "label": "Offer 已接受",
+      "phase": "H",
+      "phaseLabel": "Offer",
+      "defaultWaitingParty": "AUTO",
+      "isTerminal": true,
+      "isSuccess": true,
+      "isSoftTerminal": false,
+      "isTransient": false,
+      "milestoneId": "M14",
+      "sortOrder": 260,
+      "description": "Offer 已接受，进入入职流程（系统外）。",
+      "uiConfig": { "color": "success", "showInKanban": true, "showInFunnel": true }
+    },
+    {
+      "id": "offer_rejected",
+      "label": "Offer 被拒",
+      "phase": "H",
+      "phaseLabel": "Offer",
+      "defaultWaitingParty": "AUTO",
+      "isTerminal": true,
+      "isSuccess": false,
+      "isSoftTerminal": false,
+      "isTransient": false,
+      "sortOrder": 270,
+      "description": "候选人拒绝 Offer，流程终止。",
+      "uiConfig": { "color": "danger", "showInKanban": true, "showInFunnel": false }
+    },
+    {
+      "id": "archived",
+      "label": "已归档",
+      "phase": "Z",
+      "phaseLabel": "全局终止态",
+      "defaultWaitingParty": "AUTO",
+      "isTerminal": true,
+      "isSuccess": false,
+      "isSoftTerminal": false,
+      "isTransient": false,
+      "sortOrder": 280,
+      "description": "主动归档，无后续计划。",
+      "uiConfig": { "color": "default", "showInKanban": true, "showInFunnel": false }
+    },
+    {
+      "id": "cooldown",
+      "label": "冷却中",
+      "phase": "Z",
+      "phaseLabel": "全局终止态",
+      "defaultWaitingParty": "AUTO",
+      "isTerminal": false,
+      "isSuccess": false,
+      "isSoftTerminal": true,
+      "isTransient": false,
+      "sortOrder": 290,
+      "description": "因平台规则或策略进入冷却，冷却结束后可恢复。",
+      "uiConfig": { "color": "warning", "showInKanban": true, "showInFunnel": false }
+    },
+    {
+      "id": "candidate_withdrew",
+      "label": "候选人主动放弃",
+      "phase": "Z",
+      "phaseLabel": "全局终止态",
+      "defaultWaitingParty": "AUTO",
+      "isTerminal": true,
+      "isSuccess": false,
+      "isSoftTerminal": false,
+      "isTransient": false,
+      "sortOrder": 300,
+      "description": "候选人明确表示放弃或已接受其他机会。",
+      "uiConfig": { "color": "danger", "showInKanban": true, "showInFunnel": false }
+    }
+  ],
+  "transitions": [
+    {
+      "id": "a1_to_a2",
+      "fromState": "discovered",
+      "toState": "ai_online_screening",
+      "trigger": "agent",
+      "condition": "Agent 启动在线评估任务。",
+      "label": "开始在线评估",
+      "allowedActors": ["agent", "system"]
+    },
+    {
+      "id": "a2_to_a3",
+      "fromState": "ai_online_screening",
+      "toState": "ai_online_passed",
+      "trigger": "agent",
+      "condition": "AI 评分大于等于阈值。",
+      "label": "标记在线评估通过",
+      "allowedActors": ["agent", "system"]
+    },
+    {
+      "id": "a2_to_a4",
+      "fromState": "ai_online_screening",
+      "toState": "ai_online_rejected",
+      "trigger": "agent",
+      "condition": "AI 评分低于阈值。",
+      "label": "标记在线评估未通过",
+      "allowedActors": ["agent", "system"]
+    },
+    {
+      "id": "a3_to_b1",
+      "fromState": "ai_online_passed",
+      "toState": "outreach_pending",
+      "trigger": "auto",
+      "condition": "通过后自动进入待发起沟通。",
+      "allowedActors": ["system"]
+    },
+    {
+      "id": "b1_to_b2",
+      "fromState": "outreach_pending",
+      "toState": "outreach_sent",
+      "trigger": "agent",
+      "condition": "Agent 发出第一条消息。",
+      "label": "发送首条消息",
+      "allowedActors": ["agent", "recruiter"]
+    },
+    {
+      "id": "b2_to_b3",
+      "fromState": "outreach_sent",
+      "toState": "in_conversation",
+      "trigger": "agent",
+      "condition": "候选人回复。",
+      "label": "建立对话",
+      "allowedActors": ["agent", "system"]
+    },
+    {
+      "id": "b2_to_b2a",
+      "fromState": "outreach_sent",
+      "toState": "no_response",
+      "trigger": "system",
+      "condition": "超时无回复。",
+      "label": "标记无回复",
+      "allowedActors": ["system", "agent"]
+    },
+    {
+      "id": "b2a_to_b2",
+      "fromState": "no_response",
+      "toState": "outreach_sent",
+      "trigger": "agent",
+      "condition": "执行一次重试沟通。",
+      "label": "重试沟通",
+      "allowedActors": ["agent", "recruiter"]
+    },
+    {
+      "id": "c1_to_b2a",
+      "fromState": "resume_requested",
+      "toState": "no_response",
+      "trigger": "system",
+      "condition": "简历请求超时无回复。",
+      "label": "标记简历无回复",
+      "allowedActors": ["system", "agent"]
+    },
+    {
+      "id": "b2a_to_c1",
+      "fromState": "no_response",
+      "toState": "resume_requested",
+      "trigger": "agent",
+      "condition": "执行一次简历请求重试。",
+      "label": "重试索要简历",
+      "allowedActors": ["agent", "recruiter"]
+    },
+    {
+      "id": "b3_to_c1",
+      "fromState": "in_conversation",
+      "toState": "resume_requested",
+      "trigger": "agent",
+      "condition": "AI 在沟通中请求简历。",
+      "label": "请求简历",
+      "allowedActors": ["agent", "recruiter"]
+    },
+    {
+      "id": "c1_to_c2",
+      "fromState": "resume_requested",
+      "toState": "resume_received",
+      "trigger": "agent",
+      "condition": "候选人发送简历文件，Agent 完成入库。",
+      "label": "记录已收到简历",
+      "allowedActors": ["agent", "system", "recruiter"]
+    },
+    {
+      "id": "c2_to_d1",
+      "fromState": "resume_received",
+      "toState": "offline_scoring",
+      "trigger": "auto",
+      "condition": "简历入库后自动开始线下评分。",
+      "allowedActors": ["system"]
+    },
+    {
+      "id": "d1_to_d2",
+      "fromState": "offline_scoring",
+      "toState": "offline_score_passed",
+      "trigger": "agent",
+      "condition": "线下评分大于等于阈值。",
+      "label": "标记线下评分通过",
+      "allowedActors": ["agent", "recruiter"]
+    },
+    {
+      "id": "d1_to_d3",
+      "fromState": "offline_scoring",
+      "toState": "offline_score_rejected",
+      "trigger": "agent",
+      "condition": "线下评分低于阈值。",
+      "label": "标记线下评分未通过",
+      "allowedActors": ["agent", "recruiter"]
+    },
+    {
+      "id": "d2_to_e1",
+      "fromState": "offline_score_passed",
+      "toState": "pending_human_review",
+      "trigger": "auto",
+      "condition": "线下评分通过后自动进入人工初筛。",
+      "allowedActors": ["system"]
+    },
+    {
+      "id": "e1_to_e2",
+      "fromState": "pending_human_review",
+      "toState": "human_review_passed",
+      "trigger": "human",
+      "condition": "招聘员确认通过，或节点切为 AI 自动后由 AI 判断通过。",
+      "label": "标记初筛通过",
+      "allowedActors": ["agent", "recruiter"]
+    },
+    {
+      "id": "e1_to_e3",
+      "fromState": "pending_human_review",
+      "toState": "human_review_rejected",
+      "trigger": "human",
+      "condition": "招聘员确认淘汰，或节点切为 AI 自动后由 AI 判断淘汰。",
+      "label": "标记初筛未通过",
+      "allowedActors": ["agent", "recruiter"]
+    },
+    {
+      "id": "e1_to_e1",
+      "fromState": "pending_human_review",
+      "toState": "pending_human_review",
+      "trigger": "human",
+      "condition": "招聘员选择暂缓。",
+      "requiresNote": true,
+      "label": "暂缓",
+      "allowedActors": ["recruiter"]
+    },
+    {
+      "id": "e2_to_f1",
+      "fromState": "human_review_passed",
+      "toState": "contact_requested",
+      "trigger": "auto",
+      "condition": "人工初筛通过后自动进入待获取联系方式。",
+      "allowedActors": ["system"]
+    },
+    {
+      "id": "f1_to_f2",
+      "fromState": "contact_requested",
+      "toState": "contact_acquired",
+      "trigger": "agent",
+      "condition": "Agent 成功提取联系方式并完成入库。",
+      "label": "记录已获取联系方式",
+      "allowedActors": ["agent", "recruiter", "system"]
+    },
+    {
+      "id": "f1_to_b2a",
+      "fromState": "contact_requested",
+      "toState": "no_response",
+      "trigger": "system",
+      "condition": "联系方式请求超时无回复。",
+      "label": "标记联系方式无回复",
+      "allowedActors": ["system", "agent"]
+    },
+    {
+      "id": "b2a_to_f1",
+      "fromState": "no_response",
+      "toState": "contact_requested",
+      "trigger": "agent",
+      "condition": "执行一次联系方式请求重试。",
+      "label": "重试索要联系方式",
+      "allowedActors": ["agent", "recruiter"]
+    },
+    {
+      "id": "f2_to_g1",
+      "fromState": "contact_acquired",
+      "toState": "interview_pending",
+      "trigger": "auto",
+      "condition": "联系方式入库后自动进入待预约面试。",
+      "allowedActors": ["system"]
+    },
+    {
+      "id": "g1_to_g2",
+      "fromState": "interview_pending",
+      "toState": "interview_scheduled",
+      "trigger": "human",
+      "condition": "面试时间、形式与地点已确认。",
+      "label": "确认面试时间",
+      "allowedActors": ["agent", "recruiter"]
+    },
+    {
+      "id": "g2_to_g3",
+      "fromState": "interview_scheduled",
+      "toState": "interview_completed",
+      "trigger": "system",
+      "condition": "面试时间到达，或人工标记面试完成。",
+      "label": "记录面试完成",
+      "allowedActors": ["system", "recruiter"]
+    },
+    {
+      "id": "g2_to_b2a",
+      "fromState": "interview_scheduled",
+      "toState": "no_response",
+      "trigger": "system",
+      "condition": "面试确认超时无回复。",
+      "label": "标记面试确认无回复",
+      "allowedActors": ["system", "agent"]
+    },
+    {
+      "id": "b2a_to_g2",
+      "fromState": "no_response",
+      "toState": "interview_scheduled",
+      "trigger": "agent",
+      "condition": "执行一次面试确认重试。",
+      "label": "重试确认面试",
+      "allowedActors": ["agent", "recruiter"]
+    },
+    {
+      "id": "g3_to_g4",
+      "fromState": "interview_completed",
+      "toState": "interview_passed",
+      "trigger": "human",
+      "condition": "录入面试结果为通过。",
+      "label": "标记面试通过",
+      "allowedActors": ["agent", "recruiter"]
+    },
+    {
+      "id": "g3_to_g5",
+      "fromState": "interview_completed",
+      "toState": "interview_rejected",
+      "trigger": "human",
+      "condition": "录入面试结果为未通过。",
+      "label": "标记面试未通过",
+      "allowedActors": ["agent", "recruiter"]
+    },
+    {
+      "id": "g4_to_g1",
+      "fromState": "interview_passed",
+      "toState": "interview_pending",
+      "trigger": "human",
+      "condition": "需要安排下一轮面试。",
+      "label": "安排下一轮面试",
+      "allowedActors": ["recruiter", "agent"]
+    },
+    {
+      "id": "g4_to_h1",
+      "fromState": "interview_passed",
+      "toState": "offer_pending",
+      "trigger": "human",
+      "condition": "最终轮通过，进入 Offer。",
+      "label": "进入 Offer",
+      "allowedActors": ["recruiter", "agent"]
+    },
+    {
+      "id": "h1_to_h2",
+      "fromState": "offer_pending",
+      "toState": "offer_sent",
+      "trigger": "human",
+      "condition": "招聘员确认发出 Offer。",
+      "label": "确认发出 Offer",
+      "allowedActors": ["recruiter"]
+    },
+    {
+      "id": "h2_to_h3",
+      "fromState": "offer_sent",
+      "toState": "offer_accepted",
+      "trigger": "agent",
+      "condition": "候选人接受 Offer。",
+      "label": "标记 Offer 已接受",
+      "allowedActors": ["agent", "recruiter", "system"]
+    },
+    {
+      "id": "h2_to_h4",
+      "fromState": "offer_sent",
+      "toState": "offer_rejected",
+      "trigger": "agent",
+      "condition": "候选人拒绝 Offer。",
+      "label": "标记 Offer 被拒",
+      "allowedActors": ["agent", "recruiter", "system"]
+    },
+    {
+      "id": "h2_to_b2a",
+      "fromState": "offer_sent",
+      "toState": "no_response",
+      "trigger": "system",
+      "condition": "Offer 发送后超时无回复。",
+      "label": "标记 Offer 无回复",
+      "allowedActors": ["system", "agent"]
+    },
+    {
+      "id": "b2a_to_h2",
+      "fromState": "no_response",
+      "toState": "offer_sent",
+      "trigger": "agent",
+      "condition": "执行一次 Offer 跟进重试。",
+      "label": "重试跟进 Offer",
+      "allowedActors": ["agent", "recruiter"]
+    },
+    {
+      "id": "z2_to_a1",
+      "fromState": "cooldown",
+      "toState": "discovered",
+      "trigger": "system",
+      "condition": "冷却结束后回到已发现。",
+      "label": "冷却恢复",
+      "allowedActors": ["system"]
+    }
+  ],
+  "globalTransitions": [
+    {
+      "id": "global_to_archived",
+      "fromState": "*",
+      "toState": "archived",
+      "trigger": "human",
+      "condition": "任意阶段均可主动归档。",
+      "requiresNote": true,
+      "label": "归档",
+      "allowedActors": ["agent", "recruiter", "system"]
+    },
+    {
+      "id": "global_to_cooldown",
+      "fromState": "*",
+      "toState": "cooldown",
+      "trigger": "system",
+      "condition": "任意阶段均可进入冷却。",
+      "requiresNote": true,
+      "label": "进入冷却",
+      "allowedActors": ["agent", "recruiter", "system"]
+    },
+    {
+      "id": "global_to_candidate_withdrew",
+      "fromState": "*",
+      "toState": "candidate_withdrew",
+      "trigger": "agent",
+      "condition": "候选人明确表示不再继续。",
+      "requiresNote": true,
+      "label": "候选人放弃",
+      "allowedActors": ["agent", "recruiter", "system"]
+    }
+  ]
+}

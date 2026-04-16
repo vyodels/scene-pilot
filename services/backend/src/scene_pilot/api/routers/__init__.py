@@ -7,6 +7,7 @@ __all__ = [
     "metrics",
     "runtime",
     "settings",
+    "state_machine",
     "skills",
     "sync",
     "playbooks",

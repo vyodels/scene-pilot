@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-import re
-
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from scene_pilot.api.deps import get_session
 from scene_pilot.db.base import utcnow
-from scene_pilot.repositories import AgentLearningRepository, ApprovalRepository, OperatorInteractionRepository, SkillRepository
+from scene_pilot.repositories import AgentLearningRepository, ApprovalRepository, OperatorInteractionRepository
 from scene_pilot.schemas import (
     ApprovalCreate,
     ApprovalDecisionRequest,
@@ -17,6 +15,7 @@ from scene_pilot.schemas import (
     PlaybookPatchDecisionRequest,
 )
 from scene_pilot.services.container import AppContainer
+from scene_pilot.services.evolution import promote_skill_draft_contract, resolve_promoted_skill_snapshot
 from scene_pilot.services.runtime import PersistedRuntimeService
 from scene_pilot.api.deps import get_container
 
@@ -328,101 +327,35 @@ def _promote_skill_draft(
     reason: str | None,
 ) -> dict[str, object] | None:
     payload = dict(approval.payload or {})
+    existing = resolve_promoted_skill_snapshot(payload)
+    if existing is not None:
+        return existing
     draft = payload.get("skill_draft")
     if not isinstance(draft, dict):
         return None
 
-    repo = SkillRepository(session)
     learning_repo = AgentLearningRepository(session)
     learning_id = payload.get("learning_id")
     learning = learning_repo.get(str(learning_id)) if isinstance(learning_id, str) and learning_id else None
-
-    skill_name = str(draft.get("skill_name") or draft.get("name") or approval.title).strip()
-    skill_key = str(draft.get("skill_id") or _slugify(skill_name)).strip("_")
-    if learning is not None and not draft.get("skill_id"):
-        skill_key = f"{skill_key}_{learning.id[:8]}"
-    skill_key = skill_key or f"runtime_skill_{approval.id[:8]}"
-
-    strategy = draft.get("strategy")
-    if not isinstance(strategy, dict):
-        strategy = {}
-    if not strategy:
-        seed_instruction = draft.get("content") or draft.get("summary")
-        if isinstance(seed_instruction, str) and seed_instruction.strip():
-            strategy = {"instruction": seed_instruction.strip()}
-
-    execution_hints = draft.get("execution_hints")
-    if not isinstance(execution_hints, dict):
-        execution_hints = {}
-
-    version_governance = draft.get("version_governance")
-    if not isinstance(version_governance, dict):
-        version_governance = {}
-
-    health_check_config = draft.get("health_check_config")
-    if not isinstance(health_check_config, dict):
-        health_check_config = {}
-    if not health_check_config:
-        health_check_config = {"expected_result_status": "pass"}
-
-    status = "active" if container.flags.is_enabled("skills.auto_activate") else "approved"
-    platform = (
-        str(draft.get("platform") or "").strip()
-        or str(payload.get("task_domain") or "").strip()
-        or str(execution_hints.get("domain") or "").strip()
-        or "runtime-scene"
+    promoted = promote_skill_draft_contract(
+        session,
+        flags=container.flags,
+        draft=draft,
+        reviewer=reviewer,
+        reason=reason,
+        fallback_title=approval.title,
+        fallback_platform=str(payload.get("task_domain") or "").strip() or "runtime-scene",
+        fallback_stage=str(payload.get("adaptive_stage") or payload.get("task_type") or "").strip() or None,
+        learning_id=learning.id if learning is not None else None,
+        promotion_source="approval",
+        source_kind="approval",
+        source_id=approval.id,
     )
-    existing = repo.by_skill_id(skill_key)
-    next_version = int(existing.version) + 1 if existing is not None else 1
-    defaults = {
-        "skill_id": skill_key,
-        "name": skill_name,
-        "version": next_version,
-        "status": status,
-        "platform": platform,
-        "bound_to_stage": draft.get("bound_to_stage") or payload.get("adaptive_stage") or payload.get("task_type"),
-        "strategy": {
-            **strategy,
-            "version_governance": {
-                **dict(strategy.get("version_governance") or {}),
-                **version_governance,
-                "approved_by": reviewer,
-                "approved_reason": reason,
-                "approved_at": utcnow().isoformat(),
-            },
-        },
-        "execution_hints": {
-            **execution_hints,
-            "version_governance": {
-                **dict(execution_hints.get("version_governance") or {}),
-                **version_governance,
-                "skill_version": next_version,
-            },
-        },
-        "health_check_config": {
-            **health_check_config,
-            "version_governance": {
-                **dict(health_check_config.get("version_governance") or {}),
-                **version_governance,
-                "skill_version": next_version,
-            },
-        },
-        "confirmed_by": reviewer,
-        "confirmed_at": utcnow(),
-        "last_health_status": reason or ("healthy" if status == "active" else "approved"),
-    }
-
-    skill = repo.update(existing, defaults) if existing is not None else repo.create(defaults)
     if learning is not None:
         learning.consolidated_at = utcnow()
         session.commit()
 
-    return {
-        "id": skill.id,
-        "skill_id": skill.skill_id,
-        "name": skill.name,
-        "status": skill.status,
-    }
+    return promoted
 
 
 def _build_system_command_resolution(container: AppContainer, payload: dict[str, object]) -> dict[str, object]:
@@ -435,11 +368,6 @@ def _build_system_command_resolution(container: AppContainer, payload: dict[str,
         "execution_enabled": bool(policy["executionEnabled"]),
         "approved_at": utcnow().isoformat(),
     }
-
-
-def _slugify(value: str) -> str:
-    normalized = re.sub(r"[^a-z0-9]+", "_", value.strip().lower())
-    return normalized.strip("_")
 
 
 def _deactivate_learning_draft(session: Session, payload: dict[str, object]) -> None:

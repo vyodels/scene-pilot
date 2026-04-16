@@ -19,7 +19,7 @@ from .domain import (
     CandidateReviewDecision,
     CandidateScorecard,
     CandidateSession,
-    CandidateStageEvent,
+    CandidateStatusTransition,
     CommunicationLog,
     DecisionLog,
     EnvironmentSnapshot,
@@ -40,4 +40,5 @@ from .domain import (
     Playbook,
     PlaybookPatch,
     PlaybookVersion,
+    RecruitmentStateMachineVersion,
 )

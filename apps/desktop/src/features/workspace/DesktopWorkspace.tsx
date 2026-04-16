@@ -1,4 +1,9 @@
 import React, { startTransition, useEffect, useMemo, useState } from "react";
+import type {
+  CandidateTransitionPayload,
+  RecruitmentStateMachine,
+  RecruitmentStateMachineUpdatePayload,
+} from "@scene-pilot/shared";
 import { AppLayout, MetricCard, Panel, SectionTabs, Sidebar, StatusBadge, TopBar } from "../../components";
 import { apiClient } from "../../lib/api";
 import { formatCompactDate } from "../../lib/format";
@@ -32,18 +37,19 @@ import type {
   WorkspaceTab,
 } from "../../lib/types";
 import { AgentInboxView } from "../agent-inbox/AgentInboxView";
+import { CandidatesKanbanView } from "../candidates/CandidatesKanbanView";
 import { CommunicationsView } from "../communications/CommunicationsView";
 import { DashboardView } from "../dashboard/DashboardView";
 import { EvolutionView } from "../evolution/EvolutionView";
 import { RecruitAgentView } from "../recruit-agent/RecruitAgentView";
 import { SettingsView } from "../settings/SettingsView";
-import { WorkbenchView } from "../workbench/WorkbenchView";
 
 const emptySettings: SettingsSnapshot = {
   locale: "en-US",
   timezone: "Asia/Shanghai",
   intranetEnabled: false,
   desktopApprovalsOnly: true,
+  autonomyEnabled: false,
   skillHealthAutonomyEnabled: false,
   skillHealthAutonomyIntervalSeconds: 300,
   providers: [],
@@ -58,6 +64,7 @@ const emptySettings: SettingsSnapshot = {
     cooldownDays: 30,
     allowOutboundMessaging: false,
     maxConcurrentRuns: 1,
+    minFunnelCandidates: 0,
   },
 };
 
@@ -472,6 +479,7 @@ export function DesktopWorkspace(): JSX.Element {
   const [jobMemories, setJobMemories] = useState<JobMemoryRecord[]>([]);
   const [globalMemory, setGlobalMemory] = useState<AgentGlobalMemoryRecord | null>(null);
   const [candidateThreads, setCandidateThreads] = useState<CandidateThreadRecord[]>([]);
+  const [stateMachine, setStateMachine] = useState<RecruitmentStateMachine | null>(null);
   const [evolutionArtifacts, setEvolutionArtifacts] = useState<EvolutionArtifactRecord[]>([]);
   const [goals, setGoals] = useState<GoalSpecRecord[]>([]);
   const [executionTraces, setExecutionTraces] = useState<ExecutionTraceRecord[]>([]);
@@ -511,6 +519,7 @@ export function DesktopWorkspace(): JSX.Element {
         nextJobMemories,
         nextGlobalMemory,
         nextCandidateThreads,
+        nextStateMachine,
         nextEvolutionArtifacts,
         nextMcpPresets,
         nextMcpServers,
@@ -533,6 +542,7 @@ export function DesktopWorkspace(): JSX.Element {
         apiClient.listJobMemories(),
         apiClient.getAgentGlobalMemory(),
         apiClient.listCandidateThreads(),
+        apiClient.getStateMachine(),
         apiClient.listEvolutionArtifacts(),
         apiClient.listMcpPresets(),
         apiClient.listMcpServers(),
@@ -559,6 +569,7 @@ export function DesktopWorkspace(): JSX.Element {
         setJobMemories(nextJobMemories);
         setGlobalMemory(nextGlobalMemory);
         setCandidateThreads(nextCandidateThreads);
+        setStateMachine(nextStateMachine);
         setEvolutionArtifacts(nextEvolutionArtifacts);
         setMcpPresets(nextMcpPresets);
         setMcpServers(nextMcpServers);
@@ -878,6 +889,11 @@ export function DesktopWorkspace(): JSX.Element {
     await loadWorkspace(copy("Recruit Agent profile saved.", "Recruit Agent 配置已保存。"));
   };
 
+  const handleSaveStateMachine = async (payload: RecruitmentStateMachineUpdatePayload) => {
+    await apiClient.updateStateMachine(payload);
+    await loadWorkspace(copy("State machine updated.", "状态机已更新。"));
+  };
+
   const handleCreateGoal = async (payload: {
     title: string;
     goalText: string;
@@ -965,19 +981,7 @@ export function DesktopWorkspace(): JSX.Element {
 
   const handleTransitionCandidateState = async (
     candidateId: string,
-    payload: {
-      toStatus: string;
-      phaseKey?: string;
-      phaseLabel?: string;
-      stageKey?: string;
-      stageLabel?: string;
-      note?: string;
-      source?: string;
-      actor?: string;
-      metadata?: Record<string, unknown>;
-      interviewRound?: number;
-      contactChannels?: string[];
-    },
+    payload: CandidateTransitionPayload,
   ) => {
     await apiClient.transitionCandidateState(candidateId, payload);
     await loadWorkspace(copy("Candidate state updated.", "候选人状态已更新。"));
@@ -1035,25 +1039,13 @@ export function DesktopWorkspace(): JSX.Element {
         );
       case "candidates":
         return (
-          <WorkbenchView
-            summary={summary}
-            data={runtimeData}
-            agent={summary.agent}
-            events={events}
-            selectedEpisodeId={selectedEpisodeId}
-            replay={selectedReplay}
-            syncStatus={syncStatus}
-            syncBacklog={syncBacklog}
-            queueItems={queueItems}
-            goals={goals}
-            traces={executionTraces}
-            graphs={executionGraphs}
-            runningAction={runtimeActionBusy}
-            syncingAction={syncingBacklog}
-            onOpenCommunications={openCommunications}
-            onOpenImportCenter={() => setTab("import-center")}
-            onOpenJdWorkspace={() => setTab("jd-workspace")}
-            onOpenAiReview={() => openAiReview("all")}
+          <CandidatesKanbanView
+            candidates={summary.candidates}
+            threads={candidateThreads}
+            stateMachine={stateMachine}
+            onOpenCandidate={(candidateId) => openCommunications("candidate", candidateId)}
+            onCreateEntry={handleCreateThreadEntry}
+            onTransition={handleTransitionCandidateState}
           />
         );
       case "import-center":
@@ -1072,12 +1064,14 @@ export function DesktopWorkspace(): JSX.Element {
         return (
           <RecruitAgentView
             profile={profile}
+            stateMachine={stateMachine}
             candidates={summary.candidates}
             skills={summary.skills}
             candidateMemories={candidateMemories}
             jobMemories={jobMemories}
             globalMemory={globalMemory}
             onSaveProfile={handleSaveProfile}
+            onSaveStateMachine={handleSaveStateMachine}
             onUpdateSkill={handleUpdateSkill}
             onDeleteSkill={handleDeleteSkill}
             onUpdateCandidateMemory={handleUpdateCandidateMemory}

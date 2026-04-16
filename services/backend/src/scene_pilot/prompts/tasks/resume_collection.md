@@ -11,3 +11,5 @@ Collect an already-available resume or attachment for the current candidate with
 - When the goal requires a local file, do not return `completed` unless you can verify a real local artifact path and its format.
 - If you can only recover text or page evidence but cannot verify a local file, return a structured failure or replan request that explains the gap clearly.
 - When you succeed, submit structured result data that includes candidate facts, resume evidence, local artifact path, and file format when known.
+- If the latest conversation clearly shows the candidate has withdrawn or wants a temporary cooldown instead of continuing the process, return a structured `rollback_signal` and stop the resume-collection path.
+- Use only explicit candidate intent for rollback. Do not guess.

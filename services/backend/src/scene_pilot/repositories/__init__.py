@@ -19,7 +19,7 @@ from .domain import (
     CandidateReviewDecisionRepository,
     CandidateScorecardRepository,
     CandidateSessionRepository,
-    CandidateStageEventRepository,
+    CandidateStatusTransitionRepository,
     CommunicationLogRepository,
     DecisionLogRepository,
     EnvironmentSnapshotRepository,
@@ -42,4 +42,5 @@ from .domain import (
     PlaybookRepository,
     PlaybookPatchRepository,
     PlaybookVersionRepository,
+    RecruitmentStateMachineVersionRepository,
 )

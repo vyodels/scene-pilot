@@ -29,6 +29,8 @@ class ProviderRuntimeSettings(BaseModel):
     anthropic_timeout_seconds: int = 180
     site_account: str = Field(default="本机场景 01", validation_alias=AliasChoices("site_account", "boss_account"))
     cooldown_days: int = 30
+    autonomy_min_funnel_candidates: int = 0
+    autonomy_sourcing_cooldown_seconds: int = 60
 
     def get(self, name: str, default: Any = None) -> Any:
         return getattr(self, name, default)

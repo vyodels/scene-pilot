@@ -30,7 +30,7 @@ from scene_pilot.models import (
     CandidateReviewDecision,
     CandidateScorecard,
     CandidateSession,
-    CandidateStageEvent,
+    CandidateStatusTransition,
     CommunicationLog,
     DecisionLog,
     EnvironmentSnapshot,
@@ -51,6 +51,7 @@ from scene_pilot.models import (
     Playbook,
     PlaybookPatch,
     PlaybookVersion,
+    RecruitmentStateMachineVersion,
 )
 from scene_pilot.schemas import AppSettingsRead, MetricsSummary
 
@@ -126,6 +127,26 @@ class CandidateRepository(BaseRepository[Candidate]):
         stmt = select(Candidate.status, func.count()).group_by(Candidate.status)
         return {status: count for status, count in self.session.execute(stmt).all()}
 
+    def count_by_current_statuses(self, statuses: list[str]) -> int:
+        normalized = [status for status in statuses if status]
+        if not normalized:
+            return 0
+        stmt = select(func.count()).select_from(Candidate).where(Candidate.current_status.in_(normalized))
+        return int(self.session.scalar(stmt) or 0)
+
+    def by_current_statuses(self, statuses: list[str], *, limit: int = 500, offset: int = 0) -> list[Candidate]:
+        normalized = [status for status in statuses if status]
+        if not normalized:
+            return []
+        stmt = (
+            select(Candidate)
+            .where(Candidate.current_status.in_(normalized))
+            .order_by(Candidate.updated_at.desc(), Candidate.id.asc())
+            .offset(offset)
+            .limit(limit)
+        )
+        return list(self.session.scalars(stmt).all())
+
     def resolve(self, candidate_id: str) -> Candidate | None:
         candidate = self.get(candidate_id)
         if candidate is not None:
@@ -133,9 +154,23 @@ class CandidateRepository(BaseRepository[Candidate]):
         stmt = select(Candidate).where(Candidate.platform_candidate_id == candidate_id)
         return self.session.scalars(stmt).first()
 
-    def update_state_snapshot(self, candidate: Candidate, *, status: str | None = None, snapshot: dict[str, Any] | None = None) -> Candidate:
+    def update_state_snapshot(
+        self,
+        candidate: Candidate,
+        *,
+        status: str | None = None,
+        current_status: str | None = None,
+        deepest_milestone: str | None = None,
+        snapshot: dict[str, Any] | None = None,
+    ) -> Candidate:
         if status is not None:
             candidate.status = status
+        if current_status is not None:
+            candidate.current_status = current_status
+        elif status is not None and not candidate.current_status:
+            candidate.current_status = status
+        if deepest_milestone is not None:
+            candidate.deepest_milestone = deepest_milestone
         if snapshot is not None:
             candidate.state_snapshot = snapshot
         candidate.updated_at = utcnow()
@@ -198,24 +233,24 @@ class CommunicationLogRepository(BaseRepository[CommunicationLog]):
         return list(self.session.scalars(stmt).all())
 
 
-class CandidateStageEventRepository(BaseRepository[CandidateStageEvent]):
-    model = CandidateStageEvent
+class CandidateStatusTransitionRepository(BaseRepository[CandidateStatusTransition]):
+    model = CandidateStatusTransition
 
-    def by_candidate(self, candidate_id: str, limit: int = 200, offset: int = 0) -> list[CandidateStageEvent]:
+    def by_candidate(self, candidate_id: str, limit: int = 200, offset: int = 0) -> list[CandidateStatusTransition]:
         stmt = (
-            select(CandidateStageEvent)
-            .where(CandidateStageEvent.candidate_id == candidate_id)
-            .order_by(CandidateStageEvent.occurred_at.asc(), CandidateStageEvent.id.asc())
+            select(CandidateStatusTransition)
+            .where(CandidateStatusTransition.candidate_id == candidate_id)
+            .order_by(CandidateStatusTransition.created_at.asc(), CandidateStatusTransition.id.asc())
             .offset(offset)
             .limit(limit)
         )
         return list(self.session.scalars(stmt).all())
 
-    def latest_for_candidate(self, candidate_id: str) -> CandidateStageEvent | None:
+    def latest_for_candidate(self, candidate_id: str) -> CandidateStatusTransition | None:
         stmt = (
-            select(CandidateStageEvent)
-            .where(CandidateStageEvent.candidate_id == candidate_id)
-            .order_by(CandidateStageEvent.occurred_at.desc(), CandidateStageEvent.id.desc())
+            select(CandidateStatusTransition)
+            .where(CandidateStatusTransition.candidate_id == candidate_id)
+            .order_by(CandidateStatusTransition.created_at.desc(), CandidateStatusTransition.id.desc())
         )
         return self.session.scalars(stmt).first()
 
@@ -345,6 +380,21 @@ class EvolutionArtifactRepository(BaseRepository[EvolutionArtifact]):
             stmt = stmt.where(EvolutionArtifact.status == status)
         stmt = stmt.order_by(EvolutionArtifact.created_at.desc(), EvolutionArtifact.id.desc()).offset(offset).limit(limit)
         return list(self.session.scalars(stmt).all())
+
+    def find_by_source_task_id(
+        self,
+        *,
+        source_task_id: str,
+        artifact_kind: str | None = None,
+    ) -> EvolutionArtifact | None:
+        stmt = select(EvolutionArtifact).order_by(EvolutionArtifact.created_at.desc(), EvolutionArtifact.id.desc())
+        if artifact_kind:
+            stmt = stmt.where(EvolutionArtifact.artifact_kind == artifact_kind)
+        for item in self.session.scalars(stmt):
+            metadata = dict(item.artifact_metadata or {})
+            if str(metadata.get("source_task_id") or "").strip() == source_task_id:
+                return item
+        return None
 
 
 class RecruitAgentProfileRepository(BaseRepository[RecruitAgentProfile]):
@@ -1099,6 +1149,46 @@ class TaskQueueRepository:
         stmt = select(TaskQueueItem.status, func.count()).group_by(TaskQueueItem.status)
         return {str(status): int(count or 0) for status, count in self.session.execute(stmt).all()}
 
+    def has_open_task_types(
+        self,
+        task_types: list[str],
+        *,
+        statuses: tuple[str, ...] = ("pending", "running"),
+    ) -> bool:
+        normalized_types = [task_type for task_type in task_types if task_type]
+        if not normalized_types:
+            return False
+        stmt = (
+            select(TaskQueueItem.id)
+            .where(
+                TaskQueueItem.task_type.in_(normalized_types),
+                TaskQueueItem.status.in_(statuses),
+            )
+            .limit(1)
+        )
+        return self.session.scalar(stmt) is not None
+
+    def open_candidate_ids_for_task_types(
+        self,
+        task_types: list[str],
+        *,
+        statuses: tuple[str, ...] = ("pending", "running"),
+    ) -> set[str]:
+        normalized_types = [task_type for task_type in task_types if task_type]
+        if not normalized_types:
+            return set()
+        stmt = select(TaskQueueItem.payload).where(
+            TaskQueueItem.task_type.in_(normalized_types),
+            TaskQueueItem.status.in_(statuses),
+        )
+        candidate_ids: set[str] = set()
+        for payload in self.session.scalars(stmt).all():
+            envelope = dict(payload or {})
+            candidate_id = str(envelope.get("candidate_id") or "").strip()
+            if candidate_id:
+                candidate_ids.add(candidate_id)
+        return candidate_ids
+
     def claim_next(self, *, locked_by: str = "scheduler") -> TaskQueueItem | None:
         now = utcnow()
         stmt = (
@@ -1206,6 +1296,29 @@ class SettingsRepository:
             record.payload = payload
         self.session.commit()
         return AppSettingsRead.model_validate(payload)
+
+
+class RecruitmentStateMachineVersionRepository(BaseRepository[RecruitmentStateMachineVersion]):
+    model = RecruitmentStateMachineVersion
+
+    def latest(self) -> RecruitmentStateMachineVersion | None:
+        stmt = (
+            select(RecruitmentStateMachineVersion)
+            .order_by(RecruitmentStateMachineVersion.version.desc())
+            .limit(1)
+        )
+        return self.session.scalars(stmt).first()
+
+    def get_version(self, version: int) -> RecruitmentStateMachineVersion | None:
+        return self.session.get(RecruitmentStateMachineVersion, version)
+
+    def list_versions(self, *, limit: int = 50) -> list[RecruitmentStateMachineVersion]:
+        stmt = (
+            select(RecruitmentStateMachineVersion)
+            .order_by(RecruitmentStateMachineVersion.version.desc())
+            .limit(limit)
+        )
+        return list(self.session.scalars(stmt).all())
 
 
 class SyncBacklogRepository:

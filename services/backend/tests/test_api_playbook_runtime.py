@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
+from datetime import timedelta
 from pathlib import Path
 import unittest
 
@@ -229,9 +230,13 @@ class ApiPlaybookRuntimeTests(unittest.TestCase):
         skills = self.client.get("/api/skills")
         self.assertEqual(skills.status_code, 200)
         promoted_skill = next(item for item in skills.json() if item["id"] == promoted_skill_id)
+        first_skill_key = promoted_skill["skill_id"]
         self.assertEqual(promoted_skill["bound_to_stage"], "candidate_probe")
         self.assertEqual(promoted_skill["status"], "approved")
         self.assertEqual(promoted_skill["platform"], "runtime-scene")
+        self.assertEqual(promoted_skill["skill_metadata"]["promotion_source"], "approval")
+        self.assertEqual(promoted_skill["skill_metadata"]["promotion_source_kind"], "approval")
+        self.assertEqual(promoted_skill["skill_metadata"]["promotion_source_id"], skill_draft_approval["id"])
 
         event_sources = [event.source for event in container.events.snapshot()]
         self.assertIn("learning", event_sources)
@@ -244,11 +249,84 @@ class ApiPlaybookRuntimeTests(unittest.TestCase):
         self.assertEqual(approved.status_code, 200)
         self.assertEqual(approved.json()["status"], "approved")
         self.assertEqual(approved.json()["payload"]["promoted_skill"]["status"], "approved")
+        self.assertEqual(approved.json()["payload"]["promoted_skill"]["version"], 1)
 
         skills = self.client.get("/api/skills")
         self.assertEqual(skills.status_code, 200)
-        promoted_skill = next(item for item in skills.json() if item["skill_id"].startswith("architecture_screening_v2"))
+        matching_skills = [item for item in skills.json() if item["skill_id"] == first_skill_key]
+        self.assertEqual(len(matching_skills), 1)
+        promoted_skill = matching_skills[0]
         self.assertEqual(promoted_skill["status"], "approved")
+        self.assertEqual(promoted_skill["version"], 1)
+        self.assertEqual(promoted_skill["id"], promoted_skill_id)
+        self.assertEqual(promoted_skill["skill_id"], first_skill_key)
+
+    def test_candidate_progression_run_persists_single_promotable_evolution_artifact(self) -> None:
+        from scene_pilot.runtime.models import LLMResponse
+        from scene_pilot.runtime.providers import ScriptedProvider
+
+        container = self.client.app.state.container
+        container.agent_control.agent_loop.provider = ScriptedProvider(
+            provider_name="scripted-progression-artifact",
+            responses=[
+                LLMResponse(
+                    content="Sent a concise outreach to validate backend ownership signals.",
+                    result_data={
+                        "status": "pass",
+                        "summary": "Candidate received the first outreach.",
+                    },
+                    skill_draft={
+                        "content": "Lead with ownership proof points before asking for resume.",
+                        "summary": "Outreach should emphasize ownership evidence.",
+                        "skill_name": "candidate_outreach_runtime",
+                    },
+                )
+            ],
+        )
+
+        queued = self.client.post(
+            "/api/agent/tasks",
+            json={
+                "task_type": "candidate_outreach",
+                "priority": 220,
+                "candidate_id": self.default_candidate_id,
+                "payload": {"message": "你好，我们想进一步聊聊后端 owner 经验。"},
+            },
+        )
+        self.assertEqual(queued.status_code, 200)
+        task_id = queued.json()["task_id"]
+
+        run_once = self.client.post("/api/agent/run-once")
+        self.assertEqual(run_once.status_code, 200)
+        self.assertEqual(run_once.json()["status"], "completed")
+
+        artifacts = self.client.get("/api/recruit-agent/evolution-artifacts?artifact_kind=skill_draft")
+        self.assertEqual(artifacts.status_code, 200)
+        matched = [
+            item
+            for item in artifacts.json()
+            if item["artifact_metadata"].get("source_task_id") == task_id
+        ]
+        self.assertEqual(len(matched), 1)
+        artifact = matched[0]
+        self.assertEqual(artifact["artifact_kind"], "skill_draft")
+        self.assertEqual(artifact["status"], "pending_review")
+        self.assertEqual(artifact["related_candidate_id"], self.default_candidate_id)
+        self.assertIn("skill_contract", artifact["artifact_body"])
+        self.assertIn("decision_trace", artifact["artifact_body"])
+        self.assertIn("model_skill_draft", artifact["artifact_body"])
+        self.assertNotIn("content", artifact["artifact_body"])
+        self.assertEqual(artifact["artifact_body"]["skill_contract"]["skill_id"], "candidate_outreach_progression")
+        self.assertEqual(artifact["artifact_body"]["skill_contract"]["bound_to_stage"], "candidate_outreach")
+
+        approvals = self.client.get("/api/approvals?pending_only=true")
+        self.assertEqual(approvals.status_code, 200)
+        progression_approvals = [
+            item
+            for item in approvals.json()
+            if item["target_type"] == "skill_draft" and item["payload"].get("task_id") == task_id
+        ]
+        self.assertEqual(progression_approvals, [])
 
     def test_runtime_persists_session_skill_and_playbook_run(self) -> None:
         from scene_pilot.models import CandidateSession, DecisionLog, ExecutionTrace
@@ -780,6 +858,408 @@ class ApiPlaybookRuntimeTests(unittest.TestCase):
         self.assertEqual(rejected.json()["payload"]["resolution"]["status"], "rejected")
         self.assertIn("closed_at", rejected.json()["payload"])
         self.assertFalse(rejected.json()["payload"]["resolution"]["resumed"])
+
+    def test_ai_auto_waiting_human_does_not_create_operator_interaction(self) -> None:
+        from scene_pilot.runtime.models import LLMResponse
+        from scene_pilot.runtime.providers import ScriptedProvider
+
+        container = self.client.app.state.container
+        container.agent_control.agent_loop.provider = ScriptedProvider(
+            provider_name="scripted-ai-auto-waiting",
+            responses=[
+                LLMResponse(
+                    content="Unexpected human escalation on ai_auto node.",
+                    requires_human_input=True,
+                )
+            ],
+        )
+
+        candidate = self.client.post(
+            "/api/candidates",
+            json={
+                "name": "AI Auto Candidate",
+                "platform": "site",
+                "status": "outreach_pending",
+                "current_status": "outreach_pending",
+                "jd_id": "jd-ai-auto",
+            },
+        ).json()
+
+        queued = self.client.post(
+            "/api/agent/tasks",
+            json={
+                "task_type": "candidate_probe",
+                "priority": 230,
+                "candidate_id": candidate["id"],
+                "payload": {"jd_criteria": "AI auto node"},
+            },
+        )
+        self.assertEqual(queued.status_code, 200)
+
+        run_once = self.client.post("/api/agent/run-once")
+        self.assertEqual(run_once.status_code, 200)
+        self.assertEqual(run_once.json()["status"], "waiting_human")
+
+        interactions = self.client.get(f"/api/recruit-agent/runtime/operator-interactions?candidate_id={candidate['id']}")
+        self.assertEqual(interactions.status_code, 200)
+        self.assertEqual(interactions.json(), [])
+
+    def test_human_required_locked_node_creates_operator_interaction_from_human_actions(self) -> None:
+        class _ShouldNotRunProvider:
+            provider_name = "should-not-run"
+
+            def generate(self, messages, *, tools=None, task=None, max_tokens=None, temperature=None):
+                raise AssertionError("human_required 节点应在进入 LLM 前直接挂起")
+
+        container = self.client.app.state.container
+        container.agent_control.agent_loop.provider = _ShouldNotRunProvider()
+
+        candidate = self.client.post(
+            "/api/candidates",
+            json={
+                "name": "Locked Review Candidate",
+                "platform": "site",
+                "status": "offer_pending",
+                "current_status": "offer_pending",
+                "jd_id": "jd-offer",
+            },
+        ).json()
+
+        queued = self.client.post(
+            "/api/agent/tasks",
+            json={
+                "task_type": "candidate_outreach",
+                "priority": 240,
+                "candidate_id": candidate["id"],
+                "payload": {"jd_criteria": "locked human review"},
+            },
+        )
+        self.assertEqual(queued.status_code, 200)
+
+        run_once = self.client.post("/api/agent/run-once")
+        self.assertEqual(run_once.status_code, 200)
+        self.assertEqual(run_once.json()["status"], "waiting_human")
+
+        interactions = self.client.get(f"/api/recruit-agent/runtime/operator-interactions?candidate_id={candidate['id']}")
+        self.assertEqual(interactions.status_code, 200)
+        payload = interactions.json()
+        self.assertEqual(len(payload), 1)
+        interaction = payload[0]
+        self.assertIn("已锁定", interaction["agent_prompt"])
+        self.assertEqual(
+            [item["label"] for item in interaction["suggested_options"]],
+            ["确认发出 Offer"],
+        )
+        self.assertEqual(interaction["suggested_options"][0]["to_status"], "offer_sent")
+
+    def test_agent_transition_candidate_records_history_and_advances_milestone(self) -> None:
+        from scene_pilot.runtime.models import LLMResponse
+        from scene_pilot.runtime.providers import ScriptedProvider
+
+        container = self.client.app.state.container
+        container.agent_control.agent_loop.provider = ScriptedProvider(
+            provider_name="scripted-transition-history",
+            responses=[
+                LLMResponse(
+                    content="Offline scoring completed.",
+                    result_data={
+                        "status": "completed",
+                        "summary": "Scoring completed",
+                        "candidates": [
+                            {
+                                "candidate_id": "__CANDIDATE_ID__",
+                                "name": "Offline Score Candidate",
+                                "platform": "site",
+                                "status": "offline_score_passed",
+                                "summary": "离线简历评分通过。",
+                            }
+                        ],
+                    },
+                )
+            ],
+        )
+
+        candidate = self.client.post(
+            "/api/candidates",
+            json={
+                "name": "Offline Score Candidate",
+                "platform": "site",
+                "status": "offline_scoring",
+                "current_status": "offline_scoring",
+                "deepest_milestone": "M06",
+                "jd_id": "jd-offline",
+            },
+        ).json()
+        container.agent_control.agent_loop.provider.responses[0].result_data["candidates"][0]["candidate_id"] = candidate["id"]
+
+        queued = self.client.post(
+            "/api/agent/tasks",
+            json={
+                "task_type": "candidate_scoring",
+                "priority": 250,
+                "candidate_id": candidate["id"],
+                "payload": {"jd_criteria": "offline scoring"},
+            },
+        )
+        self.assertEqual(queued.status_code, 200)
+
+        run_once = self.client.post("/api/agent/run-once")
+        self.assertEqual(run_once.status_code, 200)
+        self.assertEqual(run_once.json()["status"], "completed")
+
+        refreshed = self.client.get(f"/api/candidates/{candidate['id']}")
+        self.assertEqual(refreshed.status_code, 200)
+        self.assertEqual(refreshed.json()["current_status"], "offline_score_passed")
+        self.assertEqual(refreshed.json()["deepest_milestone"], "M08")
+
+        transitions = self.client.get(f"/api/recruit-agent/candidates/{candidate['id']}/transitions")
+        self.assertEqual(transitions.status_code, 200)
+        latest = transitions.json()[-1]
+        self.assertEqual(latest["actor"], "agent")
+        self.assertEqual(latest["to_status"], "offline_score_passed")
+        self.assertEqual(latest["milestone_updated"], "M08")
+        self.assertEqual(latest["trigger"], "标记线下评分通过")
+        self.assertEqual(latest["metadata"]["criteria_ref"]["skillId"], "resume_scoring_v1")
+
+    def test_retry_outbound_updates_waiting_retry_state_and_last_contacted_at(self) -> None:
+        from scene_pilot.db.base import utcnow
+        from scene_pilot.runtime.models import LLMResponse
+        from scene_pilot.runtime.providers import ScriptedProvider
+
+        container = self.client.app.state.container
+        container.agent_control.agent_loop.provider = ScriptedProvider(
+            provider_name="scripted-waiting-retry-outbound",
+            responses=[
+                LLMResponse(
+                    content="Follow-up reminder sent.",
+                    result_data={
+                        "status": "completed",
+                        "summary": "Sent a follow-up reminder because the candidate has not replied yet.",
+                        "message": "跟进一下，方便的话麻烦回复我。",
+                        "message_sent": True,
+                    },
+                )
+            ],
+        )
+
+        previous_contacted_at = utcnow() - timedelta(hours=96)
+        candidate = self.client.post(
+            "/api/candidates",
+            json={
+                "name": "Retry Follow Up Candidate",
+                "platform": "boss",
+                "status": "outreach_sent",
+                "current_status": "outreach_sent",
+                "jd_id": "jd-retry-follow-up",
+                "last_contacted_at": previous_contacted_at.isoformat(),
+                "state_snapshot": {
+                    "snapshot_metadata": {
+                        "waiting_retry": {
+                            "status": "outreach_sent",
+                            "retry_count": 1,
+                            "last_outbound_at": previous_contacted_at.isoformat(),
+                            "max_retries": 2,
+                            "retry_after_hours": 72,
+                            "close_after_hours": 168,
+                        }
+                    }
+                },
+            },
+        ).json()
+
+        queued = self.client.post(
+            "/api/agent/tasks",
+            json={
+                "task_type": "candidate_outreach",
+                "priority": 235,
+                "candidate_id": candidate["id"],
+                "payload": {
+                    "retryContext": {
+                        "sourceStatus": "outreach_sent",
+                        "retryCount": 2,
+                        "maxRetries": 2,
+                        "retryAfterHours": 72,
+                        "closeAfterHours": 168,
+                        "reason": "retry_window_elapsed",
+                    }
+                },
+            },
+        )
+        self.assertEqual(queued.status_code, 200)
+
+        run_once = self.client.post("/api/agent/run-once")
+        self.assertEqual(run_once.status_code, 200)
+        self.assertEqual(run_once.json()["status"], "completed")
+
+        refreshed = self.client.get(f"/api/candidates/{candidate['id']}")
+        self.assertEqual(refreshed.status_code, 200)
+        payload = refreshed.json()
+        self.assertEqual(payload["current_status"], "outreach_sent")
+        self.assertIsNotNone(payload["last_contacted_at"])
+        self.assertGreater(payload["last_contacted_at"], previous_contacted_at.isoformat())
+        waiting_retry = payload["state_snapshot"]["snapshot_metadata"]["waiting_retry"]
+        self.assertEqual(waiting_retry["status"], "outreach_sent")
+        self.assertEqual(waiting_retry["retry_count"], 2)
+        self.assertEqual(waiting_retry["max_retries"], 2)
+        self.assertEqual(waiting_retry["retry_after_hours"], 72)
+        self.assertEqual(waiting_retry["close_after_hours"], 168)
+
+    def test_agent_applies_conversation_rollback_signal_without_fake_outbound_message(self) -> None:
+        from scene_pilot.models import CommunicationLog
+        from scene_pilot.runtime.models import LLMResponse
+        from scene_pilot.runtime.providers import ScriptedProvider
+
+        container = self.client.app.state.container
+        container.agent_control.agent_loop.provider = ScriptedProvider(
+            provider_name="scripted-conversation-rollback-withdrew",
+            responses=[
+                LLMResponse(
+                    content="Candidate already accepted another offer.",
+                    result_data={
+                        "status": "completed",
+                        "summary": "Candidate explicitly withdrew from the process.",
+                        "rollback_signal": {
+                            "toStatus": "candidate_withdrew",
+                            "reason": "候选人明确表示已接受其他 Offer。",
+                            "evidenceExcerpt": "我已经接了别的 offer，先不继续了。",
+                            "signalKind": "conversation_signal",
+                        },
+                    },
+                )
+            ],
+        )
+
+        candidate = self.client.post(
+            "/api/candidates",
+            json={
+                "name": "Rollback Candidate",
+                "platform": "boss",
+                "status": "in_conversation",
+                "current_status": "in_conversation",
+                "deepest_milestone": "M04",
+                "jd_id": "jd-rollback",
+            },
+        ).json()
+        entry = self.client.post(
+            f"/api/recruit-agent/candidate-threads/{candidate['id']}/entries",
+            json={
+                "direction": "inbound",
+                "content": "我已经接了别的 offer，先不继续了。",
+                "message_type": "text",
+                "platform": "boss",
+            },
+        )
+        self.assertEqual(entry.status_code, 201)
+
+        queued = self.client.post(
+            "/api/agent/tasks",
+            json={
+                "task_type": "candidate_outreach",
+                "priority": 230,
+                "candidate_id": candidate["id"],
+                "payload": {},
+            },
+        )
+        self.assertEqual(queued.status_code, 200)
+
+        run_once = self.client.post("/api/agent/run-once")
+        self.assertEqual(run_once.status_code, 200)
+        self.assertEqual(run_once.json()["status"], "completed")
+
+        refreshed = self.client.get(f"/api/candidates/{candidate['id']}")
+        self.assertEqual(refreshed.status_code, 200)
+        self.assertEqual(refreshed.json()["current_status"], "candidate_withdrew")
+
+        transitions = self.client.get(f"/api/recruit-agent/candidates/{candidate['id']}/transitions")
+        self.assertEqual(transitions.status_code, 200)
+        latest = transitions.json()[-1]
+        self.assertEqual(latest["actor"], "agent_override")
+        self.assertEqual(latest["trigger"], "conversation_signal")
+        self.assertEqual(latest["to_status"], "candidate_withdrew")
+        self.assertEqual(latest["override_reason"], "候选人明确表示已接受其他 Offer。")
+        self.assertEqual(latest["metadata"]["signal_kind"], "conversation_signal")
+
+        with container.session_factory() as session:
+            logs = (
+                session.query(CommunicationLog)
+                .filter(CommunicationLog.candidate_id == candidate["id"])
+                .order_by(CommunicationLog.timestamp.asc())
+                .all()
+            )
+            self.assertEqual(len(logs), 1)
+            self.assertEqual(logs[0].direction, "inbound")
+
+    def test_agent_applies_cooldown_rollback_signal_and_sets_cooldown_until(self) -> None:
+        from scene_pilot.db.base import utcnow
+        from scene_pilot.models import Candidate
+        from scene_pilot.runtime.models import LLMResponse
+        from scene_pilot.runtime.providers import ScriptedProvider
+
+        container = self.client.app.state.container
+        container.agent_control.agent_loop.provider = ScriptedProvider(
+            provider_name="scripted-conversation-rollback-cooldown",
+            responses=[
+                LLMResponse(
+                    content="Candidate asked to revisit later.",
+                    result_data={
+                        "status": "completed",
+                        "summary": "Candidate prefers to pause and revisit later.",
+                        "rollback_signal": {
+                            "toStatus": "cooldown",
+                            "reason": "候选人明确表示暂时不考虑换工作。",
+                            "evidenceExcerpt": "最近不考虑换工作，一个月后再聊。",
+                            "signalKind": "conversation_signal",
+                            "cooldownDays": 14,
+                        },
+                    },
+                )
+            ],
+        )
+
+        candidate = self.client.post(
+            "/api/candidates",
+            json={
+                "name": "Cooldown Candidate",
+                "platform": "boss",
+                "status": "in_conversation",
+                "current_status": "in_conversation",
+                "deepest_milestone": "M04",
+                "jd_id": "jd-cooldown",
+            },
+        ).json()
+
+        queued = self.client.post(
+            "/api/agent/tasks",
+            json={
+                "task_type": "candidate_outreach",
+                "priority": 225,
+                "candidate_id": candidate["id"],
+                "payload": {},
+            },
+        )
+        self.assertEqual(queued.status_code, 200)
+
+        run_once = self.client.post("/api/agent/run-once")
+        self.assertEqual(run_once.status_code, 200)
+        self.assertEqual(run_once.json()["status"], "completed")
+
+        with container.session_factory() as session:
+            refreshed = session.get(Candidate, candidate["id"])
+            self.assertIsNotNone(refreshed)
+            assert refreshed is not None
+            self.assertEqual(refreshed.current_status, "cooldown")
+            self.assertIsNotNone(refreshed.cooldown_until)
+            remaining_days = (refreshed.cooldown_until.date() - utcnow().date()).days
+            self.assertGreaterEqual(remaining_days, 13)
+            self.assertLessEqual(remaining_days, 14)
+
+        transitions = self.client.get(f"/api/recruit-agent/candidates/{candidate['id']}/transitions")
+        self.assertEqual(transitions.status_code, 200)
+        latest = transitions.json()[-1]
+        self.assertEqual(latest["actor"], "agent_override")
+        self.assertEqual(latest["trigger"], "conversation_signal")
+        self.assertEqual(latest["to_status"], "cooldown")
+        self.assertEqual(latest["metadata"]["conversation_signal"]["cooldown_days"], 14)
 
     def test_system_command_request_enforces_flag_and_whitelist(self) -> None:
         container = self.client.app.state.container

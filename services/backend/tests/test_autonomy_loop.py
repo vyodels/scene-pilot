@@ -1,13 +1,21 @@
 import time
+from datetime import timedelta
 
 from fastapi.testclient import TestClient
 
 from scene_pilot.core.app import create_app
 from scene_pilot.core.settings import AppSettings, FeatureFlags
+from scene_pilot.db.base import utcnow
 from scene_pilot.models import Candidate, Skill
-from scene_pilot.repositories import AgentRunRepository, AgentWorkItemRepository, TaskQueueRepository
+from scene_pilot.repositories import (
+    AgentRunRepository,
+    AgentWorkItemRepository,
+    CandidateStatusTransitionRepository,
+    TaskQueueRepository,
+)
 from scene_pilot.runtime.models import LLMResponse
 from scene_pilot.runtime.providers import ScriptedProvider
+from scene_pilot.runtime.tools import ToolDefinition
 from scene_pilot.services.runtime_control import RuntimeControlService
 
 
@@ -122,6 +130,351 @@ def test_autonomy_loop_runs_periodic_skill_health_sweep(tmp_path):
             assert refreshed.last_health_status == "warning"
 
         assert any(event.source == "skill_health" for event in container.events.snapshot())
+
+
+def test_autonomy_loop_triggers_candidate_discovery_when_funnel_supply_is_low(tmp_path):
+    app = create_app(
+        AppSettings(
+            data_dir=str(tmp_path / "data"),
+            database_url=f"sqlite:///{tmp_path / 'recruit-agent.db'}",
+            feature_flags=FeatureFlags(enable_autonomy=True),
+            provider_config={
+                "autonomy_min_funnel_candidates": 1,
+                "autonomy_sourcing_cooldown_seconds": 1,
+            },
+        )
+    )
+    container = app.state.bootstrap_container
+    container.agent_control.agent_loop.provider = ScriptedProvider(
+        provider_name="scripted-autonomy-discovery",
+        responses=[
+            LLMResponse(
+                content="Autonomous discovery completed.",
+                result_data={"status": "discovered", "summary": "Auto sourcing run completed."},
+            )
+        ]
+        * 16,
+    )
+    if not container.agent_control.agent_loop.tools.has("test_browser_capability"):
+        container.agent_control.agent_loop.tools.register(
+            ToolDefinition(
+                name="test_browser_capability",
+                description="Test browser capability placeholder.",
+                parameters={"type": "object", "properties": {}, "additionalProperties": True},
+                handler=lambda arguments: {"ok": True, **arguments},
+                metadata={"capabilities": ["browser"]},
+            )
+        )
+
+    with TestClient(app) as client:
+        autonomy = client.app.state.autonomy_loop
+        assert autonomy.enabled is True
+        assert autonomy.is_running() is True
+
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            if any(outcome.task.task_type == "candidate_discovery" for outcome in container.scheduler.history):
+                break
+            time.sleep(0.05)
+
+        assert any(outcome.task.task_type == "candidate_discovery" for outcome in container.scheduler.history)
+        assert any(
+            event.source == "autonomy" and "below threshold" in event.message.lower()
+            for event in container.events.snapshot()
+        )
+
+
+def test_agent_control_prioritizes_high_potential_candidate_for_progression(tmp_path):
+    app = create_app(
+        AppSettings(
+            data_dir=str(tmp_path / "data"),
+            database_url=f"sqlite:///{tmp_path / 'recruit-agent.db'}",
+        )
+    )
+    container = app.state.bootstrap_container
+    if not container.agent_control.agent_loop.tools.has("test_browser_capability"):
+        container.agent_control.agent_loop.tools.register(
+            ToolDefinition(
+                name="test_browser_capability",
+                description="Test browser capability placeholder.",
+                parameters={"type": "object", "properties": {}, "additionalProperties": True},
+                handler=lambda arguments: {"ok": True, **arguments},
+                metadata={"capabilities": ["browser"]},
+            )
+        )
+
+    with container.session_factory() as session:
+        lower_rank = Candidate(
+            name="Recent Candidate",
+            platform="boss",
+            platform_candidate_id="boss_priority_recent",
+            status="discovered",
+            current_status="discovered",
+            ai_scores={"overall": 62},
+        )
+        higher_rank = Candidate(
+            name="Priority Candidate",
+            platform="boss",
+            platform_candidate_id="boss_priority_high",
+            status="discovered",
+            current_status="discovered",
+            ai_scores={"overall": 96},
+        )
+        session.add_all([lower_rank, higher_rank])
+        session.commit()
+        higher_candidate_id = higher_rank.id
+        lower_rank.updated_at = utcnow()
+        higher_rank.updated_at = utcnow() - timedelta(days=2)
+        session.commit()
+
+    task = container.agent_control.maybe_enqueue_priority_candidate_progression()
+    assert task is not None
+    assert task.task_type == "candidate_probe"
+    assert task.candidate_id == higher_candidate_id
+    assert task.payload["selection"]["candidateId"] == higher_candidate_id
+    assert task.payload["selection"]["selectedTaskType"] == "candidate_probe"
+    assert task.payload["selection"]["scoreBreakdown"]["total"] > 0
+    assert "reason" in task.payload["selection"]
+
+    with container.session_factory() as session:
+        selected = session.get(Candidate, task.candidate_id)
+        assert selected is not None
+        assert selected.platform_candidate_id == "boss_priority_high"
+        queue_item = TaskQueueRepository(session).get(task.task_id)
+        assert queue_item is not None
+        assert queue_item.priority == task.priority
+
+    assert task.metadata["autonomy_trigger"] == "candidate_priority_queue"
+    assert task.metadata["candidate_priority_score"] > 0
+    assert task.metadata["candidate_priority_reason"]
+
+
+def test_agent_control_skips_candidates_that_already_have_open_task(tmp_path):
+    app = create_app(
+        AppSettings(
+            data_dir=str(tmp_path / "data"),
+            database_url=f"sqlite:///{tmp_path / 'recruit-agent.db'}",
+        )
+    )
+    container = app.state.bootstrap_container
+    if not container.agent_control.agent_loop.tools.has("test_browser_capability"):
+        container.agent_control.agent_loop.tools.register(
+            ToolDefinition(
+                name="test_browser_capability",
+                description="Test browser capability placeholder.",
+                parameters={"type": "object", "properties": {}, "additionalProperties": True},
+                handler=lambda arguments: {"ok": True, **arguments},
+                metadata={"capabilities": ["browser"]},
+            )
+        )
+
+    with container.session_factory() as session:
+        blocked = Candidate(
+            name="Blocked Candidate",
+            platform="boss",
+            platform_candidate_id="boss_priority_blocked",
+            status="discovered",
+            current_status="discovered",
+            ai_scores={"overall": 99},
+        )
+        fallback = Candidate(
+            name="Fallback Candidate",
+            platform="boss",
+            platform_candidate_id="boss_priority_fallback",
+            status="discovered",
+            current_status="discovered",
+            ai_scores={"overall": 76},
+        )
+        session.add_all([blocked, fallback])
+        session.commit()
+        blocked_candidate_id = blocked.id
+        fallback_candidate_id = fallback.id
+        blocked.updated_at = utcnow() - timedelta(days=1)
+        fallback.updated_at = utcnow() - timedelta(hours=12)
+        session.commit()
+
+    container.agent_control.enqueue_task(
+        "candidate_probe",
+        candidate_id=blocked_candidate_id,
+        payload={"seed": "existing-open-task"},
+        priority=280,
+    )
+
+    task = container.agent_control.maybe_enqueue_priority_candidate_progression()
+    assert task is not None
+    assert task.candidate_id == fallback_candidate_id
+    assert task.payload["selection"]["candidateId"] == fallback_candidate_id
+
+
+def test_autonomy_loop_queues_priority_candidate_progression_when_idle(tmp_path):
+    app = create_app(
+        AppSettings(
+            data_dir=str(tmp_path / "data"),
+            database_url=f"sqlite:///{tmp_path / 'recruit-agent.db'}",
+            feature_flags=FeatureFlags(enable_autonomy=True),
+        )
+    )
+    container = app.state.bootstrap_container
+    container.agent_control.agent_loop.provider = ScriptedProvider(
+        provider_name="scripted-autonomy-priority",
+        responses=[
+            LLMResponse(
+                content="Priority candidate progression completed.",
+                result_data={"status": "pass", "summary": "Priority candidate progressed."},
+            )
+        ]
+        * 16,
+    )
+    if not container.agent_control.agent_loop.tools.has("test_browser_capability"):
+        container.agent_control.agent_loop.tools.register(
+            ToolDefinition(
+                name="test_browser_capability",
+                description="Test browser capability placeholder.",
+                parameters={"type": "object", "properties": {}, "additionalProperties": True},
+                handler=lambda arguments: {"ok": True, **arguments},
+                metadata={"capabilities": ["browser"]},
+            )
+        )
+
+    with container.session_factory() as session:
+        candidate = Candidate(
+            name="Autonomy Priority Candidate",
+            platform="boss",
+            platform_candidate_id="boss_priority_loop",
+            status="discovered",
+            current_status="discovered",
+            ai_scores={"overall": 91},
+        )
+        session.add(candidate)
+        session.commit()
+
+    with TestClient(app) as client:
+        autonomy = client.app.state.autonomy_loop
+        assert autonomy.enabled is True
+        assert autonomy.is_running() is True
+
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            if any(outcome.task.task_type == "candidate_probe" for outcome in container.scheduler.history):
+                break
+            time.sleep(0.05)
+
+        assert any(outcome.task.task_type == "candidate_probe" for outcome in container.scheduler.history)
+        assert any(
+            event.source == "autonomy" and "priority candidate progression" in event.message.lower()
+            for event in container.events.snapshot()
+        )
+
+
+def test_agent_control_queues_waiting_candidate_retry_when_window_elapsed(tmp_path):
+    app = create_app(
+        AppSettings(
+            data_dir=str(tmp_path / "data"),
+            database_url=f"sqlite:///{tmp_path / 'recruit-agent.db'}",
+        )
+    )
+    container = app.state.bootstrap_container
+    if not container.agent_control.agent_loop.tools.has("test_browser_capability"):
+        container.agent_control.agent_loop.tools.register(
+            ToolDefinition(
+                name="test_browser_capability",
+                description="Test browser capability placeholder.",
+                parameters={"type": "object", "properties": {}, "additionalProperties": True},
+                handler=lambda arguments: {"ok": True, **arguments},
+                metadata={"capabilities": ["browser"]},
+            )
+        )
+
+    with container.session_factory() as session:
+        candidate = Candidate(
+            name="Retry Candidate",
+            platform="boss",
+            platform_candidate_id="boss_retry_candidate",
+            status="outreach_sent",
+            current_status="outreach_sent",
+            last_contacted_at=utcnow() - timedelta(hours=96),
+            state_snapshot={
+                "snapshot_metadata": {
+                    "waiting_retry": {
+                        "status": "outreach_sent",
+                        "retry_count": 0,
+                        "last_outbound_at": (utcnow() - timedelta(hours=96)).isoformat(),
+                    }
+                }
+            },
+        )
+        session.add(candidate)
+        session.commit()
+        candidate_id = candidate.id
+
+    task = container.agent_control.maybe_process_waiting_candidate_retry()
+    assert task is not None
+    assert task.task_type == "candidate_outreach"
+    assert task.candidate_id == candidate_id
+    assert task.payload["autonomy_source"] == "waiting_candidate_retry"
+    assert task.payload["retryContext"]["retryCount"] == 1
+    assert task.payload["retryContext"]["reason"] == "retry_window_elapsed"
+    assert task.metadata["autonomy_trigger"] == "waiting_candidate_retry"
+    assert task.metadata["retry_policy_retry_count"] == 1
+
+
+def test_agent_control_closes_waiting_candidate_to_no_response_after_retry_exhaustion(tmp_path):
+    app = create_app(
+        AppSettings(
+            data_dir=str(tmp_path / "data"),
+            database_url=f"sqlite:///{tmp_path / 'recruit-agent.db'}",
+        )
+    )
+    container = app.state.bootstrap_container
+
+    with container.session_factory() as session:
+        last_contacted_at = utcnow() - timedelta(hours=200)
+        candidate = Candidate(
+            name="Close Candidate",
+            platform="boss",
+            platform_candidate_id="boss_retry_close",
+            status="outreach_sent",
+            current_status="outreach_sent",
+            last_contacted_at=last_contacted_at,
+            state_snapshot={
+                "snapshot_metadata": {
+                    "waiting_retry": {
+                        "status": "outreach_sent",
+                        "retry_count": 2,
+                        "last_outbound_at": last_contacted_at.isoformat(),
+                        "max_retries": 2,
+                        "retry_after_hours": 72,
+                        "close_after_hours": 168,
+                    }
+                }
+            },
+        )
+        session.add(candidate)
+        session.commit()
+        candidate_id = candidate.id
+
+    result = container.agent_control.maybe_process_waiting_candidate_retry()
+    assert result == {
+        "action": "close_to_no_response",
+        "candidate_id": candidate_id,
+        "current_status": "outreach_sent",
+        "reason": "retry_limit_reached + close_window_elapsed",
+    }
+
+    with container.session_factory() as session:
+        refreshed = session.get(Candidate, candidate_id)
+        assert refreshed is not None
+        assert refreshed.current_status == "no_response"
+        waiting_retry = refreshed.state_snapshot["snapshot_metadata"]["waiting_retry"]
+        assert waiting_retry["status"] == "no_response"
+        assert waiting_retry["retry_count"] == 2
+        assert waiting_retry["close_reason"] == "retry_policy_timeout"
+        assert waiting_retry["closed_at"]
+        transition = CandidateStatusTransitionRepository(session).latest_for_candidate(candidate_id)
+        assert transition is not None
+        assert transition.to_status == "no_response"
+        assert transition.actor == "agent"
+        assert transition.trigger == "retry_policy_timeout"
 
 
 def test_runtime_recovery_restores_recently_interrupted_run_on_restart(tmp_path):

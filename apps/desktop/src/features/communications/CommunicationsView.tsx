@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import type { CandidateTransitionPayload } from "@scene-pilot/shared";
 import { Panel, StatusBadge } from "../../components";
 import { formatCompactDate } from "../../lib/format";
 import { useI18n } from "../../lib/i18n";
@@ -19,22 +20,7 @@ interface CommunicationsViewProps {
   onApprove(id: string): Promise<void> | void;
   onReject(id: string): Promise<void> | void;
   onCreateEntry(candidateId: string, payload: { direction: string; content: string; messageType?: string; platform?: string }): Promise<void> | void;
-  onTransitionState(
-    candidateId: string,
-    payload: {
-      toStatus: string;
-      phaseKey?: string;
-      phaseLabel?: string;
-      stageKey?: string;
-      stageLabel?: string;
-      note?: string;
-      source?: string;
-      actor?: string;
-      metadata?: Record<string, unknown>;
-      interviewRound?: number;
-      contactChannels?: string[];
-    },
-  ): Promise<void> | void;
+  onTransitionState(candidateId: string, payload: CandidateTransitionPayload): Promise<void> | void;
   onCreateAssessment(
     candidateId: string,
     payload: {
@@ -529,11 +515,12 @@ export function CommunicationsView({
       .map((item) => item.trim())
       .filter(Boolean);
     await onTransitionState(selectedThread.candidate.id, {
+      actor: "recruiter",
       toStatus: transitionStatus,
+      trigger: "manual_transition",
       stageKey: transitionStatus,
       stageLabel: transitionStatus,
       note: transitionNote.trim() || undefined,
-      source: "operator",
       interviewRound: Number(interviewRoundDraft || "0") || undefined,
       contactChannels,
     });

@@ -1,3 +1,5 @@
+import type { CandidateStatusTransition } from "@scene-pilot/shared";
+
 export type WorkspaceTab =
   | "home"
   | "candidates"
@@ -43,7 +45,9 @@ export interface CandidateRecord {
   platform: string;
   location: string;
   status: CandidateStatus;
+  currentStatus?: string;
   stageKey: string;
+  deepestMilestone?: string | null;
   jdTitle: string;
   matchScore: number;
   experienceYears: number;
@@ -460,6 +464,7 @@ export interface CandidateThreadRecord {
   communicationLogs: CandidateConversationEntry[];
   stateSnapshot: CandidateStateSnapshotRecord;
   stageEvents: CandidateStageEventRecord[];
+  statusTransitions: CandidateStatusTransition[];
   assessments: CandidateAssessmentRecord[];
   assignments: CandidateAssignmentRecord[];
   resumeArtifacts: ResumeArtifactRecord[];
@@ -607,6 +612,7 @@ export interface SettingsSnapshot {
   timezone: string;
   intranetEnabled: boolean;
   desktopApprovalsOnly: boolean;
+  autonomyEnabled: boolean;
   skillHealthAutonomyEnabled: boolean;
   skillHealthAutonomyIntervalSeconds?: number | null;
   providers: ProviderConfig[];
@@ -622,6 +628,7 @@ export interface SettingsSnapshot {
     cooldownDays: number;
     allowOutboundMessaging: boolean;
     maxConcurrentRuns: number;
+    minFunnelCandidates: number;
   };
 }
 

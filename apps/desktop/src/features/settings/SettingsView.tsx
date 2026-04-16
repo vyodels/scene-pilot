@@ -198,6 +198,11 @@ export function SettingsView({
         <div style={{ display: "grid", gap: "var(--space-3)" }}>
           <StatusBadge tone={draft.desktopApprovalsOnly ? "warning" : "neutral"}>{draft.desktopApprovalsOnly ? copy("desktop review only", "仅桌面复核") : copy("mixed review mode", "混合复核模式")}</StatusBadge>
           <StatusBadge tone={draft.intranetEnabled ? "positive" : "neutral"}>{draft.intranetEnabled ? copy("intranet sync enabled", "已启用内网同步") : copy("no intranet sync", "未启用内网同步")}</StatusBadge>
+          <StatusBadge tone={draft.autonomyEnabled ? "positive" : "neutral"}>
+            {draft.autonomyEnabled
+              ? copy("autonomous loop enabled", "已启用自主运行")
+              : copy("autonomous loop disabled", "自主运行未启用")}
+          </StatusBadge>
           <StatusBadge tone={draft.skillHealthAutonomyEnabled ? "positive" : "neutral"}>
             {draft.skillHealthAutonomyEnabled
               ? copy(`review checks every ${draft.skillHealthAutonomyIntervalSeconds}s`, `复核检查每 ${draft.skillHealthAutonomyIntervalSeconds} 秒执行一次`)
@@ -221,6 +226,14 @@ export function SettingsView({
               onChange={(event) => setDraft((current) => ({ ...current, desktopApprovalsOnly: event.target.checked }))}
             />
             {copy("Keep reviews desktop-only", "复核仅在桌面端完成")}
+          </label>
+          <label style={{ display: "flex", alignItems: "center", gap: "var(--space-3)", fontSize: "var(--font-size-base)" }}>
+            <input
+              type="checkbox"
+              checked={draft.autonomyEnabled}
+              onChange={(event) => setDraft((current) => ({ ...current, autonomyEnabled: event.target.checked }))}
+            />
+            {copy("Enable autonomous sourcing loop", "启用自主补人循环")}
           </label>
           <label style={{ display: "flex", alignItems: "center", gap: "var(--space-3)", fontSize: "var(--font-size-base)" }}>
             <input
@@ -298,6 +311,24 @@ export function SettingsView({
                   platform: {
                     ...current.platform,
                     maxConcurrentRuns: Math.max(1, Number(event.target.value || current.platform.maxConcurrentRuns || 1)),
+                  },
+                }))
+              }
+              style={inputStyle}
+            />
+          </label>
+          <label style={{ display: "grid", gap: "var(--space-2)", fontSize: "var(--font-size-sm)", color: theme.colors.muted }}>
+            {copy("Minimum funnel candidates before auto sourcing", "触发自主补人的最小漏斗人数")}
+            <input
+              type="number"
+              min={0}
+              value={draft.platform.minFunnelCandidates}
+              onChange={(event) =>
+                setDraft((current) => ({
+                  ...current,
+                  platform: {
+                    ...current.platform,
+                    minFunnelCandidates: Math.max(0, Number(event.target.value || 0)),
                   },
                 }))
               }
@@ -620,6 +651,7 @@ export function SettingsView({
               onSave({
                 intranetEnabled: draft.intranetEnabled,
                 desktopApprovalsOnly: draft.desktopApprovalsOnly,
+                autonomyEnabled: draft.autonomyEnabled,
                 skillHealthAutonomyEnabled: draft.skillHealthAutonomyEnabled,
                 skillHealthAutonomyIntervalSeconds: draft.skillHealthAutonomyIntervalSeconds,
                 platform: draft.platform,

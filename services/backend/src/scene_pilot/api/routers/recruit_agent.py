@@ -25,12 +25,13 @@ from scene_pilot.repositories import (
     CandidateReviewDecisionRepository,
     CandidateScorecardRepository,
     CandidateSessionRepository,
-    CandidateStageEventRepository,
+    CandidateStatusTransitionRepository,
     CommunicationLogRepository,
     EvolutionArtifactRepository,
     JobMemoryRepository,
     RecruitAgentProfileRepository,
     ResumeArtifactRepository,
+    SkillRepository,
     StrategyFragmentRepository,
     TalentPoolSyncRecordRepository,
 )
@@ -51,7 +52,7 @@ from scene_pilot.schemas import (
     CandidateReviewDecisionRead,
     CandidateScorecardCreate,
     CandidateScorecardRead,
-    CandidateStageEventRead,
+    CandidateStatusTransitionRead,
     CandidateStateSnapshotRead,
     CandidateStateTransitionRequest,
     CandidateThreadRead,
@@ -82,11 +83,11 @@ from scene_pilot.schemas import (
 )
 from scene_pilot.services.container import AppContainer
 from scene_pilot.services.events import EventStreamService
+from scene_pilot.services.evolution import promote_skill_draft_contract, resolve_promoted_skill_snapshot
 from scene_pilot.services.recruit_agent import (
     AUTO_COMPACT_THRESHOLD,
     apply_memory_compaction,
     content_length,
-    DEFAULT_CANDIDATE_STATUSES,
     default_candidate_state_snapshot,
     ensure_candidate_memory,
     ensure_global_memory,
@@ -96,6 +97,7 @@ from scene_pilot.services.recruit_agent import (
     resolve_context_policy,
     validate_evolution_artifact,
 )
+from scene_pilot.services.state_machine import available_state_statuses, transition_candidate
 
 router = APIRouter(prefix="/api/recruit-agent", tags=["recruit-agent"])
 
@@ -149,24 +151,25 @@ def _ensure_runtime_session(session: Session):
 
 
 def _candidate_state_snapshot(candidate) -> CandidateStateSnapshotRead:
+    current_status = candidate.current_status or candidate.status
     payload = dict(candidate.state_snapshot or {})
     if not payload:
-        payload = default_candidate_state_snapshot(status=candidate.status)
+        payload = default_candidate_state_snapshot(status=current_status)
     if payload.get("current_stage_key") in {None, ""}:
-        payload["current_stage_key"] = candidate.status
+        payload["current_stage_key"] = current_status
     if payload.get("current_stage_label") in {None, ""}:
         payload["current_stage_label"] = str(payload["current_stage_key"]).replace("_", " ")
     if payload.get("contact_channels") is None:
         payload["contact_channels"] = []
     if payload.get("interview_plan") is None:
-        payload["interview_plan"] = default_candidate_state_snapshot(status=candidate.status)["interview_plan"]
+        payload["interview_plan"] = default_candidate_state_snapshot(status=current_status)["interview_plan"]
     return CandidateStateSnapshotRead.model_validate(payload)
 
 
 def _build_candidate_thread(session: Session, candidate) -> CandidateThreadRead:
     session_repo = CandidateSessionRepository(session)
     logs_repo = CommunicationLogRepository(session)
-    stage_repo = CandidateStageEventRepository(session)
+    transition_repo = CandidateStatusTransitionRepository(session)
     assessment_repo = CandidateAssessmentRepository(session)
     assignment_repo = CandidateAssignmentRepository(session)
     resume_repo = ResumeArtifactRepository(session)
@@ -175,28 +178,10 @@ def _build_candidate_thread(session: Session, candidate) -> CandidateThreadRead:
     sync_repo = TalentPoolSyncRecordRepository(session)
     candidate_session = session_repo.by_candidate_id(candidate.id)
     logs = logs_repo.by_candidate(candidate.id, limit=200, offset=0)
-    stage_events = stage_repo.by_candidate(candidate.id, limit=200, offset=0)
-    if not stage_events:
-        stage_events = [
-            CandidateStageEventRead(
-                id=f"synthetic-stage-{candidate.id}",
-                candidate_id=candidate.id,
-                event_type="stage_snapshot",
-                from_status=None,
-                to_status=candidate.status,
-                phase_key=_candidate_state_snapshot(candidate).current_phase_key,
-                phase_label=_candidate_state_snapshot(candidate).current_phase_label,
-                stage_key=candidate.current_stage_key or candidate.status,
-                stage_label=_candidate_state_snapshot(candidate).current_stage_label,
-                actor="agent",
-                source="synthetic",
-                note="首次候选人状态快照。",
-                payload={},
-                occurred_at=candidate.updated_at,
-                created_at=candidate.updated_at,
-                updated_at=candidate.updated_at,
-            )
-        ]
+    status_transitions = [
+        CandidateStatusTransitionRead.model_validate(item)
+        for item in transition_repo.by_candidate(candidate.id, limit=200, offset=0)
+    ]
     assessments = assessment_repo.by_candidate(candidate.id, limit=50, offset=0)
     if candidate.ai_scores and not any(item.assessment_type == "ai" for item in assessments):
         assessments = [
@@ -204,7 +189,7 @@ def _build_candidate_thread(session: Session, candidate) -> CandidateThreadRead:
                 id=f"synthetic-ai-{candidate.id}",
                 candidate_id=candidate.id,
                 assessment_type="ai",
-                stage_key=candidate.current_stage_key or candidate.status,
+                stage_key=candidate.current_stage_key or candidate.current_status or candidate.status,
                 status="completed",
                 decision=str((candidate.ai_scores or {}).get("decision") or "pending"),
                 score=int((candidate.ai_scores or {}).get("overall") or 0),
@@ -247,14 +232,14 @@ def _build_candidate_thread(session: Session, candidate) -> CandidateThreadRead:
             for item in logs
         ],
         state_snapshot=_candidate_state_snapshot(candidate),
-        stage_events=[item if isinstance(item, CandidateStageEventRead) else CandidateStageEventRead.model_validate(item) for item in stage_events],
+        status_transitions=status_transitions,
         assessments=assessments,
         assignments=assignments,
         resume_artifacts=resume_artifacts,
         scorecards=scorecards,
         review_decisions=review_decisions,
         sync_records=sync_records,
-        available_statuses=DEFAULT_CANDIDATE_STATUSES,
+        available_statuses=available_state_statuses(session),
         runtime_approvals=_runtime_approvals_for_candidate(session, candidate.id),
         runtime_interactions=_runtime_interactions_for_candidate(session, candidate.id),
     )
@@ -285,74 +270,6 @@ def _next_recommended_stages(status: str) -> list[str]:
         "cooldown": ["pending_communication"],
     }
     return mapping.get(status, [])
-
-
-def _apply_transition_snapshot(
-    candidate,
-    payload: CandidateStateTransitionRequest,
-) -> dict[str, Any]:
-    snapshot = dict(candidate.state_snapshot or {}) or default_candidate_state_snapshot(status=candidate.status)
-    snapshot["current_stage_key"] = payload.stage_key or payload.to_status
-    snapshot["current_stage_label"] = payload.stage_label or str(snapshot["current_stage_key"]).replace("_", " ")
-    if payload.phase_key is not None:
-        snapshot["current_phase_key"] = payload.phase_key
-    if payload.phase_label is not None:
-        snapshot["current_phase_label"] = payload.phase_label
-    if payload.contact_channels is not None:
-        unique_channels = [item for item in dict.fromkeys(payload.contact_channels) if item]
-        snapshot["contact_channels"] = unique_channels
-        snapshot["contact_acquired"] = bool(unique_channels)
-        snapshot["contact_status"] = "acquired" if unique_channels else "missing"
-    if payload.to_status == "contact_acquired" and not snapshot.get("contact_channels"):
-        contact_info = dict(candidate.contact_info or {})
-        channels = [key for key in ("phone", "mobile", "wechat") if contact_info.get(key)]
-        snapshot["contact_channels"] = channels
-        snapshot["contact_acquired"] = bool(channels)
-        snapshot["contact_status"] = "acquired" if channels else "missing"
-    if payload.to_status == "resume_requested":
-        snapshot["resume_status"] = "requested"
-    elif payload.to_status == "resume_received":
-        snapshot["resume_status"] = "received"
-    if payload.to_status == "ai_assessment_completed":
-        snapshot["ai_assessment_status"] = "completed"
-    if payload.to_status == "human_assessment_pending":
-        snapshot["human_assessment_status"] = "pending"
-    elif payload.to_status == "human_assessment_completed":
-        snapshot["human_assessment_status"] = "completed"
-    interview_plan = dict(snapshot.get("interview_plan") or default_candidate_state_snapshot()["interview_plan"])
-    rounds = list(interview_plan.get("rounds") or [])
-    if payload.interview_round is not None:
-        interview_plan["active_round"] = payload.interview_round
-        found = False
-        for round_item in rounds:
-            if int(round_item.get("round") or 0) == payload.interview_round:
-                found = True
-                if payload.to_status.startswith("waiting_schedule_"):
-                    round_item["status"] = "waiting_schedule"
-                elif payload.to_status.startswith("interview_"):
-                    round_item["status"] = "scheduled"
-                round_item["updated_at"] = _now().isoformat()
-                if payload.note:
-                    round_item["summary"] = payload.note
-        if not found:
-            rounds.append(
-                {
-                    "round": payload.interview_round,
-                    "label": f"第 {payload.interview_round} 轮",
-                    "status": "scheduled" if payload.to_status.startswith("interview_") else "waiting_schedule",
-                    "updated_at": _now().isoformat(),
-                    "summary": payload.note,
-                }
-            )
-    interview_plan["rounds"] = rounds
-    snapshot["interview_plan"] = interview_plan
-    snapshot["latest_note"] = payload.note
-    snapshot["latest_transition_at"] = _now().isoformat()
-    snapshot["latest_transition_source"] = payload.source
-    snapshot["next_recommended_stages"] = _next_recommended_stages(payload.to_status)
-    snapshot.setdefault("snapshot_metadata", {})
-    snapshot["snapshot_metadata"]["manual_override"] = payload.source == "operator"
-    return snapshot
 
 
 @router.get("/profile", response_model=RecruitAgentProfileRead)
@@ -743,49 +660,19 @@ def transition_candidate_state(
     payload: CandidateStateTransitionRequest,
     session: Session = Depends(get_session),
 ) -> CandidateThreadRead:
-    candidate_repo = CandidateRepository(session)
     candidate = _get_candidate_or_404(session, candidate_id)
-    previous_status = candidate.status
-    next_snapshot = _apply_transition_snapshot(candidate, payload)
-    contact_info = dict(candidate.contact_info or {})
-    if payload.contact_channels is not None:
-        if "phone" in payload.contact_channels or "mobile" in payload.contact_channels:
-            contact_info.setdefault("has_phone", True)
-        if "wechat" in payload.contact_channels:
-            contact_info.setdefault("has_wechat", True)
-        candidate.contact_info = contact_info
-    candidate.current_stage_key = payload.stage_key or payload.to_status
-    candidate_repo.update_state_snapshot(candidate, status=payload.to_status, snapshot=next_snapshot)
-    CandidateStageEventRepository(session).create(
-        {
-            "candidate_id": candidate.id,
-            "event_type": "stage_transition",
-            "from_status": previous_status,
-            "to_status": payload.to_status,
-            "phase_key": payload.phase_key,
-            "phase_label": payload.phase_label,
-            "stage_key": payload.stage_key or payload.to_status,
-            "stage_label": payload.stage_label or str(payload.stage_key or payload.to_status).replace("_", " "),
-            "actor": payload.actor,
-            "source": payload.source,
-            "note": payload.note,
-            "payload": {
-                **dict(payload.metadata or {}),
-                "interview_round": payload.interview_round,
-                "contact_channels": payload.contact_channels,
-            },
-            "occurred_at": _now(),
-        }
-    )
+    try:
+        transition_candidate(session, candidate=candidate, payload=payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     refreshed = _get_candidate_or_404(session, candidate_id)
     return _build_candidate_thread(session, refreshed)
 
-
-@router.get("/candidates/{candidate_id}/events", response_model=list[CandidateStageEventRead])
-def list_candidate_stage_events(candidate_id: str, session: Session = Depends(get_session)) -> list[CandidateStageEventRead]:
+@router.get("/candidates/{candidate_id}/transitions", response_model=list[CandidateStatusTransitionRead])
+def list_candidate_status_transitions(candidate_id: str, session: Session = Depends(get_session)) -> list[CandidateStatusTransitionRead]:
     candidate = _get_candidate_or_404(session, candidate_id)
-    items = CandidateStageEventRepository(session).by_candidate(candidate.id, limit=500, offset=0)
-    return [CandidateStageEventRead.model_validate(item) for item in items]
+    items = CandidateStatusTransitionRepository(session).by_candidate(candidate.id, limit=500, offset=0)
+    return [CandidateStatusTransitionRead.model_validate(item) for item in items]
 
 
 @router.get("/candidates/{candidate_id}/assignments", response_model=list[CandidateAssignmentRead])
@@ -833,7 +720,7 @@ def create_resume_artifact(
             "captured_at": payload.captured_at or _now(),
         }
     )
-    snapshot = dict(candidate.state_snapshot or {}) or default_candidate_state_snapshot(status=candidate.status)
+    snapshot = dict(candidate.state_snapshot or {}) or default_candidate_state_snapshot(status=candidate.current_status or candidate.status)
     if payload.artifact_type == "resume":
         snapshot["resume_status"] = "received"
         snapshot["latest_note"] = payload.file_name or snapshot.get("latest_note")
@@ -889,7 +776,7 @@ def create_candidate_assessment(
                 "decided_at": payload.reviewed_at or _now(),
             }
         )
-    snapshot = dict(candidate.state_snapshot or {}) or default_candidate_state_snapshot(status=candidate.status)
+    snapshot = dict(candidate.state_snapshot or {}) or default_candidate_state_snapshot(status=candidate.current_status or candidate.status)
     if payload.assessment_type == "ai":
         snapshot["ai_assessment_status"] = payload.status
     if payload.assessment_type == "manual":
@@ -1304,6 +1191,7 @@ def create_evolution_artifact(
 def update_evolution_artifact(
     artifact_id: str,
     payload: EvolutionArtifactUpdate,
+    container: AppContainer = Depends(get_container),
     session: Session = Depends(get_session),
 ) -> EvolutionArtifactRead:
     repo = EvolutionArtifactRepository(session)
@@ -1320,5 +1208,57 @@ def update_evolution_artifact(
         )
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
-    updated = repo.update(item, payload)
+    update_payload = payload.model_dump(exclude_unset=True)
+
+    if item.artifact_kind == "skill_draft" and next_status in {"approved", "applied"}:
+        artifact_metadata = {
+            **dict(item.artifact_metadata or {}),
+            **dict(payload.artifact_metadata or {}),
+        }
+        promoted_skill = resolve_promoted_skill_snapshot(artifact_metadata)
+        if promoted_skill is None and item.related_skill_id:
+            skill = SkillRepository(session).get(item.related_skill_id)
+            if skill is not None:
+                promoted_skill = {
+                    "id": skill.id,
+                    "skill_id": skill.skill_id,
+                    "name": skill.name,
+                    "status": skill.status,
+                    "version": skill.version,
+                }
+        if promoted_skill is None:
+            promoted_skill = promote_skill_draft_contract(
+                session,
+                flags=container.flags,
+                draft=dict(next_body or {}),
+                reviewer=payload.reviewed_by,
+                reason=str(artifact_metadata.get("review_reason") or "").strip() or None,
+                fallback_title=item.title,
+                fallback_platform=str(artifact_metadata.get("promotion_fallback_platform") or "").strip() or "runtime-scene",
+                fallback_stage=str(
+                    artifact_metadata.get("promotion_fallback_stage")
+                    or artifact_metadata.get("bound_to_stage")
+                    or artifact_metadata.get("task_type")
+                    or ""
+                ).strip()
+                or None,
+                learning_id=str(artifact_metadata.get("learning_id") or "").strip() or None,
+                promotion_source="evolution_artifact",
+                source_kind="evolution_artifact",
+                source_id=item.id,
+            )
+        merged_metadata = {
+            **artifact_metadata,
+            "promoted_skill": promoted_skill,
+        }
+        update_payload.update(
+            {
+                "status": "applied",
+                "reviewed_at": payload.reviewed_at or _now(),
+                "applied_at": payload.applied_at or _now(),
+                "related_skill_id": promoted_skill["id"],
+                "artifact_metadata": merged_metadata,
+            }
+        )
+    updated = repo.update(item, update_payload)
     return EvolutionArtifactRead.model_validate(updated)

@@ -14,6 +14,9 @@ services/backend/.ruff_cache
 services/backend/data
 services/backend/src/*.egg-info
 data
+!packages/shared/src/data/
+!packages/shared/src/data/defaultStateMachine.json
+!packages/shared/src/data/defaultStateMachine.ts
 apps/desktop/dist-electron
 apps/desktop/dist-renderer
 .release

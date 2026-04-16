@@ -14,6 +14,7 @@ from .routers.recruit_agent import router as recruit_agent_router
 from .routers.runtime import router as runtime_router
 from .routers.settings import router as settings_router
 from .routers.skills import router as skills_router
+from .routers.state_machine import router as state_machine_router
 from .routers.sync import router as sync_router
 from .routers.playbooks import router as playbooks_router
 
@@ -24,6 +25,7 @@ ALL_ROUTERS = [
     skills_router,
     mcp_router,
     settings_router,
+    state_machine_router,
     approvals_router,
     metrics_router,
     runtime_router,

@@ -1,8 +1,10 @@
 import React, { useEffect, useMemo, useState } from "react";
+import type { RecruitmentStateMachine, RecruitmentStateMachineUpdatePayload } from "@scene-pilot/shared";
 import { StatusBadge } from "../../components";
 import { Panel, TopTabPage } from "../../components";
 import { formatCompactDate } from "../../lib/format";
 import { useI18n } from "../../lib/i18n";
+import { StateMachineEditor } from "../state-machine/StateMachineEditor";
 import type {
   AgentGlobalMemoryRecord,
   CandidateMemoryRecord,
@@ -12,7 +14,7 @@ import type {
   SkillRecord,
 } from "../../lib/types";
 
-type RecruitAgentTab = "profile" | "blueprint" | "context" | "memory" | "skills";
+type RecruitAgentTab = "profile" | "blueprint" | "state-machine" | "context" | "memory" | "skills";
 type MemoryTargetKey = `candidate:${string}` | `job:${string}` | "global";
 
 const theme = {
@@ -39,12 +41,14 @@ const theme = {
 
 interface RecruitAgentViewProps {
   profile: RecruitAgentProfileRecord | null;
+  stateMachine: RecruitmentStateMachine | null;
   candidates: CandidateRecord[];
   skills: SkillRecord[];
   candidateMemories: CandidateMemoryRecord[];
   jobMemories: JobMemoryRecord[];
   globalMemory: AgentGlobalMemoryRecord | null;
   onSaveProfile(payload: Partial<RecruitAgentProfileRecord>): Promise<void> | void;
+  onSaveStateMachine(payload: RecruitmentStateMachineUpdatePayload): Promise<void> | void;
   onUpdateSkill(skillId: string, payload: Partial<SkillRecord>): Promise<void> | void;
   onDeleteSkill(skillId: string): Promise<void> | void;
   onUpdateCandidateMemory(candidateId: string, payload: Partial<CandidateMemoryRecord>): Promise<void> | void;
@@ -130,12 +134,14 @@ function compactNumber(value: unknown, fallback: number): number {
 
 export function RecruitAgentView({
   profile,
+  stateMachine,
   candidates,
   skills,
   candidateMemories,
   jobMemories,
   globalMemory,
   onSaveProfile,
+  onSaveStateMachine,
   onUpdateSkill,
   onDeleteSkill,
   onUpdateCandidateMemory,
@@ -1090,6 +1096,7 @@ export function RecruitAgentView({
         items={[
           { key: "profile", label: copy("Strategy brief", "策略概览") },
           { key: "blueprint", label: copy("Strategy", "策略") },
+          { key: "state-machine", label: copy("State machine", "状态机") },
           { key: "context", label: copy("Context", "上下文") },
           { key: "memory", label: copy("Memory", "记忆") },
           { key: "skills", label: copy("Skills", "技能") },
@@ -1099,6 +1106,7 @@ export function RecruitAgentView({
       >
         {tab === "profile" ? profileContent : null}
         {tab === "blueprint" ? blueprintContent : null}
+        {tab === "state-machine" ? <StateMachineEditor stateMachine={stateMachine} skills={skills} onSave={onSaveStateMachine} /> : null}
         {tab === "context" ? contextContent : null}
         {tab === "memory" ? memoryContent : null}
         {tab === "skills" ? skillContent : null}
