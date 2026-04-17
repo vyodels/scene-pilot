@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
@@ -25,7 +27,12 @@ from scene_pilot.api.routers.recruit_agent import (
     _get_application_with_person_or_404,
     _with_application_id,
 )
-from scene_pilot.repositories import ApplicationAssessmentRepository, CandidateApplicationRepository
+from scene_pilot.repositories import (
+    ApplicationAssessmentRepository,
+    CandidateApplicationRepository,
+    CandidateRepository,
+    JobDescriptionRepository,
+)
 from scene_pilot.schemas import (
     CandidateAssessmentCreate,
     CandidateAssessmentRead,
@@ -52,16 +59,59 @@ from scene_pilot.schemas import (
 router = APIRouter(prefix="/api/candidate-applications", tags=["candidate-applications"])
 
 
+def _timestamp(value) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return int(value.timestamp())
+    return None
+
+
+def _as_candidate_application_read(session: Session, application) -> CandidateApplicationRead:
+    person = CandidateRepository(session).get_by_internal_id(application.person_id)
+    job_description = (
+        JobDescriptionRepository(session).get_by_internal_id(application.job_description_id)
+        if application.job_description_id
+        else None
+    )
+    return CandidateApplicationRead.model_validate(
+        {
+            "candidate_application_id": application.candidate_application_id,
+            "candidate_person_id": person.candidate_person_id if person is not None else application.person_id,
+            "job_description_id": (
+                job_description.job_description_id if job_description is not None else application.job_description_id
+            ),
+            "source_platform": application.source_platform or application.platform,
+            "source_platform_candidate_person_id": application.source_platform_candidate_person_id,
+            "current_status": application.current_status,
+            "current_stage_key": application.current_stage_key,
+            "deepest_milestone": application.deepest_milestone,
+            "state_snapshot": dict(application.state_snapshot or {}),
+            "ai_scores": dict(application.ai_scores or {}),
+            "ai_reasoning": application.ai_reasoning,
+            "cooldown_until": _timestamp(application.cooldown_until),
+            "last_contacted_at": _timestamp(application.last_contacted_at),
+            "application_metadata": dict(application.application_metadata or {}),
+            "application_window": application.application_window,
+            "created_at": _timestamp(application.created_at),
+            "updated_at": _timestamp(application.updated_at),
+        }
+    )
+
+
 @router.get("", response_model=list[CandidateApplicationRead])
 def list_candidate_applications(
     limit: int = Query(default=100, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
     session: Session = Depends(get_session),
 ) -> list[CandidateApplicationRead]:
-    return [
-        CandidateApplicationRead.model_validate(item)
-        for item in CandidateApplicationRepository(session).list(limit=limit, offset=offset)
-    ]
+    return [_as_candidate_application_read(session, item) for item in CandidateApplicationRepository(session).list(limit=limit, offset=offset)]
 
 
 @router.get("/threads", response_model=list[CandidateThreadRead])
@@ -82,7 +132,7 @@ def create_candidate_application(
         item = CandidateApplicationRepository(session).create(payload)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    return CandidateApplicationRead.model_validate(item)
+    return _as_candidate_application_read(session, item)
 
 
 @router.get("/{application_id}", response_model=CandidateApplicationRead)
@@ -90,7 +140,7 @@ def get_candidate_application(application_id: str, session: Session = Depends(ge
     item = CandidateApplicationRepository(session).get(application_id)
     if item is None:
         raise HTTPException(status_code=404, detail="Candidate application not found")
-    return CandidateApplicationRead.model_validate(item)
+    return _as_candidate_application_read(session, item)
 
 
 @router.patch("/{application_id}", response_model=CandidateApplicationRead)
@@ -104,7 +154,7 @@ def update_candidate_application(
     if item is None:
         raise HTTPException(status_code=404, detail="Candidate application not found")
     updated = repo.update(item, payload)
-    return CandidateApplicationRead.model_validate(updated)
+    return _as_candidate_application_read(session, updated)
 
 
 @router.get("/{applicationId}/thread", response_model=CandidateThreadRead)

@@ -77,9 +77,12 @@ class CandidatePersonUpdate(BaseModel):
 class CandidatePersonRead(CandidatePersonBase):
     model_config = ConfigDict(from_attributes=True)
 
-    id: str
-    created_at: datetime
-    updated_at: datetime
+    candidate_person_id: str = Field(
+        validation_alias=AliasChoices("candidate_person_id", "candidatePersonId"),
+        serialization_alias="candidatePersonId",
+    )
+    created_at: int = Field(serialization_alias="createdAt")
+    updated_at: int = Field(serialization_alias="updatedAt")
 
 
 class CandidateBase(CandidatePersonBase):
@@ -131,14 +134,20 @@ class JobDescriptionUpdate(BaseModel):
 class JobDescriptionRead(JobDescriptionBase):
     model_config = ConfigDict(from_attributes=True)
 
-    id: str
-    created_at: datetime
-    updated_at: datetime
+    job_description_id: str = Field(
+        validation_alias=AliasChoices("job_description_id", "jobDescriptionId"),
+        serialization_alias="jobDescriptionId",
+    )
+    created_at: int = Field(serialization_alias="createdAt")
+    updated_at: int = Field(serialization_alias="updatedAt")
 
 
 class CandidateApplicationBase(BaseModel):
-    person_id: str
-    job_description_id: str | None = None
+    person_id: str = Field(validation_alias=AliasChoices("person_id", "personId", "candidate_person_id", "candidatePersonId"))
+    job_description_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("job_description_id", "jobDescriptionId"),
+    )
     platform: str = "site"
     platform_application_id: str | None = None
     current_status: str = "discovered"
@@ -157,7 +166,10 @@ class CandidateApplicationCreate(CandidateApplicationBase):
 
 
 class CandidateApplicationUpdate(BaseModel):
-    job_description_id: str | None = None
+    job_description_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("job_description_id", "jobDescriptionId"),
+    )
     platform: str | None = None
     platform_application_id: str | None = None
     current_status: str | None = None
@@ -171,13 +183,49 @@ class CandidateApplicationUpdate(BaseModel):
     application_metadata: dict[str, Any] | None = None
 
 
-class CandidateApplicationRead(CandidateApplicationBase):
-    model_config = ConfigDict(from_attributes=True)
+class CandidateApplicationRead(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
 
-    id: str
-    application_window: str
-    created_at: datetime
-    updated_at: datetime
+    candidate_application_id: str = Field(
+        validation_alias=AliasChoices("candidate_application_id", "candidateApplicationId"),
+        serialization_alias="candidateApplicationId",
+    )
+    candidate_person_id: str = Field(
+        validation_alias=AliasChoices("candidate_person_id", "candidatePersonId"),
+        serialization_alias="candidatePersonId",
+    )
+    job_description_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("job_description_id", "jobDescriptionId"),
+        serialization_alias="jobDescriptionId",
+    )
+    source_platform: str = Field(
+        default="site",
+        validation_alias=AliasChoices("source_platform", "sourcePlatform", "platform"),
+        serialization_alias="sourcePlatform",
+    )
+    source_platform_candidate_person_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "source_platform_candidate_person_id",
+            "sourcePlatformCandidatePersonId",
+            "platform_application_id",
+            "platformApplicationId",
+        ),
+        serialization_alias="sourcePlatformCandidatePersonId",
+    )
+    application_window: str = Field(serialization_alias="applicationWindow")
+    current_status: str = Field(serialization_alias="currentStatus")
+    current_stage_key: str | None = Field(default=None, serialization_alias="currentStageKey")
+    deepest_milestone: str | None = Field(default=None, serialization_alias="deepestMilestone")
+    state_snapshot: dict[str, Any] = Field(default_factory=dict, serialization_alias="stateSnapshot")
+    ai_scores: dict[str, Any] = Field(default_factory=dict, serialization_alias="aiScores")
+    ai_reasoning: str | None = Field(default=None, serialization_alias="aiReasoning")
+    cooldown_until: int | None = Field(default=None, serialization_alias="cooldownUntil")
+    last_contacted_at: int | None = Field(default=None, serialization_alias="lastContactedAt")
+    application_metadata: dict[str, Any] = Field(default_factory=dict, serialization_alias="applicationMetadata")
+    created_at: int = Field(serialization_alias="createdAt")
+    updated_at: int = Field(serialization_alias="updatedAt")
 
 
 class ApplicationPersonSummaryRead(BaseModel):
@@ -1817,7 +1865,7 @@ class TimelineEventRead(BaseModel):
     id: str
     label: str
     detail: str
-    at: str
+    at: int
     tone: str
 
 
@@ -1838,8 +1886,8 @@ class ApplicationDashboardRead(BaseModel):
     jobDescription: JobDescriptionSummaryRead
     stateSnapshot: dict[str, Any] = Field(default_factory=dict)
     aiScores: dict[str, Any] = Field(default_factory=dict)
-    cooldownUntil: str | None = None
-    lastContactedAt: str | None = None
+    cooldownUntil: int | None = None
+    lastContactedAt: int | None = None
 
 
 class ApplicationFollowUpSummaryDefinitionRead(BaseModel):
@@ -1871,7 +1919,7 @@ class PlaybookDashboardRead(BaseModel):
     scopeRef: str | None = None
     status: str
     version: str
-    updatedAt: str
+    updatedAt: int
     nodes: list[BlueprintNodeSummaryRead]
 
 
@@ -1883,7 +1931,7 @@ class SkillDashboardRead(BaseModel):
     boundStage: str
     platform: str
     health: str
-    lastCheckedAt: str
+    lastCheckedAt: int
     summary: str
 
 
@@ -1894,7 +1942,7 @@ class ApprovalDashboardRead(BaseModel):
     detail: str
     requester: str
     status: str
-    createdAt: str
+    createdAt: int
 
 
 class AgentStatusRead(BaseModel):

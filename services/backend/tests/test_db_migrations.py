@@ -40,7 +40,12 @@ def test_initialize_database_records_baseline_version(tmp_path):
         assert "candidate_persons" in tables
         assert "candidate_applications" in tables
         assert "job_descriptions" in tables
-        assert "resume_artifacts" in tables
+        assert "candidate_person_platform_idx" in tables
+        assert "job_description_platform_idx" in tables
+        assert "candidate_application_assessments" in tables
+        assert "candidate_application_scorecards" in tables
+        assert "candidate_application_messages" in tables
+        assert "candidate_application_transitions" in tables
         assert current_schema_version(connection) == CURRENT_SCHEMA_VERSION
 
 

@@ -109,7 +109,7 @@ def test_autonomy_loop_processes_enqueued_task_when_enabled(tmp_path):
 
     container.agent_control.enqueue_task(
         "candidate_probe",
-        application_id=application.id,
+        application_id=application.candidate_application_id,
         candidate_id=candidate.id,
         payload={"jd_criteria": "Python"},
         priority=250,
@@ -265,7 +265,7 @@ def test_agent_control_prioritizes_high_potential_candidate_for_progression(tmp_
             current_status="discovered",
             ai_scores={"overall": 96},
         )
-        higher_candidate_id = higher_rank.id
+        higher_candidate_id = higher_rank.candidate_application_id
         lower_rank.updated_at = utcnow()
         higher_rank.updated_at = utcnow() - timedelta(days=2)
         session.commit()
@@ -280,7 +280,11 @@ def test_agent_control_prioritizes_high_potential_candidate_for_progression(tmp_
     assert "reason" in task.payload["selection"]
 
     with container.session_factory() as session:
-        selected = session.get(CandidateApplication, task.application_id)
+        selected = (
+            session.query(CandidateApplication)
+            .filter(CandidateApplication.candidate_application_id == task.application_id)
+            .first()
+        )
         assert selected is not None
         assert selected.platform_application_id == "boss_priority_high"
         queue_item = TaskQueueRepository(session).get(task.task_id)
@@ -328,8 +332,8 @@ def test_agent_control_skips_candidates_that_already_have_open_task(tmp_path):
             current_status="discovered",
             ai_scores={"overall": 76},
         )
-        blocked_candidate_id = blocked.id
-        fallback_candidate_id = fallback.id
+        blocked_candidate_id = blocked.candidate_application_id
+        fallback_candidate_id = fallback.candidate_application_id
         blocked.updated_at = utcnow() - timedelta(days=1)
         fallback.updated_at = utcnow() - timedelta(hours=12)
         session.commit()
@@ -442,7 +446,7 @@ def test_agent_control_queues_waiting_candidate_retry_when_window_elapsed(tmp_pa
                 }
             },
         )
-        candidate_id = candidate.id
+        candidate_id = candidate.candidate_application_id
 
     task = container.agent_control.maybe_process_waiting_candidate_retry()
     assert task is not None
@@ -486,7 +490,7 @@ def test_agent_control_closes_waiting_candidate_to_no_response_after_retry_exhau
                 }
             },
         )
-        candidate_id = candidate.id
+        candidate_id = candidate.candidate_application_id
 
     result = container.agent_control.maybe_process_waiting_candidate_retry()
     assert result == {
@@ -497,7 +501,11 @@ def test_agent_control_closes_waiting_candidate_to_no_response_after_retry_exhau
     }
 
     with container.session_factory() as session:
-        refreshed = session.get(CandidateApplication, candidate_id)
+        refreshed = (
+            session.query(CandidateApplication)
+            .filter(CandidateApplication.candidate_application_id == candidate_id)
+            .first()
+        )
         assert refreshed is not None
         assert refreshed.current_status == "no_response"
         waiting_retry = refreshed.state_snapshot["snapshot_metadata"]["waiting_retry"]
@@ -553,7 +561,7 @@ def test_runtime_recovery_restores_recently_interrupted_run_on_restart(tmp_path)
 
     task = container.agent_control.enqueue_task(
         "candidate_probe",
-        application_id=application.id,
+        application_id=application.candidate_application_id,
         candidate_id=candidate.id,
         payload={"jd_criteria": "Recovery path"},
         priority=260,

@@ -26,6 +26,7 @@ from scene_pilot.repositories import (
     ExecutionGraphProjectionRepository,
     ExecutionTraceRepository,
     GoalSpecRepository,
+    JobDescriptionRepository,
     OperatorInteractionRepository,
     ApprovalRepository,
     CandidateRepository,
@@ -302,12 +303,17 @@ class AgentControlService:
                 node = node_by_id.get(current_status)
                 if node is None:
                     continue
+                application_business_id = str(
+                    getattr(application, "candidate_application_id", None) or getattr(application, "id", "") or ""
+                ).strip()
+                if not application_business_id:
+                    continue
                 execution_config = dict(node.get("executionConfig") or {})
                 person = candidate_repo.resolve(application.person_id)
-                application_names[application.id] = str(getattr(person, "name", "") or "")
+                application_names[application_business_id] = str(getattr(person, "name", "") or "")
                 targets.append(
                     ApplicationProgressionTarget(
-                        application_id=application.id,
+                        application_id=application_business_id,
                         current_status=current_status,
                         node_id=str(node.get("id") or current_status),
                         node_label=str(node.get("label") or current_status),
@@ -324,7 +330,10 @@ class AgentControlService:
                         updated_at=getattr(application, "updated_at", None),
                         last_contacted_at=getattr(application, "last_contacted_at", None),
                         cooldown_until=getattr(application, "cooldown_until", None),
-                        has_open_task=application.id in open_application_ids,
+                        has_open_task=(
+                            application_business_id in open_application_ids
+                            or str(getattr(application, "id", "") or "") in open_application_ids
+                        ),
                     )
                 )
             selection = select_next_application_progression(targets)
@@ -445,8 +454,13 @@ class AgentControlService:
                 retry_policy = self._state_machine_retry_policy(node)
                 if node is None or retry_policy is None:
                     continue
+                application_business_id = str(
+                    getattr(application, "candidate_application_id", None) or getattr(application, "id", "") or ""
+                ).strip()
+                if not application_business_id:
+                    continue
                 person = candidate_repo.resolve(application.person_id)
-                person_names[application.id] = str(getattr(person, "name", "") or "")
+                person_names[application_business_id] = str(getattr(person, "name", "") or "")
                 retry_state = self._candidate_retry_state(application, current_status=current_status)
                 try:
                     retry_count = max(int(retry_state.get("retry_count") or 0), 0)
@@ -454,7 +468,7 @@ class AgentControlService:
                     retry_count = 0
                 targets.append(
                     ApplicationWaitingRetryTarget(
-                        application_id=application.id,
+                        application_id=application_business_id,
                         current_status=current_status,
                         node_id=str(node.get("id") or current_status),
                         node_label=str(node.get("label") or current_status),
@@ -467,7 +481,10 @@ class AgentControlService:
                         is_terminal=bool(node.get("isTerminal")),
                         is_soft_terminal=bool(node.get("isSoftTerminal")),
                         is_transient=bool(node.get("isTransient")),
-                        has_open_task=application.id in open_application_ids,
+                        has_open_task=(
+                            application_business_id in open_application_ids
+                            or str(getattr(application, "id", "") or "") in open_application_ids
+                        ),
                         created_at=getattr(application, "created_at", None),
                         updated_at=getattr(application, "updated_at", None),
                         last_contacted_at=getattr(application, "last_contacted_at", None),
@@ -1669,6 +1686,18 @@ class AgentControlService:
                 candidate = candidate_repo.resolve(application.person_id)
             if candidate is None:
                 return {}
+            job_description = (
+                JobDescriptionRepository(session).get_by_internal_id(application.job_description_id)
+                if application is not None and application.job_description_id
+                else None
+            )
+            person_id = candidate.candidate_person_id
+            application_business_id = (
+                application.candidate_application_id
+                if application is not None
+                else application_id or person_id
+            )
+            job_description_id = job_description.job_description_id if job_description is not None else None
 
             state_machine_snapshot = dict(state_machine or self._load_state_machine_snapshot() or {})
             current_status = str(application.current_status if application is not None else resolve_candidate_current_status(candidate))
@@ -1697,7 +1726,7 @@ class AgentControlService:
                 )
                 if application is not None
                 else CandidateSessionRepository(session).get_or_create(
-                    candidate.id,
+                    person_id,
                     defaults={
                         "status": "active",
                         "context_summary": f"{candidate.name} is currently in {current_status}.",
@@ -1713,7 +1742,7 @@ class AgentControlService:
             adaptive_stage = self._adaptive_stage_for_task(task)
             facts.update(
                 {
-                    "application_id": application.id if application is not None else application_id or candidate.id,
+                    "application_id": application_business_id,
                     "candidate_status": current_status,
                     "current_status": current_status,
                     "goal_spec_id": str(task.metadata.get("goal_spec_id") or task.payload.get("goal_id") or "") or None,
@@ -1734,16 +1763,16 @@ class AgentControlService:
 
             return {
                 "candidate": {
-                    "id": candidate.id,
-                    "application_id": application.id if application is not None else application_id or candidate.id,
-                    "person_id": candidate.id,
+                    "id": person_id,
+                    "application_id": application_business_id,
+                    "person_id": person_id,
                     "platform_candidate_id": candidate.platform_candidate_id,
                     "name": candidate.name,
                     "platform": candidate.platform,
                     "current_status": current_status,
                     "current_stage_key": application.current_stage_key if application is not None else None,
                     "deepest_milestone": application.deepest_milestone if application is not None else None,
-                    "job_description_id": application.job_description_id if application is not None else None,
+                    "job_description_id": job_description_id,
                     "contact_info": dict(candidate.contact_info or {}),
                     "resume_path": candidate.resume_path,
                     "online_resume_text": candidate.online_resume_text,
@@ -1863,7 +1892,7 @@ class AgentControlService:
                         result.data.setdefault("persisted_candidate_ids", list(persisted_candidate_ids))
                 if candidate is not None:
                     candidate_session = session_repo.get_or_create(
-                        candidate.id,
+                        candidate.candidate_person_id,
                         defaults={"status": "active", "facts": {}, "recent_messages": []},
                     )
                     business_status = extract_business_status(result.data) or result.status
@@ -1929,7 +1958,7 @@ class AgentControlService:
                             {
                                 "kind": "score_update",
                                 "task_type": task.task_type,
-                                "candidate_id": candidate.id,
+                                "candidate_id": candidate.candidate_person_id,
                                 "score": result.data.get("overall") or result.data.get("score"),
                                 "decision": result.data.get("decision") or result.data.get("status"),
                             },
@@ -1965,7 +1994,7 @@ class AgentControlService:
                                 {
                                     "kind": "outbound_message",
                                     "task_type": task.task_type,
-                                    "candidate_id": candidate.id,
+                                    "candidate_id": candidate.candidate_person_id,
                                     "message_type": "text",
                                     "message": outbound_message,
                                 },
@@ -2002,7 +2031,7 @@ class AgentControlService:
                                 {
                                     "kind": "outbound_message",
                                     "task_type": task.task_type,
-                                    "candidate_id": candidate.id,
+                                    "candidate_id": candidate.candidate_person_id,
                                     "message_type": "resume_request",
                                     "message": resume_request_message,
                                 },
@@ -2012,7 +2041,7 @@ class AgentControlService:
                     if decision_value and not learning_stage:
                         decision_repo.create(
                             {
-                                "candidate_id": candidate.id,
+                                "candidate_id": candidate.candidate_person_id,
                                 "task_id": task.task_id,
                                 "decision_type": task.task_type,
                                 "decision": decision_value,
@@ -2130,12 +2159,12 @@ class AgentControlService:
             if explicit_application_id is not None:
                 application = application_repo.get(explicit_application_id)
             if application is None and resolved_job_description_id:
-                application_window = make_application_window(existing.id, resolved_job_description_id)
+                application_window = make_application_window(existing.candidate_person_id, resolved_job_description_id)
                 application = application_repo.by_application_window(application_window)
             if application is None and resolved_job_description_id:
                 application = application_repo.create(
                     {
-                        "person_id": existing.id,
+                        "person_id": existing.candidate_person_id,
                         "job_description_id": resolved_job_description_id,
                         "platform": normalized["platform"],
                         "platform_application_id": normalized.get("platform_application_id"),
@@ -2166,7 +2195,7 @@ class AgentControlService:
                 session.flush()
 
             candidate_session = session_repo.get_or_create(
-                existing.id,
+                existing.candidate_person_id,
                 defaults={
                     "status": "active",
                     "context_summary": normalized.get("ai_reasoning"),
@@ -2246,7 +2275,11 @@ class AgentControlService:
                         target_entity.deepest_milestone = self._state_machine_milestone_for_status(state_machine_snapshot, target_status)
                 session.flush()
 
-            persisted_subject_id = application.id if application is not None else existing.id
+            persisted_subject_id = (
+                application.candidate_application_id
+                if application is not None
+                else existing.candidate_person_id
+            )
             if persisted_subject_id not in persisted_ids:
                 persisted_ids.append(persisted_subject_id)
 
@@ -3445,7 +3478,7 @@ class AgentControlService:
             or task.payload.get("applicationId")
             or ""
         ).strip() or None
-        person_id = str(
+        raw_person_id = str(
             task.metadata.get("person_id")
             or getattr(run, "candidate_id", None)
             or (
@@ -3456,8 +3489,14 @@ class AgentControlService:
             or ""
         ).strip() or None
         application = CandidateApplicationRepository(session).get(application_id) if session is not None and application_id else None
-        if person_id is None and application is not None:
-            person_id = str(application.person_id or "").strip() or None
+        person_id = raw_person_id
+        if session is not None:
+            candidate_repo = CandidateRepository(session)
+            candidate = candidate_repo.resolve(raw_person_id) if raw_person_id else None
+            if candidate is None and application is not None:
+                candidate = candidate_repo.resolve(application.person_id)
+            if candidate is not None:
+                person_id = str(candidate.candidate_person_id or "").strip() or None
         return application_id, person_id, application
 
     def _build_graph_projection_payload(
@@ -4317,7 +4356,13 @@ class AgentControlService:
                 )
 
                 candidate = dict((session_context or {}).get("candidate") or {})
-                person_id = str(candidate.get("id") or task.metadata.get("person_id") or task.candidate_id or "").strip() or None
+                person_id = str(
+                    candidate.get("person_id")
+                    or candidate.get("id")
+                    or task.metadata.get("person_id")
+                    or task.candidate_id
+                    or ""
+                ).strip() or None
                 application_id = str(candidate.get("application_id") or task.application_id or "").strip() or None
                 candidate_name = str(candidate.get("name") or task.candidate_id or "candidate").strip()
                 title = f"{candidate_name} · {self._humanize_task_label(adaptive_stage)} 技能草案"
@@ -4511,7 +4556,7 @@ class AgentControlService:
             return
 
         session_repo = CandidateSessionRepository(session)
-        candidate_session = session_repo.by_candidate_id(candidate.id)
+        candidate_session = session_repo.by_candidate_id(candidate.candidate_person_id)
         if candidate_session is None:
             return
 

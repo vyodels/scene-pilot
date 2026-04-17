@@ -15,6 +15,7 @@ from scene_pilot.repositories import (
     CandidateApplicationRepository,
     CandidateRepository,
     GoalSpecRepository,
+    JobDescriptionRepository,
     RecruitAgentProfileRepository,
     TaskQueueRepository,
 )
@@ -45,6 +46,11 @@ class RuntimeControlService:
         lane = self.resolve_lane(task)
         application_id = str(task.application_id or "").strip() or None
         application = CandidateApplicationRepository(self.session).get(application_id) if application_id else None
+        job_description = (
+            JobDescriptionRepository(self.session).get_by_internal_id(application.job_description_id)
+            if application is not None and application.job_description_id
+            else None
+        )
         candidate = (
             CandidateRepository(self.session).resolve(task.candidate_id)
             if task.candidate_id
@@ -53,10 +59,8 @@ class RuntimeControlService:
             else None
         )
         person_anchor_id = (
-            candidate.id
+            candidate.candidate_person_id
             if candidate is not None
-            else application.person_id
-            if application is not None
             else None
         )
         workflow_anchor_id = application_id or person_anchor_id
@@ -67,9 +71,10 @@ class RuntimeControlService:
             task.metadata["application_id"] = application_id
             task.payload.setdefault("application_id", application_id)
         if application is not None:
-            task.metadata.setdefault("person_id", application.person_id)
-            if application.job_description_id:
-                task.metadata.setdefault("job_description_id", application.job_description_id)
+            if person_anchor_id:
+                task.metadata.setdefault("person_id", person_anchor_id)
+            if job_description is not None:
+                task.metadata.setdefault("job_description_id", job_description.job_description_id)
         goal_spec_id = self._ensure_goal_for_task(
             task,
             agent_profile_id=session_record.agent_profile_id,
@@ -91,8 +96,8 @@ class RuntimeControlService:
                     "goal_spec_id": goal_spec_id,
                     "candidate_id": person_anchor_id,
                     "job_description_id": (
-                        application.job_description_id
-                        if application is not None
+                        job_description.job_description_id
+                        if job_description is not None
                         else None
                     ),
                     "platform": task.platform or (candidate.platform if candidate is not None else "site"),
@@ -106,11 +111,11 @@ class RuntimeControlService:
                         "task_types": [task.task_type],
                         "adaptive_stage": adaptive_stage,
                         "application_id": application_id,
-                        "person_id": application.person_id if application is not None else None,
+                        "person_id": person_anchor_id,
                         "job_description_id": (
-                            application.job_description_id
-                            if application is not None
-                            else getattr(candidate, "job_description_id", None)
+                            job_description.job_description_id
+                            if job_description is not None
+                            else None
                         ),
                         "requested_by": task.metadata.get("requested_by"),
                     },
@@ -597,12 +602,20 @@ class RuntimeControlService:
                 "requested_by": str(task.metadata.get("requested_by") or "runtime"),
                 "constraints": {
                     "application_id": task.application_id,
-                    "candidate_id": candidate.id if candidate is not None else task.candidate_id,
+                    "candidate_id": (
+                        candidate.candidate_person_id
+                        if candidate is not None
+                        else task.candidate_id
+                    ),
                     "platform": task.platform,
                 },
                 "context_hints": {
                     "application_id": task.application_id,
-                    "candidate_id": candidate.id if candidate is not None else task.candidate_id,
+                    "candidate_id": (
+                        candidate.candidate_person_id
+                        if candidate is not None
+                        else task.candidate_id
+                    ),
                     "job_description_id": getattr(candidate, "job_description_id", None),
                     "adaptive_stage": adaptive_stage,
                 },

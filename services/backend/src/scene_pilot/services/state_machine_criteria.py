@@ -264,7 +264,13 @@ def _skill_swap_sort_key(skill) -> tuple[int, int, int, float, str]:
     observed_outcomes = (skill.execution_hints or {}).get("observed_outcomes") if isinstance(skill.execution_hints, dict) else []
     observed_count = len(observed_outcomes) if isinstance(observed_outcomes, list) else 0
     version = int(skill.version or 0)
-    updated_at = skill.updated_at.timestamp() if getattr(skill, "updated_at", None) is not None else 0.0
+    raw_updated_at = getattr(skill, "updated_at", None)
+    if raw_updated_at is None:
+        updated_at = 0.0
+    elif isinstance(raw_updated_at, int):
+        updated_at = float(raw_updated_at)
+    else:
+        updated_at = raw_updated_at.timestamp()
     return (
         health_priority,
         -observed_count,

@@ -1734,6 +1734,205 @@ def _create_candidate_subject_tables(connection: Connection) -> None:
         )
 
 
+def _canonicalize_core_entity_schema(connection: Connection) -> None:
+    tables = {
+        row[0]
+        for row in connection.execute(text("SELECT name FROM sqlite_master WHERE type='table'")).fetchall()
+    }
+
+    if "candidate_persons" in tables:
+        person_columns = {
+            row[1]
+            for row in connection.execute(text("PRAGMA table_info(candidate_persons)")).fetchall()
+        }
+        if "candidate_person_id" not in person_columns:
+            connection.execute(
+                text("ALTER TABLE candidate_persons ADD COLUMN candidate_person_id TEXT")
+            )
+
+    if "candidate_applications" in tables:
+        application_columns = {
+            row[1]
+            for row in connection.execute(text("PRAGMA table_info(candidate_applications)")).fetchall()
+        }
+        if "candidate_application_id" not in application_columns:
+            connection.execute(
+                text("ALTER TABLE candidate_applications ADD COLUMN candidate_application_id TEXT")
+            )
+        if "source_platform_candidate_person_id" not in application_columns:
+            connection.execute(
+                text("ALTER TABLE candidate_applications ADD COLUMN source_platform_candidate_person_id TEXT")
+            )
+
+    if "candidate_person_platform_idx" not in tables:
+        connection.execute(
+            text(
+                """
+                CREATE TABLE candidate_person_platform_idx (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    candidate_person_platform_idx_id TEXT,
+                    candidate_person_id TEXT NOT NULL REFERENCES candidate_persons(id) ON DELETE CASCADE,
+                    platform TEXT NOT NULL,
+                    platform_candidate_person_id TEXT NOT NULL,
+                    profile_url TEXT,
+                    raw_profile TEXT NOT NULL DEFAULT '{}',
+                    first_seen_at BIGINT,
+                    last_seen_at BIGINT,
+                    created_at BIGINT NOT NULL,
+                    updated_at BIGINT NOT NULL,
+                    CONSTRAINT uq_candidate_person_platform_identity UNIQUE (platform, platform_candidate_person_id)
+                )
+                """
+            )
+        )
+        connection.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_candidate_person_platform_idx_candidate_person_id ON candidate_person_platform_idx (candidate_person_id)"
+            )
+        )
+
+    if "job_description_platform_idx" not in tables:
+        connection.execute(
+            text(
+                """
+                CREATE TABLE job_description_platform_idx (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    job_description_platform_idx_id TEXT,
+                    job_description_id TEXT NOT NULL REFERENCES job_descriptions(id) ON DELETE CASCADE,
+                    platform TEXT NOT NULL,
+                    external_id TEXT NOT NULL,
+                    external_url TEXT,
+                    sync_status TEXT NOT NULL DEFAULT 'pending',
+                    sync_metadata TEXT NOT NULL DEFAULT '{}',
+                    last_synced_at BIGINT,
+                    created_at BIGINT NOT NULL,
+                    updated_at BIGINT NOT NULL,
+                    CONSTRAINT uq_job_description_platform_identity UNIQUE (platform, external_id)
+                )
+                """
+            )
+        )
+        connection.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_job_description_platform_idx_job_description_id ON job_description_platform_idx (job_description_id)"
+            )
+        )
+
+    if "candidate_application_messages" not in tables:
+        connection.execute(
+            text(
+                """
+                CREATE TABLE candidate_application_messages (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    candidate_application_message_id TEXT,
+                    candidate_application_id TEXT NOT NULL REFERENCES candidate_applications(id) ON DELETE CASCADE,
+                    direction TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    message_type TEXT NOT NULL DEFAULT 'text',
+                    signal_snapshot TEXT NOT NULL DEFAULT '{}',
+                    message_metadata TEXT NOT NULL DEFAULT '{}',
+                    occurred_at BIGINT NOT NULL,
+                    created_at BIGINT NOT NULL,
+                    updated_at BIGINT NOT NULL
+                )
+                """
+            )
+        )
+
+    if "candidate_application_transitions" not in tables:
+        connection.execute(
+            text(
+                """
+                CREATE TABLE candidate_application_transitions (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    candidate_application_transition_id TEXT,
+                    candidate_application_id TEXT NOT NULL REFERENCES candidate_applications(id) ON DELETE CASCADE,
+                    from_status TEXT NOT NULL,
+                    to_status TEXT NOT NULL,
+                    from_status_label TEXT NOT NULL,
+                    to_status_label TEXT NOT NULL,
+                    actor TEXT NOT NULL,
+                    actor_id TEXT,
+                    trigger TEXT NOT NULL,
+                    note TEXT,
+                    override_reason TEXT,
+                    is_override INTEGER NOT NULL DEFAULT 0,
+                    milestone_updated TEXT,
+                    transition_metadata TEXT NOT NULL DEFAULT '{}',
+                    created_at BIGINT NOT NULL,
+                    updated_at BIGINT NOT NULL
+                )
+                """
+            )
+        )
+        connection.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_candidate_application_transitions_application_created_at ON candidate_application_transitions (candidate_application_id, created_at)"
+            )
+        )
+
+    if "candidate_application_assessments" not in tables:
+        connection.execute(
+            text(
+                """
+                CREATE TABLE candidate_application_assessments (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    candidate_application_assessment_id TEXT,
+                    candidate_application_id TEXT NOT NULL REFERENCES candidate_applications(id) ON DELETE CASCADE,
+                    assessment_actor_type TEXT NOT NULL DEFAULT 'ai',
+                    assessment_stage_key TEXT,
+                    assessment_stage_label TEXT,
+                    assessment_round INTEGER NOT NULL DEFAULT 1,
+                    decision TEXT,
+                    score INTEGER,
+                    summary TEXT,
+                    criteria_snapshot TEXT NOT NULL DEFAULT '{}',
+                    evidence_snapshot TEXT NOT NULL DEFAULT '{}',
+                    result_payload TEXT NOT NULL DEFAULT '{}',
+                    assessment_metadata TEXT NOT NULL DEFAULT '{}',
+                    assessed_at BIGINT,
+                    created_at BIGINT NOT NULL,
+                    updated_at BIGINT NOT NULL
+                )
+                """
+            )
+        )
+        connection.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_candidate_application_assessments_application_created_at ON candidate_application_assessments (candidate_application_id, created_at)"
+            )
+        )
+
+    if "candidate_application_scorecards" not in tables:
+        connection.execute(
+            text(
+                """
+                CREATE TABLE candidate_application_scorecards (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    candidate_application_scorecard_id TEXT,
+                    candidate_application_id TEXT NOT NULL REFERENCES candidate_applications(id) ON DELETE CASCADE,
+                    assessment_stage_key TEXT,
+                    scorecard_source TEXT NOT NULL DEFAULT 'ai',
+                    rubric_version TEXT NOT NULL DEFAULT 'recruit-scorecard-v1',
+                    score_total INTEGER,
+                    verdict TEXT,
+                    summary TEXT,
+                    dimension_scores TEXT NOT NULL DEFAULT '{}',
+                    evidence_snapshot TEXT NOT NULL DEFAULT '{}',
+                    scorecard_metadata TEXT NOT NULL DEFAULT '{}',
+                    created_at BIGINT NOT NULL,
+                    updated_at BIGINT NOT NULL
+                )
+                """
+            )
+        )
+        connection.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_candidate_application_scorecards_application_created_at ON candidate_application_scorecards (candidate_application_id, created_at)"
+            )
+        )
+
+
 MIGRATIONS: tuple[SchemaMigration, ...] = (
     SchemaMigration(
         version=1,
@@ -1819,6 +2018,11 @@ MIGRATIONS: tuple[SchemaMigration, ...] = (
         version=17,
         name="create_candidate_subject_tables",
         apply=_create_candidate_subject_tables,
+    ),
+    SchemaMigration(
+        version=18,
+        name="canonicalize_core_entity_schema",
+        apply=_canonicalize_core_entity_schema,
     ),
 )
 

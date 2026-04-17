@@ -20,10 +20,10 @@ class ApplicationProgressionTarget:
     is_transient: bool = False
     effective_execution_mode: str = "none"
     locked: bool = False
-    created_at: datetime | None = None
-    updated_at: datetime | None = None
-    last_contacted_at: datetime | None = None
-    cooldown_until: datetime | None = None
+    created_at: int | datetime | None = None
+    updated_at: int | datetime | None = None
+    last_contacted_at: int | datetime | None = None
+    cooldown_until: int | datetime | None = None
     has_open_task: bool = False
 
 
@@ -49,9 +49,19 @@ class ApplicationProgressionSelection:
     reason: str
 
 
-def _normalize_datetime(value: datetime | None, *, now: datetime) -> datetime | None:
+def _normalize_datetime(value: int | float | str | datetime | None, *, now: datetime) -> datetime | None:
     if value is None:
         return None
+    if isinstance(value, (int, float)):
+        return datetime.fromtimestamp(value, tz=now.tzinfo or timezone.utc)
+    if isinstance(value, str):
+        try:
+            parsed = datetime.fromisoformat(value)
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=now.tzinfo or timezone.utc)
+        return parsed
     if value.tzinfo is None:
         return value.replace(tzinfo=now.tzinfo or timezone.utc)
     return value

@@ -89,17 +89,26 @@ def _validate_state_machine_payload(payload: dict[str, Any]) -> None:
 
 
 def serialize_state_machine_version(record: Any) -> dict[str, Any]:
+    def _timestamp(value: Any) -> int | None:
+        if value is None:
+            return None
+        if isinstance(value, int):
+            return value
+        if hasattr(value, "timestamp"):
+            return int(value.timestamp())
+        return int(value)
+
     return {
         "version": int(record.version),
-        "updatedAt": record.updated_at.isoformat(),
+        "updatedAt": _timestamp(record.updated_at),
         "updatedBy": str(record.updated_by),
         "changeSummary": record.change_summary,
         "nodes": list(record.nodes_json or []),
         "transitions": list(record.transitions_json or []),
         "globalTransitions": list(record.global_transitions_json or []),
         "versionMetadata": dict(record.version_metadata or {}),
-        "publishedAt": record.published_at.isoformat(),
-        "createdAt": record.created_at.isoformat(),
+        "publishedAt": _timestamp(record.published_at),
+        "createdAt": _timestamp(record.created_at),
     }
 
 

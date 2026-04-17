@@ -24,8 +24,30 @@ from scene_pilot.services.state_machine import ensure_latest_state_machine
 from scene_pilot.services.sync import SyncService
 
 
-def _utcnow() -> str:
-    return datetime.now(timezone.utc).isoformat()
+def _timestamp(value: Any) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str):
+        try:
+            parsed = datetime.fromisoformat(value)
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return int(parsed.timestamp())
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return int(value.timestamp())
+    return None
+
+
+def _utcnow() -> int:
+    return int(datetime.now(timezone.utc).timestamp())
 
 
 def _sync_setting(settings: AppSettings, key: str, default: Any = None) -> Any:
@@ -302,7 +324,7 @@ class DashboardService:
                     "id": event.id,
                     "label": event.source,
                     "detail": event.message,
-                    "at": event.at,
+                    "at": _timestamp(event.at) or _utcnow(),
                     "tone": "warning" if event.level == "warning" else "critical" if event.level == "error" else "positive",
                 }
                 for event in self.events.snapshot()[-10:]
@@ -312,7 +334,7 @@ class DashboardService:
                     "id": approval.id,
                     "label": "审批待处理",
                     "detail": approval.title,
-                    "at": approval.created_at.isoformat(),
+                    "at": _timestamp(approval.created_at) or _utcnow(),
                     "tone": "warning",
                 }
                 for approval in approvals
@@ -323,7 +345,7 @@ class DashboardService:
                     "id": skill.id,
                     "label": "Skill health 已降级",
                     "detail": skill.name,
-                    "at": (skill.last_health_check.isoformat() if skill.last_health_check else _utcnow()),
+                    "at": _timestamp(skill.last_health_check) or _utcnow(),
                     "tone": "critical" if skill.last_health_status == "critical" else "warning",
                 }
                 for skill in skills
@@ -334,7 +356,7 @@ class DashboardService:
                     "id": learning.id,
                     "label": "可用学习草案",
                     "detail": learning.content[:120],
-                    "at": learning.created_at.isoformat(),
+                    "at": _timestamp(learning.created_at) or _utcnow(),
                     "tone": "positive" if learning.is_active else "neutral",
                 }
                 for learning in learnings[:5]
@@ -357,8 +379,8 @@ class DashboardService:
                     "jobDescription": payload["job_description"],
                     "stateSnapshot": payload["state_snapshot"],
                     "aiScores": payload["ai_scores"],
-                    "cooldownUntil": payload["cooldown_until"].isoformat() if payload["cooldown_until"] else None,
-                    "lastContactedAt": payload["last_contacted_at"].isoformat() if payload["last_contacted_at"] else None,
+                    "cooldownUntil": _timestamp(payload["cooldown_until"]),
+                    "lastContactedAt": _timestamp(payload["last_contacted_at"]),
                 }
                 for payload in (
                     application_payload_from_application(
@@ -383,7 +405,7 @@ class DashboardService:
                     "scopeRef": item.scope_ref,
                     "status": item.status,
                     "version": f"v{item.version}",
-                    "updatedAt": item.updated_at.isoformat(),
+                    "updatedAt": _timestamp(item.updated_at) or _utcnow(),
                     "nodes": _blueprint_nodes_for_dashboard(item.blueprint),
                 }
                 for item in playbooks
@@ -397,7 +419,7 @@ class DashboardService:
                     "boundStage": item.bound_to_stage or "unbound",
                     "platform": item.platform,
                     "health": item.last_health_status or "warning",
-                    "lastCheckedAt": item.last_health_check.isoformat() if item.last_health_check else _utcnow(),
+                    "lastCheckedAt": _timestamp(item.last_health_check) or _utcnow(),
                     "summary": item.strategy.get("summary", "Skill 策略由本地优先运行时生成。"),
                 }
                 for item in skills
@@ -410,7 +432,7 @@ class DashboardService:
                     "detail": item.notes or item.payload.get("summary", "等待人工审查。"),
                     "requester": item.requested_by or "agent",
                     "status": item.status,
-                    "createdAt": item.created_at.isoformat(),
+                    "createdAt": _timestamp(item.created_at) or _utcnow(),
                 }
                 for item in approvals
             ],

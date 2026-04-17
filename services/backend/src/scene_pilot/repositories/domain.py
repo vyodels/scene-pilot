@@ -129,6 +129,13 @@ class PlaybookRepository(BaseRepository[Playbook]):
 class CandidateRepository(BaseRepository[Candidate]):
     model = Candidate
 
+    def get(self, item_id: str) -> Candidate | None:
+        stmt = select(Candidate).where(Candidate.candidate_person_id == item_id)
+        return self.session.scalars(stmt).first()
+
+    def get_by_internal_id(self, internal_id: str) -> Candidate | None:
+        return self.session.get(Candidate, internal_id)
+
     def by_platform_candidate_id(self, platform: str, platform_candidate_id: str) -> Candidate | None:
         stmt = select(Candidate).where(
             Candidate.platform == platform,
@@ -138,6 +145,9 @@ class CandidateRepository(BaseRepository[Candidate]):
 
     def resolve(self, candidate_id: str) -> Candidate | None:
         candidate = self.get(candidate_id)
+        if candidate is not None:
+            return candidate
+        candidate = self.get_by_internal_id(candidate_id)
         if candidate is not None:
             return candidate
         stmt = select(Candidate).where(Candidate.platform_candidate_id == candidate_id)
@@ -150,13 +160,20 @@ class CandidatePlatformIdxRepository(BaseRepository[CandidatePlatformIdx]):
     def by_platform_identity(self, platform: str, platform_candidate_id: str) -> CandidatePlatformIdx | None:
         stmt = select(CandidatePlatformIdx).where(
             CandidatePlatformIdx.platform == platform,
-            CandidatePlatformIdx.platform_candidate_id == platform_candidate_id,
+            CandidatePlatformIdx.platform_candidate_person_id == platform_candidate_id,
         )
         return self.session.scalars(stmt).first()
 
 
 class JobDescriptionRepository(BaseRepository[JobDescription]):
     model = JobDescription
+
+    def get(self, item_id: str) -> JobDescription | None:
+        stmt = select(JobDescription).where(JobDescription.job_description_id == item_id)
+        return self.session.scalars(stmt).first()
+
+    def get_by_internal_id(self, internal_id: str) -> JobDescription | None:
+        return self.session.get(JobDescription, internal_id)
 
 
 class JobDescriptionPlatformIdxRepository(BaseRepository[JobDescriptionPlatformIdx]):
@@ -173,18 +190,34 @@ class JobDescriptionPlatformIdxRepository(BaseRepository[JobDescriptionPlatformI
 class CandidateApplicationRepository(BaseRepository[CandidateApplication]):
     model = CandidateApplication
 
+    def get(self, item_id: str) -> CandidateApplication | None:
+        stmt = select(CandidateApplication).where(CandidateApplication.candidate_application_id == item_id)
+        return self.session.scalars(stmt).first()
+
+    def get_by_internal_id(self, internal_id: str) -> CandidateApplication | None:
+        return self.session.get(CandidateApplication, internal_id)
+
     def _normalize_payload(self, data: BaseModel | dict[str, Any]) -> dict[str, Any]:
         payload = data.model_dump(exclude_unset=True) if isinstance(data, BaseModel) else dict(data)
-        person_id = str(payload.get("person_id") or "").strip()
-        job_description_id = str(payload.get("job_description_id") or "").strip()
-        if person_id and job_description_id:
+        person_business_id = str(payload.get("person_id") or "").strip()
+        job_business_id = str(payload.get("job_description_id") or "").strip()
+        person = CandidateRepository(self.session).get(person_business_id) if person_business_id else None
+        if person is not None:
+            payload["person_id"] = person.id
+        job_description = JobDescriptionRepository(self.session).get(job_business_id) if job_business_id else None
+        if job_description is not None:
+            payload["job_description_id"] = job_description.id
+        if person_business_id and job_business_id:
             from scene_pilot.services.application_window import make_application_window
 
-            canonical_window = make_application_window(person_id, job_description_id)
+            canonical_window = make_application_window(person_business_id, job_business_id)
             provided_window = str(payload.get("application_window") or "").strip()
             if provided_window and provided_window != canonical_window:
                 raise ValueError("application_window must match the canonical person/job/month format")
             payload["application_window"] = canonical_window
+        payload.setdefault("source_platform", str(payload.get("platform") or "site"))
+        if person is not None:
+            payload.setdefault("source_platform_candidate_person_id", person.platform_candidate_id)
         return payload
 
     def create(self, data: BaseModel | dict[str, Any]) -> CandidateApplication:
@@ -237,18 +270,34 @@ class CandidateApplicationRepository(BaseRepository[CandidateApplication]):
         return self.session.scalars(stmt).first()
 
 
+def _resolve_application_storage_id(session: Session, application_id: str) -> str:
+    normalized = str(application_id or "").strip()
+    if not normalized:
+        return normalized
+    repo = CandidateApplicationRepository(session)
+    application = repo.get(normalized)
+    if application is not None:
+        return application.id
+    application = repo.get_by_internal_id(normalized)
+    if application is not None:
+        return application.id
+    return normalized
+
+
 class ApplicationSessionRepository(BaseRepository[ApplicationSession]):
     model = ApplicationSession
 
     def by_application_id(self, application_id: str) -> ApplicationSession | None:
-        stmt = select(ApplicationSession).where(ApplicationSession.application_id == application_id)
+        resolved_application_id = _resolve_application_storage_id(self.session, application_id)
+        stmt = select(ApplicationSession).where(ApplicationSession.application_id == resolved_application_id)
         return self.session.scalars(stmt).first()
 
     def get_or_create(self, application_id: str, *, defaults: dict[str, Any] | None = None) -> ApplicationSession:
-        existing = self.by_application_id(application_id)
+        resolved_application_id = _resolve_application_storage_id(self.session, application_id)
+        existing = self.by_application_id(resolved_application_id)
         if existing is not None:
             return existing
-        payload = {"application_id": application_id, **dict(defaults or {})}
+        payload = {"application_id": resolved_application_id, **dict(defaults or {})}
         return self.create(payload)
 
     def append_recent_message(
@@ -281,9 +330,10 @@ class ApplicationCommunicationLogRepository(BaseRepository[ApplicationCommunicat
     model = ApplicationCommunicationLog
 
     def by_application(self, application_id: str, limit: int = 100, offset: int = 0) -> list[ApplicationCommunicationLog]:
+        resolved_application_id = _resolve_application_storage_id(self.session, application_id)
         stmt = (
             select(ApplicationCommunicationLog)
-            .where(ApplicationCommunicationLog.application_id == application_id)
+            .where(ApplicationCommunicationLog.application_id == resolved_application_id)
             .order_by(ApplicationCommunicationLog.timestamp.asc(), ApplicationCommunicationLog.id.asc())
             .offset(offset)
             .limit(limit)
@@ -295,9 +345,10 @@ class ApplicationStatusTransitionRepository(BaseRepository[ApplicationStatusTran
     model = ApplicationStatusTransition
 
     def by_application(self, application_id: str, limit: int = 200, offset: int = 0) -> list[ApplicationStatusTransition]:
+        resolved_application_id = _resolve_application_storage_id(self.session, application_id)
         stmt = (
             select(ApplicationStatusTransition)
-            .where(ApplicationStatusTransition.application_id == application_id)
+            .where(ApplicationStatusTransition.application_id == resolved_application_id)
             .order_by(ApplicationStatusTransition.created_at.asc(), ApplicationStatusTransition.id.asc())
             .offset(offset)
             .limit(limit)
@@ -305,9 +356,10 @@ class ApplicationStatusTransitionRepository(BaseRepository[ApplicationStatusTran
         return list(self.session.scalars(stmt).all())
 
     def latest_for_application(self, application_id: str) -> ApplicationStatusTransition | None:
+        resolved_application_id = _resolve_application_storage_id(self.session, application_id)
         stmt = (
             select(ApplicationStatusTransition)
-            .where(ApplicationStatusTransition.application_id == application_id)
+            .where(ApplicationStatusTransition.application_id == resolved_application_id)
             .order_by(ApplicationStatusTransition.created_at.desc(), ApplicationStatusTransition.id.desc())
         )
         return self.session.scalars(stmt).first()
@@ -317,9 +369,10 @@ class ApplicationAssessmentRepository(BaseRepository[ApplicationAssessment]):
     model = ApplicationAssessment
 
     def by_application(self, application_id: str, limit: int = 50, offset: int = 0) -> list[ApplicationAssessment]:
+        resolved_application_id = _resolve_application_storage_id(self.session, application_id)
         stmt = (
             select(ApplicationAssessment)
-            .where(ApplicationAssessment.application_id == application_id)
+            .where(ApplicationAssessment.application_id == resolved_application_id)
             .order_by(ApplicationAssessment.created_at.desc(), ApplicationAssessment.id.desc())
             .offset(offset)
             .limit(limit)
@@ -331,9 +384,10 @@ class ApplicationAssignmentRepository(BaseRepository[ApplicationAssignment]):
     model = ApplicationAssignment
 
     def by_application(self, application_id: str, limit: int = 50, offset: int = 0) -> list[ApplicationAssignment]:
+        resolved_application_id = _resolve_application_storage_id(self.session, application_id)
         stmt = (
             select(ApplicationAssignment)
-            .where(ApplicationAssignment.application_id == application_id)
+            .where(ApplicationAssignment.application_id == resolved_application_id)
             .order_by(ApplicationAssignment.assigned_at.desc(), ApplicationAssignment.id.desc())
             .offset(offset)
             .limit(limit)
@@ -359,9 +413,10 @@ class ApplicationScorecardRepository(BaseRepository[ApplicationScorecard]):
     model = ApplicationScorecard
 
     def by_application(self, application_id: str, limit: int = 100, offset: int = 0) -> list[ApplicationScorecard]:
+        resolved_application_id = _resolve_application_storage_id(self.session, application_id)
         stmt = (
             select(ApplicationScorecard)
-            .where(ApplicationScorecard.application_id == application_id)
+            .where(ApplicationScorecard.application_id == resolved_application_id)
             .order_by(ApplicationScorecard.created_at.desc(), ApplicationScorecard.id.desc())
             .offset(offset)
             .limit(limit)
@@ -373,9 +428,10 @@ class ApplicationReviewDecisionRepository(BaseRepository[ApplicationReviewDecisi
     model = ApplicationReviewDecision
 
     def by_application(self, application_id: str, limit: int = 100, offset: int = 0) -> list[ApplicationReviewDecision]:
+        resolved_application_id = _resolve_application_storage_id(self.session, application_id)
         stmt = (
             select(ApplicationReviewDecision)
-            .where(ApplicationReviewDecision.application_id == application_id)
+            .where(ApplicationReviewDecision.application_id == resolved_application_id)
             .order_by(ApplicationReviewDecision.decided_at.desc(), ApplicationReviewDecision.id.desc())
             .offset(offset)
             .limit(limit)
@@ -387,9 +443,10 @@ class ApplicationSyncRecordRepository(BaseRepository[ApplicationSyncRecord]):
     model = ApplicationSyncRecord
 
     def by_application(self, application_id: str, limit: int = 50, offset: int = 0) -> list[ApplicationSyncRecord]:
+        resolved_application_id = _resolve_application_storage_id(self.session, application_id)
         stmt = (
             select(ApplicationSyncRecord)
-            .where(ApplicationSyncRecord.application_id == application_id)
+            .where(ApplicationSyncRecord.application_id == resolved_application_id)
             .order_by(ApplicationSyncRecord.created_at.desc(), ApplicationSyncRecord.id.desc())
             .offset(offset)
             .limit(limit)
@@ -505,9 +562,10 @@ class ResumeArtifactRepository(BaseRepository[ResumeArtifact]):
     model = ResumeArtifact
 
     def by_application(self, application_id: str, limit: int = 50, offset: int = 0) -> list[ResumeArtifact]:
+        resolved_application_id = _resolve_application_storage_id(self.session, application_id)
         stmt = (
             select(ResumeArtifact)
-            .where(ResumeArtifact.application_id == application_id)
+            .where(ResumeArtifact.application_id == resolved_application_id)
             .order_by(ResumeArtifact.captured_at.desc(), ResumeArtifact.id.desc())
             .offset(offset)
             .limit(limit)

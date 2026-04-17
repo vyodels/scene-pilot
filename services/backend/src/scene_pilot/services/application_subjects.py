@@ -12,9 +12,15 @@ def application_payload_from_application(
     contact_info = dict(getattr(person, "contact_info", None) or {})
     state_snapshot = dict(getattr(application, "state_snapshot", None) or {})
     ai_scores = dict(getattr(application, "ai_scores", None) or {})
-    application_id = str(getattr(application, "id", "") or "").strip()
-    person_id = str(getattr(application, "person_id", "") or "").strip() or None
-    job_description_id = str(getattr(application, "job_description_id", "") or "").strip() or None
+    application_id = str(
+        getattr(application, "candidate_application_id", None) or getattr(application, "id", "") or ""
+    ).strip()
+    person_id = str(
+        getattr(person, "candidate_person_id", None) or getattr(application, "person_id", "") or ""
+    ).strip() or None
+    job_description_id = str(
+        getattr(job_description, "job_description_id", None) or getattr(application, "job_description_id", "") or ""
+    ).strip() or None
     return {
         "id": application_id,
         "application_id": application_id,

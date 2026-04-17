@@ -89,7 +89,7 @@ def create_subject(
     )
     application = create_application(
         client,
-        person_id=person["id"],
+        person_id=person["candidatePersonId"],
         platform=platform,
         current_status=current_status,
         current_stage_key=current_stage_key,
@@ -118,8 +118,8 @@ def test_recruit_agent_candidate_thread_state_and_memory(tmp_path):
             ai_scores={"overall": 91, "decision": "pass"},
             ai_reasoning="工程深度和 owner 意识都比较强。",
         )
-        candidate_id = subject["person"]["id"]
-        application_id = subject["application"]["id"]
+        candidate_id = subject["person"]["candidatePersonId"]
+        application_id = subject["application"]["candidateApplicationId"]
 
         profile_response = client.get("/api/recruit-agent/profile")
         assert profile_response.status_code == 200
@@ -279,7 +279,7 @@ def test_resume_artifact_contact_snapshot_relinks_application_person(tmp_path):
             platform="boss",
             platform_candidate_id="boss-existing-1",
             contact_info={"wechat": "ada_001"},
-        )["id"]
+        )["candidatePersonId"]
 
         duplicate_subject = create_subject(
             client,
@@ -287,7 +287,7 @@ def test_resume_artifact_contact_snapshot_relinks_application_person(tmp_path):
             platform="boss",
             platform_candidate_id="boss-duplicate-1",
         )
-        application_id = duplicate_subject["application"]["id"]
+        application_id = duplicate_subject["application"]["candidateApplicationId"]
 
         artifact_response = client.post(
             f"/api/candidate-applications/{application_id}/resume-artifacts",
@@ -304,7 +304,7 @@ def test_resume_artifact_contact_snapshot_relinks_application_person(tmp_path):
 
         application_response = client.get(f"/api/candidate-applications/{application_id}")
         assert application_response.status_code == 200
-        assert application_response.json()["person_id"] == existing_id
+        assert application_response.json()["candidatePersonId"] == existing_id
 
         thread_response = client.get(f"/api/candidate-applications/{application_id}/thread")
         assert thread_response.status_code == 200
@@ -320,7 +320,7 @@ def test_contact_channels_transition_does_not_merge_application_person(tmp_path)
             platform="boss",
             platform_candidate_id="boss-existing-weak",
             contact_info={"wechat": "existing_wechat"},
-        )["id"]
+        )["candidatePersonId"]
 
         duplicate_subject = create_subject(
             client,
@@ -328,7 +328,7 @@ def test_contact_channels_transition_does_not_merge_application_person(tmp_path)
             platform="boss",
             platform_candidate_id="boss-weak-1",
         )
-        application_id = duplicate_subject["application"]["id"]
+        application_id = duplicate_subject["application"]["candidateApplicationId"]
 
         transition_response = client.post(
             f"/api/candidate-applications/{application_id}/transitions",
@@ -345,12 +345,12 @@ def test_contact_channels_transition_does_not_merge_application_person(tmp_path)
 
         application_response = client.get(f"/api/candidate-applications/{application_id}")
         assert application_response.status_code == 200
-        assert application_response.json()["person_id"] == duplicate_subject["person"]["id"]
-        assert application_response.json()["person_id"] != existing_id
+        assert application_response.json()["candidatePersonId"] == duplicate_subject["person"]["candidatePersonId"]
+        assert application_response.json()["candidatePersonId"] != existing_id
 
         thread_payload = transition_response.json()
         assert thread_payload["state_snapshot"]["contact_channels"] == ["phone", "wechat"]
-        assert thread_payload["application"]["person_id"] == duplicate_subject["person"]["id"]
+        assert thread_payload["application"]["person_id"] == duplicate_subject["person"]["candidatePersonId"]
 
 
 def test_recruit_agent_evolution_artifacts_validate_kind_schema(tmp_path):
@@ -692,7 +692,7 @@ def test_state_machine_criteria_suggestions_endpoint(tmp_path):
                         client,
                         name=f"Criteria Candidate {index}",
                         platform="boss",
-                    )["id"],
+                        )["candidatePersonId"],
                     "platform": "boss",
                     "current_status": "offline_scoring",
                     "current_stage_key": "offline_scoring",
@@ -700,7 +700,7 @@ def test_state_machine_criteria_suggestions_endpoint(tmp_path):
                 },
             )
             assert candidate_response.status_code == 201
-            candidate_id = candidate_response.json()["id"]
+            candidate_id = candidate_response.json()["candidateApplicationId"]
             transition_response = client.post(f"/api/candidate-applications/{candidate_id}/transitions", json=payload)
             assert transition_response.status_code == 200
 

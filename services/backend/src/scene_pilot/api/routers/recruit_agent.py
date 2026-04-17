@@ -135,19 +135,27 @@ def _with_application_id(model_cls, item, application_id: str, person_id: str | 
         payload = {key: value for key, value in vars(item).items() if not key.startswith("_")}
     else:
         payload = dict(item)
-    payload["application_id"] = payload.get("application_id") or application_id
-    payload["person_id"] = payload.get("person_id") or person_id
+    payload["application_id"] = application_id
+    if person_id is not None:
+        payload["person_id"] = person_id
     return model_cls.model_validate(payload)
 
 
-def _runtime_person_filter_id(session: Session, candidate_id: str | None) -> str | None:
+def _runtime_subject_filter_ids(session: Session, candidate_id: str | None) -> tuple[str | None, str | None]:
     text = str(candidate_id or "").strip()
     if not text:
-        return None
+        return None, None
     application = CandidateApplicationRepository(session).get(text)
     if application is not None:
-        return application.person_id
-    return text
+        person = CandidateRepository(session).resolve(application.person_id)
+        return (
+            str(person.candidate_person_id or "").strip() or None if person is not None else None,
+            application.candidate_application_id,
+        )
+    person = CandidateRepository(session).resolve(text)
+    if person is not None:
+        return str(person.candidate_person_id or "").strip() or None, None
+    return text, None
 
 
 def _application_subject_read_for_application(person, application, job_description=None) -> ApplicationSubjectRead:
@@ -222,10 +230,10 @@ def _application_state_snapshot(application) -> CandidateStateSnapshotRead:
 
 
 def _build_application_thread(session: Session, application, person) -> CandidateThreadRead:
-    application_id = application.id
-    person_id = person.id
+    application_id = application.candidate_application_id
+    person_id = person.candidate_person_id
     job_description = (
-        JobDescriptionRepository(session).get(application.job_description_id)
+        JobDescriptionRepository(session).get_by_internal_id(application.job_description_id)
         if getattr(application, "job_description_id", None)
         else None
     )
@@ -248,7 +256,7 @@ def _build_application_thread(session: Session, application, person) -> Candidat
     if application.ai_scores and not any(item.assessment_type == "ai" for item in assessments):
             assessments = [
                 CandidateAssessmentRead(
-                    id=f"synthetic-ai-{application.id}",
+                id=f"synthetic-ai-{application.id}",
                     person_id=person_id,
                     application_id=application_id,
                 assessment_type="ai",
@@ -274,7 +282,7 @@ def _build_application_thread(session: Session, application, person) -> Candidat
     ]
     resume_artifacts = [
         _with_application_id(ResumeArtifactRead, item, application_id, person_id)
-        for item in resume_repo.by_application(application_id, limit=20, offset=0)
+        for item in resume_repo.by_application(application.id, limit=20, offset=0)
     ]
     scorecards = [
         _with_application_id(CandidateScorecardRead, item, application_id, person_id)
@@ -291,7 +299,7 @@ def _build_application_thread(session: Session, application, person) -> Candidat
     return CandidateThreadRead(
         application_id=application_id,
         person_id=person_id,
-        job_description_id=application.job_description_id,
+        job_description_id=job_description.job_description_id if job_description is not None else None,
         application=_application_subject_read_for_application(person, application, job_description),
         session_status=application_session.status if application_session is not None else "active",
         context_summary=application_session.context_summary if application_session is not None else None,
@@ -319,8 +327,8 @@ def _build_application_thread(session: Session, application, person) -> Candidat
         review_decisions=review_decisions,
         sync_records=sync_records,
         available_statuses=available_state_statuses(session),
-        runtime_approvals=_runtime_approvals_for_application(session, application.id, person_id),
-        runtime_interactions=_runtime_interactions_for_application(session, application.id, person_id),
+        runtime_approvals=_runtime_approvals_for_application(session, application.id, person.id),
+        runtime_interactions=_runtime_interactions_for_application(session, application.id, person.id),
     )
 
 
@@ -332,7 +340,7 @@ def build_application_thread(session: Session, application_id: str) -> Candidate
 def list_application_entries(session: Session, application_id: str) -> list[CandidateConversationEntryRead]:
     application, _person = _get_application_with_person_or_404(session, application_id)
     logs = ApplicationCommunicationLogRepository(session).by_application(application.id, limit=200, offset=0)
-    resolved_application_id = application.id
+    resolved_application_id = application.candidate_application_id
     return [
         CandidateConversationEntryRead(
             id=item.id,
@@ -354,7 +362,7 @@ def create_application_entry(
     payload: CandidateConversationEntryCreate,
 ) -> CandidateConversationEntryRead:
     application, _person = _get_application_with_person_or_404(session, application_id)
-    resolved_application_id = application.id
+    resolved_application_id = application.candidate_application_id
     timestamp = payload.timestamp or _now()
     entry = ApplicationCommunicationLogRepository(session).create(
         {
@@ -392,9 +400,11 @@ def create_application_entry(
 
 def list_application_status_transitions(session: Session, application_id: str) -> list[CandidateStatusTransitionRead]:
     application, _person = _get_application_with_person_or_404(session, application_id)
-    resolved_application_id = application.id
+    resolved_application_id = application.candidate_application_id
+    person = CandidateRepository(session).resolve(application.person_id)
+    person_id = person.candidate_person_id if person is not None else application.person_id
     items = ApplicationStatusTransitionRepository(session).by_application(application.id, limit=500, offset=0)
-    return [_with_application_id(CandidateStatusTransitionRead, item, resolved_application_id, application.person_id) for item in items]
+    return [_with_application_id(CandidateStatusTransitionRead, item, resolved_application_id, person_id) for item in items]
 
 
 def create_application_status_transition(
@@ -407,7 +417,9 @@ def create_application_status_transition(
         transition_candidate(session, candidate=person, application=application, payload=payload)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    refreshed_application, refreshed_person = _get_application_with_person_or_404(session, application.id)
+    refreshed_application, refreshed_person = _get_application_with_person_or_404(
+        session, application.candidate_application_id
+    )
     return _build_application_thread(session, refreshed_application, refreshed_person)
 
 
@@ -593,9 +605,9 @@ def list_application_status_transitions_view(application_id: str, session: Sessi
 
 
 def list_application_assignments(application_id: str, session: Session = Depends(get_session)) -> list[CandidateAssignmentRead]:
-    application, _person = _get_application_with_person_or_404(session, application_id)
+    application, person = _get_application_with_person_or_404(session, application_id)
     items = ApplicationAssignmentRepository(session).by_application(application.id, limit=100, offset=0)
-    return [_with_application_id(CandidateAssignmentRead, item, application.id, application.person_id) for item in items]
+    return [_with_application_id(CandidateAssignmentRead, item, application.candidate_application_id, person.candidate_person_id) for item in items]
 
 
 def create_application_assignment(
@@ -614,13 +626,19 @@ def create_application_assignment(
             "assigned_at": payload.assigned_at or _now(),
         }
     )
-    return _with_application_id(CandidateAssignmentRead, item, application.id, application.person_id)
+    person = CandidateRepository(session).resolve(application.person_id)
+    return _with_application_id(
+        CandidateAssignmentRead,
+        item,
+        application.candidate_application_id,
+        person.candidate_person_id if person is not None else application.person_id,
+    )
 
 
 def list_application_resume_artifacts(application_id: str, session: Session = Depends(get_session)) -> list[ResumeArtifactRead]:
     application, person = _get_application_with_person_or_404(session, application_id)
     items = ResumeArtifactRepository(session).by_application(application.id, limit=100, offset=0)
-    return [_with_application_id(ResumeArtifactRead, item, application.id, person.id) for item in items]
+    return [_with_application_id(ResumeArtifactRead, item, application.candidate_application_id, person.candidate_person_id) for item in items]
 
 
 def create_application_resume_artifact(
@@ -656,7 +674,12 @@ def create_application_resume_artifact(
                 "current_stage_key": application.current_stage_key or application.current_status,
             },
         )
-    return _with_application_id(ResumeArtifactRead, item, application.id, linked_person.id)
+    return _with_application_id(
+        ResumeArtifactRead,
+        item,
+        application.candidate_application_id,
+        linked_person.candidate_person_id,
+    )
 
 
 def create_application_assessment(
@@ -713,13 +736,21 @@ def create_application_assessment(
         snapshot["human_assessment_status"] = payload.status
     snapshot["latest_note"] = payload.summary or snapshot.get("latest_note")
     CandidateApplicationRepository(session).update(application, {"state_snapshot": snapshot})
-    return _with_application_id(CandidateAssessmentRead, item, application.id, application.person_id)
+    person = CandidateRepository(session).resolve(application.person_id)
+    return _with_application_id(
+        CandidateAssessmentRead,
+        item,
+        application.candidate_application_id,
+        person.candidate_person_id if person is not None else application.person_id,
+    )
 
 
 def list_application_scorecards(application_id: str, session: Session = Depends(get_session)) -> list[CandidateScorecardRead]:
     application, _person = _get_application_with_person_or_404(session, application_id)
     items = ApplicationScorecardRepository(session).by_application(application.id, limit=100, offset=0)
-    return [_with_application_id(CandidateScorecardRead, item, application.id, application.person_id) for item in items]
+    person = CandidateRepository(session).resolve(application.person_id)
+    person_id = person.candidate_person_id if person is not None else application.person_id
+    return [_with_application_id(CandidateScorecardRead, item, application.candidate_application_id, person_id) for item in items]
 
 
 def create_application_scorecard(
@@ -737,13 +768,21 @@ def create_application_scorecard(
             "application_id": application.id,
         }
     )
-    return _with_application_id(CandidateScorecardRead, item, application.id, application.person_id)
+    person = CandidateRepository(session).resolve(application.person_id)
+    return _with_application_id(
+        CandidateScorecardRead,
+        item,
+        application.candidate_application_id,
+        person.candidate_person_id if person is not None else application.person_id,
+    )
 
 
 def list_application_review_decisions(application_id: str, session: Session = Depends(get_session)) -> list[CandidateReviewDecisionRead]:
     application, _person = _get_application_with_person_or_404(session, application_id)
     items = ApplicationReviewDecisionRepository(session).by_application(application.id, limit=100, offset=0)
-    return [_with_application_id(CandidateReviewDecisionRead, item, application.id, application.person_id) for item in items]
+    person = CandidateRepository(session).resolve(application.person_id)
+    person_id = person.candidate_person_id if person is not None else application.person_id
+    return [_with_application_id(CandidateReviewDecisionRead, item, application.candidate_application_id, person_id) for item in items]
 
 
 def create_application_review_decision(
@@ -762,13 +801,21 @@ def create_application_review_decision(
             "decided_at": payload.decided_at or _now(),
         }
     )
-    return _with_application_id(CandidateReviewDecisionRead, item, application.id, application.person_id)
+    person = CandidateRepository(session).resolve(application.person_id)
+    return _with_application_id(
+        CandidateReviewDecisionRead,
+        item,
+        application.candidate_application_id,
+        person.candidate_person_id if person is not None else application.person_id,
+    )
 
 
 def list_application_sync_records(application_id: str, session: Session = Depends(get_session)) -> list[TalentPoolSyncRecordRead]:
     application, _person = _get_application_with_person_or_404(session, application_id)
     items = ApplicationSyncRecordRepository(session).by_application(application.id, limit=100, offset=0)
-    return [_with_application_id(TalentPoolSyncRecordRead, item, application.id, application.person_id) for item in items]
+    person = CandidateRepository(session).resolve(application.person_id)
+    person_id = person.candidate_person_id if person is not None else application.person_id
+    return [_with_application_id(TalentPoolSyncRecordRead, item, application.candidate_application_id, person_id) for item in items]
 
 
 def create_application_sync_record(
@@ -786,7 +833,13 @@ def create_application_sync_record(
             "application_id": application.id,
         }
     )
-    return _with_application_id(TalentPoolSyncRecordRead, item, application.id, application.person_id)
+    person = CandidateRepository(session).resolve(application.person_id)
+    return _with_application_id(
+        TalentPoolSyncRecordRead,
+        item,
+        application.candidate_application_id,
+        person.candidate_person_id if person is not None else application.person_id,
+    )
 
 
 @router.get("/goals", response_model=list[GoalSpecRead])
@@ -890,7 +943,7 @@ def list_runtime_runs(
     session: Session = Depends(get_session),
 ) -> list[RuntimeControlledRunRead]:
     session_record = _ensure_runtime_session(session)
-    resolved_candidate_id = _runtime_person_filter_id(session, candidate_id)
+    resolved_candidate_id, resolved_application_id = _runtime_subject_filter_ids(session, candidate_id)
     items = AgentRunRepository(session).list_filtered(
         session_id=session_record.id,
         status=status,
@@ -899,6 +952,12 @@ def list_runtime_runs(
         limit=limit,
         offset=offset,
     )
+    if resolved_application_id:
+        items = [
+            item
+            for item in items
+            if str((item.runtime_metadata or {}).get("application_id") or "").strip() == resolved_application_id
+        ]
     return [RuntimeControlledRunRead.model_validate(item) for item in items]
 
 
@@ -964,13 +1023,19 @@ def list_runtime_graphs(
     offset: int = Query(default=0, ge=0),
     session: Session = Depends(get_session),
 ) -> list[ExecutionGraphProjectionRead]:
-    resolved_candidate_id = _runtime_person_filter_id(session, candidate_id)
+    resolved_candidate_id, resolved_application_id = _runtime_subject_filter_ids(session, candidate_id)
     items = ExecutionGraphProjectionRepository(session).list_recent(
         goal_spec_id=goal_id,
         candidate_id=resolved_candidate_id,
         limit=limit,
         offset=offset,
     )
+    if resolved_application_id:
+        items = [
+            item
+            for item in items
+            if str((item.graph_metadata or {}).get("application_id") or "").strip() == resolved_application_id
+        ]
     return [ExecutionGraphProjectionRead.model_validate(item) for item in items]
 
 
@@ -1002,7 +1067,7 @@ def list_operator_interactions(
     session: Session = Depends(get_session),
 ) -> list[OperatorInteractionRead]:
     session_record = _ensure_runtime_session(session)
-    resolved_candidate_id = _runtime_person_filter_id(session, candidate_id)
+    resolved_candidate_id, resolved_application_id = _runtime_subject_filter_ids(session, candidate_id)
     items = OperatorInteractionRepository(session).list_recent(
         session_id=session_record.id,
         candidate_id=resolved_candidate_id,
@@ -1010,6 +1075,12 @@ def list_operator_interactions(
         limit=limit,
         offset=offset,
     )
+    if resolved_application_id:
+        items = [
+            item
+            for item in items
+            if str((item.interaction_metadata or {}).get("application_id") or "").strip() == resolved_application_id
+        ]
     return [OperatorInteractionRead.model_validate(item) for item in items]
 
 

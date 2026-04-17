@@ -32,7 +32,7 @@ def test_candidate_crud(tmp_path):
         assert candidate["name"] == "Ada Lovelace"
         assert candidate["resume_path"] == "/resumes/ada.pdf"
 
-        candidate_id = candidate["id"]
+        candidate_id = candidate["candidatePersonId"]
         shadow_application = client.get(f"/api/candidate-applications/{candidate_id}")
         assert shadow_application.status_code == 404
 
@@ -62,7 +62,7 @@ def test_job_description_and_application_crud(tmp_path):
             },
         )
         assert person_response.status_code == 201
-        person_id = person_response.json()["id"]
+        person_id = person_response.json()["candidatePersonId"]
 
         job_response = client.post(
             "/api/job-descriptions",
@@ -79,7 +79,7 @@ def test_job_description_and_application_crud(tmp_path):
         assert job_response.status_code == 201
         job_description = job_response.json()
         assert job_description["title"] == "后端工程师"
-        job_description_id = job_description["id"]
+        job_description_id = job_description["jobDescriptionId"]
 
         application_response = client.post(
             "/api/candidate-applications",
@@ -94,17 +94,17 @@ def test_job_description_and_application_crud(tmp_path):
         )
         assert application_response.status_code == 201
         application = application_response.json()
-        assert application["person_id"] == person_id
-        assert application["job_description_id"] == job_description_id
+        assert application["candidatePersonId"] == person_id
+        assert application["jobDescriptionId"] == job_description_id
 
-        application_id = application["id"]
+        application_id = application["candidateApplicationId"]
         get_application = client.get(f"/api/candidate-applications/{application_id}")
         assert get_application.status_code == 200
-        assert get_application.json()["platform_application_id"] == "boss-app-1"
+        assert get_application.json()["sourcePlatform"] == "boss"
 
         patch_application = client.patch(
             f"/api/candidate-applications/{application_id}",
             json={"current_status": "screening_passed"},
         )
         assert patch_application.status_code == 200
-        assert patch_application.json()["current_status"] == "screening_passed"
+        assert patch_application.json()["currentStatus"] == "screening_passed"

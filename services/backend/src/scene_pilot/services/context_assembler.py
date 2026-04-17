@@ -23,6 +23,7 @@ from scene_pilot.repositories import (
     CandidateScorecardRepository,
     CandidateSessionRepository,
     JobDescriptionMemoryRepository,
+    JobDescriptionRepository,
 )
 from scene_pilot.scheduler.queue import TaskEnvelope
 from scene_pilot.services.recruit_agent import ensure_primary_recruit_agent_profile, resolve_context_policy
@@ -133,6 +134,11 @@ class ContextAssemblerService:
             candidate = CandidateRepository(self.session).resolve(task.candidate_id)
         if candidate is None and application is not None:
             candidate = CandidateRepository(self.session).resolve(application.person_id)
+        job_description = (
+            JobDescriptionRepository(self.session).get_by_internal_id(application.job_description_id)
+            if application is not None and application.job_description_id
+            else None
+        )
         if candidate is not None:
             add_fragment(
                 source="application" if application is not None else "candidate",
@@ -140,11 +146,11 @@ class ContextAssemblerService:
                 kind="candidate_progress",
                 tier="required",
                 content={
-                    "application_id": application.id if application is not None else None,
-                    "person_id": application.person_id if application is not None else candidate.id,
+                    "application_id": application.candidate_application_id if application is not None else None,
+                    "person_id": candidate.candidate_person_id,
                     "current_status": application.current_status if application is not None else "discovered",
                     "current_stage_key": application.current_stage_key if application is not None else None,
-                    "job_description_id": application.job_description_id if application is not None else None,
+                    "job_description_id": job_description.job_description_id if job_description is not None else None,
                     "state_snapshot": dict(application.state_snapshot or {}) if application is not None else {},
                 },
                 required=True,
@@ -152,7 +158,7 @@ class ContextAssemblerService:
             )
 
             application_session = ApplicationSessionRepository(self.session).by_application_id(application.id) if application is not None else None
-            candidate_session = CandidateSessionRepository(self.session).by_candidate_id(candidate.id)
+            candidate_session = CandidateSessionRepository(self.session).by_candidate_id(candidate.candidate_person_id)
             active_session = application_session or candidate_session
             if active_session is not None:
                 recent_messages = list(active_session.recent_messages or [])[-8:]
@@ -392,9 +398,13 @@ class ContextAssemblerService:
         return {
             "lane": lane,
             "run_type": task.task_type,
-            "application_id": application.id if application is not None else application_id or None,
-            "person_id": candidate.id if candidate is not None else None,
-            "job_description_id": application.job_description_id if application is not None else None,
+            "application_id": (
+                application.candidate_application_id
+                if application is not None
+                else application_id or None
+            ),
+            "person_id": candidate.candidate_person_id if candidate is not None else None,
+            "job_description_id": job_description.job_description_id if job_description is not None else None,
             "token_budget": token_budget,
             "context_policy": context_policy,
             "selected_token_estimate": used_tokens,
