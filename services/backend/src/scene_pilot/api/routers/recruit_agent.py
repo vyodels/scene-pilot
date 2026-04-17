@@ -29,7 +29,6 @@ from scene_pilot.repositories import (
     CandidateAssessmentRepository,
     CandidateApplicationRepository,
     CandidateAssignmentRepository,
-    CandidateMemoryRepository,
     CandidateRepository,
     CandidateReviewDecisionRepository,
     CandidateScorecardRepository,
@@ -37,7 +36,6 @@ from scene_pilot.repositories import (
     CandidateStatusTransitionRepository,
     CommunicationLogRepository,
     EvolutionArtifactRepository,
-    JobMemoryRepository,
     RecruitAgentProfileRepository,
     PersonResumeArtifactRepository,
     ResumeArtifactRepository,
@@ -55,9 +53,7 @@ from scene_pilot.schemas import (
     CandidateAssignmentRead,
     CandidateConversationEntryCreate,
     CandidateConversationEntryRead,
-    CandidateMemoryRead,
-    CandidateMemoryUpdate,
-    CandidateRead,
+    ApplicationSubjectRead,
     CandidateReviewDecisionCreate,
     CandidateReviewDecisionRead,
     CandidateScorecardCreate,
@@ -74,8 +70,6 @@ from scene_pilot.schemas import (
     GoalSpecCreate,
     GoalSpecRead,
     GoalSpecUpdate,
-    JobMemoryRead,
-    JobMemoryUpdate,
     MemoryCompactRequest,
     OperatorInteractionRead,
     OperatorInteractionResolveRequest,
@@ -92,7 +86,6 @@ from scene_pilot.schemas import (
     TalentPoolSyncRecordRead,
 )
 from scene_pilot.services.container import AppContainer
-from scene_pilot.services.application_subjects import application_id_for_candidate, job_description_id_for_candidate, person_id_for_candidate
 from scene_pilot.services.events import EventStreamService
 from scene_pilot.services.evolution import promote_skill_draft_contract, resolve_promoted_skill_snapshot
 from scene_pilot.services.recruit_agent import (
@@ -100,9 +93,7 @@ from scene_pilot.services.recruit_agent import (
     apply_memory_compaction,
     content_length,
     default_candidate_state_snapshot,
-    ensure_candidate_memory,
     ensure_global_memory,
-    ensure_job_memory,
     ensure_primary_recruit_agent_profile,
     needs_compaction,
     resolve_context_policy,
@@ -157,27 +148,29 @@ def _runtime_person_filter_id(session: Session, candidate_id: str | None) -> str
     return text
 
 
-def _candidate_read_for_application(candidate, application) -> CandidateRead:
-    return CandidateRead.model_validate(
+def _candidate_read_for_application(candidate, application) -> ApplicationSubjectRead:
+    return ApplicationSubjectRead.model_validate(
         {
             "id": candidate.id,
+            "application_id": application.id,
+            "person_id": candidate.id,
             "name": candidate.name,
             "platform": application.platform or candidate.platform,
             "platform_candidate_id": candidate.platform_candidate_id,
             "current_status": application.current_status,
             "current_stage_key": application.current_stage_key,
             "deepest_milestone": application.deepest_milestone,
-            "job_description_id": application.job_description_id or candidate.job_description_id,
+            "job_description_id": application.job_description_id,
             "contact_info": dict(candidate.contact_info or {}),
             "state_snapshot": dict(application.state_snapshot or {}),
             "resume_path": candidate.resume_path,
             "online_resume_text": candidate.online_resume_text,
-            "ai_scores": dict(application.ai_scores or candidate.ai_scores or {}),
-            "ai_reasoning": application.ai_reasoning or candidate.ai_reasoning,
-            "cooldown_until": application.cooldown_until or candidate.cooldown_until,
-            "last_contacted_at": application.last_contacted_at or candidate.last_contacted_at,
-            "created_at": candidate.created_at,
-            "updated_at": candidate.updated_at,
+            "ai_scores": dict(application.ai_scores or {}),
+            "ai_reasoning": application.ai_reasoning,
+            "cooldown_until": application.cooldown_until,
+            "last_contacted_at": application.last_contacted_at,
+            "created_at": application.created_at,
+            "updated_at": application.updated_at,
         }
     )
 
@@ -308,7 +301,7 @@ def _build_candidate_thread(session: Session, application, candidate) -> Candida
     return CandidateThreadRead(
         application_id=application_id,
         person_id=person_id,
-        job_description_id=application.job_description_id or job_description_id_for_candidate(candidate),
+        job_description_id=application.job_description_id,
         candidate=_candidate_read_for_application(candidate, application),
         session_status=candidate_session.status if candidate_session is not None else "active",
         context_summary=candidate_session.context_summary if candidate_session is not None else None,
@@ -480,222 +473,6 @@ def update_recruit_agent_profile(
                 repo.update(item, {"is_primary": False})
     updated = repo.update(profile, patch)
     return RecruitAgentProfileRead.model_validate(updated)
-
-
-@router.get("/candidate-memories", response_model=list[CandidateMemoryRead])
-def list_candidate_memories(
-    limit: int = Query(default=100, ge=1, le=500),
-    offset: int = Query(default=0, ge=0),
-    session: Session = Depends(get_session),
-) -> list[CandidateMemoryRead]:
-    profile = ensure_primary_recruit_agent_profile(session)
-    candidate_repo = CandidateRepository(session)
-    for candidate in candidate_repo.list(limit=5000, offset=0):
-        ensure_candidate_memory(session, agent_profile_id=profile.id, candidate_id=candidate.id)
-    items = CandidateMemoryRepository(session).list_for_agent(profile.id, limit=limit, offset=offset)
-    return [CandidateMemoryRead.model_validate(item) for item in items]
-
-
-@router.get("/candidate-memories/{candidate_id}", response_model=CandidateMemoryRead)
-def get_candidate_memory(candidate_id: str, session: Session = Depends(get_session)) -> CandidateMemoryRead:
-    profile = ensure_primary_recruit_agent_profile(session)
-    candidate = _get_candidate_or_404(session, candidate_id)
-    item = ensure_candidate_memory(session, agent_profile_id=profile.id, candidate_id=candidate.id)
-    return CandidateMemoryRead.model_validate(item)
-
-
-@router.patch("/candidate-memories/{candidate_id}", response_model=CandidateMemoryRead)
-def update_candidate_memory(
-    candidate_id: str,
-    payload: CandidateMemoryUpdate,
-    container: AppContainer = Depends(get_container),
-    session: Session = Depends(get_session),
-) -> CandidateMemoryRead:
-    profile = ensure_primary_recruit_agent_profile(session)
-    candidate = _get_candidate_or_404(session, candidate_id)
-    repo = CandidateMemoryRepository(session)
-    item = ensure_candidate_memory(session, agent_profile_id=profile.id, candidate_id=candidate.id)
-    update_data = payload.model_dump(exclude_unset=True)
-    if "content" in update_data:
-        update_data.setdefault("raw_content", update_data["content"] or {})
-        update_data["token_estimate"] = content_length(update_data["content"] or {})
-        update_data["disclosure"] = {
-            "preview": str(update_data.get("summary") or item.summary or "")[:180],
-            "operator_summary": str(update_data.get("summary") or item.summary or ""),
-            "model_context": str(update_data["content"])[:1600],
-        }
-    updated = repo.update(item, update_data)
-    threshold = int(
-        (((profile.memory_policy or {}).get("candidate_memory") or {}).get("compact_threshold") or AUTO_COMPACT_THRESHOLD)
-    )
-    auto_compact = bool((((profile.memory_policy or {}).get("candidate_memory") or {}).get("auto_compact") or False))
-    if auto_compact and needs_compaction(dict(updated.content or {}), threshold=threshold):
-        apply_memory_compaction(
-            updated,
-            providers=container.providers,
-            scope=f"candidate:{candidate.id}",
-            reason="auto_compact_threshold_exceeded",
-            compacted_at=_now(),
-        )
-        updated = repo.update(
-            updated,
-            {
-                "summary": updated.summary,
-                "raw_content": dict(updated.raw_content or {}),
-                "content": dict(updated.content or {}),
-                "disclosure": dict(updated.disclosure or {}),
-                "token_estimate": updated.token_estimate,
-                "compacted_at": updated.compacted_at,
-                "compacted_reason": updated.compacted_reason,
-                "memory_metadata": dict(updated.memory_metadata or {}),
-            },
-        )
-    return CandidateMemoryRead.model_validate(updated)
-
-
-@router.post("/candidate-memories/{candidate_id}/compact", response_model=CandidateMemoryRead)
-def compact_candidate_memory(
-    candidate_id: str,
-    payload: MemoryCompactRequest,
-    container: AppContainer = Depends(get_container),
-    session: Session = Depends(get_session),
-) -> CandidateMemoryRead:
-    profile = ensure_primary_recruit_agent_profile(session)
-    candidate = _get_candidate_or_404(session, candidate_id)
-    repo = CandidateMemoryRepository(session)
-    item = ensure_candidate_memory(session, agent_profile_id=profile.id, candidate_id=candidate.id)
-    if not payload.force and not needs_compaction(dict(item.content or {})):
-        return CandidateMemoryRead.model_validate(item)
-    apply_memory_compaction(
-        item,
-        providers=container.providers,
-        scope=f"candidate:{candidate.id}",
-        reason=payload.reason,
-        compacted_at=_now(),
-    )
-    updated = repo.update(
-        item,
-        {
-            "summary": item.summary,
-            "raw_content": dict(item.raw_content or {}),
-            "content": dict(item.content or {}),
-            "disclosure": dict(item.disclosure or {}),
-            "token_estimate": item.token_estimate,
-            "compacted_at": item.compacted_at,
-            "compacted_reason": item.compacted_reason,
-            "memory_metadata": dict(item.memory_metadata or {}),
-        },
-    )
-    return CandidateMemoryRead.model_validate(updated)
-
-
-@router.get("/job-memories", response_model=list[JobMemoryRead])
-def list_job_memories(
-    limit: int = Query(default=100, ge=1, le=500),
-    offset: int = Query(default=0, ge=0),
-    session: Session = Depends(get_session),
-) -> list[JobMemoryRead]:
-    profile = ensure_primary_recruit_agent_profile(session)
-    candidate_repo = CandidateRepository(session)
-    jd_ids = sorted(
-        {
-            str(candidate.job_description_id)
-            for candidate in candidate_repo.list(limit=5000, offset=0)
-            if candidate.job_description_id
-        }
-    )
-    for jd_id in jd_ids:
-        ensure_job_memory(session, agent_profile_id=profile.id, jd_id=jd_id)
-    items = JobMemoryRepository(session).list_for_agent(profile.id, limit=limit, offset=offset)
-    return [JobMemoryRead.model_validate(item) for item in items]
-
-
-@router.get("/job-memories/{jd_id}", response_model=JobMemoryRead)
-def get_job_memory(jd_id: str, session: Session = Depends(get_session)) -> JobMemoryRead:
-    profile = ensure_primary_recruit_agent_profile(session)
-    item = ensure_job_memory(session, agent_profile_id=profile.id, jd_id=jd_id)
-    return JobMemoryRead.model_validate(item)
-
-
-@router.patch("/job-memories/{jd_id}", response_model=JobMemoryRead)
-def update_job_memory(
-    jd_id: str,
-    payload: JobMemoryUpdate,
-    container: AppContainer = Depends(get_container),
-    session: Session = Depends(get_session),
-) -> JobMemoryRead:
-    profile = ensure_primary_recruit_agent_profile(session)
-    repo = JobMemoryRepository(session)
-    item = ensure_job_memory(session, agent_profile_id=profile.id, jd_id=jd_id)
-    update_data = payload.model_dump(exclude_unset=True)
-    if "content" in update_data:
-        update_data.setdefault("raw_content", update_data["content"] or {})
-        update_data["token_estimate"] = content_length(update_data["content"] or {})
-        update_data["disclosure"] = {
-            "preview": str(update_data.get("summary") or item.summary or "")[:180],
-            "operator_summary": str(update_data.get("summary") or item.summary or ""),
-            "model_context": str(update_data["content"])[:1600],
-        }
-    updated = repo.update(item, update_data)
-    threshold = int((((profile.memory_policy or {}).get("job_memory") or {}).get("compact_threshold") or AUTO_COMPACT_THRESHOLD))
-    auto_compact = bool((((profile.memory_policy or {}).get("job_memory") or {}).get("auto_compact") or False))
-    if auto_compact and needs_compaction(dict(updated.content or {}), threshold=threshold):
-        apply_memory_compaction(
-            updated,
-            providers=container.providers,
-            scope=f"job:{jd_id}",
-            reason="auto_compact_threshold_exceeded",
-            compacted_at=_now(),
-        )
-        updated = repo.update(
-            updated,
-            {
-                "summary": updated.summary,
-                "raw_content": dict(updated.raw_content or {}),
-                "content": dict(updated.content or {}),
-                "disclosure": dict(updated.disclosure or {}),
-                "token_estimate": updated.token_estimate,
-                "compacted_at": updated.compacted_at,
-                "compacted_reason": updated.compacted_reason,
-                "memory_metadata": dict(updated.memory_metadata or {}),
-            },
-        )
-    return JobMemoryRead.model_validate(updated)
-
-
-@router.post("/job-memories/{jd_id}/compact", response_model=JobMemoryRead)
-def compact_job_memory(
-    jd_id: str,
-    payload: MemoryCompactRequest,
-    container: AppContainer = Depends(get_container),
-    session: Session = Depends(get_session),
-) -> JobMemoryRead:
-    profile = ensure_primary_recruit_agent_profile(session)
-    repo = JobMemoryRepository(session)
-    item = ensure_job_memory(session, agent_profile_id=profile.id, jd_id=jd_id)
-    if not payload.force and not needs_compaction(dict(item.content or {})):
-        return JobMemoryRead.model_validate(item)
-    apply_memory_compaction(
-        item,
-        providers=container.providers,
-        scope=f"job:{jd_id}",
-        reason=payload.reason,
-        compacted_at=_now(),
-    )
-    updated = repo.update(
-        item,
-        {
-            "summary": item.summary,
-            "raw_content": dict(item.raw_content or {}),
-            "content": dict(item.content or {}),
-            "disclosure": dict(item.disclosure or {}),
-            "token_estimate": item.token_estimate,
-            "compacted_at": item.compacted_at,
-            "compacted_reason": item.compacted_reason,
-            "memory_metadata": dict(item.memory_metadata or {}),
-        },
-    )
-    return JobMemoryRead.model_validate(updated)
 
 
 @router.get("/global-memory", response_model=AgentGlobalMemoryRead)

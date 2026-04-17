@@ -1309,18 +1309,9 @@ def _create_candidate_subject_tables(connection: Connection) -> None:
                     name TEXT NOT NULL,
                     platform TEXT NOT NULL DEFAULT 'site',
                     platform_candidate_id TEXT,
-                    current_status TEXT NOT NULL DEFAULT 'discovered',
-                    current_stage_key TEXT,
-                    deepest_milestone TEXT,
-                    job_description_id TEXT,
                     contact_info TEXT NOT NULL DEFAULT '{}',
-                    state_snapshot TEXT NOT NULL DEFAULT '{}',
                     resume_path TEXT,
                     online_resume_text TEXT,
-                    ai_scores TEXT NOT NULL DEFAULT '{}',
-                    ai_reasoning TEXT,
-                    cooldown_until TEXT,
-                    last_contacted_at TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 )
@@ -1332,6 +1323,21 @@ def _create_candidate_subject_tables(connection: Connection) -> None:
         connection.execute(
             text("CREATE INDEX IF NOT EXISTS ix_candidate_persons_platform_candidate_id ON candidate_persons (platform_candidate_id)")
         )
+    else:
+        person_columns = {row[1] for row in connection.execute(text("PRAGMA table_info(candidate_persons)")).fetchall()}
+        for column_name in (
+            "current_status",
+            "current_stage_key",
+            "deepest_milestone",
+            "job_description_id",
+            "state_snapshot",
+            "ai_scores",
+            "ai_reasoning",
+            "cooldown_until",
+            "last_contacted_at",
+        ):
+            if column_name in person_columns:
+                connection.execute(text(f"ALTER TABLE candidate_persons DROP COLUMN {column_name}"))
 
     if "candidates_platform_idx" not in tables:
         connection.execute(
@@ -1439,6 +1445,69 @@ def _create_candidate_subject_tables(connection: Connection) -> None:
         connection.execute(
             text("CREATE INDEX IF NOT EXISTS ix_candidate_applications_current_status ON candidate_applications (current_status)")
         )
+
+    if "candidate_person_memories" not in tables:
+        connection.execute(
+            text(
+                """
+                CREATE TABLE candidate_person_memories (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    agent_profile_id TEXT NOT NULL REFERENCES recruit_agent_profiles(id) ON DELETE CASCADE,
+                    person_id TEXT NOT NULL REFERENCES candidate_persons(id) ON DELETE CASCADE,
+                    status TEXT NOT NULL DEFAULT 'active',
+                    memory_schema_version TEXT NOT NULL DEFAULT 'candidate-person-memory-v1',
+                    summary TEXT,
+                    raw_content TEXT NOT NULL DEFAULT '{}',
+                    content TEXT NOT NULL DEFAULT '{}',
+                    disclosure TEXT NOT NULL DEFAULT '{}',
+                    token_estimate INTEGER NOT NULL DEFAULT 0,
+                    source_count INTEGER NOT NULL DEFAULT 0,
+                    compacted_at TEXT,
+                    compacted_reason TEXT,
+                    memory_metadata TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    CONSTRAINT uq_candidate_person_memories_agent_person UNIQUE (agent_profile_id, person_id)
+                )
+                """
+            )
+        )
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_candidate_person_memories_person_id ON candidate_person_memories (person_id)"))
+
+    if "job_description_memories" not in tables:
+        connection.execute(
+            text(
+                """
+                CREATE TABLE job_description_memories (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    agent_profile_id TEXT NOT NULL REFERENCES recruit_agent_profiles(id) ON DELETE CASCADE,
+                    job_description_id TEXT NOT NULL REFERENCES job_descriptions(id) ON DELETE CASCADE,
+                    status TEXT NOT NULL DEFAULT 'active',
+                    memory_schema_version TEXT NOT NULL DEFAULT 'job-description-memory-v1',
+                    summary TEXT,
+                    raw_content TEXT NOT NULL DEFAULT '{}',
+                    content TEXT NOT NULL DEFAULT '{}',
+                    disclosure TEXT NOT NULL DEFAULT '{}',
+                    token_estimate INTEGER NOT NULL DEFAULT 0,
+                    source_count INTEGER NOT NULL DEFAULT 0,
+                    compacted_at TEXT,
+                    compacted_reason TEXT,
+                    memory_metadata TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    CONSTRAINT uq_job_description_memories_agent_job UNIQUE (agent_profile_id, job_description_id)
+                )
+                """
+            )
+        )
+        connection.execute(
+            text("CREATE INDEX IF NOT EXISTS ix_job_description_memories_job_description_id ON job_description_memories (job_description_id)")
+        )
+
+    if "candidate_memories" in tables:
+        connection.execute(text("DROP TABLE candidate_memories"))
+    if "job_memories" in tables:
+        connection.execute(text("DROP TABLE job_memories"))
 
     if "application_sessions" not in tables:
         connection.execute(

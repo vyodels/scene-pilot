@@ -17,12 +17,12 @@ from scene_pilot.repositories import (
     CandidateApplicationRepository,
     ApprovalRepository,
     CandidateAssessmentRepository,
-    CandidateMemoryRepository,
+    CandidatePersonMemoryRepository,
     CandidateRepository,
     CandidateReviewDecisionRepository,
     CandidateScorecardRepository,
     CandidateSessionRepository,
-    JobMemoryRepository,
+    JobDescriptionMemoryRepository,
 )
 from scene_pilot.scheduler.queue import TaskEnvelope
 from scene_pilot.services.recruit_agent import ensure_primary_recruit_agent_profile, resolve_context_policy
@@ -105,7 +105,7 @@ class ContextAssemblerService:
                 "adaptive_stage": str(task.metadata.get("adaptive_stage") or task.payload.get("adaptive_stage") or task.task_type),
                 "goal_spec_id": str(task.metadata.get("goal_spec_id") or task.payload.get("goal_id") or "") or None,
                 "application_id": task.application_id or task.payload.get("application_id") or task.metadata.get("application_id"),
-                "candidate_id": task.candidate_id,
+                "person_id": task.candidate_id,
                 "payload": dict(task.payload or {}),
                 "metadata": dict(task.metadata or {}),
             },
@@ -141,12 +141,11 @@ class ContextAssemblerService:
                 tier="required",
                 content={
                     "application_id": application.id if application is not None else None,
-                    "candidate_id": candidate.id,
                     "person_id": application.person_id if application is not None else candidate.id,
-                    "current_status": application.current_status if application is not None else candidate.current_status,
-                    "current_stage_key": application.current_stage_key if application is not None else candidate.current_stage_key,
-                    "job_description_id": application.job_description_id if application is not None else candidate.job_description_id,
-                    "state_snapshot": dict(application.state_snapshot or {}) if application is not None else dict(candidate.state_snapshot or {}),
+                    "current_status": application.current_status if application is not None else "discovered",
+                    "current_stage_key": application.current_stage_key if application is not None else None,
+                    "job_description_id": application.job_description_id if application is not None else None,
+                    "state_snapshot": dict(application.state_snapshot or {}) if application is not None else {},
                 },
                 required=True,
                 score=98,
@@ -167,9 +166,9 @@ class ContextAssemblerService:
                         required=lane == "candidate",
                         score=90,
                     )
-            candidate_memory = CandidateMemoryRepository(self.session).by_agent_and_candidate(
+            candidate_memory = CandidatePersonMemoryRepository(self.session).by_agent_and_person(
                 agent_profile_id=profile.id,
-                candidate_id=candidate.id,
+                person_id=candidate.id,
             )
             if candidate_memory is not None:
                 disclosure = dict(candidate_memory.disclosure or {})
@@ -201,11 +200,11 @@ class ContextAssemblerService:
                     score=75,
                 )
 
-            jd_id = application.job_description_id if application is not None else candidate.job_description_id
-            if jd_id:
-                job_memory = JobMemoryRepository(self.session).by_agent_and_jd(
+            job_description_id = application.job_description_id if application is not None else None
+            if job_description_id:
+                job_memory = JobDescriptionMemoryRepository(self.session).by_agent_and_job_description(
                     agent_profile_id=profile.id,
-                    jd_id=jd_id,
+                    job_description_id=job_description_id,
                 )
                 if job_memory is not None:
                     disclosure = dict(job_memory.disclosure or {})
@@ -394,8 +393,8 @@ class ContextAssemblerService:
             "lane": lane,
             "run_type": task.task_type,
             "application_id": application.id if application is not None else application_id or None,
-            "candidate_id": candidate.id if candidate is not None else None,
-            "job_id": candidate.job_description_id if candidate is not None else None,
+            "person_id": candidate.id if candidate is not None else None,
+            "job_description_id": application.job_description_id if application is not None else None,
             "token_budget": token_budget,
             "context_policy": context_policy,
             "selected_token_estimate": used_tokens,

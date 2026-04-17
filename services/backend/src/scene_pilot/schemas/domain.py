@@ -52,54 +52,6 @@ class AppSettingsUpdate(BaseModel):
     intranet_sync: dict[str, Any] | None = None
 
 
-class CandidateBase(BaseModel):
-    name: str
-    platform: str = "site"
-    platform_candidate_id: str | None = None
-    current_status: str = "discovered"
-    current_stage_key: str | None = None
-    deepest_milestone: str | None = None
-    job_description_id: str | None = Field(default=None, validation_alias=AliasChoices("job_description_id", "jd_id"))
-    contact_info: dict[str, Any] = Field(default_factory=dict)
-    state_snapshot: dict[str, Any] = Field(default_factory=dict)
-    resume_path: str | None = None
-    online_resume_text: str | None = None
-    ai_scores: dict[str, Any] = Field(default_factory=dict)
-    ai_reasoning: str | None = None
-    cooldown_until: datetime | None = None
-    last_contacted_at: datetime | None = None
-
-
-class CandidateCreate(CandidateBase):
-    pass
-
-
-class CandidateUpdate(BaseModel):
-    name: str | None = None
-    platform: str | None = None
-    platform_candidate_id: str | None = None
-    current_status: str | None = None
-    current_stage_key: str | None = None
-    deepest_milestone: str | None = None
-    job_description_id: str | None = Field(default=None, validation_alias=AliasChoices("job_description_id", "jd_id"))
-    contact_info: dict[str, Any] | None = None
-    state_snapshot: dict[str, Any] | None = None
-    resume_path: str | None = None
-    online_resume_text: str | None = None
-    ai_scores: dict[str, Any] | None = None
-    ai_reasoning: str | None = None
-    cooldown_until: datetime | None = None
-    last_contacted_at: datetime | None = None
-
-
-class CandidateRead(CandidateBase):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: str
-    created_at: datetime
-    updated_at: datetime
-
-
 class CandidatePersonBase(BaseModel):
     name: str
     platform: str = "site"
@@ -128,6 +80,22 @@ class CandidatePersonRead(CandidatePersonBase):
     id: str
     created_at: datetime
     updated_at: datetime
+
+
+class CandidateBase(CandidatePersonBase):
+    pass
+
+
+class CandidateCreate(CandidatePersonCreate):
+    pass
+
+
+class CandidateUpdate(CandidatePersonUpdate):
+    pass
+
+
+class CandidateRead(CandidatePersonRead):
+    pass
 
 
 class JobDescriptionBase(BaseModel):
@@ -212,6 +180,32 @@ class CandidateApplicationRead(CandidateApplicationBase):
     updated_at: datetime
 
 
+class ApplicationSubjectRead(BaseModel):
+    id: str | None = Field(default=None, validation_alias=AliasChoices("id", "person_id", "personId"))
+    application_id: str = Field(validation_alias=AliasChoices("application_id", "applicationId", "id"))
+    person_id: str | None = Field(default=None, validation_alias=AliasChoices("person_id", "personId"))
+    job_description_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("job_description_id", "jobDescriptionId"),
+    )
+    name: str
+    platform: str = "site"
+    platform_candidate_id: str | None = None
+    current_status: str = "discovered"
+    current_stage_key: str | None = None
+    deepest_milestone: str | None = None
+    contact_info: dict[str, Any] = Field(default_factory=dict)
+    state_snapshot: dict[str, Any] = Field(default_factory=dict)
+    resume_path: str | None = None
+    online_resume_text: str | None = None
+    ai_scores: dict[str, Any] = Field(default_factory=dict)
+    ai_reasoning: str | None = None
+    cooldown_until: datetime | None = None
+    last_contacted_at: datetime | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
 class RecruitAgentProfileBase(BaseModel):
     agent_key: str
     name: str
@@ -256,9 +250,9 @@ class RecruitAgentProfileRead(RecruitAgentProfileBase):
 
 class CandidateMemoryBase(BaseModel):
     agent_profile_id: str
-    candidate_id: str
+    person_id: str
     status: str = "active"
-    memory_schema_version: str = "candidate-memory-v1"
+    memory_schema_version: str = "candidate-person-memory-v1"
     summary: str | None = None
     raw_content: dict[str, Any] = Field(default_factory=dict)
     content: dict[str, Any] = Field(default_factory=dict)
@@ -298,9 +292,9 @@ class CandidateMemoryRead(CandidateMemoryBase):
 
 class JobMemoryBase(BaseModel):
     agent_profile_id: str
-    jd_id: str
+    job_description_id: str
     status: str = "active"
-    memory_schema_version: str = "job-memory-v1"
+    memory_schema_version: str = "job-description-memory-v1"
     summary: str | None = None
     raw_content: dict[str, Any] = Field(default_factory=dict)
     content: dict[str, Any] = Field(default_factory=dict)
@@ -689,7 +683,7 @@ class CandidateThreadRead(BaseModel):
         default=None,
         validation_alias=AliasChoices("job_description_id", "jobDescriptionId"),
     )
-    candidate: CandidateRead
+    candidate: ApplicationSubjectRead
     session_status: str = "active"
     context_summary: str | None = None
     facts: dict[str, Any] = Field(default_factory=dict)

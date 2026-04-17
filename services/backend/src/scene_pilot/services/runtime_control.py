@@ -93,8 +93,6 @@ class RuntimeControlService:
                     "job_description_id": (
                         application.job_description_id
                         if application is not None
-                        else candidate.job_description_id
-                        if candidate is not None
                         else None
                     ),
                     "platform": task.platform or (candidate.platform if candidate is not None else "site"),

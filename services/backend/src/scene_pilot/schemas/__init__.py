@@ -32,6 +32,7 @@ from .domain import (
     CandidateApplicationCreate,
     CandidateApplicationRead,
     CandidateApplicationUpdate,
+    ApplicationSubjectRead,
     CandidateCreate,
     CandidateAssessmentCreate,
     CandidateAssessmentRead,

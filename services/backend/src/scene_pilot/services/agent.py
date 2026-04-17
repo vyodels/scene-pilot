@@ -1689,7 +1689,8 @@ class AgentControlService:
                     application.id,
                     defaults={
                         "status": "active",
-                        "context_summary": candidate.ai_reasoning or f"{candidate.name} is currently in {current_status}.",
+                        "context_summary": (application.ai_reasoning if application is not None else None)
+                        or f"{candidate.name} is currently in {current_status}.",
                         "facts": {},
                         "recent_messages": [],
                         "last_active_at": utcnow(),
@@ -1700,7 +1701,7 @@ class AgentControlService:
                     candidate.id,
                     defaults={
                         "status": "active",
-                        "context_summary": candidate.ai_reasoning or f"{candidate.name} is currently in {current_status}.",
+                        "context_summary": f"{candidate.name} is currently in {current_status}.",
                         "facts": {},
                         "recent_messages": [],
                         "last_active_at": utcnow(),
@@ -1736,18 +1737,19 @@ class AgentControlService:
                 "candidate": {
                     "id": candidate.id,
                     "application_id": application.id if application is not None else application_id or candidate.id,
+                    "person_id": candidate.id,
                     "platform_candidate_id": candidate.platform_candidate_id,
                     "name": candidate.name,
                     "platform": candidate.platform,
                     "current_status": current_status,
-                    "current_stage_key": application.current_stage_key if application is not None else candidate.current_stage_key,
-                    "deepest_milestone": application.deepest_milestone if application is not None else candidate.deepest_milestone,
-                    "job_description_id": application.job_description_id if application is not None else candidate.job_description_id,
+                    "current_stage_key": application.current_stage_key if application is not None else None,
+                    "deepest_milestone": application.deepest_milestone if application is not None else None,
+                    "job_description_id": application.job_description_id if application is not None else None,
                     "contact_info": dict(candidate.contact_info or {}),
                     "resume_path": candidate.resume_path,
                     "online_resume_text": candidate.online_resume_text,
-                    "ai_scores": dict(candidate.ai_scores or {}),
-                    "ai_reasoning": candidate.ai_reasoning,
+                    "ai_scores": dict(application.ai_scores or {}) if application is not None else {},
+                    "ai_reasoning": application.ai_reasoning if application is not None else None,
                 },
                 "session": {
                     "id": candidate_session.id,
@@ -1867,8 +1869,6 @@ class AgentControlService:
                     )
                     business_status = extract_business_status(result.data) or result.status
                     if not learning_stage:
-                        candidate.current_stage_key = adaptive_stage
-                        candidate.ai_reasoning = result.content or candidate.ai_reasoning
                         if application is not None:
                             application.current_stage_key = adaptive_stage
                             application.ai_reasoning = result.content or application.ai_reasoning
@@ -1922,7 +1922,6 @@ class AgentControlService:
                         candidate=candidate,
                     )
                     if task.task_type == "candidate_scoring" and isinstance(result.data, dict) and result.success:
-                        candidate.ai_scores = dict(result.data)
                         if application is not None:
                             application.ai_scores = dict(result.data)
                             application.ai_reasoning = result.content or application.ai_reasoning
@@ -2106,16 +2105,9 @@ class AgentControlService:
                         "name": normalized["name"],
                         "platform": normalized["platform"],
                         "platform_candidate_id": normalized.get("platform_candidate_id"),
-                        "current_status": "discovered",
-                        "current_stage_key": "discovered",
-                        "deepest_milestone": initial_milestone,
-                        "job_description_id": normalized.get("job_description_id") or normalized.get("jd_id"),
                         "contact_info": normalized["contact_info"],
-                        "state_snapshot": default_candidate_state_snapshot(status="discovered"),
                         "resume_path": normalized.get("resume_path"),
                         "online_resume_text": normalized.get("online_resume_text"),
-                        "ai_scores": normalized.get("ai_scores", {}),
-                        "ai_reasoning": normalized.get("ai_reasoning"),
                     }
                 )
                 created = True
@@ -2125,27 +2117,14 @@ class AgentControlService:
                 existing.name = normalized["name"] or existing.name
                 existing.platform = normalized["platform"] or existing.platform
                 existing.platform_candidate_id = normalized.get("platform_candidate_id") or existing.platform_candidate_id
-                existing.job_description_id = (
-                    normalized.get("job_description_id")
-                    or normalized.get("jd_id")
-                    or existing.job_description_id
-                )
                 existing.contact_info = merged_contact
                 existing.resume_path = normalized.get("resume_path") or existing.resume_path
                 existing.online_resume_text = normalized.get("online_resume_text") or existing.online_resume_text
-                existing.ai_scores = normalized.get("ai_scores") or existing.ai_scores
-                existing.ai_reasoning = normalized.get("ai_reasoning") or existing.ai_reasoning
-                if not existing.deepest_milestone:
-                    existing.deepest_milestone = self._state_machine_milestone_for_status(
-                        state_machine_snapshot,
-                        resolve_candidate_current_status(existing),
-                    )
                 session.flush()
 
             resolved_job_description_id = (
                 normalized.get("job_description_id")
                 or normalized.get("jd_id")
-                or existing.job_description_id
             )
             application = None
             explicit_application_id = str(task.application_id or task.metadata.get("application_id") or "").strip() or None
@@ -2179,6 +2158,12 @@ class AgentControlService:
                 application.platform = normalized["platform"] or application.platform
                 if resolved_job_description_id:
                     application.job_description_id = resolved_job_description_id
+                application.platform_application_id = (
+                    normalized.get("platform_application_id")
+                    or application.platform_application_id
+                )
+                application.ai_scores = normalized.get("ai_scores", {}) or application.ai_scores
+                application.ai_reasoning = normalized.get("ai_reasoning") or application.ai_reasoning
                 session.flush()
 
             candidate_session = session_repo.get_or_create(
@@ -2238,7 +2223,7 @@ class AgentControlService:
                 existing = candidate_repo.resolve(transition_result.candidate_id) or existing
                 if application is not None:
                     application = application_repo.get(application.id) or application
-                merged_snapshot = dict(existing.state_snapshot or {})
+                merged_snapshot = dict((application.state_snapshot if application is not None else {}) or {})
                 merged_snapshot["latest_note"] = normalized.get("ai_reasoning") or merged_snapshot.get("latest_note")
                 merged_metadata = dict(merged_snapshot.get("snapshot_metadata") or {})
                 merged_metadata.update(
@@ -2249,15 +2234,17 @@ class AgentControlService:
                     }
                 )
                 merged_snapshot["snapshot_metadata"] = merged_metadata
-                existing.state_snapshot = merged_snapshot
+                if application is not None:
+                    application.state_snapshot = merged_snapshot
                 session.flush()
             else:
                 target_entity = application if application is not None else existing
-                target_entity.current_status = target_status or target_entity.current_status
-                target_entity.current_stage_key = normalized["current_stage_key"] or target_entity.current_stage_key
-                target_entity.state_snapshot = normalized["state_snapshot"] or target_entity.state_snapshot
-                if created and not target_entity.deepest_milestone:
-                    target_entity.deepest_milestone = self._state_machine_milestone_for_status(state_machine_snapshot, target_status)
+                if application is not None:
+                    target_entity.current_status = target_status or target_entity.current_status
+                    target_entity.current_stage_key = normalized["current_stage_key"] or target_entity.current_stage_key
+                    target_entity.state_snapshot = normalized["state_snapshot"] or target_entity.state_snapshot
+                    if created and not target_entity.deepest_milestone:
+                        target_entity.deepest_milestone = self._state_machine_milestone_for_status(state_machine_snapshot, target_status)
                 session.flush()
 
             persisted_subject_id = application.id if application is not None else existing.id
@@ -3765,8 +3752,8 @@ class AgentControlService:
             "closeAfterHours": close_after_hours,
         }
 
-    def _candidate_retry_state(self, candidate: Any, *, current_status: str) -> dict[str, Any]:
-        snapshot_metadata = dict(dict(getattr(candidate, "state_snapshot", {}) or {}).get("snapshot_metadata") or {})
+    def _candidate_retry_state(self, subject: Any, *, current_status: str) -> dict[str, Any]:
+        snapshot_metadata = dict(dict(getattr(subject, "state_snapshot", {}) or {}).get("snapshot_metadata") or {})
         retry_state = dict(snapshot_metadata.get("waiting_retry") or {})
         if str(retry_state.get("status") or "").strip() != current_status:
             return {}
@@ -3774,7 +3761,7 @@ class AgentControlService:
 
     def _set_candidate_retry_state(
         self,
-        candidate: Any,
+        subject: Any,
         *,
         status: str,
         retry_count: int,
@@ -3783,7 +3770,7 @@ class AgentControlService:
         closed_at: Any = None,
         close_reason: str | None = None,
     ) -> None:
-        snapshot = dict(getattr(candidate, "state_snapshot", {}) or {}) or default_candidate_state_snapshot(status=status)
+        snapshot = dict(getattr(subject, "state_snapshot", {}) or {}) or default_candidate_state_snapshot(status=status)
         snapshot_metadata = dict(snapshot.get("snapshot_metadata") or {})
         state = {
             "status": status,
@@ -3806,10 +3793,10 @@ class AgentControlService:
             state["close_reason"] = close_reason
         snapshot_metadata["waiting_retry"] = {key: value for key, value in state.items() if value is not None}
         snapshot["snapshot_metadata"] = snapshot_metadata
-        candidate.state_snapshot = snapshot
+        subject.state_snapshot = snapshot
 
-    def _clear_candidate_retry_state(self, candidate: Any) -> None:
-        snapshot = dict(getattr(candidate, "state_snapshot", {}) or {})
+    def _clear_candidate_retry_state(self, subject: Any) -> None:
+        snapshot = dict(getattr(subject, "state_snapshot", {}) or {})
         if not snapshot:
             return
         snapshot_metadata = dict(snapshot.get("snapshot_metadata") or {})
@@ -3817,7 +3804,7 @@ class AgentControlService:
             return
         snapshot_metadata.pop("waiting_retry", None)
         snapshot["snapshot_metadata"] = snapshot_metadata
-        candidate.state_snapshot = snapshot
+        subject.state_snapshot = snapshot
 
     def _extract_candidate_rollback_signal(self, result: AgentResult) -> dict[str, Any] | None:
         if not isinstance(result.data, dict):
@@ -3894,12 +3881,17 @@ class AgentControlService:
         current_status = resolve_candidate_current_status(candidate)
         target_status = str(signal["to_status"]).strip()
         candidate_repo = CandidateRepository(session)
+        application_id, _person_id, application = self._task_subject_ids(session, task)
+        status_subject = application or candidate
+        if application is not None:
+            current_status = resolve_candidate_current_status(application)
         try:
             if current_status != target_status:
                 transition_result = self._agent_transition_candidate(
                     session,
                     task=task,
                     candidate=candidate,
+                    application=application,
                     to_status=target_status,
                     note=str(signal["note"] or "").strip() or None,
                     trigger="conversation_signal",
@@ -3917,6 +3909,9 @@ class AgentControlService:
                     },
                 )
                 candidate = candidate_repo.resolve(transition_result.candidate_id) or candidate
+                if application_id:
+                    application = CandidateApplicationRepository(session).get(application_id) or application
+                    status_subject = application or candidate
                 transition_record = transition_result.transition_record
                 result.metadata["candidate_transition"] = {
                     "kind": "rollback_signal",
@@ -3929,11 +3924,19 @@ class AgentControlService:
                     "note": transition_record.note,
                 }
             if target_status == "cooldown":
-                candidate.cooldown_until = utcnow() + timedelta(days=int(signal["cooldown_days"] or self._configured_cooldown_days()))
+                if application is not None:
+                    application.cooldown_until = utcnow() + timedelta(days=int(signal["cooldown_days"] or self._configured_cooldown_days()))
+                else:
+                    candidate.cooldown_until = utcnow() + timedelta(days=int(signal["cooldown_days"] or self._configured_cooldown_days()))
             else:
-                candidate.cooldown_until = None
+                if application is not None:
+                    application.cooldown_until = None
+                else:
+                    candidate.cooldown_until = None
             session.commit()
             session.refresh(candidate)
+            if application is not None:
+                session.refresh(application)
         except StateMachineValidationError as exc:
             self.events.publish(
                 "warning",
@@ -3947,7 +3950,7 @@ class AgentControlService:
             return candidate
 
         result.metadata["rollback_signal_applied"] = True
-        self._clear_candidate_retry_state(candidate)
+        self._clear_candidate_retry_state(status_subject)
         self._append_progression_action(
             result,
             {
@@ -4028,7 +4031,6 @@ class AgentControlService:
                 return candidate
 
         contacted_at = utcnow()
-        candidate.last_contacted_at = contacted_at
         if application is not None:
             application.last_contacted_at = contacted_at
         self._set_candidate_retry_state(

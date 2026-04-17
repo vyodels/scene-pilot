@@ -6,11 +6,11 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from scene_pilot.models import AgentGlobalMemory, CandidateMemory, JobMemory, RecruitAgentProfile
+from scene_pilot.models import AgentGlobalMemory, CandidatePersonMemory, JobDescriptionMemory, RecruitAgentProfile
 from scene_pilot.repositories import (
     AgentGlobalMemoryRepository,
-    CandidateMemoryRepository,
-    JobMemoryRepository,
+    CandidatePersonMemoryRepository,
+    JobDescriptionMemoryRepository,
     RecruitAgentProfileRepository,
 )
 from scene_pilot.runtime.models import Message
@@ -577,22 +577,22 @@ def ensure_primary_recruit_agent_profile(session: Session) -> RecruitAgentProfil
     return created
 
 
-def ensure_candidate_memory(
+def ensure_candidate_person_memory(
     session: Session,
     *,
     agent_profile_id: str,
-    candidate_id: str,
-) -> CandidateMemory:
-    repo = CandidateMemoryRepository(session)
-    memory = repo.by_agent_and_candidate(agent_profile_id=agent_profile_id, candidate_id=candidate_id)
+    person_id: str,
+) -> CandidatePersonMemory:
+    repo = CandidatePersonMemoryRepository(session)
+    memory = repo.by_agent_and_person(agent_profile_id=agent_profile_id, person_id=person_id)
     if memory is not None:
         return memory
     return repo.create(
         {
             "agent_profile_id": agent_profile_id,
-            "candidate_id": candidate_id,
+            "person_id": person_id,
             "status": "active",
-            "memory_schema_version": "candidate-memory-v1",
+            "memory_schema_version": "candidate-person-memory-v1",
             "summary": "候选人长期记忆尚未整理。",
             "raw_content": {
                 "identity_summary": "",
@@ -621,27 +621,27 @@ def ensure_candidate_memory(
             ),
             "token_estimate": 0,
             "source_count": 0,
-            "memory_metadata": {"scope": "candidate", "isolation_key": candidate_id},
+            "memory_metadata": {"scope": "candidate_person", "isolation_key": person_id},
         }
     )
 
 
-def ensure_job_memory(
+def ensure_job_description_memory(
     session: Session,
     *,
     agent_profile_id: str,
-    jd_id: str,
-) -> JobMemory:
-    repo = JobMemoryRepository(session)
-    memory = repo.by_agent_and_jd(agent_profile_id=agent_profile_id, jd_id=jd_id)
+    job_description_id: str,
+) -> JobDescriptionMemory:
+    repo = JobDescriptionMemoryRepository(session)
+    memory = repo.by_agent_and_job_description(agent_profile_id=agent_profile_id, job_description_id=job_description_id)
     if memory is not None:
         return memory
     return repo.create(
         {
             "agent_profile_id": agent_profile_id,
-            "jd_id": jd_id,
+            "job_description_id": job_description_id,
             "status": "active",
-            "memory_schema_version": "job-memory-v1",
+            "memory_schema_version": "job-description-memory-v1",
             "summary": "岗位长期记忆尚未整理。",
             "raw_content": {
                 "screening_preferences": [],
@@ -668,7 +668,7 @@ def ensure_job_memory(
             ),
             "token_estimate": 0,
             "source_count": 0,
-            "memory_metadata": {"scope": "job", "isolation_key": jd_id},
+            "memory_metadata": {"scope": "job_description", "isolation_key": job_description_id},
         }
     )
 
@@ -780,13 +780,13 @@ def compact_memory_payload(
 
 
 def apply_memory_compaction(
-    record: CandidateMemory | JobMemory | AgentGlobalMemory,
+    record: CandidatePersonMemory | JobDescriptionMemory | AgentGlobalMemory,
     *,
     providers: ProviderRegistry,
     scope: str,
     reason: str,
     compacted_at: datetime,
-) -> CandidateMemory | JobMemory | AgentGlobalMemory:
+) -> CandidatePersonMemory | JobDescriptionMemory | AgentGlobalMemory:
     original_raw_content = dict(record.raw_content or {}) or dict(record.content or {})
     compacted = compact_memory_payload(
         providers=providers,

@@ -122,7 +122,7 @@ test -f docs/superpowers/specs/2026-04-16-candidate-target-data-model-spec.md
 
 Expected: 命令成功退出。
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add docs/superpowers/plans/2026-04-16-candidate-target-model-unification.md
@@ -231,7 +231,7 @@ python3 -m pytest services/backend/tests/test_api_recruit_agent.py -k "job_descr
 
 Expected: PASS.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add services/backend/src/scene_pilot/db/migrations.py services/backend/src/scene_pilot/models/domain.py services/backend/src/scene_pilot/repositories/domain.py services/backend/src/scene_pilot/schemas/domain.py services/backend/tests/test_api_recruit_agent.py
@@ -349,7 +349,7 @@ python3 -m pytest services/backend/tests/test_api_recruit_agent.py -k "applicati
 
 Expected: PASS。
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add services/backend/src/scene_pilot/db/migrations.py services/backend/src/scene_pilot/models/domain.py services/backend/src/scene_pilot/repositories/domain.py services/backend/src/scene_pilot/schemas/domain.py services/backend/src/scene_pilot/api/routers/candidate_applications.py services/backend/tests/test_api_recruit_agent.py
@@ -437,7 +437,7 @@ python3 -m pytest services/backend/tests/test_api_recruit_agent.py services/back
 
 Expected: PASS。
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add services/backend/src/scene_pilot/models/domain.py services/backend/src/scene_pilot/repositories/domain.py services/backend/src/scene_pilot/schemas/domain.py services/backend/src/scene_pilot/api/routers/recruit_agent.py services/backend/tests/test_api_recruit_agent.py services/backend/tests/test_api_playbook_runtime.py
@@ -515,7 +515,7 @@ python3 -m pytest services/backend/tests/test_autonomy_loop.py services/backend/
 
 Expected: PASS。
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add services/backend/src/scene_pilot/services/state_machine.py services/backend/src/scene_pilot/services/dashboard.py services/backend/src/scene_pilot/services/agent.py services/backend/src/scene_pilot/services/context_assembler.py services/backend/src/scene_pilot/services/runtime_control.py services/backend/tests/test_autonomy_loop.py services/backend/tests/test_candidate_progression_selector.py services/backend/tests/test_api_playbook_runtime.py
@@ -592,7 +592,7 @@ python3 -m pytest services/backend/tests/test_api_recruit_agent.py -k "contact_a
 
 Expected: PASS。
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add services/backend/src/scene_pilot/services/contact_identity.py services/backend/src/scene_pilot/services/state_machine.py services/backend/src/scene_pilot/services/agent.py services/backend/src/scene_pilot/repositories/domain.py services/backend/src/scene_pilot/api/routers/recruit_agent.py services/backend/tests/test_api_recruit_agent.py
@@ -661,7 +661,7 @@ npm run desktop:typecheck
 
 Expected: PASS。
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add apps/desktop/src/lib/types.ts apps/desktop/src/lib/api.ts apps/desktop/src/features/kanban-shared/kanbanUtils.ts apps/desktop/src/features/funnel-kanban/FunnelKanbanView.tsx apps/desktop/src/features/status-kanban/StatusKanbanView.tsx apps/desktop/src/features/candidates/CandidatesKanbanView.tsx apps/desktop/src/features/workspace/DesktopWorkspace.tsx
@@ -724,7 +724,7 @@ grep -R "platform_candidate_id\|jd_id\|candidate_id" services/backend/src/scene_
 
 Expected: 只剩有意保留的使用点；workflow path 不应再把单个混合 `Candidate` row 当成同时代表“人”和“投递”。
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add services/backend/src/scene_pilot apps/desktop/src packages/shared/src docs/superpowers/specs/2026-04-16-candidate-target-data-model-spec.md

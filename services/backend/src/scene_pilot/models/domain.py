@@ -16,18 +16,9 @@ class Candidate(Base, TimestampMixin):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     platform: Mapped[str] = mapped_column(String(64), nullable=False, default="site", index=True)
     platform_candidate_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
-    current_status: Mapped[str] = mapped_column(String(64), nullable=False, default="discovered", index=True)
-    current_stage_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    deepest_milestone: Mapped[str | None] = mapped_column(String(16), nullable=True, index=True)
-    job_description_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     contact_info: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
-    state_snapshot: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     resume_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
     online_resume_text: Mapped[str | None] = mapped_column(Text, nullable=True)
-    ai_scores: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
-    ai_reasoning: Mapped[str | None] = mapped_column(Text, nullable=True)
-    cooldown_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    last_contacted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class CandidatePlatformIdx(Base, TimestampMixin):
@@ -589,32 +580,6 @@ class RecruitAgentProfile(Base, TimestampMixin):
     agent_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
 
 
-class CandidateMemory(Base, TimestampMixin):
-    __tablename__ = "candidate_memories"
-    __table_args__ = (
-        UniqueConstraint("agent_profile_id", "candidate_id", name="uq_candidate_memories_agent_candidate"),
-    )
-
-    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=generate_id)
-    agent_profile_id: Mapped[str] = mapped_column(
-        ForeignKey("recruit_agent_profiles.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    candidate_id: Mapped[str] = mapped_column(ForeignKey("candidate_persons.id", ondelete="CASCADE"), nullable=False, index=True)
-    status: Mapped[str] = mapped_column(String(32), nullable=False, default="active", index=True)
-    memory_schema_version: Mapped[str] = mapped_column(String(64), nullable=False, default="candidate-memory-v1")
-    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
-    raw_content: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
-    content: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
-    disclosure: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
-    token_estimate: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    source_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    compacted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    compacted_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
-    memory_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
-
-
 class CandidatePersonMemory(Base, TimestampMixin):
     __tablename__ = "candidate_person_memories"
     __table_args__ = (
@@ -634,32 +599,6 @@ class CandidatePersonMemory(Base, TimestampMixin):
     )
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="active", index=True)
     memory_schema_version: Mapped[str] = mapped_column(String(64), nullable=False, default="candidate-person-memory-v1")
-    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
-    raw_content: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
-    content: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
-    disclosure: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
-    token_estimate: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    source_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    compacted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    compacted_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
-    memory_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
-
-
-class JobMemory(Base, TimestampMixin):
-    __tablename__ = "job_memories"
-    __table_args__ = (
-        UniqueConstraint("agent_profile_id", "jd_id", name="uq_job_memories_agent_jd"),
-    )
-
-    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=generate_id)
-    agent_profile_id: Mapped[str] = mapped_column(
-        ForeignKey("recruit_agent_profiles.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    jd_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
-    status: Mapped[str] = mapped_column(String(32), nullable=False, default="active", index=True)
-    memory_schema_version: Mapped[str] = mapped_column(String(64), nullable=False, default="job-memory-v1")
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     raw_content: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     content: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)

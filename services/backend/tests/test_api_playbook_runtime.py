@@ -601,7 +601,7 @@ class ApiPlaybookRuntimeTests(unittest.TestCase):
         row = dashboard.json()["candidates"][0]
         candidate_id = row["id"]
         person_id = row["personId"]
-        self.assertEqual(self.client.get(f"/api/recruit-agent/candidate-memories/{person_id}").status_code, 200)
+        self.assertEqual(self.client.get(f"/api/candidate-persons/{person_id}/memory").status_code, 200)
         self.assertEqual(self.client.get("/api/recruit-agent/global-memory").status_code, 200)
         entry = self.client.post(
             f"/api/candidate-applications/{candidate_id}/entries",
@@ -1251,7 +1251,7 @@ class ApiPlaybookRuntimeTests(unittest.TestCase):
 
     def test_agent_applies_cooldown_rollback_signal_and_sets_cooldown_until(self) -> None:
         from scene_pilot.db.base import utcnow
-        from scene_pilot.models import Candidate
+        from scene_pilot.models import CandidateApplication
         from scene_pilot.runtime.models import LLMResponse
         from scene_pilot.runtime.providers import ScriptedProvider
 
@@ -1300,7 +1300,7 @@ class ApiPlaybookRuntimeTests(unittest.TestCase):
         self.assertEqual(run_once.json()["status"], "completed")
 
         with container.session_factory() as session:
-            refreshed = session.get(Candidate, subject["person"]["id"])
+            refreshed = session.get(CandidateApplication, candidate["id"])
             self.assertIsNotNone(refreshed)
             assert refreshed is not None
             self.assertEqual(refreshed.current_status, "cooldown")

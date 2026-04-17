@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 from scene_pilot.core.app import create_app
 from scene_pilot.core.settings import AppSettings, FeatureFlags
 from scene_pilot.db.base import utcnow
-from scene_pilot.models import Candidate, CandidateApplication, Skill
+from scene_pilot.models import Candidate, CandidateApplication, JobDescription, Skill
 from scene_pilot.repositories import (
     AgentRunRepository,
     AgentWorkItemRepository,
@@ -34,10 +34,6 @@ def _create_subject(
         name=name,
         platform=platform,
         platform_candidate_id=platform_candidate_id,
-        current_status=current_status,
-        ai_scores=dict(ai_scores or {}),
-        last_contacted_at=last_contacted_at,
-        state_snapshot=dict(state_snapshot or {}),
     )
     session.add(candidate)
     session.flush()
@@ -96,14 +92,24 @@ def test_autonomy_loop_processes_enqueued_task_when_enabled(tmp_path):
             name="Autonomy Candidate",
             platform="boss",
             platform_candidate_id="boss_autonomy_001",
-            current_status="screening",
         )
         session.add(candidate)
+        session.flush()
+        application = CandidateApplication(
+            person_id=candidate.id,
+            platform="boss",
+            platform_application_id="boss_autonomy_001",
+            application_window=f"{candidate.id}:boss_autonomy_001:screening",
+            current_status="screening",
+        )
+        session.add(application)
         session.commit()
         session.refresh(candidate)
+        session.refresh(application)
 
     container.agent_control.enqueue_task(
         "candidate_probe",
+        application_id=application.id,
         candidate_id=candidate.id,
         payload={"jd_criteria": "Python"},
         priority=250,
@@ -519,19 +525,35 @@ def test_runtime_recovery_restores_recently_interrupted_run_on_restart(tmp_path)
     container = app.state.bootstrap_container
 
     with container.session_factory() as session:
+        job = JobDescription(
+            id="jd-recovery",
+            title="Recovery Role",
+            status="active",
+        )
+        session.add(job)
         candidate = Candidate(
             name="Recovery Candidate",
             platform="boss",
             platform_candidate_id="boss_recovery_001",
-            current_status="screening",
-            job_description_id="jd-recovery",
         )
         session.add(candidate)
+        session.flush()
+        application = CandidateApplication(
+            person_id=candidate.id,
+            job_description_id="jd-recovery",
+            platform="boss",
+            platform_application_id="boss_recovery_001",
+            application_window=f"{candidate.id}:boss_recovery_001:screening",
+            current_status="screening",
+        )
+        session.add(application)
         session.commit()
         session.refresh(candidate)
+        session.refresh(application)
 
     task = container.agent_control.enqueue_task(
         "candidate_probe",
+        application_id=application.id,
         candidate_id=candidate.id,
         payload={"jd_criteria": "Recovery path"},
         priority=260,

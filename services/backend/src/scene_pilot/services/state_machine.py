@@ -336,8 +336,16 @@ def transition_candidate(
     payload: CandidateStateTransitionRequest,
 ) -> StateMachineTransitionResult:
     state_machine = ensure_latest_state_machine(session)
+    application_repo = CandidateApplicationRepository(session)
+    if application is None:
+        application_id_hint = str(getattr(candidate, "application_id", None) or "").strip() or None
+        if application_id_hint is not None:
+            application = application_repo.get(application_id_hint)
+        if application is None:
+            applications = application_repo.by_person(candidate.id, limit=1, offset=0)
+            application = applications[0] if applications else None
     status_subject = application or candidate
-    application_id = str(getattr(application, "id", None) or getattr(candidate, "id", None) or "").strip() or None
+    application_id = str(getattr(application, "id", None) or "").strip() or None
     nodes = _node_index(state_machine)
     current_status = resolve_candidate_current_status(status_subject)
     if current_status not in nodes:
@@ -366,7 +374,6 @@ def transition_candidate(
         status_subject=status_subject,
         contact_source=candidate,
     )
-    candidate_repo = CandidateRepository(session)
     history_repo = CandidateStatusTransitionRepository(session)
     contact_info = dict(candidate.contact_info or {})
     if payload.contact_channels is not None:
@@ -375,15 +382,7 @@ def transition_candidate(
         if "wechat" in payload.contact_channels:
             contact_info.setdefault("has_wechat", True)
         candidate.contact_info = contact_info
-    updated_candidate = candidate_repo.update_state_snapshot(
-        candidate,
-        current_status=payload.to_status,
-        deepest_milestone=next_deepest_milestone,
-        snapshot=snapshot,
-    )
-    updated_candidate.current_stage_key = payload.stage_key or payload.to_status
-    session.commit()
-    session.refresh(updated_candidate)
+    session.flush()
 
     actor = _resolve_actor(payload)
     trigger = payload.trigger or str(
@@ -397,7 +396,7 @@ def transition_candidate(
 
     transition_record = history_repo.create(
         {
-            "candidate_id": updated_candidate.id,
+            "candidate_id": candidate.id,
             "from_status": current_status,
             "to_status": payload.to_status,
             "from_status_label": str(from_node.get("label") or current_status),
@@ -421,12 +420,6 @@ def transition_candidate(
             },
         }
     )
-    application_repo = CandidateApplicationRepository(session)
-    if application is None and application_id:
-        application = application_repo.get(application_id)
-    if application is None:
-        applications = application_repo.by_person(updated_candidate.id, limit=1, offset=0)
-        application = applications[0] if applications else None
     if application is not None:
         application_id = application.id
         application_repo.update(
@@ -436,8 +429,8 @@ def transition_candidate(
                 "current_stage_key": payload.stage_key or payload.to_status,
                 "deepest_milestone": next_deepest_milestone,
                 "state_snapshot": snapshot,
-                "cooldown_until": getattr(updated_candidate, "cooldown_until", None),
-                "last_contacted_at": getattr(updated_candidate, "last_contacted_at", None),
+                "cooldown_until": getattr(application, "cooldown_until", None),
+                "last_contacted_at": getattr(application, "last_contacted_at", None),
             },
         )
         ApplicationStatusTransitionRepository(session).create(
@@ -468,7 +461,7 @@ def transition_candidate(
         )
     return StateMachineTransitionResult(
         application_id=application_id,
-        candidate_id=updated_candidate.id,
+        candidate_id=candidate.id,
         from_status=current_status,
         to_status=payload.to_status,
         deepest_milestone=next_deepest_milestone,

@@ -51,10 +51,10 @@ interface RecruitAgentViewProps {
   onSaveStateMachine(payload: RecruitmentStateMachineUpdatePayload): Promise<void> | void;
   onUpdateSkill(skillId: string, payload: Partial<SkillRecord>): Promise<void> | void;
   onDeleteSkill(skillId: string): Promise<void> | void;
-  onUpdateCandidateMemory(candidateId: string, payload: Partial<CandidateMemoryRecord>): Promise<void> | void;
-  onCompactCandidateMemory(candidateId: string): Promise<void> | void;
-  onUpdateJobMemory(jdId: string, payload: Partial<JobMemoryRecord>): Promise<void> | void;
-  onCompactJobMemory(jdId: string): Promise<void> | void;
+  onUpdateCandidateMemory(personId: string, payload: Partial<CandidateMemoryRecord>): Promise<void> | void;
+  onCompactCandidateMemory(personId: string): Promise<void> | void;
+  onUpdateJobMemory(jobDescriptionId: string, payload: Partial<JobMemoryRecord>): Promise<void> | void;
+  onCompactJobMemory(jobDescriptionId: string): Promise<void> | void;
   onUpdateGlobalMemory(payload: Partial<AgentGlobalMemoryRecord>): Promise<void> | void;
   onCompactGlobalMemory(): Promise<void> | void;
 }
@@ -302,13 +302,13 @@ export function RecruitAgentView({
     const items: Array<{ key: MemoryTargetKey; label: string; detail: string }> = [
       { key: "global", label: copy("Global Memory", "全局记忆"), detail: copy("Cross-candidate lessons only", "仅跨候选人的全局经验") },
       ...candidateMemories.map((item) => ({
-        key: `candidate:${item.candidateId}` as const,
-        label: candidateNameById.get(item.candidateId) ?? item.candidateId,
+        key: `candidate:${item.personId}` as const,
+        label: candidateNameById.get(item.personId) ?? item.personId,
         detail: copy("Candidate-isolated memory", "候选人隔离记忆"),
       })),
       ...jobMemories.map((item) => ({
-        key: `job:${item.jdId}` as const,
-        label: item.jdId,
+        key: `job:${item.jobDescriptionId}` as const,
+        label: item.jobDescriptionId,
         detail: copy("JD-isolated memory", "JD 隔离记忆"),
       })),
     ];
@@ -330,10 +330,10 @@ export function RecruitAgentView({
     }
     const [scope, id] = selectedMemoryKey.split(":");
     if (scope === "candidate") {
-      const record = candidateMemories.find((item) => item.candidateId === id);
+      const record = candidateMemories.find((item) => item.personId === id);
       return record ? { kind: "candidate" as const, record } : null;
     }
-    const record = jobMemories.find((item) => item.jdId === id);
+    const record = jobMemories.find((item) => item.jobDescriptionId === id);
     return record ? { kind: "job" as const, record } : null;
   }, [candidateMemories, globalMemory, jobMemories, selectedMemoryKey]);
 
@@ -518,11 +518,11 @@ export function RecruitAgentView({
         },
       };
       if (selectedMemory.kind === "candidate") {
-        await onUpdateCandidateMemory(selectedMemory.record.candidateId, payload);
+        await onUpdateCandidateMemory(selectedMemory.record.personId, payload);
         return;
       }
       if (selectedMemory.kind === "job") {
-        await onUpdateJobMemory(selectedMemory.record.jdId, payload);
+        await onUpdateJobMemory(selectedMemory.record.jobDescriptionId, payload);
         return;
       }
       await onUpdateGlobalMemory(payload);
@@ -536,11 +536,11 @@ export function RecruitAgentView({
       return;
     }
     if (selectedMemory.kind === "candidate") {
-      await onCompactCandidateMemory(selectedMemory.record.candidateId);
+      await onCompactCandidateMemory(selectedMemory.record.personId);
       return;
     }
     if (selectedMemory.kind === "job") {
-      await onCompactJobMemory(selectedMemory.record.jdId);
+      await onCompactJobMemory(selectedMemory.record.jobDescriptionId);
       return;
     }
     await onCompactGlobalMemory();
@@ -861,7 +861,7 @@ export function RecruitAgentView({
       </Panel>
 
       <Panel
-        title={selectedMemory ? (selectedMemory.kind === "candidate" ? candidateNameById.get(selectedMemory.record.candidateId) ?? selectedMemory.record.candidateId : selectedMemory.kind === "job" ? selectedMemory.record.jdId : copy("Global memory", "全局记忆")) : copy("Memory detail", "Memory 详情")}
+        title={selectedMemory ? (selectedMemory.kind === "candidate" ? candidateNameById.get(selectedMemory.record.personId) ?? selectedMemory.record.personId : selectedMemory.kind === "job" ? selectedMemory.record.jobDescriptionId : copy("Global memory", "全局记忆")) : copy("Memory detail", "Memory 详情")}
         eyebrow={copy("Progressive disclosure", "渐进式披露")}
         description={copy("Raw evidence remains preserved. The compacted content and model-ready view are editable separately.", "原始证据会被保留。压缩内容和模型可用视图可以独立编辑。")}
         actions={

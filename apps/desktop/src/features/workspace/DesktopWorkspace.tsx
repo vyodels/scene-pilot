@@ -732,23 +732,23 @@ export function DesktopWorkspace(): JSX.Element {
     await loadWorkspace(copy("Skill deleted.", "Skill 已删除。"));
   };
 
-  const handleUpdateCandidateMemory = async (candidateId: string, payload: Partial<CandidateMemoryRecord>) => {
-    await apiClient.updateCandidateMemory(candidateId, payload);
+  const handleUpdateCandidateMemory = async (personId: string, payload: Partial<CandidateMemoryRecord>) => {
+    await apiClient.updateCandidateMemory(personId, payload);
     await loadWorkspace(copy("Candidate memory updated.", "候选人 memory 已更新。"));
   };
 
-  const handleCompactCandidateMemory = async (candidateId: string) => {
-    await apiClient.compactCandidateMemory(candidateId, "manual_compact", true);
+  const handleCompactCandidateMemory = async (personId: string) => {
+    await apiClient.compactCandidateMemory(personId, "manual_compact", true);
     await loadWorkspace(copy("Candidate memory compacted.", "候选人 memory 已 compact。"));
   };
 
-  const handleUpdateJobMemory = async (jdId: string, payload: Partial<JobMemoryRecord>) => {
-    await apiClient.updateJobMemory(jdId, payload);
+  const handleUpdateJobMemory = async (jobDescriptionId: string, payload: Partial<JobMemoryRecord>) => {
+    await apiClient.updateJobMemory(jobDescriptionId, payload);
     await loadWorkspace(copy("JD memory updated.", "JD memory 已更新。"));
   };
 
-  const handleCompactJobMemory = async (jdId: string) => {
-    await apiClient.compactJobMemory(jdId, "manual_compact", true);
+  const handleCompactJobMemory = async (jobDescriptionId: string) => {
+    await apiClient.compactJobMemory(jobDescriptionId, "manual_compact", true);
     await loadWorkspace(copy("JD memory compacted.", "JD memory 已 compact。"));
   };
 

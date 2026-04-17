@@ -126,7 +126,7 @@ def test_recruit_agent_candidate_thread_state_and_memory(tmp_path):
         assert "status_machine" in profile_response.json()["playbook_blueprint"]
         assert "context_policy" in profile_response.json()["prompt_config"]
 
-        memory_response = client.get(f"/api/recruit-agent/candidate-memories/{candidate_id}")
+        memory_response = client.get(f"/api/candidate-persons/{candidate_id}/memory")
         assert memory_response.status_code == 200
         assert "raw_content" in memory_response.json()
         assert "disclosure" in memory_response.json()

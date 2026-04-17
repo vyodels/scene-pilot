@@ -33,10 +33,10 @@ interface EvolutionViewProps {
   onSaveProfile(payload: Partial<RecruitAgentProfileRecord>): Promise<void> | void;
   onUpdateSkill(skillId: string, payload: Partial<SkillRecord>): Promise<void> | void;
   onDeleteSkill(skillId: string): Promise<void> | void;
-  onUpdateCandidateMemory(candidateId: string, payload: Partial<CandidateMemoryRecord>): Promise<void> | void;
-  onCompactCandidateMemory(candidateId: string): Promise<void> | void;
-  onUpdateJobMemory(jdId: string, payload: Partial<JobMemoryRecord>): Promise<void> | void;
-  onCompactJobMemory(jdId: string): Promise<void> | void;
+  onUpdateCandidateMemory(personId: string, payload: Partial<CandidateMemoryRecord>): Promise<void> | void;
+  onCompactCandidateMemory(personId: string): Promise<void> | void;
+  onUpdateJobMemory(jobDescriptionId: string, payload: Partial<JobMemoryRecord>): Promise<void> | void;
+  onCompactJobMemory(jobDescriptionId: string): Promise<void> | void;
   onUpdateGlobalMemory(payload: Partial<AgentGlobalMemoryRecord>): Promise<void> | void;
   onCompactGlobalMemory(): Promise<void> | void;
   onUpdateArtifact(artifactId: string, payload: Partial<EvolutionArtifactRecord>): Promise<void> | void;
@@ -299,16 +299,16 @@ export function EvolutionView({
         tone: "neutral",
       },
       ...candidateMemories.map((memory) => ({
-        key: `memory:candidate:${memory.candidateId}`,
-        label: candidateNameById.get(memory.candidateId) ?? memory.candidateId,
+        key: `memory:candidate:${memory.personId}`,
+        label: candidateNameById.get(memory.personId) ?? memory.personId,
         detail: memory.summary ?? copy("Candidate-isolated memory", "候选人隔离记忆"),
         status: memory.status,
         updatedAt: memory.updatedAt,
         tone: toneFromStatus(memory.status),
       })),
       ...jobMemories.map((memory) => ({
-        key: `memory:job:${memory.jdId}`,
-        label: memory.jdId,
+        key: `memory:job:${memory.jobDescriptionId}`,
+        label: memory.jobDescriptionId,
         detail: memory.summary ?? copy("JD-isolated memory", "JD 隔离记忆"),
         status: memory.status,
         updatedAt: memory.updatedAt,
@@ -490,10 +490,10 @@ export function EvolutionView({
     }
     const [, scope, target] = selectedKey.split(":");
     if (scope === "candidate") {
-      const record = candidateMemories.find((item) => item.candidateId === target);
+      const record = candidateMemories.find((item) => item.personId === target);
       return record ? { kind: "candidate" as const, record } : null;
     }
-    const record = jobMemories.find((item) => item.jdId === target);
+    const record = jobMemories.find((item) => item.jobDescriptionId === target);
     return record ? { kind: "job" as const, record } : null;
   }, [candidateMemories, globalMemory, jobMemories, selectedKey]);
 
@@ -660,9 +660,9 @@ export function EvolutionView({
     };
     try {
       if (selectedMemoryRecord.kind === "candidate") {
-        await onUpdateCandidateMemory(selectedMemoryRecord.record.candidateId, payload);
+        await onUpdateCandidateMemory(selectedMemoryRecord.record.personId, payload);
       } else if (selectedMemoryRecord.kind === "job") {
-        await onUpdateJobMemory(selectedMemoryRecord.record.jdId, payload);
+        await onUpdateJobMemory(selectedMemoryRecord.record.jobDescriptionId, payload);
       } else {
         await onUpdateGlobalMemory(payload);
       }
@@ -676,9 +676,9 @@ export function EvolutionView({
       return;
     }
     if (selectedMemoryRecord.kind === "candidate") {
-      await onCompactCandidateMemory(selectedMemoryRecord.record.candidateId);
+      await onCompactCandidateMemory(selectedMemoryRecord.record.personId);
     } else if (selectedMemoryRecord.kind === "job") {
-      await onCompactJobMemory(selectedMemoryRecord.record.jdId);
+      await onCompactJobMemory(selectedMemoryRecord.record.jobDescriptionId);
     } else {
       await onCompactGlobalMemory();
     }

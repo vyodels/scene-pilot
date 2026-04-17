@@ -35,7 +35,7 @@ from scene_pilot.models import (
     CandidateApplication,
     CandidateAssessment,
     CandidateAssignment,
-    CandidateMemory,
+    CandidatePersonMemory,
     CandidatePlatformIdx,
     CandidateReviewDecision,
     CandidateScorecard,
@@ -48,8 +48,8 @@ from scene_pilot.models import (
     ExecutionEpisode,
     ExecutionPlan,
     JobDescription,
+    JobDescriptionMemory,
     JobDescriptionPlatformIdx,
-    JobMemory,
     McpServer,
     McpTool,
     RecruitAgentProfile,
@@ -136,55 +136,12 @@ class CandidateRepository(BaseRepository[Candidate]):
         )
         return self.session.scalars(stmt).first()
 
-    def count_by_status(self) -> dict[str, int]:
-        stmt = select(Candidate.current_status, func.count()).group_by(Candidate.current_status)
-        return {status: count for status, count in self.session.execute(stmt).all()}
-
-    def count_by_current_statuses(self, statuses: list[str]) -> int:
-        normalized = [status for status in statuses if status]
-        if not normalized:
-            return 0
-        stmt = select(func.count()).select_from(Candidate).where(Candidate.current_status.in_(normalized))
-        return int(self.session.scalar(stmt) or 0)
-
-    def by_current_statuses(self, statuses: list[str], *, limit: int = 500, offset: int = 0) -> list[Candidate]:
-        normalized = [status for status in statuses if status]
-        if not normalized:
-            return []
-        stmt = (
-            select(Candidate)
-            .where(Candidate.current_status.in_(normalized))
-            .order_by(Candidate.updated_at.desc(), Candidate.id.asc())
-            .offset(offset)
-            .limit(limit)
-        )
-        return list(self.session.scalars(stmt).all())
-
     def resolve(self, candidate_id: str) -> Candidate | None:
         candidate = self.get(candidate_id)
         if candidate is not None:
             return candidate
         stmt = select(Candidate).where(Candidate.platform_candidate_id == candidate_id)
         return self.session.scalars(stmt).first()
-
-    def update_state_snapshot(
-        self,
-        candidate: Candidate,
-        *,
-        current_status: str | None = None,
-        deepest_milestone: str | None = None,
-        snapshot: dict[str, Any] | None = None,
-    ) -> Candidate:
-        if current_status is not None:
-            candidate.current_status = current_status
-        if deepest_milestone is not None:
-            candidate.deepest_milestone = deepest_milestone
-        if snapshot is not None:
-            candidate.state_snapshot = snapshot
-        candidate.updated_at = utcnow()
-        self.session.commit()
-        self.session.refresh(candidate)
-        return candidate
 
 
 class CandidatePlatformIdxRepository(BaseRepository[CandidatePlatformIdx]):
@@ -674,42 +631,42 @@ class RecruitAgentProfileRepository(BaseRepository[RecruitAgentProfile]):
         return self.session.scalars(stmt).first()
 
 
-class CandidateMemoryRepository(BaseRepository[CandidateMemory]):
-    model = CandidateMemory
+class CandidatePersonMemoryRepository(BaseRepository[CandidatePersonMemory]):
+    model = CandidatePersonMemory
 
-    def by_agent_and_candidate(self, *, agent_profile_id: str, candidate_id: str) -> CandidateMemory | None:
-        stmt = select(CandidateMemory).where(
-            CandidateMemory.agent_profile_id == agent_profile_id,
-            CandidateMemory.candidate_id == candidate_id,
+    def by_agent_and_person(self, *, agent_profile_id: str, person_id: str) -> CandidatePersonMemory | None:
+        stmt = select(CandidatePersonMemory).where(
+            CandidatePersonMemory.agent_profile_id == agent_profile_id,
+            CandidatePersonMemory.person_id == person_id,
         )
         return self.session.scalars(stmt).first()
 
-    def list_for_agent(self, agent_profile_id: str, limit: int = 100, offset: int = 0) -> list[CandidateMemory]:
+    def list_for_agent(self, agent_profile_id: str, limit: int = 100, offset: int = 0) -> list[CandidatePersonMemory]:
         stmt = (
-            select(CandidateMemory)
-            .where(CandidateMemory.agent_profile_id == agent_profile_id)
-            .order_by(CandidateMemory.updated_at.desc(), CandidateMemory.id.asc())
+            select(CandidatePersonMemory)
+            .where(CandidatePersonMemory.agent_profile_id == agent_profile_id)
+            .order_by(CandidatePersonMemory.updated_at.desc(), CandidatePersonMemory.id.asc())
             .offset(offset)
             .limit(limit)
         )
         return list(self.session.scalars(stmt).all())
 
 
-class JobMemoryRepository(BaseRepository[JobMemory]):
-    model = JobMemory
+class JobDescriptionMemoryRepository(BaseRepository[JobDescriptionMemory]):
+    model = JobDescriptionMemory
 
-    def by_agent_and_jd(self, *, agent_profile_id: str, jd_id: str) -> JobMemory | None:
-        stmt = select(JobMemory).where(
-            JobMemory.agent_profile_id == agent_profile_id,
-            JobMemory.jd_id == jd_id,
+    def by_agent_and_job_description(self, *, agent_profile_id: str, job_description_id: str) -> JobDescriptionMemory | None:
+        stmt = select(JobDescriptionMemory).where(
+            JobDescriptionMemory.agent_profile_id == agent_profile_id,
+            JobDescriptionMemory.job_description_id == job_description_id,
         )
         return self.session.scalars(stmt).first()
 
-    def list_for_agent(self, agent_profile_id: str, limit: int = 100, offset: int = 0) -> list[JobMemory]:
+    def list_for_agent(self, agent_profile_id: str, limit: int = 100, offset: int = 0) -> list[JobDescriptionMemory]:
         stmt = (
-            select(JobMemory)
-            .where(JobMemory.agent_profile_id == agent_profile_id)
-            .order_by(JobMemory.updated_at.desc(), JobMemory.id.asc())
+            select(JobDescriptionMemory)
+            .where(JobDescriptionMemory.agent_profile_id == agent_profile_id)
+            .order_by(JobDescriptionMemory.updated_at.desc(), JobDescriptionMemory.id.asc())
             .offset(offset)
             .limit(limit)
         )
@@ -1740,7 +1697,7 @@ class MetricsRepository:
         self.session = session
 
     def summary(self) -> MetricsSummary:
-        candidate_count = self.session.scalar(select(func.count()).select_from(Candidate)) or 0
+        candidate_count = self.session.scalar(select(func.count()).select_from(CandidateApplication)) or 0
         playbook_count = self.session.scalar(select(func.count()).select_from(Playbook)) or 0
         skill_count = self.session.scalar(select(func.count()).select_from(Skill)) or 0
         approval_count = self.session.scalar(select(func.count()).select_from(ApprovalItem)) or 0
@@ -1753,7 +1710,7 @@ class MetricsRepository:
         by_status = {
             status: count
             for status, count in self.session.execute(
-                select(Candidate.current_status, func.count()).group_by(Candidate.current_status)
+                select(CandidateApplication.current_status, func.count()).group_by(CandidateApplication.current_status)
             ).all()
         }
         return MetricsSummary(

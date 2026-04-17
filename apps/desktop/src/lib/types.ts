@@ -391,7 +391,7 @@ export interface RecruitAgentProfileRecord {
 export interface CandidateMemoryRecord {
   id: string;
   agentProfileId: string;
-  candidateId: string;
+  personId: string;
   status: string;
   memorySchemaVersion: string;
   summary?: string;
@@ -410,7 +410,7 @@ export interface CandidateMemoryRecord {
 export interface JobMemoryRecord {
   id: string;
   agentProfileId: string;
-  jdId: string;
+  jobDescriptionId: string;
   status: string;
   memorySchemaVersion: string;
   summary?: string;

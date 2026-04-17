@@ -116,13 +116,13 @@ export interface DesktopApiClient {
     payload: { action: string; comment?: string; operator?: string; scope?: string },
   ): Promise<OperatorInteractionRecord>;
   listCandidateMemories(): Promise<CandidateMemoryRecord[]>;
-  getCandidateMemory(candidateId: string): Promise<CandidateMemoryRecord>;
-  updateCandidateMemory(candidateId: string, payload: Partial<CandidateMemoryRecord>): Promise<CandidateMemoryRecord>;
-  compactCandidateMemory(candidateId: string, reason?: string, force?: boolean): Promise<CandidateMemoryRecord>;
+  getCandidateMemory(personId: string): Promise<CandidateMemoryRecord>;
+  updateCandidateMemory(personId: string, payload: Partial<CandidateMemoryRecord>): Promise<CandidateMemoryRecord>;
+  compactCandidateMemory(personId: string, reason?: string, force?: boolean): Promise<CandidateMemoryRecord>;
   listJobMemories(): Promise<JobMemoryRecord[]>;
-  getJobMemory(jdId: string): Promise<JobMemoryRecord>;
-  updateJobMemory(jdId: string, payload: Partial<JobMemoryRecord>): Promise<JobMemoryRecord>;
-  compactJobMemory(jdId: string, reason?: string, force?: boolean): Promise<JobMemoryRecord>;
+  getJobMemory(jobDescriptionId: string): Promise<JobMemoryRecord>;
+  updateJobMemory(jobDescriptionId: string, payload: Partial<JobMemoryRecord>): Promise<JobMemoryRecord>;
+  compactJobMemory(jobDescriptionId: string, reason?: string, force?: boolean): Promise<JobMemoryRecord>;
   getAgentGlobalMemory(): Promise<AgentGlobalMemoryRecord>;
   updateAgentGlobalMemory(payload: Partial<AgentGlobalMemoryRecord>): Promise<AgentGlobalMemoryRecord>;
   compactAgentGlobalMemory(reason?: string, force?: boolean): Promise<AgentGlobalMemoryRecord>;
@@ -839,9 +839,9 @@ function normalizeCandidateMemory(raw: unknown): CandidateMemoryRecord {
   return {
     id: String(record.id ?? ""),
     agentProfileId: String(record.agentProfileId ?? record.agent_profile_id ?? ""),
-    candidateId: String(record.candidateId ?? record.candidate_id ?? ""),
+    personId: String(record.personId ?? record.person_id ?? ""),
     status: String(record.status ?? "active"),
-    memorySchemaVersion: String(record.memorySchemaVersion ?? record.memory_schema_version ?? "candidate-memory-v1"),
+    memorySchemaVersion: String(record.memorySchemaVersion ?? record.memory_schema_version ?? "candidate-person-memory-v1"),
     summary: record.summary ? String(record.summary) : undefined,
     rawContent: asRecord(record.rawContent ?? record.raw_content),
     content: asRecord(record.content),
@@ -861,9 +861,9 @@ function normalizeJobMemory(raw: unknown): JobMemoryRecord {
   return {
     id: String(record.id ?? ""),
     agentProfileId: String(record.agentProfileId ?? record.agent_profile_id ?? ""),
-    jdId: String(record.jdId ?? record.jd_id ?? ""),
+    jobDescriptionId: String(record.jobDescriptionId ?? record.job_description_id ?? ""),
     status: String(record.status ?? "active"),
-    memorySchemaVersion: String(record.memorySchemaVersion ?? record.memory_schema_version ?? "job-memory-v1"),
+    memorySchemaVersion: String(record.memorySchemaVersion ?? record.memory_schema_version ?? "job-description-memory-v1"),
     summary: record.summary ? String(record.summary) : undefined,
     rawContent: asRecord(record.rawContent ?? record.raw_content),
     content: asRecord(record.content),
@@ -2234,12 +2234,12 @@ function createFetchClient(baseUrl: string): DesktopApiClient {
         }),
       ),
     listCandidateMemories: async () =>
-      asArray(await requestJson<unknown>(baseUrl, "/api/recruit-agent/candidate-memories")).map(normalizeCandidateMemory),
-    getCandidateMemory: async (candidateId) =>
-      normalizeCandidateMemory(await requestJson<unknown>(baseUrl, `/api/recruit-agent/candidate-memories/${candidateId}`)),
-    updateCandidateMemory: async (candidateId, payload) =>
+      asArray(await requestJson<unknown>(baseUrl, "/api/candidate-persons/memories")).map(normalizeCandidateMemory),
+    getCandidateMemory: async (personId) =>
+      normalizeCandidateMemory(await requestJson<unknown>(baseUrl, `/api/candidate-persons/${personId}/memory`)),
+    updateCandidateMemory: async (personId, payload) =>
       normalizeCandidateMemory(
-        await requestJson<unknown>(baseUrl, `/api/recruit-agent/candidate-memories/${candidateId}`, {
+        await requestJson<unknown>(baseUrl, `/api/candidate-persons/${personId}/memory`, {
           method: "PATCH",
           body: JSON.stringify({
             status: payload.status,
@@ -2254,20 +2254,20 @@ function createFetchClient(baseUrl: string): DesktopApiClient {
           }),
         }),
       ),
-    compactCandidateMemory: async (candidateId, reason, force = false) =>
+    compactCandidateMemory: async (personId, reason, force = false) =>
       normalizeCandidateMemory(
-        await requestJson<unknown>(baseUrl, `/api/recruit-agent/candidate-memories/${candidateId}/compact`, {
+        await requestJson<unknown>(baseUrl, `/api/candidate-persons/${personId}/memory/compact`, {
           method: "POST",
           body: JSON.stringify({ reason, force }),
         }),
       ),
     listJobMemories: async () =>
-      asArray(await requestJson<unknown>(baseUrl, "/api/recruit-agent/job-memories")).map(normalizeJobMemory),
-    getJobMemory: async (jdId) =>
-      normalizeJobMemory(await requestJson<unknown>(baseUrl, `/api/recruit-agent/job-memories/${jdId}`)),
-    updateJobMemory: async (jdId, payload) =>
+      asArray(await requestJson<unknown>(baseUrl, "/api/job-descriptions/memories")).map(normalizeJobMemory),
+    getJobMemory: async (jobDescriptionId) =>
+      normalizeJobMemory(await requestJson<unknown>(baseUrl, `/api/job-descriptions/${jobDescriptionId}/memory`)),
+    updateJobMemory: async (jobDescriptionId, payload) =>
       normalizeJobMemory(
-        await requestJson<unknown>(baseUrl, `/api/recruit-agent/job-memories/${jdId}`, {
+        await requestJson<unknown>(baseUrl, `/api/job-descriptions/${jobDescriptionId}/memory`, {
           method: "PATCH",
           body: JSON.stringify({
             status: payload.status,
@@ -2282,9 +2282,9 @@ function createFetchClient(baseUrl: string): DesktopApiClient {
           }),
         }),
       ),
-    compactJobMemory: async (jdId, reason, force = false) =>
+    compactJobMemory: async (jobDescriptionId, reason, force = false) =>
       normalizeJobMemory(
-        await requestJson<unknown>(baseUrl, `/api/recruit-agent/job-memories/${jdId}/compact`, {
+        await requestJson<unknown>(baseUrl, `/api/job-descriptions/${jobDescriptionId}/memory/compact`, {
           method: "POST",
           body: JSON.stringify({ reason, force }),
         }),
