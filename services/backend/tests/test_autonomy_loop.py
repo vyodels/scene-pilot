@@ -274,7 +274,7 @@ def test_agent_control_prioritizes_high_potential_candidate_for_progression(tmp_
     assert task is not None
     assert task.task_type == "candidate_probe"
     assert task.application_id == higher_candidate_id
-    assert task.payload["selection"]["candidateId"] == higher_candidate_id
+    assert task.payload["selection"]["applicationId"] == higher_candidate_id
     assert task.payload["selection"]["selectedTaskType"] == "candidate_probe"
     assert task.payload["selection"]["scoreBreakdown"]["total"] > 0
     assert "reason" in task.payload["selection"]
@@ -344,7 +344,7 @@ def test_agent_control_skips_candidates_that_already_have_open_task(tmp_path):
     task = container.agent_control.maybe_enqueue_priority_candidate_progression()
     assert task is not None
     assert task.application_id == fallback_candidate_id
-    assert task.payload["selection"]["candidateId"] == fallback_candidate_id
+    assert task.payload["selection"]["applicationId"] == fallback_candidate_id
 
 
 def test_autonomy_loop_queues_priority_candidate_progression_when_idle(tmp_path):

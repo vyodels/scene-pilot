@@ -5,54 +5,54 @@ import { CandidateTable } from "../kanban-shared/CandidateTable";
 import { CandidateCommunicationPanel } from "../kanban-shared/CandidateCommunicationPanel";
 import {
   CandidateDateRangeControl,
-  createCandidateDateRangeState,
-  resolveCandidateDateRangeFilter,
-  type CandidateDateRangeState,
+  createApplicationDateRangeState,
+  resolveApplicationDateRangeFilter,
+  type ApplicationDateRangeState,
 } from "../kanban-shared/CandidateDateRangeControl";
 import { CandidateDetailDrawer } from "../kanban-shared/CandidateDetailDrawer";
 import { FunnelStageBar } from "../kanban-shared/FunnelStageBar";
 import { ManualStatusOverrideDrawer } from "../kanban-shared/ManualStatusOverrideDrawer";
-import { buildCandidateViewModels, createNodeMap, isWithinCandidateDateFilter } from "../kanban-shared/kanbanUtils";
-import type { CandidateRecord, CandidateThreadRecord } from "../../lib/types";
+import { buildApplicationViewModels, createNodeMap, isWithinApplicationDateFilter } from "../kanban-shared/kanbanUtils";
+import type { ApplicationRecord, ApplicationThreadRecord } from "../../lib/types";
 import { useI18n } from "../../lib/i18n";
 
 interface FunnelKanbanViewProps {
-  candidates: CandidateRecord[];
-  threads: CandidateThreadRecord[];
+  applications: ApplicationRecord[];
+  threads: ApplicationThreadRecord[];
   stateMachine: RecruitmentStateMachine;
-  preferredCandidateId?: string;
+  preferredApplicationId?: string;
   preferredConversationToken?: number;
-  onOpenCandidate(candidateId: string): void;
+  onOpenApplication(applicationId: string): void;
   onRefresh?(): Promise<unknown> | void;
   onCreateEntry(
-    candidateId: string,
+    applicationId: string,
     payload: { direction: string; content: string; messageType?: string; platform?: string },
   ): Promise<unknown> | void;
-  onTransition(candidateId: string, payload: CandidateTransitionPayload): Promise<unknown> | void;
+  onTransition(applicationId: string, payload: CandidateTransitionPayload): Promise<unknown> | void;
 }
 
 export function FunnelKanbanView({
-  candidates,
+  applications,
   threads,
   stateMachine,
-  preferredCandidateId,
+  preferredApplicationId,
   preferredConversationToken,
-  onOpenCandidate,
+  onOpenApplication,
   onRefresh,
   onCreateEntry,
   onTransition,
 }: FunnelKanbanViewProps): JSX.Element {
   const { copy } = useI18n();
   const [jobFilter, setJobFilter] = useState("all");
-  const [dateRange, setDateRange] = useState<CandidateDateRangeState>(() => createCandidateDateRangeState());
+  const [dateRange, setDateRange] = useState<ApplicationDateRangeState>(() => createApplicationDateRangeState());
   const visibleMilestones = useMemo(
     () => funnelMilestones.filter((milestone) => milestone.showInFunnel),
     [],
   );
   const [selectedMilestone, setSelectedMilestone] = useState<string>(visibleMilestones[0]?.id ?? "M01");
-  const [activeConversationCandidateId, setActiveConversationCandidateId] = useState<string>();
-  const [detailCandidateId, setDetailCandidateId] = useState<string>();
-  const [overrideCandidateId, setOverrideCandidateId] = useState<string>();
+  const [activeConversationApplicationId, setActiveConversationApplicationId] = useState<string>();
+  const [detailApplicationId, setDetailApplicationId] = useState<string>();
+  const [overrideApplicationId, setOverrideApplicationId] = useState<string>();
 
   useEffect(() => {
     if (!visibleMilestones.some((milestone) => milestone.id === selectedMilestone)) {
@@ -61,19 +61,22 @@ export function FunnelKanbanView({
   }, [selectedMilestone, visibleMilestones]);
 
   const models = useMemo(
-    () => buildCandidateViewModels(candidates, threads, stateMachine),
-    [candidates, stateMachine, threads],
+    () => buildApplicationViewModels(applications, threads, stateMachine),
+    [applications, stateMachine, threads],
   );
 
   const jobOptions = useMemo(
-    () => Array.from(new Set(models.map((item) => item.candidate.jdTitle))).sort((left, right) => left.localeCompare(right)),
+    () =>
+      Array.from(new Set(models.map((item) => item.application.jobDescription.title))).sort((left, right) =>
+        left.localeCompare(right),
+      ),
     [models],
   );
 
   const jobFilteredModels = useMemo(
     () =>
       models.filter((item) => {
-        if (jobFilter !== "all" && item.candidate.jdTitle !== jobFilter) {
+        if (jobFilter !== "all" && item.application.jobDescription.title !== jobFilter) {
           return false;
         }
         return true;
@@ -82,7 +85,7 @@ export function FunnelKanbanView({
   );
 
   const nodeById = useMemo(() => createNodeMap(stateMachine), [stateMachine]);
-  const dateFilter = useMemo(() => resolveCandidateDateRangeFilter(dateRange), [dateRange]);
+  const dateFilter = useMemo(() => resolveApplicationDateRangeFilter(dateRange), [dateRange]);
 
   const stageItems = useMemo(
     () =>
@@ -90,7 +93,7 @@ export function FunnelKanbanView({
         const count = jobFilteredModels.filter(
           (item) =>
             item.deepestMilestone === milestone.id &&
-            isWithinCandidateDateFilter(item.milestoneReachedAt[milestone.id], dateFilter),
+            isWithinApplicationDateFilter(item.milestoneReachedAt[milestone.id], dateFilter),
         ).length;
         return {
           milestoneId: milestone.id,
@@ -103,13 +106,13 @@ export function FunnelKanbanView({
 
   const selectedNodeLabel =
     visibleMilestones.find((milestone) => milestone.id === selectedMilestone)?.label ?? copy("Selected stage", "当前阶段");
-  const selectedCandidates = useMemo(
+  const selectedApplications = useMemo(
     () =>
       jobFilteredModels
         .filter(
           (item) =>
             item.deepestMilestone === selectedMilestone &&
-            isWithinCandidateDateFilter(item.milestoneReachedAt[selectedMilestone], dateFilter),
+            isWithinApplicationDateFilter(item.milestoneReachedAt[selectedMilestone], dateFilter),
         )
         .map((item) => ({
           ...item,
@@ -117,41 +120,41 @@ export function FunnelKanbanView({
         })),
     [dateFilter, jobFilteredModels, nodeById, selectedMilestone],
   );
-  const detailRecord = selectedCandidates.find((item) => item.candidate.id === detailCandidateId) ?? null;
+  const detailRecord = selectedApplications.find((item) => item.application.id === detailApplicationId) ?? null;
   const overrideRecord =
-    selectedCandidates.find((item) => item.candidate.id === overrideCandidateId) ??
-    (detailRecord?.candidate.id === overrideCandidateId ? detailRecord : null);
+    selectedApplications.find((item) => item.application.id === overrideApplicationId) ??
+    (detailRecord?.application.id === overrideApplicationId ? detailRecord : null);
 
   useEffect(() => {
-    if (!selectedCandidates.length) {
-      setActiveConversationCandidateId(undefined);
-      setDetailCandidateId(undefined);
-      setOverrideCandidateId(undefined);
+    if (!selectedApplications.length) {
+      setActiveConversationApplicationId(undefined);
+      setDetailApplicationId(undefined);
+      setOverrideApplicationId(undefined);
       return;
     }
-    if (activeConversationCandidateId && selectedCandidates.some((item) => item.candidate.id === activeConversationCandidateId)) {
-      if (detailCandidateId && !selectedCandidates.some((item) => item.candidate.id === detailCandidateId)) {
-        setDetailCandidateId(undefined);
+    if (activeConversationApplicationId && selectedApplications.some((item) => item.application.id === activeConversationApplicationId)) {
+      if (detailApplicationId && !selectedApplications.some((item) => item.application.id === detailApplicationId)) {
+        setDetailApplicationId(undefined);
       }
-      if (overrideCandidateId && !selectedCandidates.some((item) => item.candidate.id === overrideCandidateId)) {
-        setOverrideCandidateId(undefined);
+      if (overrideApplicationId && !selectedApplications.some((item) => item.application.id === overrideApplicationId)) {
+        setOverrideApplicationId(undefined);
       }
       return;
     }
-    setActiveConversationCandidateId(undefined);
-    if (detailCandidateId && !selectedCandidates.some((item) => item.candidate.id === detailCandidateId)) {
-      setDetailCandidateId(undefined);
+    setActiveConversationApplicationId(undefined);
+    if (detailApplicationId && !selectedApplications.some((item) => item.application.id === detailApplicationId)) {
+      setDetailApplicationId(undefined);
     }
-    if (overrideCandidateId && !selectedCandidates.some((item) => item.candidate.id === overrideCandidateId)) {
-      setOverrideCandidateId(undefined);
+    if (overrideApplicationId && !selectedApplications.some((item) => item.application.id === overrideApplicationId)) {
+      setOverrideApplicationId(undefined);
     }
-  }, [activeConversationCandidateId, detailCandidateId, overrideCandidateId, selectedCandidates]);
+  }, [activeConversationApplicationId, detailApplicationId, overrideApplicationId, selectedApplications]);
 
   useEffect(() => {
-    if (!preferredCandidateId || preferredConversationToken == null) {
+    if (!preferredApplicationId || preferredConversationToken == null) {
       return;
     }
-    const target = models.find((item) => item.candidate.id === preferredCandidateId);
+    const target = models.find((item) => item.application.id === preferredApplicationId);
     if (!target) {
       return;
     }
@@ -159,8 +162,8 @@ export function FunnelKanbanView({
     if (target.deepestMilestone) {
       setSelectedMilestone(target.deepestMilestone);
     }
-    setActiveConversationCandidateId(preferredCandidateId);
-  }, [models, preferredCandidateId, preferredConversationToken]);
+    setActiveConversationApplicationId(preferredApplicationId);
+  }, [models, preferredApplicationId, preferredConversationToken]);
 
   return (
     <div className="kanban-page">
@@ -185,23 +188,23 @@ export function FunnelKanbanView({
 
       <CandidateTable
         title={selectedNodeLabel}
-        count={selectedCandidates.length}
-        candidates={selectedCandidates}
+        count={selectedApplications.length}
+        applications={selectedApplications}
         stateMachine={stateMachine}
         emptyMessage={copy("No candidates reached this funnel milestone under the current filters.", "当前筛选条件下该漏斗阶段没有候选人。")}
-        onOpenDetail={setDetailCandidateId}
-        onOpenCommunication={setActiveConversationCandidateId}
+        onOpenDetail={setDetailApplicationId}
+        onOpenCommunication={setActiveConversationApplicationId}
         onTransition={onTransition}
       />
 
-      {activeConversationCandidateId ? (
+      {activeConversationApplicationId ? (
         <CandidateCommunicationPanel
-          candidates={selectedCandidates}
-          selectedCandidateId={activeConversationCandidateId}
+          applications={selectedApplications}
+          selectedApplicationId={activeConversationApplicationId}
           stateMachine={stateMachine}
-          onSelectCandidate={setActiveConversationCandidateId}
-          onClose={() => setActiveConversationCandidateId(undefined)}
-          onOpenFullCockpit={onOpenCandidate}
+          onSelectApplication={setActiveConversationApplicationId}
+          onClose={() => setActiveConversationApplicationId(undefined)}
+          onOpenFullCockpit={onOpenApplication}
           onRefresh={onRefresh}
           onCreateEntry={onCreateEntry}
           onTransition={onTransition}
@@ -212,11 +215,11 @@ export function FunnelKanbanView({
         open={Boolean(detailRecord)}
         record={detailRecord}
         stateMachine={stateMachine}
-        onClose={() => setDetailCandidateId(undefined)}
+        onClose={() => setDetailApplicationId(undefined)}
         onTransition={onTransition}
         onRequestOverride={() => {
           if (detailRecord) {
-            setOverrideCandidateId(detailRecord.candidate.id);
+            setOverrideApplicationId(detailRecord.application.id);
           }
         }}
       />
@@ -225,7 +228,7 @@ export function FunnelKanbanView({
         open={Boolean(overrideRecord)}
         record={overrideRecord}
         stateMachine={stateMachine}
-        onClose={() => setOverrideCandidateId(undefined)}
+        onClose={() => setOverrideApplicationId(undefined)}
         onSubmit={onTransition}
       />
     </div>

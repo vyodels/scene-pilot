@@ -4,31 +4,31 @@ import { CandidateTable } from "../kanban-shared/CandidateTable";
 import { CandidateCommunicationPanel } from "../kanban-shared/CandidateCommunicationPanel";
 import {
   CandidateDateRangeControl,
-  createCandidateDateRangeState,
-  resolveCandidateDateRangeFilter,
-  type CandidateDateRangeState,
+  createApplicationDateRangeState,
+  resolveApplicationDateRangeFilter,
+  type ApplicationDateRangeState,
 } from "../kanban-shared/CandidateDateRangeControl";
 import { CandidateDetailDrawer } from "../kanban-shared/CandidateDetailDrawer";
 import { ManualStatusOverrideDrawer } from "../kanban-shared/ManualStatusOverrideDrawer";
 import { StatusChain } from "../kanban-shared/StatusChain";
-import { buildCandidateViewModels, isWithinCandidateDateFilter, nodeTone } from "../kanban-shared/kanbanUtils";
-import type { CandidateFollowUpSummaryDefinition, CandidateRecord, CandidateThreadRecord } from "../../lib/types";
+import { buildApplicationViewModels, isWithinApplicationDateFilter, nodeTone } from "../kanban-shared/kanbanUtils";
+import type { ApplicationFollowUpSummaryDefinition, ApplicationRecord, ApplicationThreadRecord } from "../../lib/types";
 import { useI18n } from "../../lib/i18n";
 
 interface StatusKanbanViewProps {
-  candidates: CandidateRecord[];
-  threads: CandidateThreadRecord[];
+  applications: ApplicationRecord[];
+  threads: ApplicationThreadRecord[];
   stateMachine: RecruitmentStateMachine;
-  summaryDefinitions?: CandidateFollowUpSummaryDefinition[];
-  preferredCandidateId?: string;
+  summaryDefinitions?: ApplicationFollowUpSummaryDefinition[];
+  preferredApplicationId?: string;
   preferredConversationToken?: number;
-  onOpenCandidate(candidateId: string): void;
+  onOpenApplication(applicationId: string): void;
   onRefresh?(): Promise<unknown> | void;
   onCreateEntry(
-    candidateId: string,
+    applicationId: string,
     payload: { direction: string; content: string; messageType?: string; platform?: string },
   ): Promise<unknown> | void;
-  onTransition(candidateId: string, payload: CandidateTransitionPayload): Promise<unknown> | void;
+  onTransition(applicationId: string, payload: CandidateTransitionPayload): Promise<unknown> | void;
 }
 
 function isGlobalTerminal(node: StateNode): boolean {
@@ -85,7 +85,7 @@ function splitMainNodesIntoRows(nodes: StateNode[], availableWidth: number): Sta
 function buildFallbackSummaryDefinitions(
   stateMachine: RecruitmentStateMachine,
   copy: (en: string, zh: string) => string,
-): CandidateFollowUpSummaryDefinition[] {
+): ApplicationFollowUpSummaryDefinition[] {
   const visibleNodes = stateMachine.nodes.filter(
     (node) => node.uiConfig?.showInKanban !== false && !node.isTransient,
   );
@@ -210,13 +210,13 @@ function buildFallbackSummaryDefinitions(
 }
 
 export function StatusKanbanView({
-  candidates,
+  applications,
   threads,
   stateMachine,
   summaryDefinitions = [],
-  preferredCandidateId,
+  preferredApplicationId,
   preferredConversationToken,
-  onOpenCandidate,
+  onOpenApplication,
   onRefresh,
   onCreateEntry,
   onTransition,
@@ -224,27 +224,30 @@ export function StatusKanbanView({
   const { copy } = useI18n();
   const [jobFilter, setJobFilter] = useState("all");
   const [visibilityFilter, setVisibilityFilter] = useState<"all" | "active" | "human">("all");
-  const [dateRange, setDateRange] = useState<CandidateDateRangeState>(() => createCandidateDateRangeState());
+  const [dateRange, setDateRange] = useState<ApplicationDateRangeState>(() => createApplicationDateRangeState());
   const [selectedStatus, setSelectedStatus] = useState<string>("all");
   const [hoveredSummaryKey, setHoveredSummaryKey] =
-    useState<CandidateFollowUpSummaryDefinition["key"] | null>(null);
-  const [activeConversationCandidateId, setActiveConversationCandidateId] = useState<string>();
-  const [detailCandidateId, setDetailCandidateId] = useState<string>();
-  const [overrideCandidateId, setOverrideCandidateId] = useState<string>();
+    useState<ApplicationFollowUpSummaryDefinition["key"] | null>(null);
+  const [activeConversationApplicationId, setActiveConversationApplicationId] = useState<string>();
+  const [detailApplicationId, setDetailApplicationId] = useState<string>();
+  const [overrideApplicationId, setOverrideApplicationId] = useState<string>();
   const chainContainerRef = useRef<HTMLDivElement | null>(null);
   const [chainWidth, setChainWidth] = useState(1200);
 
   const models = useMemo(
-    () => buildCandidateViewModels(candidates, threads, stateMachine),
-    [candidates, stateMachine, threads],
+    () => buildApplicationViewModels(applications, threads, stateMachine),
+    [applications, stateMachine, threads],
   );
 
   const jobOptions = useMemo(
-    () => Array.from(new Set(models.map((item) => item.candidate.jdTitle))).sort((left, right) => left.localeCompare(right)),
+    () =>
+      Array.from(new Set(models.map((item) => item.application.jobDescription.title))).sort((left, right) =>
+        left.localeCompare(right),
+      ),
     [models],
   );
 
-  const effectiveDateFilter = useMemo(() => resolveCandidateDateRangeFilter(dateRange), [dateRange]);
+  const effectiveDateFilter = useMemo(() => resolveApplicationDateRangeFilter(dateRange), [dateRange]);
   const effectiveSummaryDefinitions = useMemo(
     () => (summaryDefinitions.length ? summaryDefinitions : buildFallbackSummaryDefinitions(stateMachine, copy)),
     [copy, stateMachine, summaryDefinitions],
@@ -259,7 +262,7 @@ export function StatusKanbanView({
     () =>
       (
         item: (typeof models)[number],
-        key: CandidateFollowUpSummaryDefinition["key"],
+        key: ApplicationFollowUpSummaryDefinition["key"],
       ): boolean => {
         const definition = summaryDefinitionByKey.get(key);
         if (!definition || definition.matchingMode === "all") {
@@ -279,10 +282,10 @@ export function StatusKanbanView({
   const baseFilteredModels = useMemo(
     () =>
       models.filter((item) => {
-        if (jobFilter !== "all" && item.candidate.jdTitle !== jobFilter) {
+        if (jobFilter !== "all" && item.application.jobDescription.title !== jobFilter) {
           return false;
         }
-        if (!isWithinCandidateDateFilter(item.latestActivityAt, effectiveDateFilter)) {
+        if (!isWithinApplicationDateFilter(item.latestActivityAt, effectiveDateFilter)) {
           return false;
         }
         return true;
@@ -389,17 +392,17 @@ export function StatusKanbanView({
     [branchNodes, chainWidth, countByStatus, mainNodes, transitionsByFromState],
   );
 
-  const tableCandidates = useMemo(
+  const tableApplications = useMemo(
     () =>
       selectedStatus === "all"
         ? filteredModels
         : filteredModels.filter((item) => item.currentStatus === selectedStatus),
     [filteredModels, selectedStatus],
   );
-  const detailRecord = tableCandidates.find((item) => item.candidate.id === detailCandidateId) ?? null;
+  const detailRecord = tableApplications.find((item) => item.application.id === detailApplicationId) ?? null;
   const overrideRecord =
-    tableCandidates.find((item) => item.candidate.id === overrideCandidateId) ??
-    (detailRecord?.candidate.id === overrideCandidateId ? detailRecord : null);
+    tableApplications.find((item) => item.application.id === overrideApplicationId) ??
+    (detailRecord?.application.id === overrideApplicationId ? detailRecord : null);
 
   useEffect(() => {
     if (!chainContainerRef.current || typeof ResizeObserver === "undefined") {
@@ -416,36 +419,36 @@ export function StatusKanbanView({
   }, []);
 
   useEffect(() => {
-    if (!tableCandidates.length) {
-      setActiveConversationCandidateId(undefined);
-      setDetailCandidateId(undefined);
-      setOverrideCandidateId(undefined);
+    if (!tableApplications.length) {
+      setActiveConversationApplicationId(undefined);
+      setDetailApplicationId(undefined);
+      setOverrideApplicationId(undefined);
       return;
     }
-    if (activeConversationCandidateId && !tableCandidates.some((item) => item.candidate.id === activeConversationCandidateId)) {
-      setActiveConversationCandidateId(undefined);
+    if (activeConversationApplicationId && !tableApplications.some((item) => item.application.id === activeConversationApplicationId)) {
+      setActiveConversationApplicationId(undefined);
     }
-    if (detailCandidateId && !tableCandidates.some((item) => item.candidate.id === detailCandidateId)) {
-      setDetailCandidateId(undefined);
+    if (detailApplicationId && !tableApplications.some((item) => item.application.id === detailApplicationId)) {
+      setDetailApplicationId(undefined);
     }
-    if (overrideCandidateId && !tableCandidates.some((item) => item.candidate.id === overrideCandidateId)) {
-      setOverrideCandidateId(undefined);
+    if (overrideApplicationId && !tableApplications.some((item) => item.application.id === overrideApplicationId)) {
+      setOverrideApplicationId(undefined);
     }
-  }, [activeConversationCandidateId, detailCandidateId, overrideCandidateId, tableCandidates]);
+  }, [activeConversationApplicationId, detailApplicationId, overrideApplicationId, tableApplications]);
 
   useEffect(() => {
-    if (!preferredCandidateId || preferredConversationToken == null) {
+    if (!preferredApplicationId || preferredConversationToken == null) {
       return;
     }
-    const target = models.find((item) => item.candidate.id === preferredCandidateId);
+    const target = models.find((item) => item.application.id === preferredApplicationId);
     if (!target) {
       return;
     }
     setJobFilter("all");
     setVisibilityFilter("all");
     setSelectedStatus(target.currentStatus);
-    setActiveConversationCandidateId(preferredCandidateId);
-  }, [models, preferredCandidateId, preferredConversationToken]);
+    setActiveConversationApplicationId(preferredApplicationId);
+  }, [models, preferredApplicationId, preferredConversationToken]);
 
   const selectedLabel =
     selectedStatus === "all"
@@ -557,23 +560,23 @@ export function StatusKanbanView({
 
       <CandidateTable
         title={selectedLabel}
-        count={tableCandidates.length}
-        candidates={tableCandidates}
+        count={tableApplications.length}
+        applications={tableApplications}
         stateMachine={stateMachine}
         emptyMessage={copy("No candidates in this status under the current filters.", "当前筛选条件下该状态没有候选人。")}
-        onOpenDetail={setDetailCandidateId}
-        onOpenCommunication={setActiveConversationCandidateId}
+        onOpenDetail={setDetailApplicationId}
+        onOpenCommunication={setActiveConversationApplicationId}
         onTransition={onTransition}
       />
 
-      {activeConversationCandidateId ? (
+      {activeConversationApplicationId ? (
         <CandidateCommunicationPanel
-          candidates={tableCandidates}
-          selectedCandidateId={activeConversationCandidateId}
+          applications={tableApplications}
+          selectedApplicationId={activeConversationApplicationId}
           stateMachine={stateMachine}
-          onSelectCandidate={setActiveConversationCandidateId}
-          onClose={() => setActiveConversationCandidateId(undefined)}
-          onOpenFullCockpit={onOpenCandidate}
+          onSelectApplication={setActiveConversationApplicationId}
+          onClose={() => setActiveConversationApplicationId(undefined)}
+          onOpenFullCockpit={onOpenApplication}
           onRefresh={onRefresh}
           onCreateEntry={onCreateEntry}
           onTransition={onTransition}
@@ -584,11 +587,11 @@ export function StatusKanbanView({
         open={Boolean(detailRecord)}
         record={detailRecord}
         stateMachine={stateMachine}
-        onClose={() => setDetailCandidateId(undefined)}
+        onClose={() => setDetailApplicationId(undefined)}
         onTransition={onTransition}
         onRequestOverride={() => {
           if (detailRecord) {
-            setOverrideCandidateId(detailRecord.candidate.id);
+            setOverrideApplicationId(detailRecord.application.id);
           }
         }}
       />
@@ -597,7 +600,7 @@ export function StatusKanbanView({
         open={Boolean(overrideRecord)}
         record={overrideRecord}
         stateMachine={stateMachine}
-        onClose={() => setOverrideCandidateId(undefined)}
+        onClose={() => setOverrideApplicationId(undefined)}
         onSubmit={onTransition}
       />
     </div>

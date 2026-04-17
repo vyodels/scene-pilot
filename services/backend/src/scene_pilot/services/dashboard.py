@@ -339,27 +339,23 @@ class DashboardService:
                 }
                 for learning in learnings[:5]
             ],
-            "candidates": [
+            "applications": [
                 {
-                    "id": payload["application_id"],
+                    "id": payload["id"],
                     "applicationId": payload["application_id"],
                     "personId": payload["person_id"],
                     "jobDescriptionId": payload["job_description_id"],
-                    "name": payload["name"],
-                    "title": str((payload.get("contact_info") or {}).get("title") or "候选人"),
                     "platform": payload["platform"],
-                    "location": payload["location"],
                     "currentStatus": payload["current_status"],
                     "stageKey": payload["stage_key"],
-                    "jdTitle": payload["job_description_title"],
+                    "deepestMilestone": payload.get("deepest_milestone"),
                     "matchScore": payload["match_score"],
-                    "experienceYears": payload["experience_years"],
                     "nextAction": payload["next_action"],
                     "summary": payload["summary"],
-                    "tags": payload["tags"],
                     "resumeAvailable": payload["resume_available"],
+                    "person": payload["person"],
+                    "jobDescription": payload["job_description"],
                     "stateSnapshot": payload["state_snapshot"],
-                    "contactInfo": payload["contact_info"],
                     "aiScores": payload["ai_scores"],
                     "cooldownUntil": payload["cooldown_until"].isoformat() if payload["cooldown_until"] else None,
                     "lastContactedAt": payload["last_contacted_at"].isoformat() if payload["last_contacted_at"] else None,
@@ -377,7 +373,7 @@ class DashboardService:
                     for application in applications
                 )
             ],
-            "candidateFollowUpSummaryDefinitions": _candidate_followup_summary_definitions(session),
+            "applicationFollowUpSummaryDefinitions": _candidate_followup_summary_definitions(session),
             "playbooks": [
                 {
                     "id": item.id,

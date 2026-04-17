@@ -9,21 +9,21 @@ import { CandidateDetailDrawer } from "./CandidateDetailDrawer";
 import { ManualStatusOverrideDrawer } from "./ManualStatusOverrideDrawer";
 import { deriveHumanActionsForNode, nodeTone } from "./kanbanUtils";
 import { StatusTimeline } from "./StatusTimeline";
-import type { CandidateViewModel } from "./kanbanUtils";
+import type { ApplicationViewModel } from "./kanbanUtils";
 
 interface CandidateCommunicationPanelProps {
-  candidates: CandidateViewModel[];
-  selectedCandidateId: string;
+  applications: ApplicationViewModel[];
+  selectedApplicationId: string;
   stateMachine: RecruitmentStateMachine;
-  onSelectCandidate(candidateId: string): void;
+  onSelectApplication(applicationId: string): void;
   onClose(): void;
-  onOpenFullCockpit(candidateId: string): void;
+  onOpenFullCockpit(applicationId: string): void;
   onRefresh?(): Promise<unknown> | void;
   onCreateEntry(
-    candidateId: string,
+    applicationId: string,
     payload: { direction: string; content: string; messageType?: string; platform?: string },
   ): Promise<unknown> | void;
-  onTransition(candidateId: string, payload: CandidateTransitionPayload): Promise<unknown> | void;
+  onTransition(applicationId: string, payload: CandidateTransitionPayload): Promise<unknown> | void;
 }
 
 function asObject(value: unknown): Record<string, unknown> {
@@ -36,10 +36,10 @@ interface PendingActionState {
 }
 
 export function CandidateCommunicationPanel({
-  candidates,
-  selectedCandidateId,
+  applications,
+  selectedApplicationId,
   stateMachine,
-  onSelectCandidate,
+  onSelectApplication,
   onClose,
   onOpenFullCockpit,
   onRefresh,
@@ -55,21 +55,21 @@ export function CandidateCommunicationPanel({
   const [refreshing, setRefreshing] = useState(false);
   const [runningActionKey, setRunningActionKey] = useState<string>();
 
-  const filteredCandidates = useMemo(() => {
+  const filteredApplications = useMemo(() => {
     const keyword = search.trim().toLowerCase();
     if (!keyword) {
-      return candidates;
+      return applications;
     }
-    return candidates.filter((item) =>
-      `${item.candidate.name} ${item.candidate.jdTitle} ${item.currentNode?.label ?? item.currentStatus}`
+    return applications.filter((item) =>
+      `${item.application.person.name} ${item.application.jobDescription.title} ${item.currentNode?.label ?? item.currentStatus}`
         .toLowerCase()
         .includes(keyword),
     );
-  }, [candidates, search]);
+  }, [applications, search]);
 
   const selectedRecord =
-    filteredCandidates.find((item) => item.candidate.id === selectedCandidateId) ??
-    candidates.find((item) => item.candidate.id === selectedCandidateId) ??
+    filteredApplications.find((item) => item.application.id === selectedApplicationId) ??
+    applications.find((item) => item.application.id === selectedApplicationId) ??
     null;
 
   const currentActions = useMemo(
@@ -81,16 +81,16 @@ export function CandidateCommunicationPanel({
     return null;
   }
 
-  const aiScores = asObject(selectedRecord.candidate.aiScores);
+  const aiScores = asObject(selectedRecord.application.aiScores);
   const onlineScore =
-    typeof aiScores.overall === "number" ? Number(aiScores.overall) : Math.round(selectedRecord.candidate.matchScore);
+    typeof aiScores.overall === "number" ? Number(aiScores.overall) : Math.round(selectedRecord.application.matchScore);
   const offlineScore = selectedRecord.thread?.scorecards[0]?.scoreTotal;
 
   const submitHumanAction = async (action: HumanActionDefinition, note?: string) => {
     const key = `${action.label}:${action.toStatus}`;
     setRunningActionKey(key);
     try {
-      await onTransition(selectedRecord.candidate.id, {
+      await onTransition(selectedRecord.application.id, {
         actor: "recruiter",
         toStatus: action.toStatus,
         trigger: action.label,
@@ -117,21 +117,21 @@ export function CandidateCommunicationPanel({
           </div>
 
           <div className="candidate-communication-panel__candidate-list">
-            {filteredCandidates.map((item) => (
+            {filteredApplications.map((item) => (
               <button
-                key={item.candidate.id}
+                key={item.application.id}
                 type="button"
                 className="candidate-communication-panel__candidate-item"
-                data-active={item.candidate.id === selectedRecord.candidate.id}
-                onClick={() => onSelectCandidate(item.candidate.id)}
+                data-active={item.application.id === selectedRecord.application.id}
+                onClick={() => onSelectApplication(item.application.id)}
               >
                 <div className="candidate-communication-panel__candidate-head">
-                  <strong>{item.candidate.name}</strong>
+                  <strong>{item.application.person.name}</strong>
                   {item.humanRequired ? <span className="candidate-communication-panel__attention">⚡</span> : null}
                 </div>
                 <div className="candidate-communication-panel__candidate-meta">
                   <span>{item.currentNode?.label ?? item.currentStatus}</span>
-                  <StatusBadge tone={nodeTone(item.currentNode)}>{item.candidate.jdTitle}</StatusBadge>
+                  <StatusBadge tone={nodeTone(item.currentNode)}>{item.application.jobDescription.title}</StatusBadge>
                 </div>
               </button>
             ))}
@@ -145,7 +145,7 @@ export function CandidateCommunicationPanel({
         <div className="candidate-communication-panel__center">
           <header className="candidate-communication-panel__toolbar">
             <div>
-              <strong>{selectedRecord.candidate.platform}</strong>
+              <strong>{selectedRecord.application.platform}</strong>
               <span>
                 {copy("Last synced", "最后同步")}{" "}
                 {selectedRecord.latestActivityAt ? formatCompactDate(selectedRecord.latestActivityAt) : copy("just now", "刚刚")}
@@ -181,11 +181,11 @@ export function CandidateCommunicationPanel({
             onSubmit={async ({ content, messageType }) => {
               setSending(true);
               try {
-                await onCreateEntry(selectedRecord.candidate.id, {
+                await onCreateEntry(selectedRecord.application.id, {
                   direction: "outbound",
                   content,
                   messageType,
-                  platform: selectedRecord.candidate.platform,
+                  platform: selectedRecord.application.platform,
                 });
               } finally {
                 setSending(false);
@@ -196,11 +196,11 @@ export function CandidateCommunicationPanel({
 
         <aside className="candidate-communication-panel__side">
           <div className="candidate-communication-panel__profile">
-            <h3>{selectedRecord.candidate.name}</h3>
+            <h3>{selectedRecord.application.person.name}</h3>
             <p>
-              {selectedRecord.candidate.title} · {selectedRecord.candidate.location}
+              {selectedRecord.application.person.title} · {selectedRecord.application.person.location}
             </p>
-            <p>{copy("Role", "应聘")}：{selectedRecord.candidate.jdTitle}</p>
+            <p>{copy("Role", "应聘")}：{selectedRecord.application.jobDescription.title}</p>
           </div>
 
           <div className="candidate-communication-panel__section">
@@ -218,8 +218,8 @@ export function CandidateCommunicationPanel({
           <div className="candidate-communication-panel__section">
             <div className="candidate-communication-panel__section-title">{copy("Tags", "标签")}</div>
             <div className="candidate-communication-panel__tag-list">
-              {selectedRecord.candidate.tags.length ? (
-                selectedRecord.candidate.tags.map((tag) => <StatusBadge key={tag} tone="neutral">{tag}</StatusBadge>)
+              {selectedRecord.application.person.tags.length ? (
+                selectedRecord.application.person.tags.map((tag) => <StatusBadge key={tag} tone="neutral">{tag}</StatusBadge>)
               ) : (
                 <span className="candidate-communication-panel__placeholder">{copy("No tags yet.", "暂无标签。")}</span>
               )}
@@ -313,7 +313,7 @@ export function CandidateCommunicationPanel({
           <button
             type="button"
             className="candidate-communication-panel__full-link"
-            onClick={() => onOpenFullCockpit(selectedRecord.candidate.id)}
+            onClick={() => onOpenFullCockpit(selectedRecord.application.id)}
           >
             {copy("Locate in candidate workspace ↗", "在候选人工作台中定位 ↗")}
           </button>

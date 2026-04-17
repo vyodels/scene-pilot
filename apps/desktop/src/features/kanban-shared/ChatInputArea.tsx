@@ -1,20 +1,20 @@
 import React, { useEffect, useState } from "react";
 import { useI18n } from "../../lib/i18n";
-import type { CandidateViewModel } from "./kanbanUtils";
+import type { ApplicationViewModel } from "./kanbanUtils";
 
 interface ChatInputAreaProps {
-  record: CandidateViewModel;
+  record: ApplicationViewModel;
   sending?: boolean;
   onSubmit(payload: { content: string; messageType?: string }): Promise<unknown> | void;
 }
 
-function createGreeting(record: CandidateViewModel): string {
-  return `您好，看到您在 ${record.candidate.title} 方向的背景和我们 ${record.candidate.jdTitle} 岗位很匹配，方便了解一下您最近的机会考虑吗？`;
+function createGreeting(record: ApplicationViewModel): string {
+  return `您好，看到您在 ${record.application.person.title} 方向的背景和我们 ${record.application.jobDescription.title} 岗位很匹配，方便了解一下您最近的机会考虑吗？`;
 }
 
-function createSuggestedReply(record: CandidateViewModel): string {
-  const strengths = record.candidate.tags.slice(0, 2).join("、");
-  return `结合您在 ${strengths || record.candidate.title} 方面的经验，我想进一步了解您最近做过的项目，以及是否方便补充一份最新简历。`;
+function createSuggestedReply(record: ApplicationViewModel): string {
+  const strengths = record.application.person.tags.slice(0, 2).join("、");
+  return `结合您在 ${strengths || record.application.person.title} 方面的经验，我想进一步了解您最近做过的项目，以及是否方便补充一份最新简历。`;
 }
 
 export function ChatInputArea({ record, sending, onSubmit }: ChatInputAreaProps): JSX.Element {
@@ -23,7 +23,7 @@ export function ChatInputArea({ record, sending, onSubmit }: ChatInputAreaProps)
 
   useEffect(() => {
     setDraft("");
-  }, [record.candidate.id]);
+  }, [record.application.id]);
 
   const handleSubmit = async () => {
     const content = draft.trim();

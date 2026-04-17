@@ -43,10 +43,7 @@ def enqueue_task(
     payload: AgentTaskCreate,
     container: AppContainer = Depends(get_container),
 ) -> AgentTaskEnqueueRead:
-    resolved_application_id = str(payload.application_id or payload.candidate_id or "").strip() or None
-    resolved_candidate_id = str(payload.candidate_id or "").strip() or None
-    if resolved_application_id and resolved_candidate_id == resolved_application_id:
-        resolved_candidate_id = None
+    resolved_application_id = str(payload.application_id or "").strip() or None
     try:
         task = container.agent_control.enqueue_task(
             payload.task_type,
@@ -60,7 +57,6 @@ def enqueue_task(
             },
             priority=payload.priority,
             application_id=resolved_application_id,
-            candidate_id=resolved_candidate_id,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

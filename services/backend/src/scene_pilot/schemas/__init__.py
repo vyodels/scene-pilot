@@ -38,7 +38,7 @@ from .domain import (
     CandidateAssessmentRead,
     CandidateAssignmentCreate,
     CandidateAssignmentRead,
-    CandidateDashboardRead,
+    ApplicationDashboardRead,
     CandidateMemoryCreate,
     CandidateMemoryRead,
     CandidateMemoryUpdate,

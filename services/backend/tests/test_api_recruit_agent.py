@@ -164,7 +164,7 @@ def test_recruit_agent_candidate_thread_state_and_memory(tmp_path):
         )
         assert transition_response.status_code == 200
         thread_payload = transition_response.json()
-        assert thread_payload["candidate"]["current_status"] == "contact_acquired"
+        assert thread_payload["application"]["current_status"] == "contact_acquired"
         assert thread_payload["state_snapshot"]["contact_acquired"] is True
         assert "phone" in thread_payload["state_snapshot"]["contact_channels"]
         assert len(thread_payload["status_transitions"]) >= 1
@@ -174,7 +174,6 @@ def test_recruit_agent_candidate_thread_state_and_memory(tmp_path):
         assessment_response = client.post(
             f"/api/candidate-applications/{application_id}/assessments",
             json={
-                "candidate_id": candidate_id,
                 "assessment_type": "manual",
                 "stage_key": "resume_received",
                 "status": "completed",
@@ -202,7 +201,6 @@ def test_recruit_agent_candidate_thread_state_and_memory(tmp_path):
         assignment_response = client.post(
             f"/api/candidate-applications/{application_id}/assignments",
             json={
-                "candidate_id": candidate_id,
                 "assignee": "recruit-ops",
                 "owner_role": "operator",
                 "status": "active",
@@ -214,7 +212,6 @@ def test_recruit_agent_candidate_thread_state_and_memory(tmp_path):
         resume_response = client.post(
             f"/api/candidate-applications/{application_id}/resume-artifacts",
             json={
-                "candidate_id": candidate_id,
                 "source": "boss",
                 "artifact_type": "resume",
                 "file_name": "ada-lovelace.pdf",
@@ -226,10 +223,9 @@ def test_recruit_agent_candidate_thread_state_and_memory(tmp_path):
         sync_response = client.post(
             f"/api/candidate-applications/{application_id}/sync-records",
             json={
-                "candidate_id": candidate_id,
                 "destination": "talent_pool",
                 "status": "pending",
-                "payload_snapshot": {"candidate_id": candidate_id},
+                "payload_snapshot": {"person_id": candidate_id},
             },
         )
         assert sync_response.status_code == 201
@@ -296,7 +292,6 @@ def test_resume_artifact_contact_snapshot_relinks_application_person(tmp_path):
         artifact_response = client.post(
             f"/api/candidate-applications/{application_id}/resume-artifacts",
             json={
-                "candidate_id": application_id,
                 "source": "boss",
                 "artifact_type": "resume",
                 "file_name": "duplicate.pdf",
@@ -313,8 +308,8 @@ def test_resume_artifact_contact_snapshot_relinks_application_person(tmp_path):
 
         thread_response = client.get(f"/api/candidate-applications/{application_id}/thread")
         assert thread_response.status_code == 200
-        assert thread_response.json()["candidate"]["id"] == existing_id
-        assert thread_response.json()["candidate"]["contact_info"]["wechat"] == "ada_001"
+        assert thread_response.json()["application"]["person_id"] == existing_id
+        assert thread_response.json()["application"]["person"]["contact_info"]["wechat"] == "ada_001"
 
 
 def test_contact_channels_transition_does_not_merge_application_person(tmp_path):
@@ -355,7 +350,7 @@ def test_contact_channels_transition_does_not_merge_application_person(tmp_path)
 
         thread_payload = transition_response.json()
         assert thread_payload["state_snapshot"]["contact_channels"] == ["phone", "wechat"]
-        assert thread_payload["candidate"]["id"] == duplicate_subject["person"]["id"]
+        assert thread_payload["application"]["person_id"] == duplicate_subject["person"]["id"]
 
 
 def test_recruit_agent_evolution_artifacts_validate_kind_schema(tmp_path):

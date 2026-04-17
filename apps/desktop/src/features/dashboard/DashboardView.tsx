@@ -3,24 +3,24 @@ import { ProgressBars, StatusBadge, Timeline } from "../../components";
 import { formatCompactDate } from "../../lib/format";
 import { useI18n } from "../../lib/i18n";
 import { translateUiToken } from "../../lib/uiText";
-import type { CandidateRecord, DashboardSummary } from "../../lib/types";
+import type { ApplicationRecord, DashboardSummary } from "../../lib/types";
 
 interface DashboardViewProps {
   summary: DashboardSummary;
   onOpenCandidates?(): void;
   onOpenJdWorkspace?(): void;
-  onOpenCommunications?(filter?: string, candidateId?: string): void;
+  onOpenCommunications?(filter?: string, applicationId?: string): void;
   onOpenAiReview?(): void;
   onOpenAiStrategy?(): void;
 }
 
-type CandidateLane = "review" | "followUp" | "resume" | "interview" | "decision" | "blocked" | "active";
+type ApplicationLane = "review" | "followUp" | "resume" | "interview" | "decision" | "blocked" | "active";
 
-interface CandidateLaneMeta {
+interface ApplicationLaneMeta {
   tone: "positive" | "neutral" | "warning" | "critical";
 }
 
-const laneMeta: Record<CandidateLane, CandidateLaneMeta> = {
+const laneMeta: Record<ApplicationLane, ApplicationLaneMeta> = {
   review: { tone: "warning" },
   followUp: { tone: "warning" },
   resume: { tone: "warning" },
@@ -152,8 +152,8 @@ function normalize(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9\u4e00-\u9fff]+/gi, "");
 }
 
-function classifyCandidate(candidate: CandidateRecord): CandidateLane {
-  const status = normalize(`${candidate.currentStatus} ${candidate.stageKey} ${candidate.nextAction} ${candidate.summary}`);
+function classifyApplication(application: ApplicationRecord): ApplicationLane {
+  const status = normalize(`${application.currentStatus} ${application.stageKey} ${application.nextAction} ${application.summary}`);
   if (/(rejected|cooldown|blocked|archived)/.test(status)) {
     return "blocked";
   }
@@ -163,7 +163,7 @@ function classifyCandidate(candidate: CandidateRecord): CandidateLane {
   if (/(interview|schedule|scheduled|onsite|screeningcall|phoneinterview)/.test(status)) {
     return "interview";
   }
-  if (!candidate.resumeAvailable || /(resume_requested|resume_pending|waiting_resume|needresume)/.test(status)) {
+  if (!application.resumeAvailable || /(resume_requested|resume_pending|waiting_resume|needresume)/.test(status)) {
     return "resume";
   }
   if (/(contact_required|contact_needed|waiting_reply|pending_communication|communicating|outreach|followup)/.test(status)) {
@@ -175,11 +175,11 @@ function classifyCandidate(candidate: CandidateRecord): CandidateLane {
   return "active";
 }
 
-function laneTone(lane: CandidateLane): "positive" | "neutral" | "warning" | "critical" {
+function laneTone(lane: ApplicationLane): "positive" | "neutral" | "warning" | "critical" {
   return laneMeta[lane].tone;
 }
 
-function laneLabel(lane: CandidateLane, copy: (en: string, zh: string) => string): string {
+function laneLabel(lane: ApplicationLane, copy: (en: string, zh: string) => string): string {
   switch (lane) {
     case "review":
       return copy("Needs review", "待审查");
@@ -227,8 +227,8 @@ export function DashboardView({
 }: DashboardViewProps): JSX.Element {
   const { copy } = useI18n();
 
-  const prioritizedCandidates = useMemo(() => {
-    return [...summary.candidates].sort((left, right) => {
+  const prioritizedApplications = useMemo(() => {
+    return [...summary.applications].sort((left, right) => {
       const laneDiff =
         ({
           review: 0,
@@ -238,7 +238,7 @@ export function DashboardView({
           decision: 4,
           blocked: 5,
           active: 6,
-        } satisfies Record<CandidateLane, number>)[classifyCandidate(left)] -
+        } satisfies Record<ApplicationLane, number>)[classifyApplication(left)] -
         ({
           review: 0,
           followUp: 1,
@@ -247,21 +247,21 @@ export function DashboardView({
           decision: 4,
           blocked: 5,
           active: 6,
-        } satisfies Record<CandidateLane, number>)[classifyCandidate(right)];
+        } satisfies Record<ApplicationLane, number>)[classifyApplication(right)];
       if (laneDiff !== 0) {
         return laneDiff;
       }
       if (right.matchScore !== left.matchScore) {
         return right.matchScore - left.matchScore;
       }
-      return left.name.localeCompare(right.name);
+      return left.person.name.localeCompare(right.person.name);
     });
-  }, [summary.candidates]);
+  }, [summary.applications]);
 
   const laneCounts = useMemo(() => {
-    return summary.candidates.reduce<Record<CandidateLane, number>>(
-      (acc, candidate) => {
-        acc[classifyCandidate(candidate)] += 1;
+    return summary.applications.reduce<Record<ApplicationLane, number>>(
+      (acc, application) => {
+        acc[classifyApplication(application)] += 1;
         return acc;
       },
       {
@@ -274,7 +274,7 @@ export function DashboardView({
         active: 0,
       },
     );
-  }, [summary.candidates]);
+  }, [summary.applications]);
 
   const attentionCount = laneCounts.review + laneCounts.followUp + laneCounts.resume + laneCounts.interview + laneCounts.decision;
   const pendingApprovals = summary.approvals.filter((item) => item.status === "pending");
@@ -384,46 +384,46 @@ export function DashboardView({
               </div>
               <h2 style={titleStyle}>{copy("Highest-priority candidates", "最高优先级候选人")}</h2>
             </div>
-            <StatusBadge tone="neutral">{copy(`${summary.candidates.length} total`, `共 ${summary.candidates.length} 人`)}</StatusBadge>
+            <StatusBadge tone="neutral">{copy(`${summary.applications.length} total`, `共 ${summary.applications.length} 条申请`)}</StatusBadge>
           </div>
           <p style={descriptionStyle}>
             {copy("Open a candidate from here to continue follow-up and communication in the candidate workspace.", "从这里打开候选人，继续在候选人工作台里完成审阅、跟进和沟通。")}
           </p>
 
           <div style={candidateListStyle}>
-            {prioritizedCandidates.slice(0, 6).map((candidate) => {
-              const lane = classifyCandidate(candidate);
-              const stateSnapshot = candidate.stateSnapshot;
+            {prioritizedApplications.slice(0, 6).map((application) => {
+              const lane = classifyApplication(application);
+              const stateSnapshot = application.stateSnapshot;
               return (
                 <button
-                  key={candidate.id}
+                  key={application.id}
                   type="button"
-                  onClick={() => onOpenCommunications?.("candidate", candidate.id)}
+                  onClick={() => onOpenCommunications?.("candidate", application.id)}
                   style={candidateButtonStyle}
                 >
                   <div style={{ display: "flex", justifyContent: "space-between", gap: "var(--space-3)", alignItems: "start", flexWrap: "wrap" }}>
                     <div style={{ display: "grid", gap: "var(--space-1)" }}>
-                      <strong style={{ fontSize: "var(--font-size-base)" }}>{candidate.name}</strong>
+                      <strong style={{ fontSize: "var(--font-size-base)" }}>{application.person.name}</strong>
                       <div style={{ color: "var(--text-secondary)", fontSize: "var(--font-size-sm)", lineHeight: "var(--line-height-base)" }}>
-                        {candidate.title} · {candidate.jdTitle} · {candidate.location}
+                        {application.person.title} · {application.jobDescription.title} · {application.person.location}
                       </div>
                     </div>
                     <div style={{ display: "flex", gap: "var(--space-2)", flexWrap: "wrap" }}>
                       <StatusBadge tone={laneTone(lane)}>{laneLabel(lane, copy)}</StatusBadge>
-                      <StatusBadge tone="neutral">{copy(`score ${candidate.matchScore}`, `分数 ${candidate.matchScore}`)}</StatusBadge>
+                      <StatusBadge tone="neutral">{copy(`score ${application.matchScore}`, `分数 ${application.matchScore}`)}</StatusBadge>
                     </div>
                   </div>
                   <div style={{ color: "var(--text-regular)", fontSize: "var(--font-size-sm)", lineHeight: "var(--line-height-base)" }}>
-                    {candidate.nextAction}
+                    {application.nextAction}
                   </div>
                   <div style={{ display: "flex", gap: "var(--space-2)", flexWrap: "wrap" }}>
                     <StatusBadge tone={stateSnapshot?.contactAcquired ? "positive" : "warning"}>
                       {stateSnapshot?.contactAcquired ? copy("Contact ready", "联系方式已到位") : copy("Needs contact", "需要联系方式")}
                     </StatusBadge>
-                    <StatusBadge tone={candidate.resumeAvailable ? "positive" : "warning"}>
-                      {candidate.resumeAvailable ? copy("Resume ready", "简历已到位") : copy("Resume pending", "简历待补")}
+                    <StatusBadge tone={application.resumeAvailable ? "positive" : "warning"}>
+                      {application.resumeAvailable ? copy("Resume ready", "简历已到位") : copy("Resume pending", "简历待补")}
                     </StatusBadge>
-                    {candidate.tags.slice(0, 3).map((tag) => (
+                    {application.person.tags.slice(0, 3).map((tag) => (
                       <StatusBadge key={tag} tone="neutral">
                         {tag}
                       </StatusBadge>

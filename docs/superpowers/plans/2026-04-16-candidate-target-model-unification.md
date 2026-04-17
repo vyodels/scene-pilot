@@ -425,7 +425,7 @@ def by_application(self, candidate_application_id: str, ...):
 
 - [x] **Step 5: 改 schemas 和 thread 构建逻辑**
 
-重构 `services/backend/src/scene_pilot/api/routers/recruit_agent.py` 中的 `_build_candidate_thread(...)` 和相关 endpoint，让它们全部基于 application ID 读写。
+重构 `services/backend/src/scene_pilot/api/routers/recruit_agent.py` 中的 application thread 构建 helper（当前实现为 `_build_application_thread(...)`）和相关 endpoint，让它们全部基于 application ID 读写。
 
 - [x] **Step 6: 跑测试确认通过**
 

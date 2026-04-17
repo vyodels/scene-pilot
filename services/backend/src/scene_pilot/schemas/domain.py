@@ -180,26 +180,55 @@ class CandidateApplicationRead(CandidateApplicationBase):
     updated_at: datetime
 
 
+class ApplicationPersonSummaryRead(BaseModel):
+    person_id: str | None = Field(default=None, validation_alias=AliasChoices("person_id", "personId"))
+    platform_candidate_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("platform_candidate_id", "platformCandidateId"),
+    )
+    name: str = ""
+    title: str = "候选人"
+    location: str = "未知"
+    experience_years: int = 0
+    tags: list[str] = Field(default_factory=list)
+    contact_info: dict[str, Any] = Field(default_factory=dict)
+
+
+class JobDescriptionSummaryRead(BaseModel):
+    job_description_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("job_description_id", "jobDescriptionId"),
+    )
+    title: str = "未分配岗位"
+
+
 class ApplicationSubjectRead(BaseModel):
-    id: str | None = Field(default=None, validation_alias=AliasChoices("id", "person_id", "personId"))
+    id: str | None = Field(default=None, validation_alias=AliasChoices("id", "application_id", "applicationId"))
     application_id: str = Field(validation_alias=AliasChoices("application_id", "applicationId", "id"))
     person_id: str | None = Field(default=None, validation_alias=AliasChoices("person_id", "personId"))
     job_description_id: str | None = Field(
         default=None,
         validation_alias=AliasChoices("job_description_id", "jobDescriptionId"),
     )
-    name: str
     platform: str = "site"
-    platform_candidate_id: str | None = None
     current_status: str = "discovered"
-    current_stage_key: str | None = None
+    stage_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("stage_key", "stageKey", "current_stage_key", "currentStageKey"),
+    )
     deepest_milestone: str | None = None
-    contact_info: dict[str, Any] = Field(default_factory=dict)
+    match_score: int = 0
+    next_action: str = "查看申请并决定下一步动作。"
+    summary: str = "申请档案正在等待审查。"
+    resume_available: bool = False
     state_snapshot: dict[str, Any] = Field(default_factory=dict)
-    resume_path: str | None = None
-    online_resume_text: str | None = None
     ai_scores: dict[str, Any] = Field(default_factory=dict)
     ai_reasoning: str | None = None
+    person: ApplicationPersonSummaryRead | None = None
+    job_description: JobDescriptionSummaryRead | None = Field(
+        default=None,
+        validation_alias=AliasChoices("job_description", "jobDescription"),
+    )
     cooldown_until: datetime | None = None
     last_contacted_at: datetime | None = None
     created_at: datetime | None = None
@@ -440,7 +469,7 @@ class CandidateStateTransitionRequest(BaseModel):
 class CandidateStatusTransitionBase(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
-    person_id: str = Field(validation_alias=AliasChoices("person_id", "candidate_id"))
+    person_id: str
     application_id: str | None = Field(default=None, validation_alias=AliasChoices("application_id", "applicationId"))
     from_status: str
     to_status: str
@@ -469,7 +498,7 @@ class CandidateStatusTransitionRead(CandidateStatusTransitionBase):
 
 
 class CandidateAssessmentBase(BaseModel):
-    person_id: str = Field(validation_alias=AliasChoices("person_id", "candidate_id"))
+    person_id: str
     application_id: str | None = None
     assessment_type: str = "ai"
     stage_key: str | None = None
@@ -485,7 +514,8 @@ class CandidateAssessmentBase(BaseModel):
 
 
 class CandidateAssessmentCreate(CandidateAssessmentBase):
-    pass
+    person_id: str | None = None
+    application_id: str | None = Field(default=None, validation_alias=AliasChoices("application_id", "applicationId"))
 
 
 class CandidateAssessmentRead(CandidateAssessmentBase):
@@ -497,7 +527,7 @@ class CandidateAssessmentRead(CandidateAssessmentBase):
 
 
 class CandidateAssignmentBase(BaseModel):
-    person_id: str = Field(validation_alias=AliasChoices("person_id", "candidate_id"))
+    person_id: str
     application_id: str | None = None
     assignee: str
     owner_role: str = "operator"
@@ -512,7 +542,8 @@ class CandidateAssignmentBase(BaseModel):
 
 
 class CandidateAssignmentCreate(CandidateAssignmentBase):
-    pass
+    person_id: str | None = None
+    application_id: str | None = Field(default=None, validation_alias=AliasChoices("application_id", "applicationId"))
 
 
 class CandidateAssignmentRead(CandidateAssignmentBase):
@@ -524,7 +555,7 @@ class CandidateAssignmentRead(CandidateAssignmentBase):
 
 
 class ResumeArtifactBase(BaseModel):
-    person_id: str | None = Field(default=None, validation_alias=AliasChoices("person_id", "candidate_id"))
+    person_id: str | None = None
     application_id: str | None = Field(default=None, validation_alias=AliasChoices("application_id", "applicationId"))
     source: str = "site"
     artifact_type: str = "resume"
@@ -552,7 +583,7 @@ class ResumeArtifactRead(ResumeArtifactBase):
 
 
 class CandidateScorecardBase(BaseModel):
-    person_id: str = Field(validation_alias=AliasChoices("person_id", "candidate_id"))
+    person_id: str
     application_id: str | None = None
     stage_key: str | None = None
     source: str = "ai"
@@ -569,7 +600,8 @@ class CandidateScorecardBase(BaseModel):
 
 
 class CandidateScorecardCreate(CandidateScorecardBase):
-    pass
+    person_id: str | None = None
+    application_id: str | None = Field(default=None, validation_alias=AliasChoices("application_id", "applicationId"))
 
 
 class CandidateScorecardRead(CandidateScorecardBase):
@@ -581,7 +613,7 @@ class CandidateScorecardRead(CandidateScorecardBase):
 
 
 class CandidateReviewDecisionBase(BaseModel):
-    person_id: str = Field(validation_alias=AliasChoices("person_id", "candidate_id"))
+    person_id: str
     application_id: str | None = None
     stage_key: str | None = None
     decision: str
@@ -597,7 +629,8 @@ class CandidateReviewDecisionBase(BaseModel):
 
 
 class CandidateReviewDecisionCreate(CandidateReviewDecisionBase):
-    pass
+    person_id: str | None = None
+    application_id: str | None = Field(default=None, validation_alias=AliasChoices("application_id", "applicationId"))
 
 
 class CandidateReviewDecisionRead(CandidateReviewDecisionBase):
@@ -609,7 +642,7 @@ class CandidateReviewDecisionRead(CandidateReviewDecisionBase):
 
 
 class TalentPoolSyncRecordBase(BaseModel):
-    person_id: str = Field(validation_alias=AliasChoices("person_id", "candidate_id"))
+    person_id: str
     application_id: str | None = None
     destination: str = "talent_pool"
     status: str = "pending"
@@ -625,7 +658,8 @@ class TalentPoolSyncRecordBase(BaseModel):
 
 
 class TalentPoolSyncRecordCreate(TalentPoolSyncRecordBase):
-    pass
+    person_id: str | None = None
+    application_id: str | None = Field(default=None, validation_alias=AliasChoices("application_id", "applicationId"))
 
 
 class TalentPoolSyncRecordRead(TalentPoolSyncRecordBase):
@@ -683,7 +717,9 @@ class CandidateThreadRead(BaseModel):
         default=None,
         validation_alias=AliasChoices("job_description_id", "jobDescriptionId"),
     )
-    candidate: ApplicationSubjectRead
+    application: ApplicationSubjectRead = Field(
+        validation_alias=AliasChoices("application", "candidate"),
+    )
     session_status: str = "active"
     context_summary: str | None = None
     facts: dict[str, Any] = Field(default_factory=dict)
@@ -1785,29 +1821,28 @@ class TimelineEventRead(BaseModel):
     tone: str
 
 
-class CandidateDashboardRead(BaseModel):
+class ApplicationDashboardRead(BaseModel):
     id: str
     applicationId: str | None = None
     personId: str | None = None
     jobDescriptionId: str | None = None
-    name: str
-    title: str
     platform: str
-    location: str
     currentStatus: str
     stageKey: str
-    jdTitle: str
+    deepestMilestone: str | None = None
     matchScore: int
-    experienceYears: int
     nextAction: str
     summary: str
-    tags: list[str] = Field(default_factory=list)
     resumeAvailable: bool
+    person: ApplicationPersonSummaryRead
+    jobDescription: JobDescriptionSummaryRead
+    stateSnapshot: dict[str, Any] = Field(default_factory=dict)
+    aiScores: dict[str, Any] = Field(default_factory=dict)
     cooldownUntil: str | None = None
     lastContactedAt: str | None = None
 
 
-class CandidateFollowUpSummaryDefinitionRead(BaseModel):
+class ApplicationFollowUpSummaryDefinitionRead(BaseModel):
     key: str
     label: str
     summary: str
@@ -1879,8 +1914,8 @@ class DashboardRead(BaseModel):
     pipeline: list[PipelineStageRead]
     timeline: list[TimelineEventRead]
     alerts: list[TimelineEventRead]
-    candidates: list[CandidateDashboardRead]
-    candidateFollowUpSummaryDefinitions: list[CandidateFollowUpSummaryDefinitionRead] = Field(default_factory=list)
+    applications: list[ApplicationDashboardRead]
+    applicationFollowUpSummaryDefinitions: list[ApplicationFollowUpSummaryDefinitionRead] = Field(default_factory=list)
     playbooks: list[PlaybookDashboardRead]
     skills: list[SkillDashboardRead]
     approvals: list[ApprovalDashboardRead]
@@ -1895,7 +1930,6 @@ class AgentTaskCreate(BaseModel):
     payload: dict[str, Any] = Field(default_factory=dict)
     priority: int = 100
     application_id: str | None = Field(default=None, validation_alias=AliasChoices("application_id", "applicationId"))
-    candidate_id: str | None = None
     task_spec_id: str | None = None
     execution_plan_id: str | None = None
     execution_episode_id: str | None = None

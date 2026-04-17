@@ -6,10 +6,10 @@ import { translateUiToken } from "../../lib/uiText";
 import type {
   AgentGlobalMemoryRecord,
   ApprovalItem,
-  CandidateMemoryRecord,
-  CandidateRecord,
+  ApplicationRecord,
   EvolutionArtifactRecord,
   JobMemoryRecord,
+  PersonMemoryRecord,
   RecruitAgentProfileRecord,
   SkillRecord,
 } from "../../lib/types";
@@ -18,11 +18,11 @@ type EvolutionSection = "inbox" | "skills" | "memory" | "prompts" | "playbook" |
 
 interface EvolutionViewProps {
   profile: RecruitAgentProfileRecord | null;
-  candidates: CandidateRecord[];
+  applications: ApplicationRecord[];
   approvals: ApprovalItem[];
   skills: SkillRecord[];
   artifacts: EvolutionArtifactRecord[];
-  candidateMemories: CandidateMemoryRecord[];
+  personMemories: PersonMemoryRecord[];
   jobMemories: JobMemoryRecord[];
   globalMemory: AgentGlobalMemoryRecord | null;
   pendingActionId?: string;
@@ -33,14 +33,14 @@ interface EvolutionViewProps {
   onSaveProfile(payload: Partial<RecruitAgentProfileRecord>): Promise<void> | void;
   onUpdateSkill(skillId: string, payload: Partial<SkillRecord>): Promise<void> | void;
   onDeleteSkill(skillId: string): Promise<void> | void;
-  onUpdateCandidateMemory(personId: string, payload: Partial<CandidateMemoryRecord>): Promise<void> | void;
-  onCompactCandidateMemory(personId: string): Promise<void> | void;
+  onUpdatePersonMemory(personId: string, payload: Partial<PersonMemoryRecord>): Promise<void> | void;
+  onCompactPersonMemory(personId: string): Promise<void> | void;
   onUpdateJobMemory(jobDescriptionId: string, payload: Partial<JobMemoryRecord>): Promise<void> | void;
   onCompactJobMemory(jobDescriptionId: string): Promise<void> | void;
   onUpdateGlobalMemory(payload: Partial<AgentGlobalMemoryRecord>): Promise<void> | void;
   onCompactGlobalMemory(): Promise<void> | void;
   onUpdateArtifact(artifactId: string, payload: Partial<EvolutionArtifactRecord>): Promise<void> | void;
-  onOpenCandidate(candidateId: string): void;
+  onOpenApplication(applicationId: string): void;
 }
 
 const theme = {
@@ -180,11 +180,11 @@ function toneFromStatus(value: string): "positive" | "neutral" | "warning" | "cr
 
 export function EvolutionView({
   profile,
-  candidates,
+  applications,
   approvals,
   skills,
   artifacts,
-  candidateMemories,
+  personMemories,
   jobMemories,
   globalMemory,
   pendingActionId,
@@ -195,33 +195,33 @@ export function EvolutionView({
   onSaveProfile,
   onUpdateSkill,
   onDeleteSkill,
-  onUpdateCandidateMemory,
-  onCompactCandidateMemory,
+  onUpdatePersonMemory,
+  onCompactPersonMemory,
   onUpdateJobMemory,
   onCompactJobMemory,
   onUpdateGlobalMemory,
   onCompactGlobalMemory,
   onUpdateArtifact,
-  onOpenCandidate,
+  onOpenApplication,
 }: EvolutionViewProps): JSX.Element {
   const { copy } = useI18n();
   const [section, setSection] = useState<EvolutionSection>("inbox");
   const [selectedKey, setSelectedKey] = useState<SelectionKey>();
   const [errorMessage, setErrorMessage] = useState<string>();
 
-  const candidateNameById = useMemo(() => {
+  const applicationDisplayNameById = useMemo(() => {
     const mapping = new Map<string, string>();
-    for (const candidate of candidates) {
-      mapping.set(candidate.id, candidate.name);
-      if (candidate.applicationId) {
-        mapping.set(candidate.applicationId, candidate.name);
+    for (const application of applications) {
+      mapping.set(application.id, application.person.name);
+      if (application.applicationId) {
+        mapping.set(application.applicationId, application.person.name);
       }
-      if (candidate.personId) {
-        mapping.set(candidate.personId, candidate.name);
+      if (application.personId) {
+        mapping.set(application.personId, application.person.name);
       }
     }
     return mapping;
-  }, [candidates]);
+  }, [applications]);
   const evolutionApprovals = useMemo(() => approvals.filter((item) => !item.relatedCandidateId), [approvals]);
 
   useEffect(() => {
@@ -298,9 +298,9 @@ export function EvolutionView({
         updatedAt: profile?.updatedAt ?? new Date().toISOString(),
         tone: "neutral",
       },
-      ...candidateMemories.map((memory) => ({
+      ...personMemories.map((memory) => ({
         key: `memory:candidate:${memory.personId}`,
-        label: candidateNameById.get(memory.personId) ?? memory.personId,
+            label: applicationDisplayNameById.get(memory.personId) ?? memory.personId,
         detail: memory.summary ?? copy("Candidate-isolated memory", "候选人隔离记忆"),
         status: memory.status,
         updatedAt: memory.updatedAt,
@@ -327,7 +327,7 @@ export function EvolutionView({
           ]
         : []),
     ],
-    [candidateMemories, candidateNameById, copy, globalMemory, jobMemories, profile],
+    [applicationDisplayNameById, personMemories, copy, globalMemory, jobMemories, profile],
   );
 
   const promptRows = useMemo<ListRow[]>(
@@ -490,12 +490,12 @@ export function EvolutionView({
     }
     const [, scope, target] = selectedKey.split(":");
     if (scope === "candidate") {
-      const record = candidateMemories.find((item) => item.personId === target);
+      const record = personMemories.find((item) => item.personId === target);
       return record ? { kind: "candidate" as const, record } : null;
     }
     const record = jobMemories.find((item) => item.jobDescriptionId === target);
     return record ? { kind: "job" as const, record } : null;
-  }, [candidateMemories, globalMemory, jobMemories, selectedKey]);
+  }, [personMemories, globalMemory, jobMemories, selectedKey]);
 
   const selectedPolicyKey = selectedKey?.startsWith("policy:") ? selectedKey.split(":")[1] : null;
 
@@ -660,7 +660,7 @@ export function EvolutionView({
     };
     try {
       if (selectedMemoryRecord.kind === "candidate") {
-        await onUpdateCandidateMemory(selectedMemoryRecord.record.personId, payload);
+        await onUpdatePersonMemory(selectedMemoryRecord.record.personId, payload);
       } else if (selectedMemoryRecord.kind === "job") {
         await onUpdateJobMemory(selectedMemoryRecord.record.jobDescriptionId, payload);
       } else {
@@ -676,7 +676,7 @@ export function EvolutionView({
       return;
     }
     if (selectedMemoryRecord.kind === "candidate") {
-      await onCompactCandidateMemory(selectedMemoryRecord.record.personId);
+      await onCompactPersonMemory(selectedMemoryRecord.record.personId);
     } else if (selectedMemoryRecord.kind === "job") {
       await onCompactJobMemory(selectedMemoryRecord.record.jobDescriptionId);
     } else {
@@ -955,7 +955,7 @@ export function EvolutionView({
           <div style={{ display: "flex", gap: "var(--space-2)", flexWrap: "wrap" }}>
             <StatusBadge tone={toneFromStatus(selectedArtifact.status)}>{translateUiToken(selectedArtifact.status, copy)}</StatusBadge>
             <StatusBadge tone="neutral">{selectedArtifact.artifactKind}</StatusBadge>
-            {selectedArtifact.relatedCandidateId ? <StatusBadge tone="warning">{candidateNameById.get(selectedArtifact.relatedCandidateId) ?? selectedArtifact.relatedCandidateId}</StatusBadge> : null}
+            {selectedArtifact.relatedCandidateId ? <StatusBadge tone="warning">{applicationDisplayNameById.get(selectedArtifact.relatedCandidateId) ?? selectedArtifact.relatedCandidateId}</StatusBadge> : null}
           </div>
           <label style={{ display: "grid", gap: "var(--space-2)" }}>
             <span>{copy("Summary", "摘要")}</span>
@@ -982,7 +982,7 @@ export function EvolutionView({
           <div style={{ display: "flex", gap: "var(--space-2)", flexWrap: "wrap" }}>
             <button type="button" onClick={() => void saveArtifact()} style={buttonStyle}>{copy("Save artifact", "保存产物")}</button>
             {selectedArtifact.relatedCandidateId ? (
-              <button type="button" onClick={() => onOpenCandidate(selectedArtifact.relatedCandidateId!)} style={buttonStyle}>
+              <button type="button" onClick={() => onOpenApplication(selectedArtifact.relatedCandidateId!)} style={buttonStyle}>
                 {copy("Open candidate", "打开候选人")}
               </button>
             ) : null}

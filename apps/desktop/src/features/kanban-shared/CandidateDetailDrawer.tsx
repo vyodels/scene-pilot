@@ -4,14 +4,14 @@ import { SectionTabs, StatusBadge } from "../../components";
 import { useI18n } from "../../lib/i18n";
 import { deriveHumanActionsForNode, nodeTone } from "./kanbanUtils";
 import { StatusTimeline } from "./StatusTimeline";
-import type { CandidateViewModel } from "./kanbanUtils";
+import type { ApplicationViewModel } from "./kanbanUtils";
 
 interface CandidateDetailDrawerProps {
   open: boolean;
-  record: CandidateViewModel | null;
+  record: ApplicationViewModel | null;
   stateMachine: RecruitmentStateMachine;
   onClose(): void;
-  onTransition(candidateId: string, payload: CandidateTransitionPayload): Promise<unknown> | void;
+  onTransition(applicationId: string, payload: CandidateTransitionPayload): Promise<unknown> | void;
   onRequestOverride(): void;
 }
 
@@ -49,13 +49,13 @@ export function CandidateDetailDrawer({
     return null;
   }
 
-  const aiScores = asObject(record.candidate.aiScores);
+  const aiScores = asObject(record.application.aiScores);
 
   const submitAction = async (action: HumanActionDefinition, note?: string) => {
-    const key = `${record.candidate.id}:${action.toStatus}:${action.label}`;
+    const key = `${record.application.id}:${action.toStatus}:${action.label}`;
     setSubmittingKey(key);
     try {
-      await onTransition(record.candidate.id, {
+      await onTransition(record.application.id, {
         actor: "recruiter",
         toStatus: action.toStatus,
         trigger: action.label,
@@ -74,9 +74,9 @@ export function CandidateDetailDrawer({
         <header className="drawer__header">
           <div>
             <div className="drawer__eyebrow">{copy("Candidate detail", "候选人详情")}</div>
-            <h2 className="drawer__title">{record.candidate.name}</h2>
+            <h2 className="drawer__title">{record.application.person.name}</h2>
             <p className="drawer__description">
-              {record.candidate.title} · {record.candidate.location}
+              {record.application.person.title} · {record.application.person.location}
             </p>
           </div>
           <button type="button" className="drawer__close" onClick={onClose}>
@@ -104,13 +104,13 @@ export function CandidateDetailDrawer({
 
           {activeTab === "profile" ? (
             <div className="drawer__grid">
-              <div><strong>{copy("Role", "应聘岗位")}</strong><span>{record.candidate.jdTitle}</span></div>
-              <div><strong>{copy("Platform", "平台")}</strong><span>{record.candidate.platform}</span></div>
-              <div><strong>{copy("Experience", "工作年限")}</strong><span>{record.candidate.experienceYears || "—"}</span></div>
+              <div><strong>{copy("Role", "应聘岗位")}</strong><span>{record.application.jobDescription.title}</span></div>
+              <div><strong>{copy("Platform", "平台")}</strong><span>{record.application.platform}</span></div>
+              <div><strong>{copy("Experience", "工作年限")}</strong><span>{record.application.person.experienceYears || "—"}</span></div>
               <div><strong>{copy("Deepest milestone", "最深里程碑")}</strong><span>{record.deepestMilestone ?? "—"}</span></div>
               <div className="drawer__full-row">
                 <strong>{copy("Summary", "摘要")}</strong>
-                <span>{record.candidate.summary || copy("No summary available.", "暂无摘要。")}</span>
+                <span>{record.application.summary || copy("No summary available.", "暂无摘要。")}</span>
               </div>
             </div>
           ) : null}
@@ -119,7 +119,7 @@ export function CandidateDetailDrawer({
             <div className="drawer__stack">
               <div className="drawer__card">
                 <strong>{copy("Online profile", "在线资料")}</strong>
-                <p>{record.candidate.summary || copy("No online profile summary.", "暂无在线资料摘要。")}</p>
+                <p>{record.application.summary || copy("No online profile summary.", "暂无在线资料摘要。")}</p>
               </div>
               {record.thread?.resumeArtifacts.length ? (
                 record.thread.resumeArtifacts.map((artifact) => (
@@ -137,7 +137,7 @@ export function CandidateDetailDrawer({
           {activeTab === "scores" ? (
             <div className="drawer__stack">
               <div className="drawer__grid">
-                <div><strong>{copy("Online", "在线")}</strong><span>{typeof aiScores.overall === "number" ? `${Math.round(Number(aiScores.overall))}/100` : `${Math.round(record.candidate.matchScore)}/100`}</span></div>
+                <div><strong>{copy("Online", "在线")}</strong><span>{typeof aiScores.overall === "number" ? `${Math.round(Number(aiScores.overall))}/100` : `${Math.round(record.application.matchScore)}/100`}</span></div>
                 <div><strong>{copy("Offline", "线下")}</strong><span>{record.thread?.scorecards[0]?.scoreTotal ?? copy("Pending", "待评分")}</span></div>
               </div>
               {record.thread?.scorecards.length ? (
@@ -169,7 +169,7 @@ export function CandidateDetailDrawer({
               <div><strong>{copy("Channels", "渠道")}</strong><span>{record.thread?.stateSnapshot.contactChannels.join(", ") || "—"}</span></div>
               <div className="drawer__full-row">
                 <strong>{copy("Contact snapshot", "联系快照")}</strong>
-                <span>{JSON.stringify(record.candidate.contactInfo ?? {}, null, 2)}</span>
+                <span>{JSON.stringify(record.application.person.contactInfo ?? {}, null, 2)}</span>
               </div>
             </div>
           ) : null}
@@ -183,7 +183,7 @@ export function CandidateDetailDrawer({
                 type="button"
                 className="drawer__button"
                 data-style={action.style}
-                disabled={submittingKey === `${record.candidate.id}:${action.toStatus}:${action.label}`}
+                disabled={submittingKey === `${record.application.id}:${action.toStatus}:${action.label}`}
                 onClick={() => {
                   if (action.requiresNote) {
                     setPendingAction({ action, note: "" });

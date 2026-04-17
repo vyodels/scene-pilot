@@ -3,17 +3,17 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 from scene_pilot.services.candidate_waiting_retry_selector import (
-    CandidateWaitingRetryAction,
-    CandidateWaitingRetryPolicy,
-    CandidateWaitingRetryTarget,
+    ApplicationWaitingRetryAction,
+    ApplicationWaitingRetryPolicy,
+    ApplicationWaitingRetryTarget,
     is_waiting_candidate_retry_eligible,
-    map_waiting_candidate_retry_task_type,
-    select_waiting_candidate_retry_action,
+    map_waiting_application_retry_task_type,
+    select_waiting_application_retry_action,
 )
 
 
 def _target(
-    candidate_id: str,
+    application_id: str,
     current_status: str,
     *,
     node_id: str | None = None,
@@ -29,13 +29,13 @@ def _target(
     created_at: datetime | None = None,
     updated_at: datetime | None = None,
     last_contacted_at: datetime | None = None,
-) -> CandidateWaitingRetryTarget:
-    return CandidateWaitingRetryTarget(
-        candidate_id=candidate_id,
+) -> ApplicationWaitingRetryTarget:
+    return ApplicationWaitingRetryTarget(
+        application_id=application_id,
         current_status=current_status,
         node_id=node_id or current_status,
         node_label=node_label or current_status,
-        retry_policy=CandidateWaitingRetryPolicy(
+        retry_policy=ApplicationWaitingRetryPolicy(
             max_retries=max_retries,
             retry_after_hours=retry_after_hours,
             close_after_hours=close_after_hours,
@@ -51,16 +51,16 @@ def _target(
     )
 
 
-def _assert_action(action: CandidateWaitingRetryAction | None, *, kind: str, candidate_id: str) -> CandidateWaitingRetryAction:
+def _assert_action(action: ApplicationWaitingRetryAction | None, *, kind: str, application_id: str) -> ApplicationWaitingRetryAction:
     assert action is not None
     assert action.action_kind == kind
-    assert action.candidate_id == candidate_id
+    assert action.application_id == application_id
     return action
 
 
 def test_selector_returns_retry_action_when_wait_window_elapsed() -> None:
     now = datetime(2026, 4, 16, 12, 0, tzinfo=timezone.utc)
-    action = select_waiting_candidate_retry_action(
+    action = select_waiting_application_retry_action(
         [
             _target(
                 "candidate-outreach-retry",
@@ -72,7 +72,7 @@ def test_selector_returns_retry_action_when_wait_window_elapsed() -> None:
         now=now,
     )
 
-    resolved = _assert_action(action, kind="retry", candidate_id="candidate-outreach-retry")
+    resolved = _assert_action(action, kind="retry", application_id="candidate-outreach-retry")
     assert resolved.selected_task_type == "candidate_outreach"
     assert resolved.next_retry_count == 1
     assert resolved.reason == "retry_window_elapsed"
@@ -80,7 +80,7 @@ def test_selector_returns_retry_action_when_wait_window_elapsed() -> None:
 
 def test_selector_prioritizes_close_when_retry_limit_is_exhausted() -> None:
     now = datetime(2026, 4, 16, 12, 0, tzinfo=timezone.utc)
-    action = select_waiting_candidate_retry_action(
+    action = select_waiting_application_retry_action(
         [
             _target(
                 "candidate-close",
@@ -104,7 +104,7 @@ def test_selector_prioritizes_close_when_retry_limit_is_exhausted() -> None:
         now=now,
     )
 
-    resolved = _assert_action(action, kind="close", candidate_id="candidate-close")
+    resolved = _assert_action(action, kind="close", application_id="candidate-close")
     assert resolved.to_status == "no_response"
     assert resolved.selected_task_type is None
     assert resolved.reason == "retry_limit_reached + close_window_elapsed"
@@ -127,9 +127,9 @@ def test_selector_skips_soft_terminal_or_open_task_targets() -> None:
 
     assert is_waiting_candidate_retry_eligible(no_response_target, now=now) is False
     assert is_waiting_candidate_retry_eligible(open_task_target, now=now) is False
-    assert select_waiting_candidate_retry_action([no_response_target, open_task_target], now=now) is None
+    assert select_waiting_application_retry_action([no_response_target, open_task_target], now=now) is None
 
 
 def test_waiting_retry_task_mapping_stays_generic_outbound_follow_up() -> None:
-    assert map_waiting_candidate_retry_task_type(_target("candidate-a", "resume_requested")) == "candidate_outreach"
-    assert map_waiting_candidate_retry_task_type(_target("candidate-b", "contact_requested")) == "candidate_outreach"
+    assert map_waiting_application_retry_task_type(_target("candidate-a", "resume_requested")) == "candidate_outreach"
+    assert map_waiting_application_retry_task_type(_target("candidate-b", "contact_requested")) == "candidate_outreach"

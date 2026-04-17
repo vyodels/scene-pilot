@@ -15,8 +15,7 @@ import type {
   AgentGlobalMemoryRecord,
   AgentSnapshot,
   AgentQueueItem,
-  CandidateMemoryRecord,
-  CandidateThreadRecord,
+  ApplicationThreadRecord,
   DashboardSummary,
   ExecutionGraphProjectionRecord,
   ExecutionTraceRecord,
@@ -26,6 +25,7 @@ import type {
   McpPresetTemplateRecord,
   McpServerRecord,
   OperatorInteractionRecord,
+  PersonMemoryRecord,
   RecruitAgentProfileRecord,
   RuntimeEpisodeReplay,
   RuntimeWorkspaceData,
@@ -40,7 +40,7 @@ import { AgentInboxView } from "../agent-inbox/AgentInboxView";
 import { CandidatesKanbanView, type CandidatesKanbanTab } from "../candidates/CandidatesKanbanView";
 import { DashboardView } from "../dashboard/DashboardView";
 import { EvolutionView } from "../evolution/EvolutionView";
-import { buildCandidateViewModels } from "../kanban-shared/kanbanUtils";
+import { buildApplicationViewModels } from "../kanban-shared/kanbanUtils";
 import { RecruitAgentView } from "../recruit-agent/RecruitAgentView";
 import { SettingsView } from "../settings/SettingsView";
 
@@ -114,17 +114,17 @@ const surfaceRowButtonStyle: React.CSSProperties = {
 };
 
 function JdWorkspaceSurface({
-  candidates,
-  onOpenCommunications,
+  applications,
+  onOpenApplication,
 }: {
-  candidates: DashboardSummary["candidates"];
-  onOpenCommunications?(filter?: string, candidateId?: string): void;
+  applications: DashboardSummary["applications"];
+  onOpenApplication?(filter?: string, applicationId?: string): void;
 }): JSX.Element {
   const { copy } = useI18n();
   const jdGroups = Object.entries(
-    candidates.reduce<Record<string, DashboardSummary["candidates"]>>((accumulator, candidate) => {
-      const key = candidate.jdTitle || copy("Unassigned role", "未分配岗位");
-      accumulator[key] = [...(accumulator[key] ?? []), candidate];
+    applications.reduce<Record<string, DashboardSummary["applications"]>>((accumulator, application) => {
+      const key = application.jobDescription.title || copy("Unassigned role", "未分配岗位");
+      accumulator[key] = [...(accumulator[key] ?? []), application];
       return accumulator;
     }, {}),
   ).sort((left, right) => right[1].length - left[1].length);
@@ -132,9 +132,9 @@ function JdWorkspaceSurface({
   return (
     <div style={{ display: "grid", gap: "var(--space-4)" }}>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(calc(var(--space-12) * 3 + var(--space-10) + var(--space-10) + var(--space-5) + var(--space-4)), 1fr))", gap: "var(--space-3)" }}>
-        {jdGroups.slice(0, 4).map(([jdTitle, jdCandidates]) => {
-          const macroCounts = jdCandidates.reduce<Record<string, number>>((accumulator, candidate) => {
-            const stage = resolveMacroStage(candidate.currentStatus, candidate.stageKey, candidate.resumeAvailable);
+        {jdGroups.slice(0, 4).map(([jdTitle, jdApplications]) => {
+          const macroCounts = jdApplications.reduce<Record<string, number>>((accumulator, application) => {
+            const stage = resolveMacroStage(application.currentStatus, application.stageKey, application.resumeAvailable);
             accumulator[stage] = (accumulator[stage] ?? 0) + 1;
             return accumulator;
           }, {});
@@ -142,7 +142,7 @@ function JdWorkspaceSurface({
             <article key={jdTitle} style={{ padding: "var(--space-4)", borderRadius: "var(--radius-md)", background: "var(--bg-card)", border: "1px solid var(--border-line)" }}>
               <div style={{ fontWeight: 600, color: "var(--text-primary)" }}>{jdTitle}</div>
               <div style={{ marginTop: "var(--space-2)", fontSize: "var(--font-size-sm)", color: "var(--text-secondary)" }}>
-                {copy(`${jdCandidates.length} candidates in this funnel.`, `该漏斗下共有 ${jdCandidates.length} 位候选人。`)}
+                {copy(`${jdApplications.length} applications in this funnel.`, `该漏斗下共有 ${jdApplications.length} 条申请。`)}
               </div>
               <div style={{ display: "flex", gap: "var(--space-2)", flexWrap: "wrap", marginTop: "var(--space-3)" }}>
                 {Object.entries(macroCounts).map(([label, count]) => (
@@ -157,36 +157,36 @@ function JdWorkspaceSurface({
       </div>
 
       <div style={{ display: "grid", gap: "var(--space-3)" }}>
-        {jdGroups.map(([jdTitle, jdCandidates]) => (
+        {jdGroups.map(([jdTitle, jdApplications]) => (
           <Panel
             key={jdTitle}
             title={jdTitle}
             eyebrow={copy("Role funnel", "岗位漏斗")}
-            description={copy("Candidates currently grouped under this role.", "当前归属到该岗位的候选人。")}
+            description={copy("Applications currently grouped under this role.", "当前归属到该岗位的申请。")}
           >
             <div style={{ display: "grid", gap: "var(--space-3)" }}>
-              {jdCandidates.map((candidate) => {
-                const macroStage = resolveMacroStage(candidate.currentStatus, candidate.stageKey, candidate.resumeAvailable);
+              {jdApplications.map((application) => {
+                const macroStage = resolveMacroStage(application.currentStatus, application.stageKey, application.resumeAvailable);
                 return (
                   <button
-                    key={candidate.id}
+                    key={application.id}
                     type="button"
-                    onClick={() => onOpenCommunications?.("candidate", candidate.id)}
+                    onClick={() => onOpenApplication?.("application", application.id)}
                     style={surfaceRowButtonStyle}
                   >
                     <div style={{ display: "flex", justifyContent: "space-between", gap: "var(--space-3)", alignItems: "start" }}>
                       <div>
-                        <div style={{ fontWeight: 600, color: "var(--text-primary)" }}>{candidate.name}</div>
+                        <div style={{ fontWeight: 600, color: "var(--text-primary)" }}>{application.person.name}</div>
                         <div style={{ marginTop: "var(--space-1)", fontSize: "var(--font-size-sm)", color: "var(--text-secondary)" }}>
-                          {candidate.title} · {candidate.location}
+                          {application.person.title} · {application.person.location}
                         </div>
                       </div>
                       <div style={{ display: "flex", gap: "var(--space-2)", flexWrap: "wrap", justifyContent: "end" }}>
                         <StatusBadge tone={macroStageTone(macroStage)}>{macroStage}</StatusBadge>
-                        <StatusBadge tone="neutral">{copy(`score ${candidate.matchScore}`, `分数 ${candidate.matchScore}`)}</StatusBadge>
+                        <StatusBadge tone="neutral">{copy(`score ${application.matchScore}`, `分数 ${application.matchScore}`)}</StatusBadge>
                       </div>
                     </div>
-                    <div style={{ marginTop: "var(--space-2)", fontSize: "var(--font-size-sm)", color: "var(--text-regular)", lineHeight: 1.6 }}>{candidate.nextAction}</div>
+                    <div style={{ marginTop: "var(--space-2)", fontSize: "var(--font-size-sm)", color: "var(--text-regular)", lineHeight: 1.6 }}>{application.nextAction}</div>
                   </button>
                 );
               })}
@@ -213,8 +213,8 @@ const emptySummary: DashboardSummary = {
   pipeline: [],
   timeline: [],
   alerts: [],
-  candidates: [],
-  candidateFollowUpSummaryDefinitions: [],
+  applications: [],
+  applicationFollowUpSummaryDefinitions: [],
   playbooks: [],
   skills: [],
   approvals: [],
@@ -271,10 +271,10 @@ export function DesktopWorkspace(): JSX.Element {
   const [transport, setTransport] = useState(apiClient.describe().transport);
   const [errorMessage, setErrorMessage] = useState<string>();
   const [profile, setProfile] = useState<RecruitAgentProfileRecord | null>(null);
-  const [candidateMemories, setCandidateMemories] = useState<CandidateMemoryRecord[]>([]);
+  const [personMemories, setPersonMemories] = useState<PersonMemoryRecord[]>([]);
   const [jobMemories, setJobMemories] = useState<JobMemoryRecord[]>([]);
   const [globalMemory, setGlobalMemory] = useState<AgentGlobalMemoryRecord | null>(null);
-  const [candidateThreads, setCandidateThreads] = useState<CandidateThreadRecord[]>([]);
+  const [applicationThreads, setApplicationThreads] = useState<ApplicationThreadRecord[]>([]);
   const [stateMachine, setStateMachine] = useState<RecruitmentStateMachine | null>(null);
   const [evolutionArtifacts, setEvolutionArtifacts] = useState<EvolutionArtifactRecord[]>([]);
   const [goals, setGoals] = useState<GoalSpecRecord[]>([]);
@@ -284,8 +284,8 @@ export function DesktopWorkspace(): JSX.Element {
   const [operatorInteractions, setOperatorInteractions] = useState<OperatorInteractionRecord[]>([]);
   const [mcpPresets, setMcpPresets] = useState<McpPresetTemplateRecord[]>([]);
   const [mcpServers, setMcpServers] = useState<McpServerRecord[]>([]);
-  const [candidateWorkspaceFocus, setCandidateWorkspaceFocus] = useState<{ candidateId?: string; conversationToken: number }>({
-    candidateId: undefined,
+  const [candidateWorkspaceFocus, setCandidateWorkspaceFocus] = useState<{ applicationId?: string; conversationToken: number }>({
+    applicationId: undefined,
     conversationToken: 0,
   });
   const [agentInboxFocus, setAgentInboxFocus] = useState<{ filter?: string; itemId?: string }>({});
@@ -318,7 +318,7 @@ export function DesktopWorkspace(): JSX.Element {
         nextCandidateMemories,
         nextJobMemories,
         nextGlobalMemory,
-        nextCandidateThreads,
+        nextApplicationThreads,
         nextStateMachine,
         nextEvolutionArtifacts,
         nextMcpPresets,
@@ -338,10 +338,10 @@ export function DesktopWorkspace(): JSX.Element {
         apiClient.listExecutionGraphs(),
         apiClient.listStrategyFragments(),
         apiClient.listOperatorInteractions(),
-        apiClient.listCandidateMemories(),
+        apiClient.listPersonMemories(),
         apiClient.listJobMemories(),
         apiClient.getAgentGlobalMemory(),
-        apiClient.listCandidateThreads(),
+        apiClient.listApplicationThreads(),
         apiClient.getStateMachine(),
         apiClient.listEvolutionArtifacts(),
         apiClient.listMcpPresets(),
@@ -365,10 +365,10 @@ export function DesktopWorkspace(): JSX.Element {
         setExecutionGraphs(nextExecutionGraphs);
         setStrategyFragments(nextStrategyFragments);
         setOperatorInteractions(nextOperatorInteractions);
-        setCandidateMemories(nextCandidateMemories);
+        setPersonMemories(nextCandidateMemories);
         setJobMemories(nextJobMemories);
         setGlobalMemory(nextGlobalMemory);
-        setCandidateThreads(nextCandidateThreads);
+        setApplicationThreads(nextApplicationThreads);
         setStateMachine(nextStateMachine);
         setEvolutionArtifacts(nextEvolutionArtifacts);
         setMcpPresets(nextMcpPresets);
@@ -465,7 +465,7 @@ export function DesktopWorkspace(): JSX.Element {
           operatorInteractions.filter((item) => !item.candidateId && item.status === "pending").length +
           summary.skills.filter((skill) => skill.status !== "active" || skill.health !== "healthy").length +
           evolutionArtifacts.filter((artifact) => /(pending|draft|review)/i.test(artifact.status)).length,
-        candidates: summary.candidates.filter((candidate) => !/(rejected|cooldown)/i.test(candidate.currentStatus)).length,
+        candidates: summary.applications.filter((application) => !/(rejected|cooldown)/i.test(application.currentStatus)).length,
       }) satisfies Partial<Record<WorkspaceTab, number>>,
     [copy, evolutionArtifacts, operatorInteractions, summary],
   );
@@ -511,8 +511,8 @@ export function DesktopWorkspace(): JSX.Element {
   );
 
   const candidateKanbanModels = useMemo(
-    () => (stateMachine ? buildCandidateViewModels(summary.candidates, candidateThreads, stateMachine) : []),
-    [candidateThreads, stateMachine, summary.candidates],
+    () => (stateMachine ? buildApplicationViewModels(summary.applications, applicationThreads, stateMachine) : []),
+    [applicationThreads, stateMachine, summary.applications],
   );
 
   const candidateKanbanTabItems = useMemo(
@@ -520,7 +520,7 @@ export function DesktopWorkspace(): JSX.Element {
       {
         key: "funnel",
         label: copy("Candidate funnel", "候选人漏斗"),
-        count: summary.candidates.length,
+        count: summary.applications.length,
       },
       {
         key: "status",
@@ -530,10 +530,10 @@ export function DesktopWorkspace(): JSX.Element {
       {
         key: "jd",
         label: copy("JD management", "JD 管理"),
-        count: new Set(summary.candidates.map((candidate) => candidate.jdTitle || copy("Unassigned role", "未分配岗位"))).size,
+        count: new Set(summary.applications.map((application) => application.jobDescription.title || copy("Unassigned role", "未分配岗位"))).size,
       },
     ],
-    [candidateKanbanModels, copy, summary.candidates],
+    [candidateKanbanModels, copy, summary.applications],
   );
 
   const importActivityGoals = useMemo(
@@ -657,25 +657,25 @@ export function DesktopWorkspace(): JSX.Element {
   const handleQueueScreeningTask = async () => {
     setRuntimeActionBusy(true);
     try {
-      const firstCandidate = summary.candidates[0];
-      if (!firstCandidate) {
+      const firstApplication = summary.applications[0];
+      if (!firstApplication) {
         await loadWorkspace(copy("No candidate available for adaptive review.", "当前没有可用于目标驱动评估的候选人。"));
         return;
       }
       await apiClient.createGoal({
-        title: copy(`Review ${firstCandidate.name}`, `评估 ${firstCandidate.name}`),
+        title: copy(`Review ${firstApplication.person.name}`, `评估 ${firstApplication.person.name}`),
         goalText: copy(
-          `Review candidate ${firstCandidate.name} for ${firstCandidate.jdTitle}. Use real external capabilities to inspect the candidate, assess fit, and distill a reusable screening strategy.`,
-          `围绕候选人 ${firstCandidate.name} 和岗位 ${firstCandidate.jdTitle} 启动一次目标驱动评估。请使用真实外部能力完成候选人查看、匹配判断，并沉淀可复用筛选策略。`,
+          `Review application ${firstApplication.person.name} for ${firstApplication.jobDescription.title}. Use real external capabilities to inspect the candidate, assess fit, and distill a reusable screening strategy.`,
+          `围绕候选人 ${firstApplication.person.name} 和岗位 ${firstApplication.jobDescription.title} 启动一次目标驱动评估。请使用真实外部能力完成候选人查看、匹配判断，并沉淀可复用筛选策略。`,
         ),
         summary: copy("Create a goal-driven candidate review run.", "创建一个目标驱动的候选人评估 run。"),
         priority: 180,
         constraints: {
-          candidate_id: firstCandidate.id,
-          platform: firstCandidate.platform,
+          application_id: firstApplication.id,
+          platform: firstApplication.platform,
         },
         contextHints: {
-          candidate_id: firstCandidate.id,
+          application_id: firstApplication.id,
           adaptive_stage: "candidate_probe",
         },
         runPreferences: {
@@ -732,13 +732,13 @@ export function DesktopWorkspace(): JSX.Element {
     await loadWorkspace(copy("Skill deleted.", "Skill 已删除。"));
   };
 
-  const handleUpdateCandidateMemory = async (personId: string, payload: Partial<CandidateMemoryRecord>) => {
-    await apiClient.updateCandidateMemory(personId, payload);
+  const handleUpdatePersonMemory = async (personId: string, payload: Partial<PersonMemoryRecord>) => {
+    await apiClient.updatePersonMemory(personId, payload);
     await loadWorkspace(copy("Candidate memory updated.", "候选人 memory 已更新。"));
   };
 
-  const handleCompactCandidateMemory = async (personId: string) => {
-    await apiClient.compactCandidateMemory(personId, "manual_compact", true);
+  const handleCompactPersonMemory = async (personId: string) => {
+    await apiClient.compactPersonMemory(personId, "manual_compact", true);
     await loadWorkspace(copy("Candidate memory compacted.", "候选人 memory 已 compact。"));
   };
 
@@ -767,39 +767,39 @@ export function DesktopWorkspace(): JSX.Element {
     await loadWorkspace(copy("Evolution artifact updated.", "演进产物已更新。"));
   };
 
-  const handleCreateThreadEntry = async (candidateId: string, payload: { direction: string; content: string; messageType?: string; platform?: string }) => {
-    await apiClient.createCandidateThreadEntry(candidateId, payload);
+  const handleCreateApplicationEntry = async (applicationId: string, payload: { direction: string; content: string; messageType?: string; platform?: string }) => {
+    await apiClient.createApplicationEntry(applicationId, payload);
     await loadWorkspace(copy("Conversation entry added.", "沟通记录已追加。"));
   };
 
-  const handleTransitionCandidateState = async (
-    candidateId: string,
+  const handleTransitionApplicationState = async (
+    applicationId: string,
     payload: CandidateTransitionPayload,
   ) => {
-    await apiClient.transitionCandidateState(candidateId, payload);
-    await loadWorkspace(copy("Candidate state updated.", "候选人状态已更新。"));
+    await apiClient.transitionApplicationState(applicationId, payload);
+    await loadWorkspace(copy("Application state updated.", "申请状态已更新。"));
   };
 
-  const resolveCandidateApplicationId = (subjectId?: string) => {
+  const resolveApplicationId = (subjectId?: string) => {
     const normalized = String(subjectId ?? "").trim();
     if (!normalized) {
       return undefined;
     }
-    const direct = summary.candidates.find(
-      (candidate) => candidate.id === normalized || candidate.applicationId === normalized,
+    const direct = summary.applications.find(
+      (application) => application.id === normalized || application.applicationId === normalized,
     );
     if (direct) {
       return direct.applicationId || direct.id;
     }
-    const byPerson = summary.candidates.find((candidate) => candidate.personId === normalized);
+    const byPerson = summary.applications.find((application) => application.personId === normalized);
     return byPerson ? byPerson.applicationId || byPerson.id : undefined;
   };
 
-  const openCandidateWorkspace = (statusFilter?: string, candidateId?: string) => {
-    const applicationId = resolveCandidateApplicationId(candidateId);
+  const openApplicationWorkspace = (statusFilter?: string, applicationIdLike?: string) => {
+    const applicationId = resolveApplicationId(applicationIdLike);
     setCandidateKanbanTab("status");
     setCandidateWorkspaceFocus((current) => ({
-      candidateId: applicationId,
+      applicationId,
       conversationToken: applicationId ? current.conversationToken + 1 : current.conversationToken,
     }));
     setTab("candidates");
@@ -830,7 +830,7 @@ export function DesktopWorkspace(): JSX.Element {
             summary={summary}
             onOpenCandidates={() => setTab("candidates")}
             onOpenJdWorkspace={openJdManagement}
-            onOpenCommunications={() => openCandidateWorkspace("active")}
+            onOpenCommunications={() => openApplicationWorkspace("active")}
             onOpenAiReview={() => openAiReview("all")}
             onOpenAiStrategy={() => setTab("ai-strategy")}
           />
@@ -838,18 +838,18 @@ export function DesktopWorkspace(): JSX.Element {
       case "candidates":
         return (
           <CandidatesKanbanView
-            candidates={summary.candidates}
-            threads={candidateThreads}
+            applications={summary.applications}
+            threads={applicationThreads}
             stateMachine={stateMachine}
-            summaryDefinitions={summary.candidateFollowUpSummaryDefinitions}
+            summaryDefinitions={summary.applicationFollowUpSummaryDefinitions}
             activeTab={candidateKanbanTab}
-            preferredCandidateId={candidateWorkspaceFocus.candidateId}
+            preferredApplicationId={candidateWorkspaceFocus.applicationId}
             preferredConversationToken={candidateWorkspaceFocus.conversationToken}
-            onOpenCandidate={(candidateId) => openCandidateWorkspace("candidate", candidateId)}
+            onOpenApplication={(applicationId) => openApplicationWorkspace("application", applicationId)}
             onRefresh={() => loadWorkspace(copy("Manual refresh completed.", "已完成手动刷新。"))}
-            onCreateEntry={handleCreateThreadEntry}
-            onTransition={handleTransitionCandidateState}
-            jdContent={<JdWorkspaceSurface candidates={summary.candidates} onOpenCommunications={openCandidateWorkspace} />}
+            onCreateEntry={handleCreateApplicationEntry}
+            onTransition={handleTransitionApplicationState}
+            jdContent={<JdWorkspaceSurface applications={summary.applications} onOpenApplication={openApplicationWorkspace} />}
           />
         );
       case "ai-strategy":
@@ -857,17 +857,17 @@ export function DesktopWorkspace(): JSX.Element {
           <RecruitAgentView
             profile={profile}
             stateMachine={stateMachine}
-            candidates={summary.candidates}
+            applications={summary.applications}
             skills={summary.skills}
-            candidateMemories={candidateMemories}
+            personMemories={personMemories}
             jobMemories={jobMemories}
             globalMemory={globalMemory}
             onSaveProfile={handleSaveProfile}
             onSaveStateMachine={handleSaveStateMachine}
             onUpdateSkill={handleUpdateSkill}
             onDeleteSkill={handleDeleteSkill}
-            onUpdateCandidateMemory={handleUpdateCandidateMemory}
-            onCompactCandidateMemory={handleCompactCandidateMemory}
+            onUpdatePersonMemory={handleUpdatePersonMemory}
+            onCompactPersonMemory={handleCompactPersonMemory}
             onUpdateJobMemory={handleUpdateJobMemory}
             onCompactJobMemory={handleCompactJobMemory}
             onUpdateGlobalMemory={handleUpdateGlobalMemory}
@@ -951,17 +951,17 @@ export function DesktopWorkspace(): JSX.Element {
                 onApprove={handleApprove}
                 onReject={handleReject}
                 onResolveInteraction={handleResolveInteraction}
-                onOpenCandidate={(candidateId) => openCandidateWorkspace("candidate", candidateId)}
+                onOpenApplication={(applicationId) => openApplicationWorkspace("application", applicationId)}
                 onOpenEvolution={openEvolution}
               />
             ) : (
               <EvolutionView
                 profile={profile}
-                candidates={summary.candidates}
+                applications={summary.applications}
                 approvals={summary.approvals}
                 skills={summary.skills}
                 artifacts={evolutionArtifacts}
-                candidateMemories={candidateMemories}
+                personMemories={personMemories}
                 jobMemories={jobMemories}
                 globalMemory={globalMemory}
                 pendingActionId={approvalActionId}
@@ -972,14 +972,14 @@ export function DesktopWorkspace(): JSX.Element {
                 onSaveProfile={handleSaveProfile}
                 onUpdateSkill={handleUpdateSkill}
                 onDeleteSkill={handleDeleteSkill}
-                onUpdateCandidateMemory={handleUpdateCandidateMemory}
-                onCompactCandidateMemory={handleCompactCandidateMemory}
+                onUpdatePersonMemory={handleUpdatePersonMemory}
+                onCompactPersonMemory={handleCompactPersonMemory}
                 onUpdateJobMemory={handleUpdateJobMemory}
                 onCompactJobMemory={handleCompactJobMemory}
                 onUpdateGlobalMemory={handleUpdateGlobalMemory}
                 onCompactGlobalMemory={handleCompactGlobalMemory}
                 onUpdateArtifact={handleUpdateEvolutionArtifact}
-                onOpenCandidate={(candidateId) => openCandidateWorkspace("candidate", candidateId)}
+                onOpenApplication={(applicationId) => openApplicationWorkspace("application", applicationId)}
               />
             )}
           </div>

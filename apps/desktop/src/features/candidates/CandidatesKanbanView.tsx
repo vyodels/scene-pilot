@@ -1,40 +1,40 @@
 import React from "react";
 import type { CandidateTransitionPayload, RecruitmentStateMachine } from "@scene-pilot/shared";
 import { useI18n } from "../../lib/i18n";
-import type { CandidateFollowUpSummaryDefinition, CandidateRecord, CandidateThreadRecord } from "../../lib/types";
+import type { ApplicationFollowUpSummaryDefinition, ApplicationRecord, ApplicationThreadRecord } from "../../lib/types";
 import { FunnelKanbanView } from "../funnel-kanban/FunnelKanbanView";
 import { StatusKanbanView } from "../status-kanban/StatusKanbanView";
 
 export type CandidatesKanbanTab = "funnel" | "status" | "jd";
 
 interface CandidatesKanbanViewProps {
-  candidates: CandidateRecord[];
-  threads: CandidateThreadRecord[];
+  applications: ApplicationRecord[];
+  threads: ApplicationThreadRecord[];
   stateMachine?: RecruitmentStateMachine | null;
-  summaryDefinitions?: CandidateFollowUpSummaryDefinition[];
+  summaryDefinitions?: ApplicationFollowUpSummaryDefinition[];
   activeTab: CandidatesKanbanTab;
   jdContent?: React.ReactNode;
-  preferredCandidateId?: string;
+  preferredApplicationId?: string;
   preferredConversationToken?: number;
-  onOpenCandidate(candidateId: string): void;
+  onOpenApplication(applicationId: string): void;
   onRefresh?(): Promise<unknown> | void;
   onCreateEntry(
-    candidateId: string,
+    applicationId: string,
     payload: { direction: string; content: string; messageType?: string; platform?: string },
   ): Promise<unknown> | void;
-  onTransition(candidateId: string, payload: CandidateTransitionPayload): Promise<unknown> | void;
+  onTransition(applicationId: string, payload: CandidateTransitionPayload): Promise<unknown> | void;
 }
 
 export function CandidatesKanbanView({
-  candidates,
+  applications,
   threads,
   stateMachine,
   summaryDefinitions = [],
   activeTab,
   jdContent,
-  preferredCandidateId,
+  preferredApplicationId,
   preferredConversationToken,
-  onOpenCandidate,
+  onOpenApplication,
   onRefresh,
   onCreateEntry,
   onTransition,
@@ -54,25 +54,25 @@ export function CandidatesKanbanView({
       <>{jdContent ?? null}</>
     ) : activeTab === "funnel" ? (
       <FunnelKanbanView
-        candidates={candidates}
+        applications={applications}
         threads={threads}
         stateMachine={stateMachine}
-        preferredCandidateId={preferredCandidateId}
+        preferredApplicationId={preferredApplicationId}
         preferredConversationToken={preferredConversationToken}
-        onOpenCandidate={onOpenCandidate}
+        onOpenApplication={onOpenApplication}
         onRefresh={onRefresh}
         onCreateEntry={onCreateEntry}
         onTransition={onTransition}
       />
     ) : (
       <StatusKanbanView
-        candidates={candidates}
+        applications={applications}
         threads={threads}
         stateMachine={stateMachine}
         summaryDefinitions={summaryDefinitions}
-        preferredCandidateId={preferredCandidateId}
+        preferredApplicationId={preferredApplicationId}
         preferredConversationToken={preferredConversationToken}
-        onOpenCandidate={onOpenCandidate}
+        onOpenApplication={onOpenApplication}
         onRefresh={onRefresh}
         onCreateEntry={onCreateEntry}
         onTransition={onTransition}

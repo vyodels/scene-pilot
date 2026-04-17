@@ -1,11 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useI18n } from "../../lib/i18n";
-import type { CandidateDateFilter } from "./kanbanUtils";
+import type { ApplicationDateFilter } from "./kanbanUtils";
 
-export type CandidateDatePreset = "all" | "manual" | "last7days" | "thisWeek" | "lastMonth" | "lastQuarter" | "lastYear";
+export type ApplicationDatePreset = "all" | "manual" | "last7days" | "thisWeek" | "lastMonth" | "lastQuarter" | "lastYear";
 
-export interface CandidateDateRangeState {
-  preset: CandidateDatePreset;
+export interface ApplicationDateRangeState {
+  preset: ApplicationDatePreset;
   startDate: string;
   endDate: string;
 }
@@ -76,7 +76,7 @@ function sortRange(startDate: string, endDate: string): { startDate: string; end
   return { startDate: endDate, endDate: startDate };
 }
 
-function resolvePresetRange(preset: CandidateDatePreset): CandidateDateFilter | null {
+function resolvePresetRange(preset: ApplicationDatePreset): ApplicationDateFilter | null {
   const now = new Date();
   const endDate = formatDateInput(now);
 
@@ -120,7 +120,7 @@ function resolvePresetRange(preset: CandidateDatePreset): CandidateDateFilter | 
   }
 }
 
-export function createCandidateDateRangeState(): CandidateDateRangeState {
+export function createApplicationDateRangeState(): ApplicationDateRangeState {
   return {
     preset: "all",
     startDate: "",
@@ -128,7 +128,7 @@ export function createCandidateDateRangeState(): CandidateDateRangeState {
   };
 }
 
-export function createDefaultManualCandidateDateRange(): CandidateDateRangeState {
+export function createDefaultManualApplicationDateRange(): ApplicationDateRangeState {
   const range = resolvePresetRange("lastMonth");
   return {
     preset: "manual",
@@ -137,7 +137,7 @@ export function createDefaultManualCandidateDateRange(): CandidateDateRangeState
   };
 }
 
-export function resolveCandidateDateRangeFilter(value: CandidateDateRangeState): CandidateDateFilter {
+export function resolveApplicationDateRangeFilter(value: ApplicationDateRangeState): ApplicationDateFilter {
   if (value.preset === "all") {
     return { kind: "all", startDate: "", endDate: "" };
   }
@@ -215,8 +215,8 @@ function CalendarPanel({
 }
 
 interface CandidateDateRangeControlProps {
-  value: CandidateDateRangeState;
-  onChange(nextValue: CandidateDateRangeState): void;
+  value: ApplicationDateRangeState;
+  onChange(nextValue: ApplicationDateRangeState): void;
 }
 
 export function CandidateDateRangeControl({ value, onChange }: CandidateDateRangeControlProps): JSX.Element {
@@ -250,7 +250,7 @@ export function CandidateDateRangeControl({ value, onChange }: CandidateDateRang
     const nextValue =
       value.preset === "manual" && value.startDate && value.endDate
         ? value
-        : createDefaultManualCandidateDateRange();
+        : createDefaultManualApplicationDateRange();
     const { startDate, endDate } = sortRange(nextValue.startDate, nextValue.endDate);
     onChange({
       preset: "manual",
@@ -289,7 +289,7 @@ export function CandidateDateRangeControl({ value, onChange }: CandidateDateRang
         <select
           value={value.preset}
           onChange={(event) => {
-            const nextPreset = event.target.value as CandidateDatePreset;
+            const nextPreset = event.target.value as ApplicationDatePreset;
             if (nextPreset === "manual") {
               openManualPicker();
               return;

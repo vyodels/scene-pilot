@@ -4,22 +4,22 @@ import { StatusBadge } from "../../components";
 import { formatCompactDate } from "../../lib/format";
 import { useI18n } from "../../lib/i18n";
 import { deriveHumanActionsForNode, nodeTone } from "./kanbanUtils";
-import type { CandidateViewModel } from "./kanbanUtils";
+import type { ApplicationViewModel } from "./kanbanUtils";
 
 interface CandidateTableProps {
   title: string;
   count: number;
   description?: string;
-  candidates: CandidateViewModel[];
+  applications: ApplicationViewModel[];
   stateMachine: RecruitmentStateMachine;
   emptyMessage: string;
-  onOpenDetail(candidateId: string): void;
-  onOpenCommunication(candidateId: string): void;
-  onTransition(candidateId: string, payload: CandidateTransitionPayload): Promise<unknown> | void;
+  onOpenDetail(applicationId: string): void;
+  onOpenCommunication(applicationId: string): void;
+  onTransition(applicationId: string, payload: CandidateTransitionPayload): Promise<unknown> | void;
 }
 
 interface PendingNoteAction {
-  candidateId: string;
+  applicationId: string;
   action: HumanActionDefinition;
 }
 
@@ -27,7 +27,7 @@ export function CandidateTable({
   title,
   count,
   description,
-  candidates,
+  applications,
   stateMachine,
   emptyMessage,
   onOpenDetail,
@@ -39,25 +39,25 @@ export function CandidateTable({
   const [noteDraft, setNoteDraft] = useState("");
   const [submittingKey, setSubmittingKey] = useState<string>();
 
-  const sortedCandidates = useMemo(
+  const sortedApplications = useMemo(
     () =>
-      [...candidates].sort((left, right) => {
+      [...applications].sort((left, right) => {
         if (left.humanRequired !== right.humanRequired) {
           return left.humanRequired ? -1 : 1;
         }
-        if (right.candidate.matchScore !== left.candidate.matchScore) {
-          return right.candidate.matchScore - left.candidate.matchScore;
+        if (right.application.matchScore !== left.application.matchScore) {
+          return right.application.matchScore - left.application.matchScore;
         }
-        return left.candidate.name.localeCompare(right.candidate.name);
+        return left.application.person.name.localeCompare(right.application.person.name);
       }),
-    [candidates],
+    [applications],
   );
 
-  const submitAction = async (candidateId: string, action: HumanActionDefinition, note?: string) => {
-    const key = `${candidateId}:${action.toStatus}:${action.label}`;
+  const submitAction = async (applicationId: string, action: HumanActionDefinition, note?: string) => {
+    const key = `${applicationId}:${action.toStatus}:${action.label}`;
     setSubmittingKey(key);
     try {
-      await onTransition(candidateId, {
+      await onTransition(applicationId, {
         actor: "recruiter",
         toStatus: action.toStatus,
         trigger: action.label,
@@ -84,7 +84,7 @@ export function CandidateTable({
         </div>
       </header>
 
-      {sortedCandidates.length ? (
+      {sortedApplications.length ? (
         <div className="candidate-table">
           <div className="candidate-table__header">
             <span>{copy("Name", "姓名")}</span>
@@ -97,7 +97,7 @@ export function CandidateTable({
             <span>{copy("Actions", "操作")}</span>
           </div>
 
-          {sortedCandidates.map((record) => {
+          {sortedApplications.map((record) => {
             const currentNode = record.currentNode;
             const actions =
               currentNode?.executionConfig?.mode === "human_required"
@@ -106,14 +106,14 @@ export function CandidateTable({
 
             return (
               <div
-                key={record.candidate.id}
+                key={record.application.id}
                 className="candidate-table__row"
                 data-human-required={record.humanRequired ? "true" : undefined}
               >
                 <div className="candidate-table__cell candidate-table__cell--identity">
-                  <strong>{record.candidate.name}</strong>
+                  <strong>{record.application.person.name}</strong>
                   <span className="candidate-table__meta">
-                    {record.candidate.platform} · {record.candidate.location}
+                    {record.application.platform} · {record.application.person.location}
                   </span>
                   {record.latestActivityAt ? (
                     <span className="candidate-table__meta">
@@ -122,15 +122,15 @@ export function CandidateTable({
                   ) : null}
                 </div>
                 <div className="candidate-table__cell">
-                  <span>{record.candidate.title}</span>
+                  <span>{record.application.person.title}</span>
                   <span className="candidate-table__meta">
-                    {copy("Match", "匹配度")} {Math.round(record.candidate.matchScore)}
+                    {copy("Match", "匹配度")} {Math.round(record.application.matchScore)}
                   </span>
                 </div>
                 <div className="candidate-table__cell">
-                  <span>{record.candidate.jdTitle}</span>
-                  {record.candidate.tags.length ? (
-                    <span className="candidate-table__meta">{record.candidate.tags.slice(0, 2).join(" / ")}</span>
+                  <span>{record.application.jobDescription.title}</span>
+                  {record.application.person.tags.length ? (
+                    <span className="candidate-table__meta">{record.application.person.tags.slice(0, 2).join(" / ")}</span>
                   ) : null}
                 </div>
                 <div className="candidate-table__cell">
@@ -151,7 +151,7 @@ export function CandidateTable({
                 <div className="candidate-table__cell candidate-table__cell--actions">
                   <div className="candidate-table__actions">
                     {actions.map((action) => {
-                      const actionKey = `${record.candidate.id}:${action.toStatus}:${action.label}`;
+                      const actionKey = `${record.application.id}:${action.toStatus}:${action.label}`;
                       return (
                         <button
                           key={actionKey}
@@ -161,11 +161,11 @@ export function CandidateTable({
                           disabled={submittingKey === actionKey}
                           onClick={() => {
                             if (action.requiresNote) {
-                              setPendingNoteAction({ candidateId: record.candidate.id, action });
+                              setPendingNoteAction({ applicationId: record.application.id, action });
                               setNoteDraft("");
                               return;
                             }
-                            void submitAction(record.candidate.id, action);
+                            void submitAction(record.application.id, action);
                           }}
                         >
                           {action.label}
@@ -175,20 +175,20 @@ export function CandidateTable({
                     <button
                       type="button"
                       className="candidate-table__detail"
-                      onClick={() => onOpenDetail(record.candidate.id)}
+                      onClick={() => onOpenDetail(record.application.id)}
                     >
                       {copy("Details", "详情")}
                     </button>
                     <button
                       type="button"
                       className="candidate-table__detail"
-                      onClick={() => onOpenCommunication(record.candidate.id)}
+                      onClick={() => onOpenCommunication(record.application.id)}
                     >
                       {copy("Open conversation", "打开沟通")}
                     </button>
                   </div>
 
-                  {pendingNoteAction?.candidateId === record.candidate.id ? (
+                  {pendingNoteAction?.applicationId === record.application.id ? (
                     <div className="candidate-table__note-popover">
                       <div className="candidate-table__note-header">
                         <strong>{pendingNoteAction.action.label}</strong>
@@ -218,7 +218,7 @@ export function CandidateTable({
                           className="candidate-table__action"
                           data-style={pendingNoteAction.action.style}
                           disabled={!noteDraft.trim() || submittingKey != null}
-                          onClick={() => void submitAction(record.candidate.id, pendingNoteAction.action, noteDraft)}
+                          onClick={() => void submitAction(record.application.id, pendingNoteAction.action, noteDraft)}
                         >
                           {copy("Confirm", "确认")}
                         </button>

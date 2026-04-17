@@ -190,8 +190,8 @@ class ApiPlaybookRuntimeTests(unittest.TestCase):
     def test_agent_queue_and_run(self) -> None:
         dashboard = self.client.get("/api/dashboard")
         self.assertEqual(dashboard.status_code, 200)
-        candidate_id = dashboard.json()["candidates"][0]["id"]
-        first_row = dashboard.json()["candidates"][0]
+        candidate_id = dashboard.json()["applications"][0]["id"]
+        first_row = dashboard.json()["applications"][0]
         self.assertEqual(first_row["applicationId"], candidate_id)
         self.assertIn("personId", first_row)
         self.assertIn("jobDescriptionId", first_row)
@@ -201,7 +201,7 @@ class ApiPlaybookRuntimeTests(unittest.TestCase):
             json={
                 "task_type": "candidate_probe",
                 "priority": 150,
-                "candidate_id": candidate_id,
+                "application_id": candidate_id,
                 "payload": {"jd_criteria": "Python"},
             },
         )
@@ -221,7 +221,7 @@ class ApiPlaybookRuntimeTests(unittest.TestCase):
 
         request_resume = self.client.post(
             "/api/agent/tasks",
-            json={"task_type": "resume_collection", "priority": 300, "candidate_id": candidate_id},
+            json={"task_type": "resume_collection", "priority": 300, "application_id": candidate_id},
         )
         self.assertEqual(request_resume.status_code, 200)
         self.assertGreaterEqual(request_resume.json()["queue_depth"], 2)
@@ -270,7 +270,7 @@ class ApiPlaybookRuntimeTests(unittest.TestCase):
         )
 
         dashboard = self.client.get("/api/dashboard")
-        row = dashboard.json()["candidates"][0]
+        row = dashboard.json()["applications"][0]
         candidate_id = row["id"]
         person_id = row["personId"]
         queued = self.client.post(
@@ -278,7 +278,7 @@ class ApiPlaybookRuntimeTests(unittest.TestCase):
             json={
                 "task_type": "candidate_probe",
                 "priority": 200,
-                "candidate_id": candidate_id,
+                "application_id": candidate_id,
                 "payload": {"jd_criteria": "Architecture"},
             },
         )
@@ -375,7 +375,7 @@ class ApiPlaybookRuntimeTests(unittest.TestCase):
             json={
                 "task_type": "candidate_outreach",
                 "priority": 220,
-                "candidate_id": self.default_candidate_id,
+                "application_id": self.default_candidate_id,
                 "payload": {"message": "你好，我们想进一步聊聊后端 owner 经验。"},
             },
         )
@@ -446,7 +446,7 @@ class ApiPlaybookRuntimeTests(unittest.TestCase):
         self.assertEqual(created_skill.status_code, 201)
 
         dashboard = self.client.get("/api/dashboard")
-        row = dashboard.json()["candidates"][0]
+        row = dashboard.json()["applications"][0]
         candidate_id = row["id"]
         person_id = row["personId"]
 
@@ -455,7 +455,7 @@ class ApiPlaybookRuntimeTests(unittest.TestCase):
             json={
                 "task_type": "candidate_probe",
                 "priority": 240,
-                "candidate_id": candidate_id,
+                "application_id": candidate_id,
                 "payload": {"jd_criteria": "Distributed systems"},
             },
         )
@@ -513,7 +513,7 @@ class ApiPlaybookRuntimeTests(unittest.TestCase):
         )
 
         dashboard = self.client.get("/api/dashboard")
-        row = dashboard.json()["candidates"][0]
+        row = dashboard.json()["applications"][0]
         candidate_id = row["id"]
         person_id = row["personId"]
 
@@ -522,7 +522,7 @@ class ApiPlaybookRuntimeTests(unittest.TestCase):
             json={
                 "task_type": "candidate_probe",
                 "priority": 220,
-                "candidate_id": candidate_id,
+                "application_id": candidate_id,
                 "payload": {"jd_criteria": "Runtime context"},
             },
         )
@@ -598,7 +598,7 @@ class ApiPlaybookRuntimeTests(unittest.TestCase):
         self.assertEqual(update_profile.status_code, 200)
 
         dashboard = self.client.get("/api/dashboard")
-        row = dashboard.json()["candidates"][0]
+        row = dashboard.json()["applications"][0]
         candidate_id = row["id"]
         person_id = row["personId"]
         self.assertEqual(self.client.get(f"/api/candidate-persons/{person_id}/memory").status_code, 200)
@@ -619,7 +619,7 @@ class ApiPlaybookRuntimeTests(unittest.TestCase):
             json={
                 "task_type": "candidate_outreach",
                 "priority": 210,
-                "candidate_id": candidate_id,
+                "application_id": candidate_id,
                 "payload": {"message": "你好，想继续和你沟通岗位细节。"},
             },
         )
@@ -664,7 +664,7 @@ class ApiPlaybookRuntimeTests(unittest.TestCase):
         )
 
         dashboard = self.client.get("/api/dashboard")
-        row = dashboard.json()["candidates"][0]
+        row = dashboard.json()["applications"][0]
         candidate_id = row["id"]
         person_id = row["personId"]
 
@@ -673,7 +673,7 @@ class ApiPlaybookRuntimeTests(unittest.TestCase):
             json={
                 "task_type": "candidate_probe",
                 "priority": 240,
-                "candidate_id": candidate_id,
+                "application_id": candidate_id,
                 "payload": {"jd_criteria": "Distributed systems"},
             },
         )
@@ -731,7 +731,7 @@ class ApiPlaybookRuntimeTests(unittest.TestCase):
         skill_id = created_skill.json()["id"]
 
         dashboard = self.client.get("/api/dashboard")
-        row = dashboard.json()["candidates"][0]
+        row = dashboard.json()["applications"][0]
         candidate_id = row["id"]
 
         queued = self.client.post(
@@ -739,7 +739,7 @@ class ApiPlaybookRuntimeTests(unittest.TestCase):
             json={
                 "task_type": "candidate_probe",
                 "priority": 240,
-                "candidate_id": candidate_id,
+                "application_id": candidate_id,
                 "adaptive_stage": "candidate_probe",
                 "payload": {"jd_criteria": "Distributed systems"},
             },
@@ -777,13 +777,13 @@ class ApiPlaybookRuntimeTests(unittest.TestCase):
         )
 
         dashboard = self.client.get("/api/dashboard")
-        candidate_id = dashboard.json()["candidates"][0]["id"]
+        candidate_id = dashboard.json()["applications"][0]["id"]
         queued = self.client.post(
             "/api/agent/tasks",
             json={
                 "task_type": "candidate_probe",
                 "priority": 210,
-                "candidate_id": candidate_id,
+                "application_id": candidate_id,
                 "payload": {"jd_criteria": "Resume review"},
             },
         )
@@ -882,7 +882,7 @@ class ApiPlaybookRuntimeTests(unittest.TestCase):
             json={
                 "task_type": "candidate_probe",
                 "priority": 180,
-                "candidate_id": target_candidate["id"],
+                "application_id": target_candidate["id"],
                 "payload": {"jd_criteria": "Global limit"},
             },
         )
@@ -913,13 +913,13 @@ class ApiPlaybookRuntimeTests(unittest.TestCase):
         )
 
         dashboard = self.client.get("/api/dashboard")
-        candidate_id = dashboard.json()["candidates"][0]["id"]
+        candidate_id = dashboard.json()["applications"][0]["id"]
         queued = self.client.post(
             "/api/agent/tasks",
             json={
                 "task_type": "candidate_probe",
                 "priority": 205,
-                "candidate_id": candidate_id,
+                "application_id": candidate_id,
                 "payload": {"jd_criteria": "Resume review"},
             },
         )
@@ -973,7 +973,7 @@ class ApiPlaybookRuntimeTests(unittest.TestCase):
             json={
                 "task_type": "candidate_probe",
                 "priority": 230,
-                "candidate_id": candidate["id"],
+                "application_id": candidate["id"],
                 "payload": {"jd_criteria": "AI auto node"},
             },
         )
@@ -1008,7 +1008,7 @@ class ApiPlaybookRuntimeTests(unittest.TestCase):
             json={
                 "task_type": "candidate_outreach",
                 "priority": 240,
-                "candidate_id": candidate["id"],
+                "application_id": candidate["id"],
                 "payload": {"jd_criteria": "locked human review"},
             },
         )
@@ -1070,7 +1070,7 @@ class ApiPlaybookRuntimeTests(unittest.TestCase):
             json={
                 "task_type": "candidate_scoring",
                 "priority": 250,
-                "candidate_id": candidate["id"],
+                "application_id": candidate["id"],
                 "payload": {"jd_criteria": "offline scoring"},
             },
         )
@@ -1141,7 +1141,7 @@ class ApiPlaybookRuntimeTests(unittest.TestCase):
             json={
                 "task_type": "candidate_outreach",
                 "priority": 235,
-                "candidate_id": candidate["id"],
+                "application_id": candidate["id"],
                 "payload": {
                     "retryContext": {
                         "sourceStatus": "outreach_sent",
@@ -1219,7 +1219,7 @@ class ApiPlaybookRuntimeTests(unittest.TestCase):
             json={
                 "task_type": "candidate_outreach",
                 "priority": 230,
-                "candidate_id": candidate["id"],
+                "application_id": candidate["id"],
                 "payload": {},
             },
         )
@@ -1289,7 +1289,7 @@ class ApiPlaybookRuntimeTests(unittest.TestCase):
             json={
                 "task_type": "candidate_outreach",
                 "priority": 225,
-                "candidate_id": candidate["id"],
+                "application_id": candidate["id"],
                 "payload": {},
             },
         )

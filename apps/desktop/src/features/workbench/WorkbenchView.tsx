@@ -32,14 +32,14 @@ interface WorkbenchViewProps {
   graphs?: ExecutionGraphProjectionRecord[];
   runningAction?: boolean;
   syncingAction?: boolean;
-  onOpenCommunications?(filter?: string, candidateId?: string): void;
+  onOpenCommunications?(filter?: string, applicationId?: string): void;
   onOpenJdWorkspace?(): void;
   onOpenAiReview?(): void;
 }
 
-type CandidateLane = "review" | "followUp" | "resume" | "interview" | "decision" | "blocked" | "active";
+type ApplicationLane = "review" | "followUp" | "resume" | "interview" | "decision" | "blocked" | "active";
 
-const laneOrder: Record<CandidateLane, number> = {
+const laneOrder: Record<ApplicationLane, number> = {
   review: 0,
   followUp: 1,
   resume: 2,
@@ -53,8 +53,8 @@ function normalize(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9\u4e00-\u9fff]+/gi, "");
 }
 
-function classifyCandidate(candidate: DashboardSummary["candidates"][number]): CandidateLane {
-  const status = normalize(`${candidate.currentStatus} ${candidate.stageKey} ${candidate.nextAction} ${candidate.summary}`);
+function classifyApplicationLane(application: DashboardSummary["applications"][number]): ApplicationLane {
+  const status = normalize(`${application.currentStatus} ${application.stageKey} ${application.nextAction} ${application.summary}`);
   if (/(rejected|cooldown|blocked|archived)/.test(status)) {
     return "blocked";
   }
@@ -64,7 +64,7 @@ function classifyCandidate(candidate: DashboardSummary["candidates"][number]): C
   if (/(interview|schedule|scheduled|onsite|screeningcall|phoneinterview)/.test(status)) {
     return "interview";
   }
-  if (!candidate.resumeAvailable || /(resume_requested|resume_pending|waiting_resume|needresume)/.test(status)) {
+  if (!application.resumeAvailable || /(resume_requested|resume_pending|waiting_resume|needresume)/.test(status)) {
     return "resume";
   }
   if (/(contact_required|contact_needed|waiting_reply|pending_communication|communicating|outreach|followup)/.test(status)) {
@@ -76,7 +76,7 @@ function classifyCandidate(candidate: DashboardSummary["candidates"][number]): C
   return "active";
 }
 
-function candidateTone(lane: CandidateLane): "positive" | "neutral" | "warning" | "critical" {
+function applicationLaneTone(lane: ApplicationLane): "positive" | "neutral" | "warning" | "critical" {
   switch (lane) {
     case "blocked":
       return "critical";
@@ -92,7 +92,7 @@ function candidateTone(lane: CandidateLane): "positive" | "neutral" | "warning" 
   }
 }
 
-function laneLabel(lane: CandidateLane, copy: (en: string, zh: string) => string): string {
+function applicationLaneLabel(lane: ApplicationLane, copy: (en: string, zh: string) => string): string {
   switch (lane) {
     case "review":
       return copy("Needs review", "待审查");
@@ -242,46 +242,46 @@ export function WorkbenchView({
   onOpenAiReview,
 }: WorkbenchViewProps): JSX.Element {
   const { copy } = useI18n();
-  const [statusFilter, setStatusFilter] = useState<CandidateLane | "all">("all");
-  const [selectedCandidateId, setSelectedCandidateId] = useState<string | undefined>(summary.candidates[0]?.id);
+  const [statusFilter, setStatusFilter] = useState<ApplicationLane | "all">("all");
+  const [selectedApplicationId, setSelectedApplicationId] = useState<string | undefined>(summary.applications[0]?.id);
 
-  const rankedCandidates = useMemo(() => {
-    return [...summary.candidates].sort((left, right) => {
-      const laneDiff = laneOrder[classifyCandidate(left)] - laneOrder[classifyCandidate(right)];
+  const rankedApplications = useMemo(() => {
+    return [...summary.applications].sort((left, right) => {
+      const laneDiff = laneOrder[classifyApplicationLane(left)] - laneOrder[classifyApplicationLane(right)];
       if (laneDiff !== 0) {
         return laneDiff;
       }
       if (right.matchScore !== left.matchScore) {
         return right.matchScore - left.matchScore;
       }
-      return left.name.localeCompare(right.name);
+      return left.person.name.localeCompare(right.person.name);
     });
-  }, [summary.candidates]);
+  }, [summary.applications]);
 
-  const filteredCandidates = useMemo(() => {
+  const filteredApplications = useMemo(() => {
     if (statusFilter === "all") {
-      return rankedCandidates;
+      return rankedApplications;
     }
-    return rankedCandidates.filter((candidate) => classifyCandidate(candidate) === statusFilter);
-  }, [rankedCandidates, statusFilter]);
+    return rankedApplications.filter((application) => classifyApplicationLane(application) === statusFilter);
+  }, [rankedApplications, statusFilter]);
 
   useEffect(() => {
-    if (!filteredCandidates.length) {
-      setSelectedCandidateId(undefined);
+    if (!filteredApplications.length) {
+      setSelectedApplicationId(undefined);
       return;
     }
-    if (!selectedCandidateId || !filteredCandidates.some((candidate) => candidate.id === selectedCandidateId)) {
-      setSelectedCandidateId(filteredCandidates[0].id);
+    if (!selectedApplicationId || !filteredApplications.some((application) => application.id === selectedApplicationId)) {
+      setSelectedApplicationId(filteredApplications[0].id);
     }
-  }, [filteredCandidates, selectedCandidateId]);
+  }, [filteredApplications, selectedApplicationId]);
 
-  const selectedCandidate = filteredCandidates.find((candidate) => candidate.id === selectedCandidateId) ?? null;
-  const selectedLane = selectedCandidate ? classifyCandidate(selectedCandidate) : null;
+  const selectedApplication = filteredApplications.find((application) => application.id === selectedApplicationId) ?? null;
+  const selectedLane = selectedApplication ? classifyApplicationLane(selectedApplication) : null;
 
   const queueCounts = useMemo(() => {
-    return summary.candidates.reduce<Record<CandidateLane, number>>(
-      (acc, candidate) => {
-        acc[classifyCandidate(candidate)] += 1;
+    return summary.applications.reduce<Record<ApplicationLane, number>>(
+      (acc, application) => {
+        acc[classifyApplicationLane(application)] += 1;
         return acc;
       },
       {
@@ -294,7 +294,7 @@ export function WorkbenchView({
         active: 0,
       },
     );
-  }, [summary.candidates]);
+  }, [summary.applications]);
 
   const activityTimeline = useMemo(
     () =>
@@ -431,49 +431,49 @@ export function WorkbenchView({
                     background: statusFilter === lane ? "var(--brand-primary-soft)" : "var(--bg-card)",
                   }}
                 >
-                  {lane === "all" ? copy("All", "全部") : laneLabel(lane, copy)}
+                  {lane === "all" ? copy("All", "全部") : applicationLaneLabel(lane, copy)}
                 </button>
               ))}
             </div>
           </div>
 
           <div style={queueGridStyle}>
-            {filteredCandidates.map((candidate) => {
-              const lane = classifyCandidate(candidate);
+            {filteredApplications.map((application) => {
+              const lane = classifyApplicationLane(application);
               return (
                 <button
-                  key={candidate.id}
+                  key={application.id}
                   type="button"
-                  onClick={() => setSelectedCandidateId(candidate.id)}
+                  onClick={() => setSelectedApplicationId(application.id)}
                   style={{
                     ...queueButtonStyle,
-                    borderColor: candidate.id === selectedCandidateId ? "var(--brand-primary)" : "var(--border-line)",
-                    background: candidate.id === selectedCandidateId ? "var(--brand-primary-soft)" : "var(--bg-subtle)",
+                    borderColor: application.id === selectedApplicationId ? "var(--brand-primary)" : "var(--border-line)",
+                    background: application.id === selectedApplicationId ? "var(--brand-primary-soft)" : "var(--bg-subtle)",
                   }}
                 >
                   <div style={{ display: "flex", justifyContent: "space-between", gap: "var(--space-3)", flexWrap: "wrap", alignItems: "start" }}>
                     <div style={{ display: "grid", gap: "var(--space-1)" }}>
-                      <strong style={{ fontSize: "var(--font-size-base)" }}>{candidate.name}</strong>
+                      <strong style={{ fontSize: "var(--font-size-base)" }}>{application.person.name}</strong>
                       <div style={{ color: "var(--text-secondary)", fontSize: "var(--font-size-sm)", lineHeight: "var(--line-height-base)" }}>
-                        {candidate.title} · {candidate.jdTitle} · {candidate.location}
+                        {application.person.title} · {application.jobDescription.title} · {application.person.location}
                       </div>
                     </div>
                     <div style={{ display: "flex", gap: "var(--space-2)", flexWrap: "wrap" }}>
-                      <StatusBadge tone={candidateTone(lane)}>{laneLabel(lane, copy)}</StatusBadge>
-                      <StatusBadge tone="neutral">{copy(`score ${candidate.matchScore}`, `分数 ${candidate.matchScore}`)}</StatusBadge>
+                      <StatusBadge tone={applicationLaneTone(lane)}>{applicationLaneLabel(lane, copy)}</StatusBadge>
+                      <StatusBadge tone="neutral">{copy(`score ${application.matchScore}`, `分数 ${application.matchScore}`)}</StatusBadge>
                     </div>
                   </div>
                   <div style={{ color: "var(--text-regular)", fontSize: "var(--font-size-sm)", lineHeight: "var(--line-height-base)" }}>
-                    {candidate.nextAction}
+                    {application.nextAction}
                   </div>
                   <div style={{ display: "flex", gap: "var(--space-2)", flexWrap: "wrap" }}>
-                    <StatusBadge tone={candidate.stateSnapshot?.contactAcquired ? "positive" : "warning"}>
-                      {candidate.stateSnapshot?.contactAcquired ? copy("Contact ready", "联系方式已到位") : copy("Needs contact", "需要联系方式")}
+                    <StatusBadge tone={application.stateSnapshot?.contactAcquired ? "positive" : "warning"}>
+                      {application.stateSnapshot?.contactAcquired ? copy("Contact ready", "联系方式已到位") : copy("Needs contact", "需要联系方式")}
                     </StatusBadge>
-                    <StatusBadge tone={candidate.resumeAvailable ? "positive" : "warning"}>
-                      {candidate.resumeAvailable ? copy("Resume ready", "简历已到位") : copy("Resume pending", "简历待补")}
+                    <StatusBadge tone={application.resumeAvailable ? "positive" : "warning"}>
+                      {application.resumeAvailable ? copy("Resume ready", "简历已到位") : copy("Resume pending", "简历待补")}
                     </StatusBadge>
-                    {candidate.tags.slice(0, 3).map((tag) => (
+                    {application.person.tags.slice(0, 3).map((tag) => (
                       <StatusBadge key={tag} tone="neutral">
                         {tag}
                       </StatusBadge>
@@ -482,7 +482,7 @@ export function WorkbenchView({
                 </button>
               );
             })}
-            {!filteredCandidates.length ? <div style={{ color: "var(--text-secondary)", fontSize: "var(--font-size-sm)" }}>{copy("No candidates match the current filter.", "当前筛选没有候选人。")}</div> : null}
+            {!filteredApplications.length ? <div style={{ color: "var(--text-secondary)", fontSize: "var(--font-size-sm)" }}>{copy("No candidates match the current filter.", "当前筛选没有候选人。")}</div> : null}
           </div>
         </section>
 
@@ -492,21 +492,21 @@ export function WorkbenchView({
               <div style={{ color: "var(--text-secondary)", fontSize: "var(--font-size-xs)", letterSpacing: "0.14em", textTransform: "uppercase" }}>
                 {copy("Selected candidate", "当前候选人")}
               </div>
-              <h2 style={titleStyle}>{selectedCandidate?.name ?? copy("Pick a candidate", "请选择候选人")}</h2>
+              <h2 style={titleStyle}>{selectedApplication?.person.name ?? copy("Pick a candidate", "请选择候选人")}</h2>
             </div>
-            {selectedCandidate ? <StatusBadge tone={candidateTone(selectedLane ?? "active")}>{laneLabel(selectedLane ?? "active", copy)}</StatusBadge> : null}
+            {selectedApplication ? <StatusBadge tone={applicationLaneTone(selectedLane ?? "active")}>{applicationLaneLabel(selectedLane ?? "active", copy)}</StatusBadge> : null}
           </div>
 
-          {selectedCandidate ? (
+          {selectedApplication ? (
             <div style={{ display: "grid", gap: "var(--space-4)" }}>
               <div style={{ display: "flex", gap: "var(--space-2)", flexWrap: "wrap" }}>
-                <StatusBadge tone="neutral">{selectedCandidate.jdTitle}</StatusBadge>
-                <StatusBadge tone="neutral">{selectedCandidate.location}</StatusBadge>
-                <StatusBadge tone={selectedCandidate.resumeAvailable ? "positive" : "warning"}>
-                  {selectedCandidate.resumeAvailable ? copy("Resume ready", "简历已到位") : copy("Resume pending", "简历待补")}
+                <StatusBadge tone="neutral">{selectedApplication.jobDescription.title}</StatusBadge>
+                <StatusBadge tone="neutral">{selectedApplication.person.location}</StatusBadge>
+                <StatusBadge tone={selectedApplication.resumeAvailable ? "positive" : "warning"}>
+                  {selectedApplication.resumeAvailable ? copy("Resume ready", "简历已到位") : copy("Resume pending", "简历待补")}
                 </StatusBadge>
-                <StatusBadge tone={selectedCandidate.stateSnapshot?.contactAcquired ? "positive" : "warning"}>
-                  {selectedCandidate.stateSnapshot?.contactAcquired ? copy("Contact ready", "联系方式已到位") : copy("Contact missing", "联系方式缺失")}
+                <StatusBadge tone={selectedApplication.stateSnapshot?.contactAcquired ? "positive" : "warning"}>
+                  {selectedApplication.stateSnapshot?.contactAcquired ? copy("Contact ready", "联系方式已到位") : copy("Contact missing", "联系方式缺失")}
                 </StatusBadge>
               </div>
 
@@ -514,7 +514,7 @@ export function WorkbenchView({
                 <div style={{ color: "var(--text-secondary)", fontSize: "var(--font-size-sm)" }}>
                   {copy("Current next step", "当前下一步")}
                 </div>
-                <div style={{ fontSize: "var(--font-size-base)", lineHeight: "var(--line-height-base)" }}>{selectedCandidate.nextAction}</div>
+                <div style={{ fontSize: "var(--font-size-base)", lineHeight: "var(--line-height-base)" }}>{selectedApplication.nextAction}</div>
               </div>
 
               <div style={{ display: "grid", gap: "var(--space-2)" }}>
@@ -522,14 +522,14 @@ export function WorkbenchView({
                   {copy("Candidate summary", "候选人摘要")}
                 </div>
                 <div style={{ color: "var(--text-regular)", fontSize: "var(--font-size-sm)", lineHeight: "var(--line-height-base)" }}>
-                  {selectedCandidate.summary}
+                  {selectedApplication.summary}
                 </div>
               </div>
 
               <div style={{ display: "grid", gap: "var(--space-2)" }}>
                 <div style={{ color: "var(--text-secondary)", fontSize: "var(--font-size-sm)" }}>{copy("Signals", "信号")}</div>
                 <div style={{ display: "flex", gap: "var(--space-2)", flexWrap: "wrap" }}>
-                  {selectedCandidate.tags.map((tag) => (
+                  {selectedApplication.person.tags.map((tag) => (
                     <StatusBadge key={tag} tone="neutral">
                       {tag}
                     </StatusBadge>
@@ -542,7 +542,7 @@ export function WorkbenchView({
                   {copy("Quick actions", "快捷操作")}
                 </div>
                 <div style={{ display: "grid", gap: "var(--space-2)" }}>
-                  <button type="button" style={primaryButtonStyle} onClick={() => onOpenCommunications?.("candidate", selectedCandidate.id)}>
+                  <button type="button" style={primaryButtonStyle} onClick={() => onOpenCommunications?.("candidate", selectedApplication.id)}>
                     {copy("Open workspace", "打开候选人工作台")}
                   </button>
                   <button type="button" style={actionButtonStyle} onClick={onOpenJdWorkspace}>

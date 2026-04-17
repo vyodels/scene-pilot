@@ -46,14 +46,14 @@ from scene_pilot.scheduler.scheduler import ScheduledOutcome, SerialScheduler
 from scene_pilot.schemas import CandidateStateTransitionRequest, TaskCompileRequest
 from scene_pilot.services.context_assembler import ContextAssemblerService
 from scene_pilot.services.candidate_progression_selector import (
-    CandidateProgressionTarget,
-    select_next_candidate_progression,
+    ApplicationProgressionTarget,
+    select_next_application_progression,
 )
 from scene_pilot.services.candidate_identity import resolve_candidate_by_contact_info
 from scene_pilot.services.candidate_waiting_retry_selector import (
-    CandidateWaitingRetryPolicy,
-    CandidateWaitingRetryTarget,
-    select_waiting_candidate_retry_action,
+    ApplicationWaitingRetryPolicy,
+    ApplicationWaitingRetryTarget,
+    select_waiting_application_retry_action,
 )
 from scene_pilot.services.events import EventStreamService
 from scene_pilot.services.feature_flags import FeatureFlagService
@@ -293,7 +293,7 @@ class AgentControlService:
                 if str(node.get("id") or "").strip()
             }
             open_application_ids = queue_repo.open_candidate_ids_for_task_types(self._autonomy_candidate_progression_task_types())
-            targets: list[CandidateProgressionTarget] = []
+            targets: list[ApplicationProgressionTarget] = []
             application_names: dict[str, str] = {}
             application_repo = CandidateApplicationRepository(session)
             candidate_repo = CandidateRepository(session)
@@ -306,8 +306,8 @@ class AgentControlService:
                 person = candidate_repo.resolve(application.person_id)
                 application_names[application.id] = str(getattr(person, "name", "") or "")
                 targets.append(
-                    CandidateProgressionTarget(
-                        candidate_id=application.id,
+                    ApplicationProgressionTarget(
+                        application_id=application.id,
                         current_status=current_status,
                         node_id=str(node.get("id") or current_status),
                         node_label=str(node.get("label") or current_status),
@@ -327,12 +327,12 @@ class AgentControlService:
                         has_open_task=application.id in open_application_ids,
                     )
                 )
-            selection = select_next_candidate_progression(targets)
+            selection = select_next_application_progression(targets)
             if selection is None:
                 return None
-            selected_application_id = selection.candidate_id
+            selected_application_id = selection.application_id
             selected_status = selection.current_status
-            application_name = application_names.get(selection.candidate_id, "")
+            application_name = application_names.get(selection.application_id, "")
 
         if selection is None:
             return None
@@ -349,8 +349,7 @@ class AgentControlService:
                 "autonomy_source": "candidate_priority_queue",
                 "current_status": selected_status,
                 "selection": {
-                    "candidateId": selection.candidate_id,
-                    "applicationId": selection.candidate_id,
+                    "applicationId": selection.application_id,
                     "selectedTaskType": selection.selected_task_type,
                     "scoreBreakdown": score_breakdown,
                     "reason": selection.reason,
@@ -412,7 +411,7 @@ class AgentControlService:
             return None
 
         selected_action = None
-        selected_candidate_name = ""
+        selected_person_name = ""
         selected_policy: dict[str, int] | None = None
         with self.session_factory() as session:
             queue_repo = TaskQueueRepository(session)
@@ -438,8 +437,8 @@ class AgentControlService:
                 return None
 
             open_application_ids = queue_repo.open_candidate_ids_for_task_types(self._autonomy_candidate_progression_task_types())
-            targets: list[CandidateWaitingRetryTarget] = []
-            candidate_names: dict[str, str] = {}
+            targets: list[ApplicationWaitingRetryTarget] = []
+            person_names: dict[str, str] = {}
             for application in application_repo.by_current_statuses(waiting_status_ids, limit=500):
                 current_status = str(application.current_status or "").strip()
                 node = node_by_id.get(current_status)
@@ -447,19 +446,19 @@ class AgentControlService:
                 if node is None or retry_policy is None:
                     continue
                 person = candidate_repo.resolve(application.person_id)
-                candidate_names[application.id] = str(getattr(person, "name", "") or "")
+                person_names[application.id] = str(getattr(person, "name", "") or "")
                 retry_state = self._candidate_retry_state(application, current_status=current_status)
                 try:
                     retry_count = max(int(retry_state.get("retry_count") or 0), 0)
                 except (TypeError, ValueError):
                     retry_count = 0
                 targets.append(
-                    CandidateWaitingRetryTarget(
-                        candidate_id=application.id,
+                    ApplicationWaitingRetryTarget(
+                        application_id=application.id,
                         current_status=current_status,
                         node_id=str(node.get("id") or current_status),
                         node_label=str(node.get("label") or current_status),
-                        retry_policy=CandidateWaitingRetryPolicy(
+                        retry_policy=ApplicationWaitingRetryPolicy(
                             max_retries=int(retry_policy["maxRetries"]),
                             retry_after_hours=int(retry_policy["retryAfterHours"]),
                             close_after_hours=int(retry_policy["closeAfterHours"]),
@@ -475,14 +474,14 @@ class AgentControlService:
                     )
                 )
 
-            selected_action = select_waiting_candidate_retry_action(targets)
+            selected_action = select_waiting_application_retry_action(targets)
             if selected_action is None:
                 return None
 
-            selected_candidate_name = candidate_names.get(selected_action.candidate_id, "")
+            selected_person_name = person_names.get(selected_action.application_id, "")
             selected_policy = self._state_machine_retry_policy(node_by_id.get(selected_action.current_status))
             if selected_action.action_kind == "close":
-                application = application_repo.get(selected_action.candidate_id)
+                application = application_repo.get(selected_action.application_id)
                 if application is None:
                     return None
                 candidate = candidate_repo.resolve(application.person_id)
@@ -509,7 +508,7 @@ class AgentControlService:
                     ),
                 )
                 candidate = candidate_repo.resolve(transition_result.candidate_id) or candidate
-                application = application_repo.get(selected_action.candidate_id) or application
+                application = application_repo.get(selected_action.application_id) or application
                 self._set_candidate_retry_state(
                     application,
                     status="no_response",
@@ -531,8 +530,8 @@ class AgentControlService:
                 "info",
                 "autonomy",
                 "Closed waiting candidate into no_response after retry policy exhaustion.",
-                application_id=selected_action.candidate_id,
-                candidate_name=selected_candidate_name,
+                application_id=selected_action.application_id,
+                candidate_name=selected_person_name,
                 current_status=selected_action.current_status,
                 reason=selected_action.reason,
                 current_retry_count=selected_action.current_retry_count,
@@ -540,7 +539,7 @@ class AgentControlService:
             )
             return {
                 "action": "close_to_no_response",
-                "application_id": selected_action.candidate_id,
+                "application_id": selected_action.application_id,
                 "current_status": selected_action.current_status,
                 "reason": selected_action.reason,
             }
@@ -572,7 +571,7 @@ class AgentControlService:
         }
         queued_task = self.enqueue_task(
             task_type,
-            application_id=selected_action.candidate_id,
+            application_id=selected_action.application_id,
             payload=retry_payload,
             metadata=retry_metadata,
             priority=priority,
@@ -582,8 +581,8 @@ class AgentControlService:
             "info",
             "autonomy",
             "Queued waiting candidate retry task.",
-            application_id=selected_action.candidate_id,
-            candidate_name=selected_candidate_name,
+            application_id=selected_action.application_id,
+            candidate_name=selected_person_name,
             task_type=task_type,
             current_status=selected_action.current_status,
             reason=selected_action.reason,

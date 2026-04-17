@@ -5,19 +5,19 @@ from datetime import datetime, timezone
 
 
 @dataclass(frozen=True, slots=True)
-class CandidateWaitingRetryPolicy:
+class ApplicationWaitingRetryPolicy:
     max_retries: int
     retry_after_hours: int
     close_after_hours: int
 
 
 @dataclass(frozen=True, slots=True)
-class CandidateWaitingRetryTarget:
-    candidate_id: str
+class ApplicationWaitingRetryTarget:
+    application_id: str
     current_status: str
     node_id: str
     node_label: str
-    retry_policy: CandidateWaitingRetryPolicy
+    retry_policy: ApplicationWaitingRetryPolicy
     current_retry_count: int = 0
     is_terminal: bool = False
     is_soft_terminal: bool = False
@@ -29,8 +29,8 @@ class CandidateWaitingRetryTarget:
 
 
 @dataclass(frozen=True, slots=True)
-class CandidateWaitingRetryAction:
-    candidate_id: str
+class ApplicationWaitingRetryAction:
+    application_id: str
     current_status: str
     node_id: str
     node_label: str
@@ -51,7 +51,7 @@ def _normalize_datetime(value: datetime | None, *, now: datetime) -> datetime | 
     return value
 
 
-def map_waiting_candidate_retry_task_type(target: CandidateWaitingRetryTarget) -> str | None:
+def map_waiting_application_retry_task_type(target: ApplicationWaitingRetryTarget) -> str | None:
     if target.current_status in {
         "outreach_sent",
         "resume_requested",
@@ -64,12 +64,12 @@ def map_waiting_candidate_retry_task_type(target: CandidateWaitingRetryTarget) -
 
 
 def is_waiting_candidate_retry_eligible(
-    target: CandidateWaitingRetryTarget,
+    target: ApplicationWaitingRetryTarget,
     *,
     now: datetime | None = None,
 ) -> bool:
     current_time = now or datetime.now(timezone.utc)
-    if not target.candidate_id or not target.current_status or not target.node_id:
+    if not target.application_id or not target.current_status or not target.node_id:
         return False
     if target.is_terminal or target.is_soft_terminal or target.is_transient:
         return False
@@ -77,10 +77,10 @@ def is_waiting_candidate_retry_eligible(
         return False
     if target.retry_policy.max_retries < 0 or target.retry_policy.retry_after_hours <= 0 or target.retry_policy.close_after_hours <= 0:
         return False
-    return _hours_since_contact(target, now=current_time) >= 0 and map_waiting_candidate_retry_task_type(target) is not None
+    return _hours_since_contact(target, now=current_time) >= 0 and map_waiting_application_retry_task_type(target) is not None
 
 
-def _hours_since_contact(target: CandidateWaitingRetryTarget, *, now: datetime) -> float:
+def _hours_since_contact(target: ApplicationWaitingRetryTarget, *, now: datetime) -> float:
     reference = (
         _normalize_datetime(target.last_contacted_at, now=now)
         or _normalize_datetime(target.updated_at, now=now)
@@ -90,13 +90,13 @@ def _hours_since_contact(target: CandidateWaitingRetryTarget, *, now: datetime) 
     return max((now - reference).total_seconds() / 3600.0, 0.0)
 
 
-def select_waiting_candidate_retry_action(
-    targets: list[CandidateWaitingRetryTarget],
+def select_waiting_application_retry_action(
+    targets: list[ApplicationWaitingRetryTarget],
     *,
     now: datetime | None = None,
-) -> CandidateWaitingRetryAction | None:
+) -> ApplicationWaitingRetryAction | None:
     current_time = now or datetime.now(timezone.utc)
-    ranked: list[tuple[tuple[int, float, int, str], CandidateWaitingRetryAction]] = []
+    ranked: list[tuple[tuple[int, float, int, str], ApplicationWaitingRetryAction]] = []
 
     for target in targets:
         if not is_waiting_candidate_retry_eligible(target, now=current_time):
@@ -104,10 +104,10 @@ def select_waiting_candidate_retry_action(
 
         hours_since_contact = round(_hours_since_contact(target, now=current_time), 4)
         policy = target.retry_policy
-        action: CandidateWaitingRetryAction | None = None
+        action: ApplicationWaitingRetryAction | None = None
         if target.current_retry_count >= policy.max_retries and hours_since_contact >= float(policy.close_after_hours):
-            action = CandidateWaitingRetryAction(
-                candidate_id=target.candidate_id,
+            action = ApplicationWaitingRetryAction(
+                application_id=target.application_id,
                 current_status=target.current_status,
                 node_id=target.node_id,
                 node_label=target.node_label,
@@ -120,11 +120,11 @@ def select_waiting_candidate_retry_action(
                 reason="retry_limit_reached + close_window_elapsed",
             )
         elif target.current_retry_count < policy.max_retries and hours_since_contact >= float(policy.retry_after_hours):
-            task_type = map_waiting_candidate_retry_task_type(target)
+            task_type = map_waiting_application_retry_task_type(target)
             if task_type is None:
                 continue
-            action = CandidateWaitingRetryAction(
-                candidate_id=target.candidate_id,
+            action = ApplicationWaitingRetryAction(
+                application_id=target.application_id,
                 current_status=target.current_status,
                 node_id=target.node_id,
                 node_label=target.node_label,
@@ -146,7 +146,7 @@ def select_waiting_candidate_retry_action(
                     1 if action.action_kind == "close" else 0,
                     action.hours_since_contact,
                     action.current_retry_count,
-                    target.candidate_id,
+                    target.application_id,
                 ),
                 action,
             )

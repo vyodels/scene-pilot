@@ -2,14 +2,14 @@ import React, { useEffect, useMemo, useState } from "react";
 import type { CandidateTransitionPayload, RecruitmentStateMachine } from "@scene-pilot/shared";
 import { StatusBadge } from "../../components";
 import { useI18n } from "../../lib/i18n";
-import type { CandidateViewModel } from "./kanbanUtils";
+import type { ApplicationViewModel } from "./kanbanUtils";
 
 interface ManualStatusOverrideDrawerProps {
   open: boolean;
-  record: CandidateViewModel | null;
+  record: ApplicationViewModel | null;
   stateMachine: RecruitmentStateMachine;
   onClose(): void;
-  onSubmit(candidateId: string, payload: CandidateTransitionPayload): Promise<unknown> | void;
+  onSubmit(applicationId: string, payload: CandidateTransitionPayload): Promise<unknown> | void;
 }
 
 export function ManualStatusOverrideDrawer({
@@ -58,7 +58,7 @@ export function ManualStatusOverrideDrawer({
         <header className="drawer__header">
           <div>
             <div className="drawer__eyebrow">{copy("Manual override", "人工修改状态")}</div>
-            <h2 className="drawer__title">{record.candidate.name}</h2>
+            <h2 className="drawer__title">{record.application.person.name}</h2>
           </div>
           <button type="button" className="drawer__close" onClick={onClose}>
             ×
@@ -121,7 +121,7 @@ export function ManualStatusOverrideDrawer({
             onClick={async () => {
               setSubmitting(true);
               try {
-                await onSubmit(record.candidate.id, {
+                await onSubmit(record.application.id, {
                   actor: "recruiter_override",
                   toStatus: targetStatus,
                   trigger: "manual_override",

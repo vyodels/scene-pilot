@@ -76,7 +76,7 @@ interface AgentInboxViewProps {
   onApprove(id: string): Promise<void> | void;
   onReject(id: string): Promise<void> | void;
   onResolveInteraction(id: string, action: string, comment?: string): Promise<void> | void;
-  onOpenCandidate(candidateId: string): void;
+  onOpenApplication(applicationId: string): void;
   onOpenEvolution(section?: string, itemId?: string): void;
 }
 
@@ -250,7 +250,7 @@ export function AgentInboxView({
   onApprove,
   onReject,
   onResolveInteraction,
-  onOpenCandidate,
+  onOpenApplication,
   onOpenEvolution,
 }: AgentInboxViewProps): JSX.Element {
   const { copy } = useI18n();
@@ -535,7 +535,7 @@ export function AgentInboxView({
                   );
                 })}
                 {selected.interaction.candidateId ? (
-                  <button type="button" onClick={() => onOpenCandidate(selected.interaction.candidateId!)} style={buttonStyle}>
+                  <button type="button" onClick={() => onOpenApplication(selected.interaction.candidateId!)} style={buttonStyle}>
                     {copy("Open candidate", "打开候选人")}
                   </button>
                 ) : null}
@@ -562,7 +562,7 @@ export function AgentInboxView({
                   {copy("Review in strategy view", "在策略视图中审查")}
                 </button>
                 {selected.artifact.relatedCandidateId ? (
-                  <button type="button" onClick={() => onOpenCandidate(selected.artifact.relatedCandidateId!)} style={buttonStyle}>
+                  <button type="button" onClick={() => onOpenApplication(selected.artifact.relatedCandidateId!)} style={buttonStyle}>
                     {copy("Open candidate", "打开候选人")}
                   </button>
                 ) : null}
@@ -645,7 +645,7 @@ export function AgentInboxView({
                 <div>{copy("Status", "状态")}: {translateUiToken(selected.approval.status, copy)}</div>
               </div>
               {selected.approval.relatedCandidateId ? (
-                <button type="button" onClick={() => onOpenCandidate(selected.approval.relatedCandidateId!)} style={buttonStyle}>
+                <button type="button" onClick={() => onOpenApplication(selected.approval.relatedCandidateId!)} style={buttonStyle}>
                   {copy("Open candidate thread", "打开候选人线程")}
                 </button>
               ) : null}

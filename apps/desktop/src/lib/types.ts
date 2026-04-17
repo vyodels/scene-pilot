@@ -11,7 +11,23 @@ export type ProviderKind = "openai-compatible" | "anthropic";
 export type ApiTransport = "http" | "offline";
 export type HealthStatus = "healthy" | "warning" | "critical";
 export type ApprovalStatus = "pending" | "approved" | "rejected";
-export type CandidateStatus = string;
+export type ApplicationStatus = string;
+
+export interface PersonSummaryRecord {
+  personId?: string | null;
+  platformCandidateId?: string | null;
+  name: string;
+  title: string;
+  location: string;
+  experienceYears: number;
+  tags: string[];
+  contactInfo: Record<string, unknown>;
+}
+
+export interface JobDescriptionSummaryRecord {
+  jobDescriptionId?: string | null;
+  title: string;
+}
 
 export interface MetricSummary {
   label: string;
@@ -35,33 +51,28 @@ export interface TimelineEvent {
   tone: "positive" | "neutral" | "warning" | "critical";
 }
 
-export interface CandidateRecord {
+export interface ApplicationRecord {
   id: string;
   applicationId: string;
   personId?: string | null;
   jobDescriptionId?: string | null;
-  name: string;
-  title: string;
   platform: string;
-  location: string;
-  currentStatus: CandidateStatus;
+  currentStatus: ApplicationStatus;
   stageKey: string;
   deepestMilestone?: string | null;
-  jdTitle: string;
   matchScore: number;
-  experienceYears: number;
   nextAction: string;
   summary: string;
-  tags: string[];
   resumeAvailable: boolean;
-  stateSnapshot?: CandidateStateSnapshotRecord;
-  contactInfo?: Record<string, unknown>;
+  person: PersonSummaryRecord;
+  jobDescription: JobDescriptionSummaryRecord;
+  stateSnapshot?: ApplicationStateSnapshotRecord;
   aiScores?: Record<string, unknown>;
   cooldownUntil?: string;
   lastContactedAt?: string;
 }
 
-export interface CandidateStateSnapshotRecord {
+export interface ApplicationStateSnapshotRecord {
   currentPhaseKey?: string | null;
   currentPhaseLabel?: string | null;
   currentStageKey?: string | null;
@@ -81,9 +92,10 @@ export interface CandidateStateSnapshotRecord {
   snapshotMetadata: Record<string, unknown>;
 }
 
-export interface CandidateStageEventRecord {
+export interface ApplicationStageEventRecord {
   id: string;
-  candidateId: string;
+  applicationId: string;
+  personId?: string | null;
   eventType: string;
   fromStatus?: string | null;
   toStatus: string;
@@ -100,9 +112,10 @@ export interface CandidateStageEventRecord {
   updatedAt: string;
 }
 
-export interface CandidateAssessmentRecord {
+export interface ApplicationAssessmentRecord {
   id: string;
-  candidateId: string;
+  applicationId: string;
+  personId?: string | null;
   assessmentType: string;
   stageKey?: string | null;
   status: string;
@@ -118,9 +131,10 @@ export interface CandidateAssessmentRecord {
   updatedAt: string;
 }
 
-export interface CandidateAssignmentRecord {
+export interface ApplicationAssignmentRecord {
   id: string;
-  candidateId: string;
+  applicationId: string;
+  personId?: string | null;
   assignee: string;
   ownerRole: string;
   status: string;
@@ -134,7 +148,8 @@ export interface CandidateAssignmentRecord {
 
 export interface ResumeArtifactRecord {
   id: string;
-  candidateId: string;
+  applicationId: string;
+  personId?: string | null;
   source: string;
   artifactType: string;
   fileName?: string | null;
@@ -147,9 +162,10 @@ export interface ResumeArtifactRecord {
   updatedAt: string;
 }
 
-export interface CandidateScorecardRecord {
+export interface ApplicationScorecardRecord {
   id: string;
-  candidateId: string;
+  applicationId: string;
+  personId?: string | null;
   stageKey?: string | null;
   source: string;
   rubricVersion: string;
@@ -163,9 +179,10 @@ export interface CandidateScorecardRecord {
   updatedAt: string;
 }
 
-export interface CandidateReviewDecisionRecord {
+export interface ApplicationReviewDecisionRecord {
   id: string;
-  candidateId: string;
+  applicationId: string;
+  personId?: string | null;
   stageKey?: string | null;
   decision: string;
   rationale?: string | null;
@@ -180,7 +197,8 @@ export interface CandidateReviewDecisionRecord {
 
 export interface TalentPoolSyncRecord {
   id: string;
-  candidateId: string;
+  applicationId: string;
+  personId?: string | null;
   destination: string;
   status: string;
   externalRef?: string | null;
@@ -388,7 +406,7 @@ export interface RecruitAgentProfileRecord {
   updatedAt: string;
 }
 
-export interface CandidateMemoryRecord {
+export interface PersonMemoryRecord {
   id: string;
   agentProfileId: string;
   personId: string;
@@ -444,8 +462,9 @@ export interface AgentGlobalMemoryRecord {
   updatedAt: string;
 }
 
-export interface CandidateConversationEntry {
+export interface ApplicationConversationEntry {
   id: string;
+  applicationId?: string | null;
   direction: string;
   content: string;
   messageType: string;
@@ -454,24 +473,24 @@ export interface CandidateConversationEntry {
   timestamp?: string | null;
 }
 
-export interface CandidateThreadRecord {
+export interface ApplicationThreadRecord {
   applicationId?: string | null;
   personId?: string | null;
   jobDescriptionId?: string | null;
-  candidate: CandidateRecord;
+  application: ApplicationRecord;
   sessionStatus: string;
   contextSummary?: string;
   facts: Record<string, unknown>;
   recentMessages: Array<Record<string, unknown>>;
-  communicationLogs: CandidateConversationEntry[];
-  stateSnapshot: CandidateStateSnapshotRecord;
-  stageEvents: CandidateStageEventRecord[];
+  communicationLogs: ApplicationConversationEntry[];
+  stateSnapshot: ApplicationStateSnapshotRecord;
+  stageEvents: ApplicationStageEventRecord[];
   statusTransitions: CandidateStatusTransition[];
-  assessments: CandidateAssessmentRecord[];
-  assignments: CandidateAssignmentRecord[];
+  assessments: ApplicationAssessmentRecord[];
+  assignments: ApplicationAssignmentRecord[];
   resumeArtifacts: ResumeArtifactRecord[];
-  scorecards: CandidateScorecardRecord[];
-  reviewDecisions: CandidateReviewDecisionRecord[];
+  scorecards: ApplicationScorecardRecord[];
+  reviewDecisions: ApplicationReviewDecisionRecord[];
   syncRecords: TalentPoolSyncRecord[];
   availableStatuses: string[];
   runtimeApprovals: ApprovalItem[];
@@ -639,8 +658,8 @@ export interface DashboardSummary {
   pipeline: PipelineStage[];
   timeline: TimelineEvent[];
   alerts: TimelineEvent[];
-  candidates: CandidateRecord[];
-  candidateFollowUpSummaryDefinitions: CandidateFollowUpSummaryDefinition[];
+  applications: ApplicationRecord[];
+  applicationFollowUpSummaryDefinitions: ApplicationFollowUpSummaryDefinition[];
   playbooks: PlaybookDefinition[];
   skills: SkillRecord[];
   approvals: ApprovalItem[];
@@ -648,7 +667,7 @@ export interface DashboardSummary {
   settings: SettingsSnapshot;
 }
 
-export interface CandidateFollowUpSummaryDefinition {
+export interface ApplicationFollowUpSummaryDefinition {
   key: "all" | "active" | "human" | "no_response" | "cooldown" | "archived" | "candidate_withdrew";
   label: string;
   summary: string;
@@ -672,7 +691,7 @@ export interface AgentTaskRequest {
   taskType: string;
   payload?: Record<string, unknown>;
   priority?: number;
-  candidateId?: string;
+  applicationId?: string;
 }
 
 export interface AgentTaskEnqueueResult {

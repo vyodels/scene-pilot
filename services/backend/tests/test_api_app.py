@@ -45,7 +45,7 @@ class ApiAppTests(unittest.TestCase):
         self.assertEqual(dashboard.status_code, 200)
         payload = dashboard.json()
         self.assertIn("metrics", payload)
-        self.assertIn("candidates", payload)
+        self.assertIn("applications", payload)
         self.assertIn("agent", payload)
 
     def test_settings_patch(self) -> None:

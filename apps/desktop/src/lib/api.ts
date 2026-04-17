@@ -7,6 +7,13 @@ import type {
   RecruitmentStateMachineUpdatePayload,
 } from "@scene-pilot/shared";
 import type {
+  ApplicationAssessmentRecord,
+  ApplicationConversationEntry,
+  ApplicationFollowUpSummaryDefinition,
+  ApplicationRecord,
+  ApplicationStageEventRecord,
+  ApplicationStateSnapshotRecord,
+  ApplicationThreadRecord,
   AgentGlobalMemoryRecord,
   ApprovalItem,
   AgentEvent,
@@ -15,17 +22,6 @@ import type {
   AgentRunResult,
   AgentTaskEnqueueResult,
   AgentTaskRequest,
-  CandidateAssessmentRecord,
-  CandidateAssignmentRecord,
-  CandidateConversationEntry,
-  CandidateFollowUpSummaryDefinition,
-  CandidateMemoryRecord,
-  CandidateRecord,
-  CandidateReviewDecisionRecord,
-  CandidateScorecardRecord,
-  CandidateStageEventRecord,
-  CandidateStateSnapshotRecord,
-  CandidateThreadRecord,
   CompileTaskRequest,
   CompileTaskResponse,
   DashboardSummary,
@@ -34,6 +30,7 @@ import type {
   ExecutionTraceRecord,
   EvolutionArtifactRecord,
   GoalSpecRecord,
+  ApplicationAssignmentRecord,
   JobMemoryRecord,
   McpPresetTemplateRecord,
   McpServerRecord,
@@ -64,6 +61,11 @@ import type {
   TalentPoolSyncRecord,
   SyncStatusSnapshot,
   PlaybookDefinition,
+  ApplicationReviewDecisionRecord,
+  ApplicationScorecardRecord,
+  JobDescriptionSummaryRecord,
+  PersonMemoryRecord,
+  PersonSummaryRecord,
 } from "./types";
 
 export interface DesktopApiClient {
@@ -115,10 +117,10 @@ export interface DesktopApiClient {
     interactionId: string,
     payload: { action: string; comment?: string; operator?: string; scope?: string },
   ): Promise<OperatorInteractionRecord>;
-  listCandidateMemories(): Promise<CandidateMemoryRecord[]>;
-  getCandidateMemory(personId: string): Promise<CandidateMemoryRecord>;
-  updateCandidateMemory(personId: string, payload: Partial<CandidateMemoryRecord>): Promise<CandidateMemoryRecord>;
-  compactCandidateMemory(personId: string, reason?: string, force?: boolean): Promise<CandidateMemoryRecord>;
+  listPersonMemories(): Promise<PersonMemoryRecord[]>;
+  getPersonMemory(personId: string): Promise<PersonMemoryRecord>;
+  updatePersonMemory(personId: string, payload: Partial<PersonMemoryRecord>): Promise<PersonMemoryRecord>;
+  compactPersonMemory(personId: string, reason?: string, force?: boolean): Promise<PersonMemoryRecord>;
   listJobMemories(): Promise<JobMemoryRecord[]>;
   getJobMemory(jobDescriptionId: string): Promise<JobMemoryRecord>;
   updateJobMemory(jobDescriptionId: string, payload: Partial<JobMemoryRecord>): Promise<JobMemoryRecord>;
@@ -126,23 +128,23 @@ export interface DesktopApiClient {
   getAgentGlobalMemory(): Promise<AgentGlobalMemoryRecord>;
   updateAgentGlobalMemory(payload: Partial<AgentGlobalMemoryRecord>): Promise<AgentGlobalMemoryRecord>;
   compactAgentGlobalMemory(reason?: string, force?: boolean): Promise<AgentGlobalMemoryRecord>;
-  listCandidateThreads(): Promise<CandidateThreadRecord[]>;
-  getCandidateThread(candidateId: string): Promise<CandidateThreadRecord>;
+  listApplicationThreads(): Promise<ApplicationThreadRecord[]>;
+  getApplicationThread(applicationId: string): Promise<ApplicationThreadRecord>;
   getStateMachine(): Promise<RecruitmentStateMachine>;
   listStateMachineCriteriaSuggestions(): Promise<StateCriteriaOptimizationReport[]>;
   listStateMachineVersions(limit?: number): Promise<RecruitmentStateMachineVersionRecord[]>;
   getStateMachineVersion(version: number): Promise<RecruitmentStateMachineVersionRecord>;
   updateStateMachine(payload: RecruitmentStateMachineUpdatePayload): Promise<RecruitmentStateMachine>;
-  listCandidateTransitions(candidateId: string): Promise<CandidateStatusTransition[]>;
-  createCandidateThreadEntry(candidateId: string, payload: { direction: string; content: string; messageType?: string; platform?: string }): Promise<CandidateConversationEntry>;
-  transitionCandidateState(candidateId: string, payload: CandidateTransitionPayload): Promise<CandidateThreadRecord>;
-  createCandidateAssessment(candidateId: string, payload: { assessmentType: string; stageKey?: string; status?: string; decision?: string; score?: number; summary?: string; evidenceRefs?: unknown[]; metadata?: Record<string, unknown>; createdBy?: string; reviewedBy?: string }): Promise<CandidateAssessmentRecord>;
+  listApplicationTransitions(applicationId: string): Promise<CandidateStatusTransition[]>;
+  createApplicationEntry(applicationId: string, payload: { direction: string; content: string; messageType?: string; platform?: string }): Promise<ApplicationConversationEntry>;
+  transitionApplicationState(applicationId: string, payload: CandidateTransitionPayload): Promise<ApplicationThreadRecord>;
+  createApplicationAssessment(applicationId: string, payload: { assessmentType: string; stageKey?: string; status?: string; decision?: string; score?: number; summary?: string; evidenceRefs?: unknown[]; metadata?: Record<string, unknown>; createdBy?: string; reviewedBy?: string }): Promise<ApplicationAssessmentRecord>;
   listEvolutionArtifacts(): Promise<EvolutionArtifactRecord[]>;
   updateEvolutionArtifact(artifactId: string, payload: Partial<EvolutionArtifactRecord>): Promise<EvolutionArtifactRecord>;
   getSyncStatus(): Promise<SyncStatusSnapshot>;
   listSyncBacklog(): Promise<SyncBacklogItem[]>;
   flushSyncBacklog(): Promise<SyncFlushResult>;
-  listCandidates(): Promise<CandidateRecord[]>;
+  listApplications(): Promise<ApplicationRecord[]>;
   listPlaybooks(): Promise<PlaybookDefinition[]>;
   listSkills(): Promise<SkillRecord[]>;
   updateSkill(skillId: string, payload: Partial<SkillRecord>): Promise<SkillRecord>;
@@ -458,10 +460,11 @@ function normalizeDashboard(raw: unknown): DashboardSummary {
     pipeline: asArray(record.pipeline) as DashboardSummary["pipeline"],
     timeline: asArray(record.timeline) as DashboardSummary["timeline"],
     alerts: asArray(record.alerts) as DashboardSummary["alerts"],
-    candidates: asArray(record.candidates).map(normalizeCandidateRecord),
-    candidateFollowUpSummaryDefinitions: asArray(
-      record.candidateFollowUpSummaryDefinitions ?? record.candidate_follow_up_summary_definitions,
-    ).map(normalizeCandidateFollowUpSummaryDefinition),
+    applications: asArray(record.applications ?? record.candidates).map(normalizeApplicationRecord),
+    applicationFollowUpSummaryDefinitions: asArray(
+      record.applicationFollowUpSummaryDefinitions ??
+        record.application_follow_up_summary_definitions,
+    ).map(normalizeApplicationFollowUpSummaryDefinition),
     playbooks: asArray(record.playbooks) as PlaybookDefinition[],
     skills: asArray(record.skills).map(normalizeSkillRecord),
     approvals: asArray(record.approvals).map(normalizeApprovalItem),
@@ -470,14 +473,14 @@ function normalizeDashboard(raw: unknown): DashboardSummary {
   };
 }
 
-function normalizeCandidateFollowUpSummaryDefinition(raw: unknown): CandidateFollowUpSummaryDefinition {
+function normalizeApplicationFollowUpSummaryDefinition(raw: unknown): ApplicationFollowUpSummaryDefinition {
   const record = asRecord(raw);
   return {
-    key: String(record.key ?? "all") as CandidateFollowUpSummaryDefinition["key"],
+    key: String(record.key ?? "all") as ApplicationFollowUpSummaryDefinition["key"],
     label: String(record.label ?? ""),
     summary: String(record.summary ?? ""),
     relation: record.relation ? String(record.relation) : null,
-    matchingMode: String(record.matchingMode ?? record.matching_mode ?? "all") as CandidateFollowUpSummaryDefinition["matchingMode"],
+    matchingMode: String(record.matchingMode ?? record.matching_mode ?? "all") as ApplicationFollowUpSummaryDefinition["matchingMode"],
     includeStatuses: asArray<string>(record.includeStatuses ?? record.include_statuses),
     excludeStatuses: asArray<string>(record.excludeStatuses ?? record.exclude_statuses),
     includeLabels: asArray<string>(record.includeLabels ?? record.include_labels),
@@ -485,9 +488,42 @@ function normalizeCandidateFollowUpSummaryDefinition(raw: unknown): CandidateFol
   };
 }
 
-function normalizeCandidateRecord(raw: unknown): CandidateRecord {
+function normalizePersonSummary(raw: unknown, fallbackContactInfo?: Record<string, unknown>): PersonSummaryRecord {
   const record = asRecord(raw);
-  const contactInfo = asRecord(record.contactInfo ?? record.contact_info);
+  const contactInfo = asRecord(record.contactInfo ?? record.contact_info ?? fallbackContactInfo);
+  return {
+    personId:
+      record.personId != null ? String(record.personId) : record.person_id != null ? String(record.person_id) : null,
+    platformCandidateId:
+      record.platformCandidateId != null
+        ? String(record.platformCandidateId)
+        : record.platform_candidate_id != null
+          ? String(record.platform_candidate_id)
+          : null,
+    name: String(record.name ?? "Unknown candidate"),
+    title: String(record.title ?? contactInfo.title ?? "候选人"),
+    location: String(record.location ?? contactInfo.location ?? "未知"),
+    experienceYears: Number(record.experienceYears ?? record.experience_years ?? contactInfo.experience_years ?? 0),
+    tags: asArray<string>(record.tags ?? contactInfo.tags),
+    contactInfo,
+  };
+}
+
+function normalizeJobDescriptionSummary(raw: unknown, fallbackId?: string | null): JobDescriptionSummaryRecord {
+  const record = asRecord(raw);
+  return {
+    jobDescriptionId:
+      record.jobDescriptionId != null
+        ? String(record.jobDescriptionId)
+        : record.job_description_id != null
+          ? String(record.job_description_id)
+          : fallbackId,
+    title: String(record.title ?? fallbackId ?? "未分配岗位"),
+  };
+}
+
+function normalizeApplicationRecord(raw: unknown): ApplicationRecord {
+  const record = asRecord(raw);
   const aiScores = asRecord(record.aiScores ?? record.ai_scores);
   const applicationId = String(record.applicationId ?? record.application_id ?? record.id ?? "");
   const personId =
@@ -497,21 +533,14 @@ function normalizeCandidateRecord(raw: unknown): CandidateRecord {
       ? String(record.jobDescriptionId)
       : record.job_description_id != null
         ? String(record.job_description_id)
-        : record.jdId != null
-          ? String(record.jdId)
-          : record.jd_id != null
-            ? String(record.jd_id)
-            : null;
+        : null;
   return {
     id: applicationId,
     applicationId,
     personId,
     jobDescriptionId,
-    name: String(record.name ?? "Unknown candidate"),
-    title: String(record.title ?? contactInfo.title ?? "候选人"),
     platform: String(record.platform ?? "site"),
-    location: String(record.location ?? contactInfo.location ?? "未知"),
-    currentStatus: String(record.currentStatus ?? record.current_status ?? "discovered") as CandidateRecord["currentStatus"],
+    currentStatus: String(record.currentStatus ?? record.current_status ?? "discovered") as ApplicationRecord["currentStatus"],
     stageKey: String(record.stageKey ?? record.stage_key ?? record.currentStageKey ?? record.current_stage_key ?? "candidate_probe"),
     deepestMilestone:
       record.deepestMilestone
@@ -519,13 +548,10 @@ function normalizeCandidateRecord(raw: unknown): CandidateRecord {
         : record.deepest_milestone
           ? String(record.deepest_milestone)
           : null,
-    jdTitle: String(record.jdTitle ?? record.jd_title ?? jobDescriptionId ?? "未分配岗位"),
     matchScore: Number(record.matchScore ?? record.match_score ?? aiScores.overall ?? 0),
-    experienceYears: Number(record.experienceYears ?? record.experience_years ?? contactInfo.experience_years ?? 0),
     nextAction: String(
       record.nextAction ??
         record.next_action ??
-        contactInfo.next_action ??
         "等待 Recruit Agent 选择下一步动作。",
     ),
     summary: String(
@@ -536,13 +562,18 @@ function normalizeCandidateRecord(raw: unknown): CandidateRecord {
         record.online_resume_text ??
         "候选人档案等待补充。",
     ),
-    tags: asArray<string>(record.tags ?? contactInfo.tags),
-    resumeAvailable: Boolean(record.resumeAvailable ?? record.resume_available ?? record.resumePath ?? record.resume_path ?? record.onlineResumeText ?? record.online_resume_text),
+    resumeAvailable: Boolean(record.resumeAvailable ?? record.resume_available ?? false),
+    person: normalizePersonSummary(
+      record.person ?? {},
+    ),
+    jobDescription: normalizeJobDescriptionSummary(
+      record.jobDescription ?? record.job_description ?? {},
+      jobDescriptionId,
+    ),
     stateSnapshot:
       record.stateSnapshot ?? record.state_snapshot
-        ? normalizeCandidateStateSnapshot(record.stateSnapshot ?? record.state_snapshot)
+        ? normalizeApplicationStateSnapshot(record.stateSnapshot ?? record.state_snapshot)
         : undefined,
-    contactInfo,
     aiScores,
     cooldownUntil: record.cooldownUntil
       ? String(record.cooldownUntil)
@@ -557,7 +588,7 @@ function normalizeCandidateRecord(raw: unknown): CandidateRecord {
   };
 }
 
-function normalizeCandidateStateSnapshot(raw: unknown): CandidateStateSnapshotRecord {
+function normalizeApplicationStateSnapshot(raw: unknown): ApplicationStateSnapshotRecord {
   const record = asRecord(raw);
   return {
     currentPhaseKey: record.currentPhaseKey ? String(record.currentPhaseKey) : record.current_phase_key ? String(record.current_phase_key) : null,
@@ -834,7 +865,7 @@ function normalizeRecruitAgentProfile(raw: unknown): RecruitAgentProfileRecord {
   };
 }
 
-function normalizeCandidateMemory(raw: unknown): CandidateMemoryRecord {
+function normalizePersonMemory(raw: unknown): PersonMemoryRecord {
   const record = asRecord(raw);
   return {
     id: String(record.id ?? ""),
@@ -899,7 +930,7 @@ function normalizeAgentGlobalMemory(raw: unknown): AgentGlobalMemoryRecord {
   };
 }
 
-function normalizeMemoryDisclosure(raw: unknown): CandidateMemoryRecord["disclosure"] {
+function normalizeMemoryDisclosure(raw: unknown): PersonMemoryRecord["disclosure"] {
   const record = asRecord(raw);
   return {
     preview: record.preview ? String(record.preview) : undefined,
@@ -909,10 +940,16 @@ function normalizeMemoryDisclosure(raw: unknown): CandidateMemoryRecord["disclos
   };
 }
 
-function normalizeConversationEntry(raw: unknown): CandidateConversationEntry {
+function normalizeApplicationConversationEntry(raw: unknown): ApplicationConversationEntry {
   const record = asRecord(raw);
   return {
     id: String(record.id ?? ""),
+    applicationId:
+      record.applicationId != null
+        ? String(record.applicationId)
+        : record.application_id != null
+          ? String(record.application_id)
+          : null,
     direction: String(record.direction ?? "system"),
     content: String(record.content ?? ""),
     messageType: String(record.messageType ?? record.message_type ?? "text"),
@@ -922,11 +959,13 @@ function normalizeConversationEntry(raw: unknown): CandidateConversationEntry {
   };
 }
 
-function normalizeCandidateStageEvent(raw: unknown): CandidateStageEventRecord {
+function normalizeApplicationStageEvent(raw: unknown): ApplicationStageEventRecord {
   const record = asRecord(raw);
   return {
     id: String(record.id ?? ""),
-    candidateId: String(record.candidateId ?? record.candidate_id ?? ""),
+    applicationId: String(record.applicationId ?? record.application_id ?? ""),
+    personId:
+      record.personId != null ? String(record.personId) : record.person_id != null ? String(record.person_id) : null,
     eventType: String(record.eventType ?? record.event_type ?? "stage_transition"),
     fromStatus: record.fromStatus ? String(record.fromStatus) : record.from_status ? String(record.from_status) : null,
     toStatus: String(record.toStatus ?? record.to_status ?? ""),
@@ -1045,11 +1084,13 @@ function normalizeRecruitmentStateMachineVersion(raw: unknown): RecruitmentState
   };
 }
 
-function normalizeCandidateAssessment(raw: unknown): CandidateAssessmentRecord {
+function normalizeApplicationAssessment(raw: unknown): ApplicationAssessmentRecord {
   const record = asRecord(raw);
   return {
     id: String(record.id ?? ""),
-    candidateId: String(record.candidateId ?? record.candidate_id ?? ""),
+    applicationId: String(record.applicationId ?? record.application_id ?? ""),
+    personId:
+      record.personId != null ? String(record.personId) : record.person_id != null ? String(record.person_id) : null,
     assessmentType: String(record.assessmentType ?? record.assessment_type ?? "ai"),
     stageKey: record.stageKey ? String(record.stageKey) : record.stage_key ? String(record.stage_key) : null,
     status: String(record.status ?? "completed"),
@@ -1066,11 +1107,13 @@ function normalizeCandidateAssessment(raw: unknown): CandidateAssessmentRecord {
   };
 }
 
-function normalizeCandidateAssignment(raw: unknown): CandidateAssignmentRecord {
+function normalizeApplicationAssignment(raw: unknown): ApplicationAssignmentRecord {
   const record = asRecord(raw);
   return {
     id: String(record.id ?? ""),
-    candidateId: String(record.candidateId ?? record.candidate_id ?? ""),
+    applicationId: String(record.applicationId ?? record.application_id ?? ""),
+    personId:
+      record.personId != null ? String(record.personId) : record.person_id != null ? String(record.person_id) : null,
     assignee: String(record.assignee ?? ""),
     ownerRole: String(record.ownerRole ?? record.owner_role ?? "operator"),
     status: String(record.status ?? "active"),
@@ -1087,7 +1130,9 @@ function normalizeResumeArtifact(raw: unknown): ResumeArtifactRecord {
   const record = asRecord(raw);
   return {
     id: String(record.id ?? ""),
-    candidateId: String(record.candidateId ?? record.candidate_id ?? ""),
+    applicationId: String(record.applicationId ?? record.application_id ?? ""),
+    personId:
+      record.personId != null ? String(record.personId) : record.person_id != null ? String(record.person_id) : null,
     source: String(record.source ?? "site"),
     artifactType: String(record.artifactType ?? record.artifact_type ?? "resume"),
     fileName: record.fileName ? String(record.fileName) : record.file_name ? String(record.file_name) : null,
@@ -1101,11 +1146,13 @@ function normalizeResumeArtifact(raw: unknown): ResumeArtifactRecord {
   };
 }
 
-function normalizeCandidateScorecard(raw: unknown): CandidateScorecardRecord {
+function normalizeApplicationScorecard(raw: unknown): ApplicationScorecardRecord {
   const record = asRecord(raw);
   return {
     id: String(record.id ?? ""),
-    candidateId: String(record.candidateId ?? record.candidate_id ?? ""),
+    applicationId: String(record.applicationId ?? record.application_id ?? ""),
+    personId:
+      record.personId != null ? String(record.personId) : record.person_id != null ? String(record.person_id) : null,
     stageKey: record.stageKey ? String(record.stageKey) : record.stage_key ? String(record.stage_key) : null,
     source: String(record.source ?? "ai"),
     rubricVersion: String(record.rubricVersion ?? record.rubric_version ?? "recruit-scorecard-v1"),
@@ -1120,11 +1167,13 @@ function normalizeCandidateScorecard(raw: unknown): CandidateScorecardRecord {
   };
 }
 
-function normalizeCandidateReviewDecision(raw: unknown): CandidateReviewDecisionRecord {
+function normalizeApplicationReviewDecision(raw: unknown): ApplicationReviewDecisionRecord {
   const record = asRecord(raw);
   return {
     id: String(record.id ?? ""),
-    candidateId: String(record.candidateId ?? record.candidate_id ?? ""),
+    applicationId: String(record.applicationId ?? record.application_id ?? ""),
+    personId:
+      record.personId != null ? String(record.personId) : record.person_id != null ? String(record.person_id) : null,
     stageKey: record.stageKey ? String(record.stageKey) : record.stage_key ? String(record.stage_key) : null,
     decision: String(record.decision ?? "review"),
     rationale: record.rationale ? String(record.rationale) : null,
@@ -1142,7 +1191,9 @@ function normalizeTalentPoolSyncRecord(raw: unknown): TalentPoolSyncRecord {
   const record = asRecord(raw);
   return {
     id: String(record.id ?? ""),
-    candidateId: String(record.candidateId ?? record.candidate_id ?? ""),
+    applicationId: String(record.applicationId ?? record.application_id ?? ""),
+    personId:
+      record.personId != null ? String(record.personId) : record.person_id != null ? String(record.person_id) : null,
     destination: String(record.destination ?? "talent_pool"),
     status: String(record.status ?? "pending"),
     externalRef: record.externalRef ? String(record.externalRef) : record.external_ref ? String(record.external_ref) : null,
@@ -1178,7 +1229,7 @@ function normalizeEvolutionArtifact(raw: unknown): EvolutionArtifactRecord {
   };
 }
 
-function normalizeCandidateThread(raw: unknown): CandidateThreadRecord {
+function normalizeApplicationThread(raw: unknown): ApplicationThreadRecord {
   const record = asRecord(raw);
   return {
     applicationId:
@@ -1195,20 +1246,20 @@ function normalizeCandidateThread(raw: unknown): CandidateThreadRecord {
         : record.job_description_id != null
           ? String(record.job_description_id)
           : null,
-    candidate: normalizeCandidateRecord(record.candidate),
+    application: normalizeApplicationRecord(record.application ?? {}),
     sessionStatus: String(record.sessionStatus ?? record.session_status ?? "active"),
     contextSummary: record.contextSummary ? String(record.contextSummary) : record.context_summary ? String(record.context_summary) : undefined,
     facts: asRecord(record.facts),
     recentMessages: asArray(record.recentMessages ?? record.recent_messages).map((item) => asRecord(item)),
-    communicationLogs: asArray(record.communicationLogs ?? record.communication_logs).map(normalizeConversationEntry),
-    stateSnapshot: normalizeCandidateStateSnapshot(record.stateSnapshot ?? record.state_snapshot),
-    stageEvents: asArray(record.stageEvents ?? record.stage_events).map(normalizeCandidateStageEvent),
+    communicationLogs: asArray(record.communicationLogs ?? record.communication_logs).map(normalizeApplicationConversationEntry),
+    stateSnapshot: normalizeApplicationStateSnapshot(record.stateSnapshot ?? record.state_snapshot),
+    stageEvents: asArray(record.stageEvents ?? record.stage_events).map(normalizeApplicationStageEvent),
     statusTransitions: asArray(record.statusTransitions ?? record.status_transitions).map(normalizeCandidateStatusTransition),
-    assessments: asArray(record.assessments).map(normalizeCandidateAssessment),
-    assignments: asArray(record.assignments).map(normalizeCandidateAssignment),
+    assessments: asArray(record.assessments).map(normalizeApplicationAssessment),
+    assignments: asArray(record.assignments).map(normalizeApplicationAssignment),
     resumeArtifacts: asArray(record.resumeArtifacts ?? record.resume_artifacts).map(normalizeResumeArtifact),
-    scorecards: asArray(record.scorecards).map(normalizeCandidateScorecard),
-    reviewDecisions: asArray(record.reviewDecisions ?? record.review_decisions).map(normalizeCandidateReviewDecision),
+    scorecards: asArray(record.scorecards).map(normalizeApplicationScorecard),
+    reviewDecisions: asArray(record.reviewDecisions ?? record.review_decisions).map(normalizeApplicationReviewDecision),
     syncRecords: asArray(record.syncRecords ?? record.sync_records).map(normalizeTalentPoolSyncRecord),
     availableStatuses: asArray<string>(record.availableStatuses ?? record.available_statuses),
     runtimeApprovals: asArray(record.runtimeApprovals ?? record.runtime_approvals).map(normalizeApprovalItem),
@@ -2233,12 +2284,12 @@ function createFetchClient(baseUrl: string): DesktopApiClient {
           }),
         }),
       ),
-    listCandidateMemories: async () =>
-      asArray(await requestJson<unknown>(baseUrl, "/api/candidate-persons/memories")).map(normalizeCandidateMemory),
-    getCandidateMemory: async (personId) =>
-      normalizeCandidateMemory(await requestJson<unknown>(baseUrl, `/api/candidate-persons/${personId}/memory`)),
-    updateCandidateMemory: async (personId, payload) =>
-      normalizeCandidateMemory(
+    listPersonMemories: async () =>
+      asArray(await requestJson<unknown>(baseUrl, "/api/candidate-persons/memories")).map(normalizePersonMemory),
+    getPersonMemory: async (personId) =>
+      normalizePersonMemory(await requestJson<unknown>(baseUrl, `/api/candidate-persons/${personId}/memory`)),
+    updatePersonMemory: async (personId, payload) =>
+      normalizePersonMemory(
         await requestJson<unknown>(baseUrl, `/api/candidate-persons/${personId}/memory`, {
           method: "PATCH",
           body: JSON.stringify({
@@ -2254,8 +2305,8 @@ function createFetchClient(baseUrl: string): DesktopApiClient {
           }),
         }),
       ),
-    compactCandidateMemory: async (personId, reason, force = false) =>
-      normalizeCandidateMemory(
+    compactPersonMemory: async (personId, reason, force = false) =>
+      normalizePersonMemory(
         await requestJson<unknown>(baseUrl, `/api/candidate-persons/${personId}/memory/compact`, {
           method: "POST",
           body: JSON.stringify({ reason, force }),
@@ -2315,10 +2366,10 @@ function createFetchClient(baseUrl: string): DesktopApiClient {
           body: JSON.stringify({ reason, force }),
         }),
       ),
-    listCandidateThreads: async () =>
-      asArray(await requestJson<unknown>(baseUrl, "/api/candidate-applications/threads")).map(normalizeCandidateThread),
-    getCandidateThread: async (candidateId) =>
-      normalizeCandidateThread(await requestJson<unknown>(baseUrl, `/api/candidate-applications/${candidateId}/thread`)),
+    listApplicationThreads: async () =>
+      asArray(await requestJson<unknown>(baseUrl, "/api/candidate-applications/threads")).map(normalizeApplicationThread),
+    getApplicationThread: async (applicationId) =>
+      normalizeApplicationThread(await requestJson<unknown>(baseUrl, `/api/candidate-applications/${applicationId}/thread`)),
     getStateMachine: async () =>
       normalizeRecruitmentStateMachine(await requestJson<unknown>(baseUrl, "/api/state-machine")),
     listStateMachineCriteriaSuggestions: async () =>
@@ -2345,13 +2396,13 @@ function createFetchClient(baseUrl: string): DesktopApiClient {
           }),
         }),
       ),
-    listCandidateTransitions: async (candidateId) =>
-      asArray(await requestJson<unknown>(baseUrl, `/api/candidate-applications/${candidateId}/transitions`)).map(
+    listApplicationTransitions: async (applicationId) =>
+      asArray(await requestJson<unknown>(baseUrl, `/api/candidate-applications/${applicationId}/transitions`)).map(
         normalizeCandidateStatusTransition,
       ),
-    createCandidateThreadEntry: async (candidateId, payload) =>
-      normalizeConversationEntry(
-        await requestJson<unknown>(baseUrl, `/api/candidate-applications/${candidateId}/entries`, {
+    createApplicationEntry: async (applicationId, payload) =>
+      normalizeApplicationConversationEntry(
+        await requestJson<unknown>(baseUrl, `/api/candidate-applications/${applicationId}/entries`, {
           method: "POST",
           body: JSON.stringify({
             direction: payload.direction,
@@ -2362,9 +2413,9 @@ function createFetchClient(baseUrl: string): DesktopApiClient {
           }),
         }),
       ),
-    transitionCandidateState: async (candidateId, payload) =>
-      normalizeCandidateThread(
-        await requestJson<unknown>(baseUrl, `/api/candidate-applications/${candidateId}/transitions`, {
+    transitionApplicationState: async (applicationId, payload) =>
+      normalizeApplicationThread(
+        await requestJson<unknown>(baseUrl, `/api/candidate-applications/${applicationId}/transitions`, {
           method: "POST",
           body: JSON.stringify({
             to_status: payload.toStatus,
@@ -2384,9 +2435,9 @@ function createFetchClient(baseUrl: string): DesktopApiClient {
           }),
         }),
       ),
-    createCandidateAssessment: async (candidateId, payload) =>
-      normalizeCandidateAssessment(
-        await requestJson<unknown>(baseUrl, `/api/candidate-applications/${candidateId}/assessments`, {
+    createApplicationAssessment: async (applicationId, payload) =>
+      normalizeApplicationAssessment(
+        await requestJson<unknown>(baseUrl, `/api/candidate-applications/${applicationId}/assessments`, {
           method: "POST",
           body: JSON.stringify({
             assessment_type: payload.assessmentType,
@@ -2428,7 +2479,7 @@ function createFetchClient(baseUrl: string): DesktopApiClient {
           body: JSON.stringify({ initiated_by: "desktop-user" }),
         }),
       ),
-    listCandidates: async () => normalizeDashboard(await requestJson<unknown>(baseUrl, "/api/dashboard")).candidates,
+    listApplications: async () => normalizeDashboard(await requestJson<unknown>(baseUrl, "/api/dashboard")).applications,
     listPlaybooks: async () => normalizeDashboard(await requestJson<unknown>(baseUrl, "/api/dashboard")).playbooks,
     listSkills: async () => asArray(await requestJson<unknown>(baseUrl, "/api/skills")).map(normalizeSkillRecord),
     updateSkill: async (skillId, payload) =>
@@ -2591,7 +2642,7 @@ function createFetchClient(baseUrl: string): DesktopApiClient {
             task_type: task.taskType,
             payload: task.payload ?? {},
             priority: task.priority ?? 100,
-            candidate_id: task.candidateId,
+            application_id: task.applicationId,
           }),
         }),
       ),

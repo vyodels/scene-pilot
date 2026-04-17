@@ -6,8 +6,8 @@ from typing import Any
 
 
 @dataclass(frozen=True, slots=True)
-class CandidateProgressionTarget:
-    candidate_id: str
+class ApplicationProgressionTarget:
+    application_id: str
     current_status: str
     node_id: str
     node_label: str
@@ -28,7 +28,7 @@ class CandidateProgressionTarget:
 
 
 @dataclass(frozen=True, slots=True)
-class CandidateProgressionScoreBreakdown:
+class ApplicationProgressionScoreBreakdown:
     ai_score: float
     stage_depth: float
     waiting_hours: float
@@ -39,13 +39,13 @@ class CandidateProgressionScoreBreakdown:
 
 
 @dataclass(frozen=True, slots=True)
-class CandidateProgressionSelection:
-    candidate_id: str
+class ApplicationProgressionSelection:
+    application_id: str
     current_status: str
     node_id: str
     node_label: str
     selected_task_type: str
-    score_breakdown: CandidateProgressionScoreBreakdown
+    score_breakdown: ApplicationProgressionScoreBreakdown
     reason: str
 
 
@@ -79,7 +79,7 @@ def extract_candidate_ai_score(ai_scores: dict[str, Any] | None) -> float:
     return 50.0
 
 
-def map_candidate_progression_task_type(target: CandidateProgressionTarget) -> str | None:
+def map_application_progression_task_type(target: ApplicationProgressionTarget) -> str | None:
     if not target.current_status or not target.node_id:
         return None
     if target.is_terminal or target.is_soft_terminal or target.is_transient:
@@ -118,13 +118,13 @@ def map_candidate_progression_task_type(target: CandidateProgressionTarget) -> s
     return None
 
 
-def is_candidate_progression_eligible(
-    target: CandidateProgressionTarget,
+def is_application_progression_eligible(
+    target: ApplicationProgressionTarget,
     *,
     now: datetime | None = None,
 ) -> bool:
     current_time = now or datetime.now(timezone.utc)
-    if not target.candidate_id or not target.current_status or not target.node_id:
+    if not target.application_id or not target.current_status or not target.node_id:
         return False
     if target.has_open_task:
         return False
@@ -142,17 +142,17 @@ def is_candidate_progression_eligible(
     if cooldown_until is not None and cooldown_until > current_time:
         return False
 
-    return map_candidate_progression_task_type(target) is not None
+    return map_application_progression_task_type(target) is not None
 
 
-def _stage_depth_score(target: CandidateProgressionTarget, *, max_sort_order: int) -> float:
+def _stage_depth_score(target: ApplicationProgressionTarget, *, max_sort_order: int) -> float:
     current_order = max(int(target.sort_order or 0), 0)
     baseline = max(max_sort_order, 1)
     normalized = max(min(current_order / baseline, 1.0), 0.0)
     return round(normalized * 100.0, 4)
 
 
-def _waiting_hours(target: CandidateProgressionTarget, *, now: datetime) -> float:
+def _waiting_hours(target: ApplicationProgressionTarget, *, now: datetime) -> float:
     timestamps = [
         _normalize_datetime(target.created_at, now=now),
         _normalize_datetime(target.updated_at, now=now),
@@ -164,11 +164,11 @@ def _waiting_hours(target: CandidateProgressionTarget, *, now: datetime) -> floa
 
 
 def _score_breakdown(
-    target: CandidateProgressionTarget,
+    target: ApplicationProgressionTarget,
     *,
     max_sort_order: int,
     now: datetime,
-) -> CandidateProgressionScoreBreakdown:
+) -> ApplicationProgressionScoreBreakdown:
     ai_score = extract_candidate_ai_score(target.ai_scores)
     stage_depth = _stage_depth_score(target, max_sort_order=max_sort_order)
     waiting_hours = _waiting_hours(target, now=now)
@@ -176,7 +176,7 @@ def _score_breakdown(
     stage_factor = 0.5 + (stage_depth / 100.0)
     waiting_factor = 1.0 + min(waiting_hours / 24.0, 1.0)
     total = round(ai_factor * stage_factor * waiting_factor, 4)
-    return CandidateProgressionScoreBreakdown(
+    return ApplicationProgressionScoreBreakdown(
         ai_score=round(ai_score, 4),
         stage_depth=round(stage_depth, 4),
         waiting_hours=waiting_hours,
@@ -187,7 +187,7 @@ def _score_breakdown(
     )
 
 
-def _selection_reason(*, score_breakdown: CandidateProgressionScoreBreakdown, current_status: str) -> str:
+def _selection_reason(*, score_breakdown: ApplicationProgressionScoreBreakdown, current_status: str) -> str:
     reason_parts: list[str] = []
     if score_breakdown.ai_score >= 85:
         reason_parts.append("high_ai_score")
@@ -216,13 +216,13 @@ def _selection_reason(*, score_breakdown: CandidateProgressionScoreBreakdown, cu
     return " + ".join(reason_parts)
 
 
-def select_next_candidate_progression(
-    targets: list[CandidateProgressionTarget],
+def select_next_application_progression(
+    targets: list[ApplicationProgressionTarget],
     *,
     now: datetime | None = None,
-) -> CandidateProgressionSelection | None:
+) -> ApplicationProgressionSelection | None:
     current_time = now or datetime.now(timezone.utc)
-    eligible_targets = [target for target in targets if is_candidate_progression_eligible(target, now=current_time)]
+    eligible_targets = [target for target in targets if is_application_progression_eligible(target, now=current_time)]
     if not eligible_targets:
         return None
 
@@ -234,15 +234,15 @@ def select_next_candidate_progression(
         or [1]
     )
 
-    ranked: list[tuple[tuple[float, float, float, float, str], CandidateProgressionSelection]] = []
+    ranked: list[tuple[tuple[float, float, float, float, str], ApplicationProgressionSelection]] = []
     for target in eligible_targets:
-        task_type = map_candidate_progression_task_type(target)
+        task_type = map_application_progression_task_type(target)
         if task_type is None:
             continue
         score_breakdown = _score_breakdown(target, max_sort_order=max_sort_order, now=current_time)
         updated_at = _normalize_datetime(target.updated_at, now=current_time) or current_time
-        selection = CandidateProgressionSelection(
-            candidate_id=target.candidate_id,
+        selection = ApplicationProgressionSelection(
+            application_id=target.application_id,
             current_status=target.current_status,
             node_id=target.node_id,
             node_label=target.node_label,
@@ -257,7 +257,7 @@ def select_next_candidate_progression(
                     score_breakdown.stage_depth,
                     score_breakdown.waiting_hours,
                     -updated_at.timestamp(),
-                    target.candidate_id,
+                    target.application_id,
                 ),
                 selection,
             )

@@ -1,10 +1,10 @@
 import { getTriggeredMilestones } from "@scene-pilot/shared";
 import type { HumanActionDefinition, RecruitmentStateMachine, StateNode, StateTransition } from "@scene-pilot/shared";
-import type { CandidateRecord, CandidateThreadRecord } from "../../lib/types";
+import type { ApplicationRecord, ApplicationThreadRecord } from "../../lib/types";
 
-export interface CandidateViewModel {
-  candidate: CandidateRecord;
-  thread?: CandidateThreadRecord;
+export interface ApplicationViewModel {
+  application: ApplicationRecord;
+  thread?: ApplicationThreadRecord;
   currentStatus: string;
   currentNode?: StateNode;
   deepestMilestone?: string | null;
@@ -16,7 +16,7 @@ export interface CandidateViewModel {
   milestoneReachedAt: Record<string, string>;
 }
 
-export interface CandidateDateFilter {
+export interface ApplicationDateFilter {
   kind: "all" | "custom";
   startDate: string;
   endDate: string;
@@ -34,8 +34,8 @@ function pickString(value: unknown): string | undefined {
   return trimmed ? trimmed : undefined;
 }
 
-export function resolveCandidateCurrentStatus(candidate: CandidateRecord): string {
-  return candidate.currentStatus.trim() || "discovered";
+export function resolveApplicationCurrentStatus(application: ApplicationRecord): string {
+  return application.currentStatus.trim() || "discovered";
 }
 
 export function createNodeMap(stateMachine: RecruitmentStateMachine): Map<string, StateNode> {
@@ -53,7 +53,7 @@ export function createTransitionMap(stateMachine: RecruitmentStateMachine): Map<
   return map;
 }
 
-function buildMilestoneReachedAt(candidate: CandidateRecord, thread?: CandidateThreadRecord): Record<string, string> {
+function buildMilestoneReachedAt(application: ApplicationRecord, thread?: ApplicationThreadRecord): Record<string, string> {
   const reachedAt: Record<string, string> = {};
   const transitions = [...(thread?.statusTransitions ?? [])].sort((left, right) => left.createdAt.localeCompare(right.createdAt));
   for (const transition of transitions) {
@@ -62,11 +62,11 @@ function buildMilestoneReachedAt(candidate: CandidateRecord, thread?: CandidateT
     }
   }
   const fallbackTimestamp =
-    thread?.stateSnapshot.latestTransitionAt ?? transitions.at(-1)?.createdAt ?? candidate.lastContactedAt ?? undefined;
-  if (candidate.deepestMilestone && fallbackTimestamp && !reachedAt[candidate.deepestMilestone]) {
-    reachedAt[candidate.deepestMilestone] = fallbackTimestamp;
+    thread?.stateSnapshot.latestTransitionAt ?? transitions.at(-1)?.createdAt ?? application.lastContactedAt ?? undefined;
+  if (application.deepestMilestone && fallbackTimestamp && !reachedAt[application.deepestMilestone]) {
+    reachedAt[application.deepestMilestone] = fallbackTimestamp;
   }
-  const inferredMilestones = getTriggeredMilestones(resolveCandidateCurrentStatus(candidate));
+  const inferredMilestones = getTriggeredMilestones(resolveApplicationCurrentStatus(application));
   for (const milestone of inferredMilestones) {
     if (fallbackTimestamp && !reachedAt[milestone.id]) {
       reachedAt[milestone.id] = fallbackTimestamp;
@@ -75,14 +75,14 @@ function buildMilestoneReachedAt(candidate: CandidateRecord, thread?: CandidateT
   return reachedAt;
 }
 
-function resolveLatestActivity(candidate: CandidateRecord, thread?: CandidateThreadRecord): string | undefined {
+function resolveLatestActivity(application: ApplicationRecord, thread?: ApplicationThreadRecord): string | undefined {
   const transitions = thread?.statusTransitions ?? [];
   const lastTransition = transitions.length ? [...transitions].sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0] : undefined;
-  return thread?.stateSnapshot.latestTransitionAt ?? lastTransition?.createdAt ?? candidate.lastContactedAt ?? undefined;
+  return thread?.stateSnapshot.latestTransitionAt ?? lastTransition?.createdAt ?? application.lastContactedAt ?? undefined;
 }
 
-function resolveContactSummary(candidate: CandidateRecord, thread?: CandidateThreadRecord): string {
-  const contactInfo = asObject(candidate.contactInfo);
+function resolveContactSummary(application: ApplicationRecord, thread?: ApplicationThreadRecord): string {
+  const contactInfo = asObject(application.person.contactInfo);
   const orderedKeys = [
     "phone",
     "mobile",
@@ -120,30 +120,30 @@ function resolveContactSummary(candidate: CandidateRecord, thread?: CandidateThr
   return "—";
 }
 
-export function buildCandidateViewModels(
-  candidates: CandidateRecord[],
-  threads: CandidateThreadRecord[],
+export function buildApplicationViewModels(
+  applications: ApplicationRecord[],
+  threads: ApplicationThreadRecord[],
   stateMachine: RecruitmentStateMachine,
-): CandidateViewModel[] {
-  const threadByCandidateId = new Map(threads.map((thread) => [thread.candidate.id, thread]));
+): ApplicationViewModel[] {
+  const threadByApplicationId = new Map(threads.map((thread) => [thread.application.id, thread]));
   const nodeById = createNodeMap(stateMachine);
 
-  return candidates.map((candidate) => {
-    const thread = threadByCandidateId.get(candidate.id);
-    const currentStatus = resolveCandidateCurrentStatus(candidate);
+  return applications.map((application) => {
+    const thread = threadByApplicationId.get(application.id);
+    const currentStatus = resolveApplicationCurrentStatus(application);
     const currentNode = nodeById.get(currentStatus);
     return {
-      candidate,
+      application,
       thread,
       currentStatus,
       currentNode,
-      deepestMilestone: candidate.deepestMilestone,
-      latestActivityAt: resolveLatestActivity(candidate, thread),
+      deepestMilestone: application.deepestMilestone,
+      latestActivityAt: resolveLatestActivity(application, thread),
       humanRequired: currentNode?.executionConfig?.mode === "human_required",
-      onlineResumeAvailable: candidate.resumeAvailable || Boolean(candidate.summary?.trim()),
+      onlineResumeAvailable: application.resumeAvailable || Boolean(application.summary?.trim()),
       offlineResumeAvailable: Boolean(thread?.resumeArtifacts.length),
-      contactSummary: resolveContactSummary(candidate, thread),
-      milestoneReachedAt: buildMilestoneReachedAt(candidate, thread),
+      contactSummary: resolveContactSummary(application, thread),
+      milestoneReachedAt: buildMilestoneReachedAt(application, thread),
     };
   });
 }
@@ -199,9 +199,9 @@ export function nodeTone(node?: StateNode): "positive" | "neutral" | "warning" |
   }
 }
 
-export function isWithinCandidateDateFilter(
+export function isWithinApplicationDateFilter(
   timestamp: string | undefined,
-  filter: CandidateDateFilter,
+  filter: ApplicationDateFilter,
 ): boolean {
   if (filter.kind === "all") {
     return true;

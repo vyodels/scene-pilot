@@ -6,23 +6,23 @@ from sqlalchemy.orm import Session
 from scene_pilot.api.deps import get_session
 from scene_pilot.api.routers.recruit_agent import (
     build_application_thread,
-    create_candidate_assignment,
-    create_candidate_assessment,
-    create_candidate_review_decision,
-    create_candidate_scorecard,
-    create_candidate_sync_record,
+    create_application_assignment,
+    create_application_assessment,
+    create_application_review_decision,
+    create_application_scorecard,
+    create_application_sync_record,
     create_application_entry,
     create_application_status_transition,
-    create_resume_artifact,
-    list_candidate_threads,
-    list_candidate_assignments,
-    list_candidate_review_decisions,
-    list_candidate_scorecards,
-    list_candidate_sync_records,
-    list_resume_artifacts,
+    create_application_resume_artifact,
+    list_application_threads,
+    list_application_assignments,
+    list_application_review_decisions,
+    list_application_scorecards,
+    list_application_sync_records,
+    list_application_resume_artifacts,
     list_application_entries,
     list_application_status_transitions,
-    _get_candidate_for_application_or_404,
+    _get_application_with_person_or_404,
     _with_application_id,
 )
 from scene_pilot.repositories import ApplicationAssessmentRepository, CandidateApplicationRepository
@@ -70,7 +70,7 @@ def list_candidate_application_threads(
     offset: int = Query(default=0, ge=0),
     session: Session = Depends(get_session),
 ) -> list[CandidateThreadRead]:
-    return list_candidate_threads(limit=limit, offset=offset, session=session)
+    return list_application_threads(limit=limit, offset=offset, session=session)
 
 
 @router.post("", response_model=CandidateApplicationRead, status_code=201)
@@ -151,7 +151,7 @@ def list_candidate_application_assessments(
     applicationId: str,
     session: Session = Depends(get_session),
 ) -> list[CandidateAssessmentRead]:
-    application, _candidate = _get_candidate_for_application_or_404(session, applicationId)
+    application, _person = _get_application_with_person_or_404(session, applicationId)
     items = ApplicationAssessmentRepository(session).by_application(application.id, limit=100, offset=0)
     return [_with_application_id(CandidateAssessmentRead, item, application.id, application.person_id) for item in items]
 
@@ -162,7 +162,7 @@ def create_candidate_application_assessment(
     payload: CandidateAssessmentCreate,
     session: Session = Depends(get_session),
 ) -> CandidateAssessmentRead:
-    return create_candidate_assessment(applicationId, payload, session)
+    return create_application_assessment(applicationId, payload, session)
 
 
 @router.get("/{applicationId}/assignments", response_model=list[CandidateAssignmentRead])
@@ -170,7 +170,7 @@ def list_candidate_application_assignments(
     applicationId: str,
     session: Session = Depends(get_session),
 ) -> list[CandidateAssignmentRead]:
-    return list_candidate_assignments(applicationId, session)
+    return list_application_assignments(applicationId, session)
 
 
 @router.post("/{applicationId}/assignments", response_model=CandidateAssignmentRead, status_code=201)
@@ -179,7 +179,7 @@ def create_candidate_application_assignment(
     payload: CandidateAssignmentCreate,
     session: Session = Depends(get_session),
 ) -> CandidateAssignmentRead:
-    return create_candidate_assignment(applicationId, payload, session)
+    return create_application_assignment(applicationId, payload, session)
 
 
 @router.get("/{applicationId}/resume-artifacts", response_model=list[ResumeArtifactRead])
@@ -187,7 +187,7 @@ def list_candidate_application_resume_artifacts(
     applicationId: str,
     session: Session = Depends(get_session),
 ) -> list[ResumeArtifactRead]:
-    return list_resume_artifacts(applicationId, session)
+    return list_application_resume_artifacts(applicationId, session)
 
 
 @router.post("/{applicationId}/resume-artifacts", response_model=ResumeArtifactRead, status_code=201)
@@ -196,7 +196,7 @@ def create_candidate_application_resume_artifact(
     payload: ResumeArtifactCreate,
     session: Session = Depends(get_session),
 ) -> ResumeArtifactRead:
-    return create_resume_artifact(applicationId, payload, session)
+    return create_application_resume_artifact(applicationId, payload, session)
 
 
 @router.get("/{applicationId}/scorecards", response_model=list[CandidateScorecardRead])
@@ -204,7 +204,7 @@ def list_candidate_application_scorecards(
     applicationId: str,
     session: Session = Depends(get_session),
 ) -> list[CandidateScorecardRead]:
-    return list_candidate_scorecards(applicationId, session)
+    return list_application_scorecards(applicationId, session)
 
 
 @router.post("/{applicationId}/scorecards", response_model=CandidateScorecardRead, status_code=201)
@@ -213,7 +213,7 @@ def create_candidate_application_scorecard(
     payload: CandidateScorecardCreate,
     session: Session = Depends(get_session),
 ) -> CandidateScorecardRead:
-    return create_candidate_scorecard(applicationId, payload, session)
+    return create_application_scorecard(applicationId, payload, session)
 
 
 @router.get("/{applicationId}/review-decisions", response_model=list[CandidateReviewDecisionRead])
@@ -221,7 +221,7 @@ def list_candidate_application_review_decisions(
     applicationId: str,
     session: Session = Depends(get_session),
 ) -> list[CandidateReviewDecisionRead]:
-    return list_candidate_review_decisions(applicationId, session)
+    return list_application_review_decisions(applicationId, session)
 
 
 @router.post("/{applicationId}/review-decisions", response_model=CandidateReviewDecisionRead, status_code=201)
@@ -230,7 +230,7 @@ def create_candidate_application_review_decision(
     payload: CandidateReviewDecisionCreate,
     session: Session = Depends(get_session),
 ) -> CandidateReviewDecisionRead:
-    return create_candidate_review_decision(applicationId, payload, session)
+    return create_application_review_decision(applicationId, payload, session)
 
 
 @router.get("/{applicationId}/sync-records", response_model=list[TalentPoolSyncRecordRead])
@@ -238,7 +238,7 @@ def list_candidate_application_sync_records(
     applicationId: str,
     session: Session = Depends(get_session),
 ) -> list[TalentPoolSyncRecordRead]:
-    return list_candidate_sync_records(applicationId, session)
+    return list_application_sync_records(applicationId, session)
 
 
 @router.post("/{applicationId}/sync-records", response_model=TalentPoolSyncRecordRead, status_code=201)
@@ -247,4 +247,4 @@ def create_candidate_application_sync_record(
     payload: TalentPoolSyncRecordCreate,
     session: Session = Depends(get_session),
 ) -> TalentPoolSyncRecordRead:
-    return create_candidate_sync_record(applicationId, payload, session)
+    return create_application_sync_record(applicationId, payload, session)

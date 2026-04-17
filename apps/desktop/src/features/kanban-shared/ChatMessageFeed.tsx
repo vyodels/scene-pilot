@@ -2,7 +2,7 @@ import React, { Fragment } from "react";
 import { StatusBadge } from "../../components";
 import { formatCompactDate } from "../../lib/format";
 import { useI18n } from "../../lib/i18n";
-import type { CandidateViewModel } from "./kanbanUtils";
+import type { ApplicationViewModel } from "./kanbanUtils";
 
 function dayKey(timestamp?: string | null): string {
   if (!timestamp) {
@@ -19,7 +19,7 @@ function messageDirection(direction: string): "inbound" | "outbound" | "system" 
 }
 
 interface ChatMessageFeedProps {
-  record: CandidateViewModel;
+  record: ApplicationViewModel;
 }
 
 export function ChatMessageFeed({ record }: ChatMessageFeedProps): JSX.Element {
@@ -32,21 +32,21 @@ export function ChatMessageFeed({ record }: ChatMessageFeedProps): JSX.Element {
 
   if (!logs.length) {
     const overallScore =
-      typeof record.candidate.aiScores?.overall === "number"
-        ? Number(record.candidate.aiScores.overall)
-        : typeof record.candidate.matchScore === "number"
-          ? record.candidate.matchScore
+      typeof record.application.aiScores?.overall === "number"
+        ? Number(record.application.aiScores.overall)
+        : typeof record.application.matchScore === "number"
+          ? record.application.matchScore
           : null;
 
     return (
       <div className="chat-feed__empty-card">
         <div className="chat-feed__empty-head">
           <strong>
-            {record.candidate.name} · {record.candidate.title}
+            {record.application.person.name} · {record.application.person.title}
           </strong>
-          <span>{record.candidate.location}</span>
+          <span>{record.application.person.location}</span>
         </div>
-        <p className="chat-feed__empty-summary">{record.candidate.summary || copy("No online resume summary yet.", "暂无在线简历摘要。")}</p>
+        <p className="chat-feed__empty-summary">{record.application.summary || copy("No online resume summary yet.", "暂无在线简历摘要。")}</p>
         <div className="chat-feed__empty-metrics">
           <StatusBadge tone="positive">
             {copy("Online score", "在线评分")} {overallScore != null ? `${Math.round(overallScore)}/100` : copy("Pending", "待生成")}
@@ -56,9 +56,9 @@ export function ChatMessageFeed({ record }: ChatMessageFeedProps): JSX.Element {
           </StatusBadge>
         </div>
         <div className="chat-feed__empty-facts">
-          <span>{copy("Role", "应聘岗位")}：{record.candidate.jdTitle}</span>
-          <span>{copy("Experience", "工作年限")}：{record.candidate.experienceYears || "—"}</span>
-          <span>{copy("Location", "所在地")}：{record.candidate.location || "—"}</span>
+          <span>{copy("Role", "应聘岗位")}：{record.application.jobDescription.title}</span>
+          <span>{copy("Experience", "工作年限")}：{record.application.person.experienceYears || "—"}</span>
+          <span>{copy("Location", "所在地")}：{record.application.person.location || "—"}</span>
         </div>
       </div>
     );

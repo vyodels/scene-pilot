@@ -24,6 +24,7 @@ from scene_pilot.repositories import (
     AgentRunRepository,
     AgentRuntimeEventRepository,
     AgentSessionRepository,
+    JobDescriptionRepository,
     OperatorInteractionRepository,
     ApprovalRepository,
     CandidateAssessmentRepository,
@@ -86,6 +87,7 @@ from scene_pilot.schemas import (
     TalentPoolSyncRecordRead,
 )
 from scene_pilot.services.container import AppContainer
+from scene_pilot.services.application_subjects import application_payload_from_application
 from scene_pilot.services.events import EventStreamService
 from scene_pilot.services.evolution import promote_skill_draft_contract, resolve_promoted_skill_snapshot
 from scene_pilot.services.recruit_agent import (
@@ -116,14 +118,14 @@ def _get_candidate_or_404(session: Session, candidate_id: str):
     return item
 
 
-def _get_candidate_for_application_or_404(session: Session, application_id: str):
+def _get_application_with_person_or_404(session: Session, application_id: str):
     application = CandidateApplicationRepository(session).get(application_id)
     if application is None:
         raise HTTPException(status_code=404, detail="Candidate application not found")
-    candidate = CandidateRepository(session).resolve(application.person_id)
-    if candidate is None:
+    person = CandidateRepository(session).resolve(application.person_id)
+    if person is None:
         raise HTTPException(status_code=404, detail="Candidate person not found")
-    return application, candidate
+    return application, person
 
 
 def _with_application_id(model_cls, item, application_id: str, person_id: str | None = None):
@@ -148,30 +150,13 @@ def _runtime_person_filter_id(session: Session, candidate_id: str | None) -> str
     return text
 
 
-def _candidate_read_for_application(candidate, application) -> ApplicationSubjectRead:
+def _application_subject_read_for_application(person, application, job_description=None) -> ApplicationSubjectRead:
     return ApplicationSubjectRead.model_validate(
-        {
-            "id": candidate.id,
-            "application_id": application.id,
-            "person_id": candidate.id,
-            "name": candidate.name,
-            "platform": application.platform or candidate.platform,
-            "platform_candidate_id": candidate.platform_candidate_id,
-            "current_status": application.current_status,
-            "current_stage_key": application.current_stage_key,
-            "deepest_milestone": application.deepest_milestone,
-            "job_description_id": application.job_description_id,
-            "contact_info": dict(candidate.contact_info or {}),
-            "state_snapshot": dict(application.state_snapshot or {}),
-            "resume_path": candidate.resume_path,
-            "online_resume_text": candidate.online_resume_text,
-            "ai_scores": dict(application.ai_scores or {}),
-            "ai_reasoning": application.ai_reasoning,
-            "cooldown_until": application.cooldown_until,
-            "last_contacted_at": application.last_contacted_at,
-            "created_at": application.created_at,
-            "updated_at": application.updated_at,
-        }
+        application_payload_from_application(
+            application,
+            person=person,
+            job_description=job_description,
+        )
     )
 
 
@@ -220,9 +205,9 @@ def _ensure_runtime_session(session: Session):
     )
 
 
-def _candidate_state_snapshot(candidate) -> CandidateStateSnapshotRead:
-    current_status = candidate.current_status
-    payload = dict(candidate.state_snapshot or {})
+def _application_state_snapshot(application) -> CandidateStateSnapshotRead:
+    current_status = application.current_status
+    payload = dict(application.state_snapshot or {})
     if not payload:
         payload = default_candidate_state_snapshot(status=current_status)
     if payload.get("current_stage_key") in {None, ""}:
@@ -236,9 +221,14 @@ def _candidate_state_snapshot(candidate) -> CandidateStateSnapshotRead:
     return CandidateStateSnapshotRead.model_validate(payload)
 
 
-def _build_candidate_thread(session: Session, application, candidate) -> CandidateThreadRead:
+def _build_application_thread(session: Session, application, person) -> CandidateThreadRead:
     application_id = application.id
-    person_id = candidate.id
+    person_id = person.id
+    job_description = (
+        JobDescriptionRepository(session).get(application.job_description_id)
+        if getattr(application, "job_description_id", None)
+        else None
+    )
     session_repo = ApplicationSessionRepository(session)
     logs_repo = ApplicationCommunicationLogRepository(session)
     transition_repo = ApplicationStatusTransitionRepository(session)
@@ -248,7 +238,7 @@ def _build_candidate_thread(session: Session, application, candidate) -> Candida
     scorecard_repo = ApplicationScorecardRepository(session)
     review_repo = ApplicationReviewDecisionRepository(session)
     sync_repo = ApplicationSyncRecordRepository(session)
-    candidate_session = session_repo.by_application_id(application.id)
+    application_session = session_repo.by_application_id(application.id)
     logs = logs_repo.by_application(application.id, limit=200, offset=0)
     status_transitions = [
         _with_application_id(CandidateStatusTransitionRead, item, application_id, person_id)
@@ -256,11 +246,11 @@ def _build_candidate_thread(session: Session, application, candidate) -> Candida
     ]
     assessments = assessment_repo.by_application(application.id, limit=50, offset=0)
     if application.ai_scores and not any(item.assessment_type == "ai" for item in assessments):
-        assessments = [
-            CandidateAssessmentRead(
-                id=f"synthetic-ai-{application.id}",
-                candidate_id=person_id,
-                application_id=application_id,
+            assessments = [
+                CandidateAssessmentRead(
+                    id=f"synthetic-ai-{application.id}",
+                    person_id=person_id,
+                    application_id=application_id,
                 assessment_type="ai",
                 stage_key=application.current_stage_key or application.current_status,
                 status="completed",
@@ -302,11 +292,11 @@ def _build_candidate_thread(session: Session, application, candidate) -> Candida
         application_id=application_id,
         person_id=person_id,
         job_description_id=application.job_description_id,
-        candidate=_candidate_read_for_application(candidate, application),
-        session_status=candidate_session.status if candidate_session is not None else "active",
-        context_summary=candidate_session.context_summary if candidate_session is not None else None,
-        facts=dict(candidate_session.facts or {}) if candidate_session is not None else {},
-        recent_messages=list(candidate_session.recent_messages or []) if candidate_session is not None else [],
+        application=_application_subject_read_for_application(person, application, job_description),
+        session_status=application_session.status if application_session is not None else "active",
+        context_summary=application_session.context_summary if application_session is not None else None,
+        facts=dict(application_session.facts or {}) if application_session is not None else {},
+        recent_messages=list(application_session.recent_messages or []) if application_session is not None else [],
         communication_logs=[
             CandidateConversationEntryRead(
                 id=item.id,
@@ -320,7 +310,7 @@ def _build_candidate_thread(session: Session, application, candidate) -> Candida
             )
             for item in logs
         ],
-        state_snapshot=_candidate_state_snapshot(application),
+        state_snapshot=_application_state_snapshot(application),
         status_transitions=status_transitions,
         assessments=assessments,
         assignments=assignments,
@@ -335,12 +325,12 @@ def _build_candidate_thread(session: Session, application, candidate) -> Candida
 
 
 def build_application_thread(session: Session, application_id: str) -> CandidateThreadRead:
-    application, candidate = _get_candidate_for_application_or_404(session, application_id)
-    return _build_candidate_thread(session, application, candidate)
+    application, person = _get_application_with_person_or_404(session, application_id)
+    return _build_application_thread(session, application, person)
 
 
 def list_application_entries(session: Session, application_id: str) -> list[CandidateConversationEntryRead]:
-    application, _candidate = _get_candidate_for_application_or_404(session, application_id)
+    application, _person = _get_application_with_person_or_404(session, application_id)
     logs = ApplicationCommunicationLogRepository(session).by_application(application.id, limit=200, offset=0)
     resolved_application_id = application.id
     return [
@@ -363,7 +353,7 @@ def create_application_entry(
     application_id: str,
     payload: CandidateConversationEntryCreate,
 ) -> CandidateConversationEntryRead:
-    application, _candidate = _get_candidate_for_application_or_404(session, application_id)
+    application, _person = _get_application_with_person_or_404(session, application_id)
     resolved_application_id = application.id
     timestamp = payload.timestamp or _now()
     entry = ApplicationCommunicationLogRepository(session).create(
@@ -377,12 +367,12 @@ def create_application_entry(
             "timestamp": timestamp,
         }
     )
-    candidate_session = ApplicationSessionRepository(session).get_or_create(
+    application_session = ApplicationSessionRepository(session).get_or_create(
         application.id,
         defaults={"status": "active", "facts": {}, "recent_messages": []},
     )
     ApplicationSessionRepository(session).append_recent_message(
-        candidate_session,
+        application_session,
         direction=payload.direction,
         content=payload.content,
         message_type=payload.message_type,
@@ -401,7 +391,7 @@ def create_application_entry(
 
 
 def list_application_status_transitions(session: Session, application_id: str) -> list[CandidateStatusTransitionRead]:
-    application, _candidate = _get_candidate_for_application_or_404(session, application_id)
+    application, _person = _get_application_with_person_or_404(session, application_id)
     resolved_application_id = application.id
     items = ApplicationStatusTransitionRepository(session).by_application(application.id, limit=500, offset=0)
     return [_with_application_id(CandidateStatusTransitionRead, item, resolved_application_id, application.person_id) for item in items]
@@ -412,13 +402,13 @@ def create_application_status_transition(
     application_id: str,
     payload: CandidateStateTransitionRequest,
 ) -> CandidateThreadRead:
-    application, candidate = _get_candidate_for_application_or_404(session, application_id)
+    application, person = _get_application_with_person_or_404(session, application_id)
     try:
-        transition_candidate(session, candidate=candidate, application=application, payload=payload)
+        transition_candidate(session, candidate=person, application=application, payload=payload)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    refreshed_application, refreshed_candidate = _get_candidate_for_application_or_404(session, application.id)
-    return _build_candidate_thread(session, refreshed_application, refreshed_candidate)
+    refreshed_application, refreshed_person = _get_application_with_person_or_404(session, application.id)
+    return _build_application_thread(session, refreshed_application, refreshed_person)
 
 
 def _next_recommended_stages(status: str) -> list[str]:
@@ -563,7 +553,7 @@ def compact_agent_global_memory(
     return AgentGlobalMemoryRead.model_validate(updated)
 
 
-def list_candidate_threads(
+def list_application_threads(
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     session: Session = Depends(get_session),
@@ -575,47 +565,46 @@ def list_candidate_threads(
         candidate = candidate_repo.resolve(application.person_id)
         if candidate is None:
             continue
-        threads.append(_build_candidate_thread(session, application, candidate))
+        threads.append(_build_application_thread(session, application, candidate))
     return threads
 
 
-def get_candidate_thread(candidate_id: str, session: Session = Depends(get_session)) -> CandidateThreadRead:
-    return build_application_thread(session, candidate_id)
+def get_application_thread(application_id: str, session: Session = Depends(get_session)) -> CandidateThreadRead:
+    return build_application_thread(session, application_id)
 
 
-def create_candidate_thread_entry(
-    candidate_id: str,
+def create_application_thread_entry(
+    application_id: str,
     payload: CandidateConversationEntryCreate,
     session: Session = Depends(get_session),
 ) -> CandidateConversationEntryRead:
-    return create_application_entry(session, candidate_id, payload)
+    return create_application_entry(session, application_id, payload)
 
 
-def transition_candidate_state(
-    candidate_id: str,
+def transition_application_state(
+    application_id: str,
     payload: CandidateStateTransitionRequest,
     session: Session = Depends(get_session),
 ) -> CandidateThreadRead:
-    return create_application_status_transition(session, candidate_id, payload)
+    return create_application_status_transition(session, application_id, payload)
 
-def list_candidate_status_transitions(candidate_id: str, session: Session = Depends(get_session)) -> list[CandidateStatusTransitionRead]:
-    return list_application_status_transitions(session, candidate_id)
+def list_application_status_transitions_view(application_id: str, session: Session = Depends(get_session)) -> list[CandidateStatusTransitionRead]:
+    return list_application_status_transitions(session, application_id)
 
 
-def list_candidate_assignments(candidate_id: str, session: Session = Depends(get_session)) -> list[CandidateAssignmentRead]:
-    application, _candidate = _get_candidate_for_application_or_404(session, candidate_id)
+def list_application_assignments(application_id: str, session: Session = Depends(get_session)) -> list[CandidateAssignmentRead]:
+    application, _person = _get_application_with_person_or_404(session, application_id)
     items = ApplicationAssignmentRepository(session).by_application(application.id, limit=100, offset=0)
     return [_with_application_id(CandidateAssignmentRead, item, application.id, application.person_id) for item in items]
 
 
-def create_candidate_assignment(
-    candidate_id: str,
+def create_application_assignment(
+    application_id: str,
     payload: CandidateAssignmentCreate,
     session: Session = Depends(get_session),
 ) -> CandidateAssignmentRead:
-    application, _candidate = _get_candidate_for_application_or_404(session, candidate_id)
+    application, _person = _get_application_with_person_or_404(session, application_id)
     assignment_payload = payload.model_dump(exclude_unset=True)
-    assignment_payload.pop("candidate_id", None)
     assignment_payload.pop("person_id", None)
     assignment_payload.pop("application_id", None)
     item = ApplicationAssignmentRepository(session).create(
@@ -628,22 +617,22 @@ def create_candidate_assignment(
     return _with_application_id(CandidateAssignmentRead, item, application.id, application.person_id)
 
 
-def list_resume_artifacts(candidate_id: str, session: Session = Depends(get_session)) -> list[ResumeArtifactRead]:
-    application, candidate = _get_candidate_for_application_or_404(session, candidate_id)
+def list_application_resume_artifacts(application_id: str, session: Session = Depends(get_session)) -> list[ResumeArtifactRead]:
+    application, person = _get_application_with_person_or_404(session, application_id)
     items = ResumeArtifactRepository(session).by_application(application.id, limit=100, offset=0)
-    return [_with_application_id(ResumeArtifactRead, item, application.id, candidate.id) for item in items]
+    return [_with_application_id(ResumeArtifactRead, item, application.id, person.id) for item in items]
 
 
-def create_resume_artifact(
-    candidate_id: str,
+def create_application_resume_artifact(
+    application_id: str,
     payload: ResumeArtifactCreate,
     session: Session = Depends(get_session),
 ) -> ResumeArtifactRead:
-    application, candidate = _get_candidate_for_application_or_404(session, candidate_id)
-    linked_candidate = relink_application_person_by_contact_info(
+    application, person = _get_application_with_person_or_404(session, application_id)
+    linked_person = relink_application_person_by_contact_info(
         session,
         application=application,
-        current_candidate=candidate,
+        current_candidate=person,
         contact_info=payload.contact_snapshot,
     )
     artifact_payload = payload.model_dump(exclude_unset=True)
@@ -667,17 +656,16 @@ def create_resume_artifact(
                 "current_stage_key": application.current_stage_key or application.current_status,
             },
         )
-    return _with_application_id(ResumeArtifactRead, item, application.id, linked_candidate.id)
+    return _with_application_id(ResumeArtifactRead, item, application.id, linked_person.id)
 
 
-def create_candidate_assessment(
-    candidate_id: str,
+def create_application_assessment(
+    application_id: str,
     payload: CandidateAssessmentCreate,
     session: Session = Depends(get_session),
 ) -> CandidateAssessmentRead:
-    application, _candidate = _get_candidate_for_application_or_404(session, candidate_id)
+    application, _person = _get_application_with_person_or_404(session, application_id)
     assessment_payload = payload.model_dump(exclude_unset=True)
-    assessment_payload.pop("candidate_id", None)
     assessment_payload.pop("person_id", None)
     assessment_metadata = assessment_payload.pop("metadata", {})
     item = ApplicationAssessmentRepository(session).create(
@@ -728,20 +716,19 @@ def create_candidate_assessment(
     return _with_application_id(CandidateAssessmentRead, item, application.id, application.person_id)
 
 
-def list_candidate_scorecards(candidate_id: str, session: Session = Depends(get_session)) -> list[CandidateScorecardRead]:
-    application, _candidate = _get_candidate_for_application_or_404(session, candidate_id)
+def list_application_scorecards(application_id: str, session: Session = Depends(get_session)) -> list[CandidateScorecardRead]:
+    application, _person = _get_application_with_person_or_404(session, application_id)
     items = ApplicationScorecardRepository(session).by_application(application.id, limit=100, offset=0)
     return [_with_application_id(CandidateScorecardRead, item, application.id, application.person_id) for item in items]
 
 
-def create_candidate_scorecard(
-    candidate_id: str,
+def create_application_scorecard(
+    application_id: str,
     payload: CandidateScorecardCreate,
     session: Session = Depends(get_session),
 ) -> CandidateScorecardRead:
-    application, _candidate = _get_candidate_for_application_or_404(session, candidate_id)
+    application, _person = _get_application_with_person_or_404(session, application_id)
     scorecard_payload = payload.model_dump(exclude_unset=True)
-    scorecard_payload.pop("candidate_id", None)
     scorecard_payload.pop("person_id", None)
     scorecard_payload.pop("application_id", None)
     item = ApplicationScorecardRepository(session).create(
@@ -753,20 +740,19 @@ def create_candidate_scorecard(
     return _with_application_id(CandidateScorecardRead, item, application.id, application.person_id)
 
 
-def list_candidate_review_decisions(candidate_id: str, session: Session = Depends(get_session)) -> list[CandidateReviewDecisionRead]:
-    application, _candidate = _get_candidate_for_application_or_404(session, candidate_id)
+def list_application_review_decisions(application_id: str, session: Session = Depends(get_session)) -> list[CandidateReviewDecisionRead]:
+    application, _person = _get_application_with_person_or_404(session, application_id)
     items = ApplicationReviewDecisionRepository(session).by_application(application.id, limit=100, offset=0)
     return [_with_application_id(CandidateReviewDecisionRead, item, application.id, application.person_id) for item in items]
 
 
-def create_candidate_review_decision(
-    candidate_id: str,
+def create_application_review_decision(
+    application_id: str,
     payload: CandidateReviewDecisionCreate,
     session: Session = Depends(get_session),
 ) -> CandidateReviewDecisionRead:
-    application, _candidate = _get_candidate_for_application_or_404(session, candidate_id)
+    application, _person = _get_application_with_person_or_404(session, application_id)
     review_payload = payload.model_dump(exclude_unset=True)
-    review_payload.pop("candidate_id", None)
     review_payload.pop("person_id", None)
     review_payload.pop("application_id", None)
     item = ApplicationReviewDecisionRepository(session).create(
@@ -779,20 +765,19 @@ def create_candidate_review_decision(
     return _with_application_id(CandidateReviewDecisionRead, item, application.id, application.person_id)
 
 
-def list_candidate_sync_records(candidate_id: str, session: Session = Depends(get_session)) -> list[TalentPoolSyncRecordRead]:
-    application, _candidate = _get_candidate_for_application_or_404(session, candidate_id)
+def list_application_sync_records(application_id: str, session: Session = Depends(get_session)) -> list[TalentPoolSyncRecordRead]:
+    application, _person = _get_application_with_person_or_404(session, application_id)
     items = ApplicationSyncRecordRepository(session).by_application(application.id, limit=100, offset=0)
     return [_with_application_id(TalentPoolSyncRecordRead, item, application.id, application.person_id) for item in items]
 
 
-def create_candidate_sync_record(
-    candidate_id: str,
+def create_application_sync_record(
+    application_id: str,
     payload: TalentPoolSyncRecordCreate,
     session: Session = Depends(get_session),
 ) -> TalentPoolSyncRecordRead:
-    application, _candidate = _get_candidate_for_application_or_404(session, candidate_id)
+    application, _person = _get_application_with_person_or_404(session, application_id)
     sync_payload = payload.model_dump(exclude_unset=True)
-    sync_payload.pop("candidate_id", None)
     sync_payload.pop("person_id", None)
     sync_payload.pop("application_id", None)
     item = ApplicationSyncRecordRepository(session).create(
