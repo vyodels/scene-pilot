@@ -1,6 +1,6 @@
 import type {
-  CandidateStatusTransition,
-  CandidateTransitionPayload,
+  ApplicationStatusTransition,
+  ApplicationTransitionPayload,
   RecruitmentStateMachine,
   StateCriteriaOptimizationReport,
   RecruitmentStateMachineVersionRecord,
@@ -112,7 +112,7 @@ export interface DesktopApiClient {
   listExecutionTraces(goalId?: string): Promise<ExecutionTraceRecord[]>;
   listExecutionGraphs(goalId?: string): Promise<ExecutionGraphProjectionRecord[]>;
   listStrategyFragments(): Promise<StrategyFragmentRecord[]>;
-  listOperatorInteractions(candidateId?: string): Promise<OperatorInteractionRecord[]>;
+  listOperatorInteractions(applicationId?: string): Promise<OperatorInteractionRecord[]>;
   resolveOperatorInteraction(
     interactionId: string,
     payload: { action: string; comment?: string; operator?: string; scope?: string },
@@ -135,9 +135,9 @@ export interface DesktopApiClient {
   listStateMachineVersions(limit?: number): Promise<RecruitmentStateMachineVersionRecord[]>;
   getStateMachineVersion(version: number): Promise<RecruitmentStateMachineVersionRecord>;
   updateStateMachine(payload: RecruitmentStateMachineUpdatePayload): Promise<RecruitmentStateMachine>;
-  listApplicationTransitions(applicationId: string): Promise<CandidateStatusTransition[]>;
+  listApplicationTransitions(applicationId: string): Promise<ApplicationStatusTransition[]>;
   createApplicationEntry(applicationId: string, payload: { direction: string; content: string; messageType?: string; platform?: string }): Promise<ApplicationConversationEntry>;
-  transitionApplicationState(applicationId: string, payload: CandidateTransitionPayload): Promise<ApplicationThreadRecord>;
+  transitionApplicationState(applicationId: string, payload: ApplicationTransitionPayload): Promise<ApplicationThreadRecord>;
   createApplicationAssessment(applicationId: string, payload: { assessmentType: string; stageKey?: string; status?: string; decision?: string; score?: number; summary?: string; evidenceRefs?: unknown[]; metadata?: Record<string, unknown>; createdBy?: string; reviewedBy?: string }): Promise<ApplicationAssessmentRecord>;
   listEvolutionArtifacts(): Promise<EvolutionArtifactRecord[]>;
   updateEvolutionArtifact(artifactId: string, payload: Partial<EvolutionArtifactRecord>): Promise<EvolutionArtifactRecord>;
@@ -306,6 +306,7 @@ function normalizeAgentSnapshot(raw: unknown): AgentSnapshot {
 
 function normalizeAgentQueueItem(raw: unknown): AgentQueueItem {
   const record = asRecord(raw);
+  const payload = asRecord(record.payload);
   return {
     taskId: String(record.taskId ?? record.task_id ?? ""),
     taskType: String(record.taskType ?? record.task_type ?? ""),
@@ -316,8 +317,19 @@ function normalizeAgentQueueItem(raw: unknown): AgentQueueItem {
     scheduledFor: record.scheduledFor ? String(record.scheduledFor) : record.scheduled_for ? String(record.scheduled_for) : null,
     lockedAt: record.lockedAt ? String(record.lockedAt) : record.locked_at ? String(record.locked_at) : null,
     lockedBy: record.lockedBy ? String(record.lockedBy) : record.locked_by ? String(record.locked_by) : null,
-    candidateId: record.candidateId ? String(record.candidateId) : record.candidate_id ? String(record.candidate_id) : null,
-    payload: asRecord(record.payload),
+    personId:
+      payload.personId != null
+        ? String(payload.personId)
+        : payload.person_id != null
+          ? String(payload.person_id)
+          : null,
+    applicationId:
+      payload.applicationId != null
+        ? String(payload.applicationId)
+        : payload.application_id != null
+          ? String(payload.application_id)
+          : null,
+    payload,
     queueAudit: asArray(record.queueAudit ?? record.queue_audit).map((entry) => {
       const audit = asRecord(entry);
       return {
@@ -460,7 +472,7 @@ function normalizeDashboard(raw: unknown): DashboardSummary {
     pipeline: asArray(record.pipeline) as DashboardSummary["pipeline"],
     timeline: asArray(record.timeline) as DashboardSummary["timeline"],
     alerts: asArray(record.alerts) as DashboardSummary["alerts"],
-    applications: asArray(record.applications ?? record.candidates).map(normalizeApplicationRecord),
+    applications: asArray(record.applications).map(normalizeApplicationRecord),
     applicationFollowUpSummaryDefinitions: asArray(
       record.applicationFollowUpSummaryDefinitions ??
         record.application_follow_up_summary_definitions,
@@ -643,11 +655,7 @@ function summarizeApprovalPayload(payload: Record<string, unknown>): string {
   const executionEpisodeId = payload.execution_episode_id ?? payload.executionEpisodeId;
   const reason = payload.reason;
   const summary = payload.summary;
-  const candidate =
-    payload.candidate_name_or_identifier ??
-    payload.candidateNameOrIdentifier ??
-    payload.candidate_id ??
-    payload.candidateId;
+  const application = payload.application_name_or_identifier ?? payload.applicationNameOrIdentifier ?? payload.application_id ?? payload.applicationId;
   const command = Array.isArray(payload.command) ? payload.command.join(" ") : null;
 
   if (summary) {
@@ -656,8 +664,8 @@ function summarizeApprovalPayload(payload: Record<string, unknown>): string {
   if (reason) {
     lines.push(String(reason));
   }
-  if (candidate) {
-    lines.push(`Candidate: ${String(candidate)}`);
+  if (application) {
+    lines.push(`Application: ${String(application)}`);
   }
   if (stepId) {
     lines.push(`Step: ${String(stepId)}`);
@@ -678,25 +686,22 @@ function normalizeApprovalItem(raw: unknown): ApprovalItem {
   const record = asRecord(raw);
   const payload = asRecord(record.payload);
   const targetType = String(record.targetType ?? record.target_type ?? record.kind ?? "approval");
-  const targetId = record.targetId ? String(record.targetId) : record.target_id ? String(record.target_id) : undefined;
-  const relatedCandidateId =
-    record.relatedCandidateId != null
-      ? String(record.relatedCandidateId)
-      : record.related_candidate_id != null
-        ? String(record.related_candidate_id)
-        : payload.candidateId != null
-          ? String(payload.candidateId)
-          : payload.candidate_id != null
-            ? String(payload.candidate_id)
-            : /candidate|communication|message|outreach/i.test(targetType) && targetId
-              ? String(targetId)
-              : undefined;
+  const relatedApplicationId =
+    record.relatedApplicationId != null
+      ? String(record.relatedApplicationId)
+      : record.related_application_id != null
+        ? String(record.related_application_id)
+        : payload.applicationId != null
+          ? String(payload.applicationId)
+          : payload.application_id != null
+            ? String(payload.application_id)
+            : undefined;
   const explicitSurface =
     record.surface === "runtime" || record.surface === "evolution"
       ? (record.surface as ApprovalItem["surface"])
       : null;
   const surface: ApprovalItem["surface"] =
-    explicitSurface ?? (targetType === "blocked_task" || relatedCandidateId ? "runtime" : "evolution");
+    explicitSurface ?? (targetType === "blocked_task" || relatedApplicationId ? "runtime" : "evolution");
   const detail =
     record.detail != null
       ? String(record.detail)
@@ -712,14 +717,13 @@ function normalizeApprovalItem(raw: unknown): ApprovalItem {
     status: String(record.status ?? "pending") as ApprovalItem["status"],
     createdAt: String(record.createdAt ?? record.created_at ?? new Date().toISOString()),
     targetType: targetType,
-    targetId,
     reviewedBy: record.reviewedBy ? String(record.reviewedBy) : record.reviewed_by ? String(record.reviewed_by) : null,
     reviewedAt: record.reviewedAt ? String(record.reviewedAt) : record.reviewed_at ? String(record.reviewed_at) : null,
     payload,
     notes: record.notes ? String(record.notes) : null,
     updatedAt: record.updatedAt ? String(record.updatedAt) : record.updated_at ? String(record.updated_at) : undefined,
     surface,
-    relatedCandidateId: relatedCandidateId ?? null,
+    relatedApplicationId: relatedApplicationId ?? null,
   };
 }
 
@@ -751,12 +755,19 @@ function normalizeGoalSpec(raw: unknown): GoalSpecRecord {
 
 function normalizeExecutionTrace(raw: unknown): ExecutionTraceRecord {
   const record = asRecord(raw);
+  const traceMetadata = asRecord(record.traceMetadata ?? record.trace_metadata);
   return {
     id: String(record.id ?? ""),
     sessionId: String(record.sessionId ?? record.session_id ?? ""),
     runId: record.runId ? String(record.runId) : record.run_id ? String(record.run_id) : null,
     goalSpecId: record.goalSpecId ? String(record.goalSpecId) : record.goal_spec_id ? String(record.goal_spec_id) : null,
-    candidateId: record.candidateId ? String(record.candidateId) : record.candidate_id ? String(record.candidate_id) : null,
+    personId: record.personId != null ? String(record.personId) : record.person_id != null ? String(record.person_id) : null,
+    applicationId:
+      traceMetadata.applicationId != null
+        ? String(traceMetadata.applicationId)
+        : traceMetadata.application_id != null
+          ? String(traceMetadata.application_id)
+          : null,
     lane: String(record.lane ?? "agent"),
     traceKind: String(record.traceKind ?? record.trace_kind ?? "adaptive_run"),
     status: String(record.status ?? "captured"),
@@ -765,7 +776,7 @@ function normalizeExecutionTrace(raw: unknown): ExecutionTraceRecord {
     rawTrace: asRecord(record.rawTrace ?? record.raw_trace),
     distilledTrace: asRecord(record.distilledTrace ?? record.distilled_trace),
     outcome: asRecord(record.outcome),
-    traceMetadata: asRecord(record.traceMetadata ?? record.trace_metadata),
+    traceMetadata,
     startedAt: record.startedAt ? String(record.startedAt) : record.started_at ? String(record.started_at) : null,
     finishedAt: record.finishedAt ? String(record.finishedAt) : record.finished_at ? String(record.finished_at) : null,
     createdAt: String(record.createdAt ?? record.created_at ?? new Date().toISOString()),
@@ -775,18 +786,25 @@ function normalizeExecutionTrace(raw: unknown): ExecutionTraceRecord {
 
 function normalizeExecutionGraph(raw: unknown): ExecutionGraphProjectionRecord {
   const record = asRecord(raw);
+  const graphMetadata = asRecord(record.graphMetadata ?? record.graph_metadata);
   return {
     id: String(record.id ?? ""),
     goalSpecId: record.goalSpecId ? String(record.goalSpecId) : record.goal_spec_id ? String(record.goal_spec_id) : null,
     runId: record.runId ? String(record.runId) : record.run_id ? String(record.run_id) : null,
-    candidateId: record.candidateId ? String(record.candidateId) : record.candidate_id ? String(record.candidate_id) : null,
+    personId: record.personId != null ? String(record.personId) : record.person_id != null ? String(record.person_id) : null,
+    applicationId:
+      graphMetadata.applicationId != null
+        ? String(graphMetadata.applicationId)
+        : graphMetadata.application_id != null
+          ? String(graphMetadata.application_id)
+          : null,
     graphKind: String(record.graphKind ?? record.graph_kind ?? "execution_projection"),
     title: String(record.title ?? ""),
     summary: record.summary ? String(record.summary) : null,
     nodes: asArray<Record<string, unknown>>(record.nodes),
     edges: asArray<Record<string, unknown>>(record.edges),
     renderedText: record.renderedText ? String(record.renderedText) : record.rendered_text ? String(record.rendered_text) : null,
-    graphMetadata: asRecord(record.graphMetadata ?? record.graph_metadata),
+    graphMetadata,
     createdAt: String(record.createdAt ?? record.created_at ?? new Date().toISOString()),
     updatedAt: String(record.updatedAt ?? record.updated_at ?? new Date().toISOString()),
   };
@@ -799,8 +817,13 @@ function normalizeStrategyFragment(raw: unknown): StrategyFragmentRecord {
     agentProfileId: String(record.agentProfileId ?? record.agent_profile_id ?? ""),
     goalSpecId: record.goalSpecId ? String(record.goalSpecId) : record.goal_spec_id ? String(record.goal_spec_id) : null,
     runId: record.runId ? String(record.runId) : record.run_id ? String(record.run_id) : null,
-    candidateId: record.candidateId ? String(record.candidateId) : record.candidate_id ? String(record.candidate_id) : null,
-    jdId: record.jdId ? String(record.jdId) : record.jd_id ? String(record.jd_id) : null,
+    personId: record.personId != null ? String(record.personId) : record.person_id != null ? String(record.person_id) : null,
+    jobDescriptionId:
+      record.jobDescriptionId != null
+        ? String(record.jobDescriptionId)
+        : record.job_description_id != null
+          ? String(record.job_description_id)
+          : null,
     scope: String(record.scope ?? "agent"),
     fragmentKind: String(record.fragmentKind ?? record.fragment_kind ?? "strategy"),
     title: String(record.title ?? ""),
@@ -818,6 +841,7 @@ function normalizeStrategyFragment(raw: unknown): StrategyFragmentRecord {
 
 function normalizeOperatorInteraction(raw: unknown): OperatorInteractionRecord {
   const record = asRecord(raw);
+  const interactionMetadata = asRecord(record.interactionMetadata ?? record.interaction_metadata);
   return {
     id: String(record.id ?? ""),
     sessionId: String(record.sessionId ?? record.session_id ?? ""),
@@ -825,7 +849,13 @@ function normalizeOperatorInteraction(raw: unknown): OperatorInteractionRecord {
     checkpointId: record.checkpointId ? String(record.checkpointId) : record.checkpoint_id ? String(record.checkpoint_id) : null,
     approvalId: record.approvalId ? String(record.approvalId) : record.approval_id ? String(record.approval_id) : null,
     goalSpecId: record.goalSpecId ? String(record.goalSpecId) : record.goal_spec_id ? String(record.goal_spec_id) : null,
-    candidateId: record.candidateId ? String(record.candidateId) : record.candidate_id ? String(record.candidate_id) : null,
+    personId: record.personId != null ? String(record.personId) : record.person_id != null ? String(record.person_id) : null,
+    applicationId:
+      interactionMetadata.applicationId != null
+        ? String(interactionMetadata.applicationId)
+        : interactionMetadata.application_id != null
+          ? String(interactionMetadata.application_id)
+          : null,
     lane: String(record.lane ?? "agent"),
     interactionType: String(record.interactionType ?? record.interaction_type ?? "confirm"),
     status: String(record.status ?? "pending"),
@@ -835,7 +865,7 @@ function normalizeOperatorInteraction(raw: unknown): OperatorInteractionRecord {
     operatorResponse: asRecord(record.operatorResponse ?? record.operator_response),
     effectSummary: record.effectSummary ? String(record.effectSummary) : record.effect_summary ? String(record.effect_summary) : null,
     scope: String(record.scope ?? "run_only"),
-    interactionMetadata: asRecord(record.interactionMetadata ?? record.interaction_metadata),
+    interactionMetadata,
     surfacedAt: String(record.surfacedAt ?? record.surfaced_at ?? new Date().toISOString()),
     resolvedAt: record.resolvedAt ? String(record.resolvedAt) : record.resolved_at ? String(record.resolved_at) : null,
     resolvedBy: record.resolvedBy ? String(record.resolvedBy) : record.resolved_by ? String(record.resolved_by) : null,
@@ -983,16 +1013,17 @@ function normalizeApplicationStageEvent(raw: unknown): ApplicationStageEventReco
   };
 }
 
-function normalizeCandidateStatusTransition(raw: unknown): CandidateStatusTransition {
+function normalizeApplicationStatusTransition(raw: unknown): ApplicationStatusTransition {
   const record = asRecord(raw);
   return {
     id: String(record.id ?? ""),
-    candidateId: String(record.candidateId ?? record.candidate_id ?? ""),
+    applicationId: String(record.applicationId ?? record.application_id ?? ""),
+    personId: record.personId != null ? String(record.personId) : record.person_id != null ? String(record.person_id) : undefined,
     fromStatus: String(record.fromStatus ?? record.from_status ?? ""),
     toStatus: String(record.toStatus ?? record.to_status ?? ""),
     fromStatusLabel: String(record.fromStatusLabel ?? record.from_status_label ?? ""),
     toStatusLabel: String(record.toStatusLabel ?? record.to_status_label ?? ""),
-    actor: String(record.actor ?? "system") as CandidateStatusTransition["actor"],
+    actor: String(record.actor ?? "system") as ApplicationStatusTransition["actor"],
     actorId: record.actorId ? String(record.actorId) : record.actor_id ? String(record.actor_id) : undefined,
     trigger: String(record.trigger ?? ""),
     note: record.note ? String(record.note) : undefined,
@@ -1209,6 +1240,8 @@ function normalizeTalentPoolSyncRecord(raw: unknown): TalentPoolSyncRecord {
 
 function normalizeEvolutionArtifact(raw: unknown): EvolutionArtifactRecord {
   const record = asRecord(raw);
+  const artifactBody = asRecord(record.artifactBody ?? record.artifact_body);
+  const artifactMetadata = asRecord(record.artifactMetadata ?? record.artifact_metadata);
   return {
     id: String(record.id ?? ""),
     agentProfileId: record.agentProfileId ? String(record.agentProfileId) : record.agent_profile_id ? String(record.agent_profile_id) : null,
@@ -1216,14 +1249,27 @@ function normalizeEvolutionArtifact(raw: unknown): EvolutionArtifactRecord {
     title: String(record.title ?? ""),
     summary: record.summary ? String(record.summary) : null,
     status: String(record.status ?? "pending_review") as EvolutionArtifactRecord["status"],
-    relatedCandidateId: record.relatedCandidateId ? String(record.relatedCandidateId) : record.related_candidate_id ? String(record.related_candidate_id) : null,
+    relatedApplicationId:
+      record.relatedApplicationId != null
+        ? String(record.relatedApplicationId)
+        : record.related_application_id != null
+          ? String(record.related_application_id)
+          : artifactMetadata.applicationId != null
+            ? String(artifactMetadata.applicationId)
+            : artifactMetadata.application_id != null
+              ? String(artifactMetadata.application_id)
+              : artifactBody.applicationId != null
+                ? String(artifactBody.applicationId)
+                : artifactBody.application_id != null
+                  ? String(artifactBody.application_id)
+                  : null,
     relatedSkillId: record.relatedSkillId ? String(record.relatedSkillId) : record.related_skill_id ? String(record.related_skill_id) : null,
     proposedBy: record.proposedBy ? String(record.proposedBy) : record.proposed_by ? String(record.proposed_by) : null,
     reviewedBy: record.reviewedBy ? String(record.reviewedBy) : record.reviewed_by ? String(record.reviewed_by) : null,
     reviewedAt: record.reviewedAt ? String(record.reviewedAt) : record.reviewed_at ? String(record.reviewed_at) : null,
     appliedAt: record.appliedAt ? String(record.appliedAt) : record.applied_at ? String(record.applied_at) : null,
-    artifactBody: asRecord(record.artifactBody ?? record.artifact_body),
-    artifactMetadata: asRecord(record.artifactMetadata ?? record.artifact_metadata),
+    artifactBody,
+    artifactMetadata,
     createdAt: String(record.createdAt ?? record.created_at ?? new Date().toISOString()),
     updatedAt: String(record.updatedAt ?? record.updated_at ?? new Date().toISOString()),
   };
@@ -1254,7 +1300,7 @@ function normalizeApplicationThread(raw: unknown): ApplicationThreadRecord {
     communicationLogs: asArray(record.communicationLogs ?? record.communication_logs).map(normalizeApplicationConversationEntry),
     stateSnapshot: normalizeApplicationStateSnapshot(record.stateSnapshot ?? record.state_snapshot),
     stageEvents: asArray(record.stageEvents ?? record.stage_events).map(normalizeApplicationStageEvent),
-    statusTransitions: asArray(record.statusTransitions ?? record.status_transitions).map(normalizeCandidateStatusTransition),
+    statusTransitions: asArray(record.statusTransitions ?? record.status_transitions).map(normalizeApplicationStatusTransition),
     assessments: asArray(record.assessments).map(normalizeApplicationAssessment),
     assignments: asArray(record.assignments).map(normalizeApplicationAssignment),
     resumeArtifacts: asArray(record.resumeArtifacts ?? record.resume_artifacts).map(normalizeResumeArtifact),
@@ -2265,11 +2311,11 @@ function createFetchClient(baseUrl: string): DesktopApiClient {
       ).map(normalizeExecutionGraph),
     listStrategyFragments: async () =>
       asArray(await requestJson<unknown>(baseUrl, "/api/recruit-agent/runtime/strategy-fragments")).map(normalizeStrategyFragment),
-    listOperatorInteractions: async (candidateId) =>
+    listOperatorInteractions: async (applicationId) =>
       asArray(
         await requestJson<unknown>(
           baseUrl,
-          `/api/recruit-agent/runtime/operator-interactions${candidateId ? `?candidate_id=${encodeURIComponent(candidateId)}` : ""}`,
+          `/api/recruit-agent/runtime/operator-interactions${applicationId ? `?application_id=${encodeURIComponent(applicationId)}` : ""}`,
         ),
       ).map(normalizeOperatorInteraction),
     resolveOperatorInteraction: async (interactionId, payload) =>
@@ -2398,7 +2444,7 @@ function createFetchClient(baseUrl: string): DesktopApiClient {
       ),
     listApplicationTransitions: async (applicationId) =>
       asArray(await requestJson<unknown>(baseUrl, `/api/candidate-applications/${applicationId}/transitions`)).map(
-        normalizeCandidateStatusTransition,
+        normalizeApplicationStatusTransition,
       ),
     createApplicationEntry: async (applicationId, payload) =>
       normalizeApplicationConversationEntry(

@@ -1,17 +1,17 @@
 import React from "react";
-import type { CandidateStatusTransition } from "@scene-pilot/shared";
+import type { ApplicationStatusTransition } from "@scene-pilot/shared";
 import { StatusBadge } from "../../components";
 import { formatCompactDate } from "../../lib/format";
 import { useI18n } from "../../lib/i18n";
 
 interface StatusTimelineProps {
-  transitions: CandidateStatusTransition[];
+  transitions: ApplicationStatusTransition[];
   compact?: boolean;
   maxItems?: number;
   onShowMore?(): void;
 }
 
-function actorTone(transition: CandidateStatusTransition): "positive" | "neutral" | "warning" | "critical" {
+function actorTone(transition: ApplicationStatusTransition): "positive" | "neutral" | "warning" | "critical" {
   if (transition.isOverride) {
     return "warning";
   }
@@ -24,7 +24,7 @@ function actorTone(transition: CandidateStatusTransition): "positive" | "neutral
   return "neutral";
 }
 
-function actorLabel(actor: CandidateStatusTransition["actor"], copy: (en: string, zh: string) => string): string {
+function actorLabel(actor: ApplicationStatusTransition["actor"], copy: (en: string, zh: string) => string): string {
   switch (actor) {
     case "agent":
       return copy("Agent", "Agent");

@@ -1,4 +1,4 @@
-export const candidateStatuses = [
+export const applicationStatuses = [
   "discovered",
   "screening",
   "pending_communication",
@@ -16,7 +16,7 @@ export const candidateStatuses = [
   "timeout_closed",
 ] as const;
 
-export type CandidateStatus = (typeof candidateStatuses)[number];
+export type ApplicationStatus = (typeof applicationStatuses)[number];
 
 export const skillStatuses = [
   "draft",
@@ -29,12 +29,13 @@ export const skillStatuses = [
 
 export type SkillStatus = (typeof skillStatuses)[number];
 
-export type CandidateRecord = {
+export type ApplicationRecord = {
   id: string;
-  name: string;
+  applicationId: string;
+  personId?: string;
+  jobDescriptionId: string;
   platform: string;
-  jdId: string;
-  currentStatus: CandidateStatus;
+  currentStatus: ApplicationStatus;
   currentStageKey: string;
   lastContactedAt?: string;
   updatedAt: string;

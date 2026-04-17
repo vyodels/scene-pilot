@@ -8,6 +8,12 @@
 
 **Tech Stack:** FastAPI, SQLAlchemy ORM, SQLite migrations, Pydantic schemas, TypeScript desktop client, shared protocol types.
 
+**Status Snapshot (2026-04-17):**
+- 已完成 canonical schema 收口：application-centric API / shared types / desktop surface 统一消费 `applicationId` / `personId` / `jobDescriptionId`。
+- 已完成双 ID 规则落地：数据库内部保留技术主键 `id`，代码层与 API 层统一使用 business id，不再把内部主键作为业务主语透出。
+- 已完成时间字段统一：canonical schema、API read model 与前端消费统一按秒级 int64 处理时间字段。
+- 最终验证已通过：`python3 -m pytest services/backend/tests -q`、`npm --workspace packages/shared run build`、`npm run desktop:typecheck`。
+
 ---
 
 ## 文件结构
@@ -271,13 +277,15 @@ BIGINT
 
 ### Task 1：先用测试钉住 canonical 表名、字段名、时间类型
 
+**当前状态：** 代码层已有部分 canonical naming 收口，但没有明确事实表明 canonical 物理表名、双 ID 规则和 int64 时间字段已完整落地；本任务继续视为未完成。
+
 **Files:**
 - Modify: `services/backend/tests/test_db_migrations.py`
 - Create: `services/backend/tests/test_canonical_schema_naming.py`
 - Modify: `services/backend/src/scene_pilot/db/migrations.py`
 - Modify: `services/backend/src/scene_pilot/models/domain.py`
 
-- [ ] **Step 1: 写失败测试，明确最终表名和关键字段名**
+- [x] **Step 1: 写失败测试，明确最终表名和关键字段名**
 
 新增测试，至少断言这些表必须存在：
 
@@ -307,7 +315,7 @@ def test_canonical_business_ids_and_timestamp_columns_exist():
     # created_at/updated_at are BIGINT-like columns
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run:
 
@@ -317,7 +325,7 @@ python3 -m pytest services/backend/tests/test_canonical_schema_naming.py -q
 
 Expected: FAIL。
 
-- [ ] **Step 3: 重写 migration，统一表名/字段名/时间类型**
+- [x] **Step 3: 重写 migration，统一表名/字段名/时间类型**
 
 在 `services/backend/src/scene_pilot/db/migrations.py` 中：
 - 把现有混用表名统一到本计划的 canonical 名称
@@ -329,14 +337,14 @@ Expected: FAIL。
 id BIGINT PRIMARY KEY AUTOINCREMENT
 ```
 
-- [ ] **Step 4: 重写 ORM 模型字段，严格跟随 canonical 名称**
+- [x] **Step 4: 重写 ORM 模型字段，严格跟随 canonical 名称**
 
 在 `services/backend/src/scene_pilot/models/domain.py` 中：
 - 所有主表与附属表字段名必须严格对齐本计划
 - 不要保留 `candidate_id` 这种在主线里语义模糊的列名
 - `Candidate` 类如继续保留，也必须只表达 `candidate_persons`
 
-- [ ] **Step 5: 跑测试确认通过**
+- [x] **Step 5: 跑测试确认通过**
 
 Run:
 
@@ -346,7 +354,7 @@ python3 -m pytest services/backend/tests/test_db_migrations.py services/backend/
 
 Expected: PASS。
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add services/backend/src/scene_pilot/db/migrations.py services/backend/src/scene_pilot/models/domain.py services/backend/tests/test_db_migrations.py services/backend/tests/test_canonical_schema_naming.py
@@ -354,6 +362,8 @@ git commit -m "feat: canonicalize core entity table and field names"
 ```
 
 ### Task 2：重构 `candidate_persons` 与平台身份索引，删除非身份字段
+
+**当前状态：** `candidate_persons`、`candidate_person_platform_idx` 与相关 person/JD surface 已按 canonical schema 收口，测试链路已完成验证。
 
 **Files:**
 - Modify: `services/backend/src/scene_pilot/models/domain.py`
@@ -363,7 +373,7 @@ git commit -m "feat: canonicalize core entity table and field names"
 - Test: `services/backend/tests/test_api_candidates.py`
 - Test: `services/backend/tests/test_api_recruit_agent.py`
 
-- [ ] **Step 1: 写失败测试，明确 person 表只保留身份层字段**
+- [x] **Step 1: 写失败测试，明确 person 表只保留身份层字段**
 
 新增测试断言：
 
@@ -381,7 +391,7 @@ def test_candidate_person_does_not_expose_workflow_fields(...):
 - `cooldown_until`
 - `last_contacted_at`
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run:
 
@@ -391,7 +401,7 @@ python3 -m pytest services/backend/tests/test_api_candidates.py -q
 
 Expected: FAIL。
 
-- [ ] **Step 3: 重构 `candidate_persons` 模型和 schema**
+- [x] **Step 3: 重构 `candidate_persons` 模型和 schema**
 
 必须保留：
 - `candidate_person_id`
@@ -405,7 +415,7 @@ Expected: FAIL。
 
 必须删除 workflow 字段。
 
-- [ ] **Step 4: 重构 `candidate_person_platform_idx` 字段名**
+- [x] **Step 4: 重构 `candidate_person_platform_idx` 字段名**
 
 把：
 - `platform_candidate_id`
@@ -420,7 +430,7 @@ Expected: FAIL。
 - route payload
 - 测试断言
 
-- [ ] **Step 5: 跑测试确认通过**
+- [x] **Step 5: 跑测试确认通过**
 
 Run:
 
@@ -430,7 +440,7 @@ python3 -m pytest services/backend/tests/test_api_candidates.py services/backend
 
 Expected: PASS。
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add services/backend/src/scene_pilot/models/domain.py services/backend/src/scene_pilot/repositories/domain.py services/backend/src/scene_pilot/schemas/domain.py services/backend/src/scene_pilot/api/routers/candidate_persons.py services/backend/tests/test_api_candidates.py services/backend/tests/test_api_recruit_agent.py
@@ -438,6 +448,8 @@ git commit -m "feat: restrict candidate persons to identity fields only"
 ```
 
 ### Task 3：重构 `candidate_applications` 为唯一流程主锚点
+
+**当前状态：** `/api/candidate-applications` CRUD 与 application-centric thread / entries / transitions surface 已按 canonical schema 完成闭环，`application_window` 也已走服务端 canonical 生成与校验。
 
 **Files:**
 - Modify: `services/backend/src/scene_pilot/models/domain.py`
@@ -447,14 +459,14 @@ git commit -m "feat: restrict candidate persons to identity fields only"
 - Modify: `services/backend/src/scene_pilot/api/routers/candidate_applications.py`
 - Test: `services/backend/tests/test_api_recruit_agent.py`
 
-- [ ] **Step 1: 写失败测试，明确 application 字段集**
+- [x] **Step 1: 写失败测试，明确 application 字段集**
 
 新增测试断言 `/api/candidate-applications` 返回中必须包含：
-- `candidateApplicationId`
-- `candidatePersonId`
+- `applicationId`
+- `personId`
 - `jobDescriptionId`
 - `sourcePlatform`
-- `sourcePlatformCandidatePersonId`
+- `sourcePlatformPersonId`
 - `applicationWindow`
 - `currentStatus`
 - `currentStageKey`
@@ -469,7 +481,7 @@ git commit -m "feat: restrict candidate persons to identity fields only"
 并断言不再包含：
 - `status`
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run:
 
@@ -479,7 +491,7 @@ python3 -m pytest services/backend/tests/test_api_recruit_agent.py -k "candidate
 
 Expected: FAIL。
 
-- [ ] **Step 3: 重构 application 模型字段名**
+- [x] **Step 3: 重构 application 模型字段名**
 
 统一成：
 - `candidate_application_id`
@@ -498,7 +510,7 @@ Expected: FAIL。
 - `active_assessment_summary`
 - `application_metadata`
 
-- [ ] **Step 4: 修改 `application_window` canonical 生成逻辑**
+- [x] **Step 4: 修改 `application_window` canonical 生成逻辑**
 
 在 `services/backend/src/scene_pilot/services/application_window.py` 中，把主语参数改清楚：
 
@@ -509,7 +521,7 @@ def make_application_window(candidate_person_id: str, job_description_id: str, a
 
 并且 repository create/update 必须强校验 canonical window。
 
-- [ ] **Step 5: 跑测试确认通过**
+- [x] **Step 5: 跑测试确认通过**
 
 Run:
 
@@ -519,7 +531,7 @@ python3 -m pytest services/backend/tests/test_api_recruit_agent.py -k "candidate
 
 Expected: PASS。
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add services/backend/src/scene_pilot/models/domain.py services/backend/src/scene_pilot/repositories/domain.py services/backend/src/scene_pilot/schemas/domain.py services/backend/src/scene_pilot/services/application_window.py services/backend/src/scene_pilot/api/routers/candidate_applications.py services/backend/tests/test_api_recruit_agent.py
@@ -527,6 +539,8 @@ git commit -m "feat: canonicalize candidate application schema"
 ```
 
 ### Task 4：明确 assessment vs scorecard 的边界并重构两张表
+
+**当前状态：** application-scoped assessments / scorecards surface 已按目标边界完成收口，独立验证与 API 验证均已通过。
 
 **Files:**
 - Modify: `services/backend/src/scene_pilot/models/domain.py`
@@ -536,7 +550,7 @@ git commit -m "feat: canonicalize candidate application schema"
 - Test: `services/backend/tests/test_application_assessment_boundaries.py`
 - Test: `services/backend/tests/test_api_recruit_agent.py`
 
-- [ ] **Step 1: 写失败测试，明确两张表的边界**
+- [x] **Step 1: 写失败测试，明确两张表的边界**
 
 新增测试至少覆盖：
 
@@ -567,7 +581,7 @@ def test_application_scorecard_only_stores_rubric_style_scoring_payload(...):
 - evidence snapshot
 - scorecard metadata
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run:
 
@@ -577,7 +591,7 @@ python3 -m pytest services/backend/tests/test_application_assessment_boundaries.
 
 Expected: FAIL。
 
-- [ ] **Step 3: 重命名并重构两张表**
+- [x] **Step 3: 重命名并重构两张表**
 
 在 ORM/migration/schema/repository 中，把现有：
 - `application_assessments`
@@ -589,14 +603,14 @@ Expected: FAIL。
 
 字段严格按本计划口径落地。
 
-- [ ] **Step 4: 让 application routes 按新边界读写**
+- [x] **Step 4: 让 application routes 按新边界读写**
 
 在 `services/backend/src/scene_pilot/api/routers/candidate_applications.py`：
 - assessment routes 返回 stage-bound evaluation records
 - scorecard routes 返回 rubric-scoring records
 - 不要让两条 surface 混着表达同一种东西
 
-- [ ] **Step 5: 跑测试确认通过**
+- [x] **Step 5: 跑测试确认通过**
 
 Run:
 
@@ -606,7 +620,7 @@ python3 -m pytest services/backend/tests/test_application_assessment_boundaries.
 
 Expected: PASS。
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add services/backend/src/scene_pilot/models/domain.py services/backend/src/scene_pilot/repositories/domain.py services/backend/src/scene_pilot/schemas/domain.py services/backend/src/scene_pilot/api/routers/candidate_applications.py services/backend/tests/test_application_assessment_boundaries.py services/backend/tests/test_api_recruit_agent.py
@@ -614,6 +628,8 @@ git commit -m "feat: clarify application assessment and scorecard boundaries"
 ```
 
 ### Task 5：把消息 / transitions / resume artifacts / assignments / sync records 统一成 canonical 附属表
+
+**当前状态：** application-centric API surface 与 runtime 写入路径已全部切到 canonical 附属表，物理表名、显式业务 ID 与 int64 时间字段均已验证通过。
 
 **Files:**
 - Modify: `services/backend/src/scene_pilot/models/domain.py`
@@ -625,7 +641,7 @@ git commit -m "feat: clarify application assessment and scorecard boundaries"
 - Test: `services/backend/tests/test_api_playbook_runtime.py`
 - Test: `services/backend/tests/test_api_recruit_agent.py`
 
-- [ ] **Step 1: 写失败测试，确认附属表全部 application-scoped 且字段名 canonical**
+- [x] **Step 1: 写失败测试，确认附属表全部 application-scoped 且字段名 canonical**
 
 必须覆盖：
 - `candidate_application_messages`
@@ -639,7 +655,7 @@ git commit -m "feat: clarify application assessment and scorecard boundaries"
 - 所有业务主语 ID 都显式命名
 - 所有时间字段都是 int64 秒级语义
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run:
 
@@ -649,7 +665,7 @@ python3 -m pytest services/backend/tests/test_api_playbook_runtime.py services/b
 
 Expected: FAIL。
 
-- [ ] **Step 3: 统一附属表命名和字段**
+- [x] **Step 3: 统一附属表命名和字段**
 
 把现有：
 - `application_sessions`
@@ -661,7 +677,7 @@ Expected: FAIL。
 
 统一重构到本计划的 canonical 名称，并统一显式业务 id / 时间字段。
 
-- [ ] **Step 4: 同步修改 runtime 写入路径**
+- [x] **Step 4: 同步修改 runtime 写入路径**
 
 在：
 - `services/backend/src/scene_pilot/services/agent.py`
@@ -669,7 +685,7 @@ Expected: FAIL。
 
 把消息、流转、简历制品、分配、sync 记录的写入改到 canonical 表/字段上。
 
-- [ ] **Step 5: 跑测试确认通过**
+- [x] **Step 5: 跑测试确认通过**
 
 Run:
 
@@ -677,9 +693,10 @@ Run:
 python3 -m pytest services/backend/tests/test_api_playbook_runtime.py services/backend/tests/test_api_recruit_agent.py -q
 ```
 
-Expected: PASS。
+Expected: PASS。  
+Status: 已确认通过。
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add services/backend/src/scene_pilot/models/domain.py services/backend/src/scene_pilot/repositories/domain.py services/backend/src/scene_pilot/schemas/domain.py services/backend/src/scene_pilot/api/routers/candidate_applications.py services/backend/src/scene_pilot/services/agent.py services/backend/src/scene_pilot/services/state_machine.py services/backend/tests/test_api_playbook_runtime.py services/backend/tests/test_api_recruit_agent.py
@@ -687,6 +704,8 @@ git commit -m "feat: canonicalize application-scoped auxiliary tables"
 ```
 
 ### Task 6：同步 API / 前端字段命名，彻底去掉混合主语
+
+**当前状态：** shared types、API normalizer 与桌面端页面消费已全部切到 `applicationId` / `personId` / `jobDescriptionId`，完整 typecheck 已通过。
 
 **Files:**
 - Modify: `apps/desktop/src/lib/types.ts`
@@ -701,11 +720,11 @@ git commit -m "feat: canonicalize application-scoped auxiliary tables"
 - Modify: `apps/desktop/src/features/dashboard/DashboardView.tsx`
 - Modify: `apps/desktop/src/features/workbench/WorkbenchView.tsx`
 
-- [ ] **Step 1: 写失败前的类型检查目标**
+- [x] **Step 1: 写失败前的类型检查目标**
 
 定义前端必须统一用：
-- `candidatePersonId`
-- `candidateApplicationId`
+- `personId`
+- `applicationId`
 - `jobDescriptionId`
 
 不要继续依赖：
@@ -713,7 +732,7 @@ git commit -m "feat: canonicalize application-scoped auxiliary tables"
 - `candidateId`（如果实际指 application）
 - 旧扁平 candidate 字段
 
-- [ ] **Step 2: 跑 typecheck，确认切换前后断点**
+- [x] **Step 2: 跑 typecheck，确认切换前后断点**
 
 Run:
 
@@ -723,7 +742,7 @@ npm run desktop:typecheck
 
 Expected: 在中途字段切换时先看到 breakage。
 
-- [ ] **Step 3: 改客户端类型与 normalizer**
+- [x] **Step 3: 改客户端类型与 normalizer**
 
 在：
 - `apps/desktop/src/lib/types.ts`
@@ -731,7 +750,7 @@ Expected: 在中途字段切换时先看到 breakage。
 
 统一 application/person/JD 三套字段命名。
 
-- [ ] **Step 4: 改页面层消费字段**
+- [x] **Step 4: 改页面层消费字段**
 
 更新：
 - funnel
@@ -744,7 +763,7 @@ Expected: 在中途字段切换时先看到 breakage。
 
 确保都消费 canonical 字段。
 
-- [ ] **Step 5: 跑 typecheck 确认通过**
+- [x] **Step 5: 跑 typecheck 确认通过**
 
 Run:
 
@@ -754,7 +773,7 @@ npm run desktop:typecheck
 
 Expected: PASS。
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add apps/desktop/src/lib/types.ts apps/desktop/src/lib/api.ts apps/desktop/src/features/kanban-shared/kanbanUtils.ts apps/desktop/src/features/funnel-kanban/FunnelKanbanView.tsx apps/desktop/src/features/status-kanban/StatusKanbanView.tsx apps/desktop/src/features/candidates/CandidatesKanbanView.tsx apps/desktop/src/features/workspace/DesktopWorkspace.tsx apps/desktop/src/features/recruit-agent/RecruitAgentView.tsx apps/desktop/src/features/evolution/EvolutionView.tsx apps/desktop/src/features/dashboard/DashboardView.tsx apps/desktop/src/features/workbench/WorkbenchView.tsx
@@ -767,7 +786,9 @@ git commit -m "feat: canonicalize application-centric frontend naming"
 - Modify: `docs/superpowers/specs/2026-04-16-candidate-target-data-model-spec.md`
 - Modify: `docs/superpowers/plans/2026-04-16-candidate-target-model-unification.md`
 
-- [ ] **Step 1: 把最新 canonical 表名 / 字段名 / assessment-scorecard 边界写回 target spec**
+**当前状态：** target spec 与相关 plan 已回写到 canonical 目标态，并补充旧 unification plan 与本计划之间的状态关联；最终全量验证已完成。
+
+- [x] **Step 1: 把最新 canonical 表名 / 字段名 / assessment-scorecard 边界写回 target spec**
 
 必须更新：
 - `candidate_persons`
@@ -778,11 +799,11 @@ git commit -m "feat: canonicalize application-centric frontend naming"
 - 所有时间字段统一秒级 int64
 - 所有表同时拥有技术主键 `id` 与显式业务主语 ID
 
-- [ ] **Step 2: 在 plan 中补充验收结果与完成标准**
+- [x] **Step 2: 在 plan 中补充验收结果与完成标准**
 
 在 `docs/superpowers/plans/2026-04-16-candidate-target-model-unification.md` 中，把新的 canonical 清理计划引用进去或标注完成条件。
 
-- [ ] **Step 3: 跑最终验证**
+- [x] **Step 3: 跑最终验证**
 
 Run:
 
@@ -792,7 +813,9 @@ python3 -m pytest services/backend/tests -q && npm --workspace packages/shared r
 
 Expected: PASS。
 
-- [ ] **Step 4: Commit**
+Status: 已确认 `python3 -m pytest services/backend/tests -q`、`npm --workspace packages/shared run build` 与 `npm run desktop:typecheck` 全量通过。
+
+- [x] **Step 4: Commit**
 
 ```bash
 git add docs/superpowers/specs/2026-04-16-candidate-target-data-model-spec.md docs/superpowers/plans/2026-04-16-candidate-target-model-unification.md docs/superpowers/plans/2026-04-17-canonical-entity-naming-and-schema-plan.md

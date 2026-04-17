@@ -78,8 +78,14 @@ class CandidatePersonRead(CandidatePersonBase):
     model_config = ConfigDict(from_attributes=True)
 
     candidate_person_id: str = Field(
-        validation_alias=AliasChoices("candidate_person_id", "candidatePersonId"),
-        serialization_alias="candidatePersonId",
+        validation_alias=AliasChoices(
+            "candidate_person_id",
+            "candidatePersonId",
+            "person_id",
+            "personId",
+        ),
+        alias="personId",
+        serialization_alias="personId",
     )
     created_at: int = Field(serialization_alias="createdAt")
     updated_at: int = Field(serialization_alias="updatedAt")
@@ -187,21 +193,29 @@ class CandidateApplicationRead(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     candidate_application_id: str = Field(
-        validation_alias=AliasChoices("candidate_application_id", "candidateApplicationId"),
-        serialization_alias="candidateApplicationId",
+        validation_alias=AliasChoices(
+            "candidate_application_id",
+            "candidateApplicationId",
+            "application_id",
+            "applicationId",
+        ),
+        serialization_alias="applicationId",
     )
     candidate_person_id: str = Field(
-        validation_alias=AliasChoices("candidate_person_id", "candidatePersonId"),
-        serialization_alias="candidatePersonId",
+        validation_alias=AliasChoices(
+            "candidate_person_id",
+            "candidatePersonId",
+            "person_id",
+            "personId",
+        ),
+        serialization_alias="personId",
     )
     job_description_id: str | None = Field(
         default=None,
-        validation_alias=AliasChoices("job_description_id", "jobDescriptionId"),
         serialization_alias="jobDescriptionId",
     )
     source_platform: str = Field(
         default="site",
-        validation_alias=AliasChoices("source_platform", "sourcePlatform", "platform"),
         serialization_alias="sourcePlatform",
     )
     source_platform_candidate_person_id: str | None = Field(
@@ -209,10 +223,10 @@ class CandidateApplicationRead(BaseModel):
         validation_alias=AliasChoices(
             "source_platform_candidate_person_id",
             "sourcePlatformCandidatePersonId",
-            "platform_application_id",
-            "platformApplicationId",
+            "source_platform_person_id",
+            "sourcePlatformPersonId",
         ),
-        serialization_alias="sourcePlatformCandidatePersonId",
+        serialization_alias="sourcePlatformPersonId",
     )
     application_window: str = Field(serialization_alias="applicationWindow")
     current_status: str = Field(serialization_alias="currentStatus")
@@ -229,58 +243,84 @@ class CandidateApplicationRead(BaseModel):
 
 
 class ApplicationPersonSummaryRead(BaseModel):
-    person_id: str | None = Field(default=None, validation_alias=AliasChoices("person_id", "personId"))
+    model_config = ConfigDict(populate_by_name=True)
+
+    person_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("person_id", "personId", "candidate_person_id", "candidatePersonId"),
+        serialization_alias="personId",
+    )
     platform_candidate_id: str | None = Field(
         default=None,
         validation_alias=AliasChoices("platform_candidate_id", "platformCandidateId"),
+        serialization_alias="platformCandidateId",
     )
     name: str = ""
     title: str = "候选人"
     location: str = "未知"
-    experience_years: int = 0
+    experience_years: int = Field(default=0, serialization_alias="experienceYears")
     tags: list[str] = Field(default_factory=list)
-    contact_info: dict[str, Any] = Field(default_factory=dict)
+    contact_info: dict[str, Any] = Field(default_factory=dict, serialization_alias="contactInfo")
 
 
 class JobDescriptionSummaryRead(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     job_description_id: str | None = Field(
         default=None,
         validation_alias=AliasChoices("job_description_id", "jobDescriptionId"),
+        serialization_alias="jobDescriptionId",
     )
     title: str = "未分配岗位"
 
 
 class ApplicationSubjectRead(BaseModel):
-    id: str | None = Field(default=None, validation_alias=AliasChoices("id", "application_id", "applicationId"))
-    application_id: str = Field(validation_alias=AliasChoices("application_id", "applicationId", "id"))
-    person_id: str | None = Field(default=None, validation_alias=AliasChoices("person_id", "personId"))
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("id", "application_id", "applicationId"),
+        serialization_alias="id",
+    )
+    application_id: str = Field(
+        validation_alias=AliasChoices("application_id", "applicationId", "candidate_application_id", "candidateApplicationId", "id"),
+        serialization_alias="applicationId",
+    )
+    person_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("person_id", "personId", "candidate_person_id", "candidatePersonId"),
+        serialization_alias="personId",
+    )
     job_description_id: str | None = Field(
         default=None,
         validation_alias=AliasChoices("job_description_id", "jobDescriptionId"),
+        serialization_alias="jobDescriptionId",
     )
     platform: str = "site"
-    current_status: str = "discovered"
+    current_status: str = Field(default="discovered", serialization_alias="currentStatus")
     stage_key: str | None = Field(
         default=None,
         validation_alias=AliasChoices("stage_key", "stageKey", "current_stage_key", "currentStageKey"),
+        serialization_alias="stageKey",
     )
-    deepest_milestone: str | None = None
-    match_score: int = 0
-    next_action: str = "查看申请并决定下一步动作。"
+    deepest_milestone: str | None = Field(default=None, serialization_alias="deepestMilestone")
+    match_score: int = Field(default=0, serialization_alias="matchScore")
+    next_action: str = Field(default="查看申请并决定下一步动作。", serialization_alias="nextAction")
     summary: str = "申请档案正在等待审查。"
-    resume_available: bool = False
-    state_snapshot: dict[str, Any] = Field(default_factory=dict)
-    ai_scores: dict[str, Any] = Field(default_factory=dict)
-    ai_reasoning: str | None = None
+    resume_available: bool = Field(default=False, serialization_alias="resumeAvailable")
+    state_snapshot: dict[str, Any] = Field(default_factory=dict, serialization_alias="stateSnapshot")
+    ai_scores: dict[str, Any] = Field(default_factory=dict, serialization_alias="aiScores")
+    ai_reasoning: str | None = Field(default=None, serialization_alias="aiReasoning")
     person: ApplicationPersonSummaryRead | None = None
     job_description: JobDescriptionSummaryRead | None = Field(
         default=None,
         validation_alias=AliasChoices("job_description", "jobDescription"),
+        serialization_alias="jobDescription",
     )
-    cooldown_until: datetime | None = None
-    last_contacted_at: datetime | None = None
-    created_at: datetime | None = None
-    updated_at: datetime | None = None
+    cooldown_until: datetime | None = Field(default=None, serialization_alias="cooldownUntil")
+    last_contacted_at: datetime | None = Field(default=None, serialization_alias="lastContactedAt")
+    created_at: datetime | None = Field(default=None, serialization_alias="createdAt")
+    updated_at: datetime | None = Field(default=None, serialization_alias="updatedAt")
 
 
 class RecruitAgentProfileBase(BaseModel):
@@ -472,7 +512,11 @@ class CandidateConversationEntryRead(CandidateConversationEntryBase):
     model_config = ConfigDict(populate_by_name=True)
 
     id: str
-    application_id: str | None = Field(default=None, validation_alias=AliasChoices("application_id", "applicationId"))
+    application_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("application_id", "applicationId"),
+        serialization_alias="applicationId",
+    )
 
 
 class CandidateStateSnapshotRead(BaseModel):
@@ -517,8 +561,12 @@ class CandidateStateTransitionRequest(BaseModel):
 class CandidateStatusTransitionBase(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
-    person_id: str
-    application_id: str | None = Field(default=None, validation_alias=AliasChoices("application_id", "applicationId"))
+    person_id: str | None = Field(default=None, exclude=True)
+    application_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("application_id", "applicationId"),
+        serialization_alias="applicationId",
+    )
     from_status: str
     to_status: str
     from_status_label: str
@@ -546,24 +594,29 @@ class CandidateStatusTransitionRead(CandidateStatusTransitionBase):
 
 
 class CandidateAssessmentBase(BaseModel):
-    person_id: str
-    application_id: str | None = None
+    model_config = ConfigDict(populate_by_name=True)
+
+    person_id: str | None = Field(default=None, exclude=True)
+    application_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("application_id", "applicationId"),
+        serialization_alias="applicationId",
+    )
     assessment_type: str = "ai"
-    stage_key: str | None = None
+    stage_key: str | None = Field(default=None, serialization_alias="stageKey")
     status: str = "completed"
     decision: str | None = None
     score: int | None = None
     summary: str | None = None
-    evidence_refs: list[Any] = Field(default_factory=list)
+    evidence_refs: list[Any] = Field(default_factory=list, serialization_alias="evidenceRefs")
     metadata: dict[str, Any] = Field(default_factory=dict, validation_alias=AliasChoices("assessment_metadata", "metadata"))
-    created_by: str | None = None
-    reviewed_by: str | None = None
-    reviewed_at: datetime | None = None
+    created_by: str | None = Field(default=None, serialization_alias="createdBy")
+    reviewed_by: str | None = Field(default=None, serialization_alias="reviewedBy")
+    reviewed_at: datetime | None = Field(default=None, serialization_alias="reviewedAt")
 
 
 class CandidateAssessmentCreate(CandidateAssessmentBase):
-    person_id: str | None = None
-    application_id: str | None = Field(default=None, validation_alias=AliasChoices("application_id", "applicationId"))
+    pass
 
 
 class CandidateAssessmentRead(CandidateAssessmentBase):
@@ -575,8 +628,14 @@ class CandidateAssessmentRead(CandidateAssessmentBase):
 
 
 class CandidateAssignmentBase(BaseModel):
-    person_id: str
-    application_id: str | None = None
+    model_config = ConfigDict(populate_by_name=True)
+
+    person_id: str | None = Field(default=None, exclude=True)
+    application_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("application_id", "applicationId"),
+        serialization_alias="applicationId",
+    )
     assignee: str
     owner_role: str = "operator"
     status: str = "active"
@@ -584,14 +643,14 @@ class CandidateAssignmentBase(BaseModel):
     assignment_metadata: dict[str, Any] = Field(
         default_factory=dict,
         validation_alias=AliasChoices("assignment_metadata", "metadata"),
+        serialization_alias="assignmentMetadata",
     )
-    assigned_at: datetime | None = None
-    released_at: datetime | None = None
+    assigned_at: datetime | None = Field(default=None, serialization_alias="assignedAt")
+    released_at: datetime | None = Field(default=None, serialization_alias="releasedAt")
 
 
 class CandidateAssignmentCreate(CandidateAssignmentBase):
-    person_id: str | None = None
-    application_id: str | None = Field(default=None, validation_alias=AliasChoices("application_id", "applicationId"))
+    pass
 
 
 class CandidateAssignmentRead(CandidateAssignmentBase):
@@ -603,19 +662,26 @@ class CandidateAssignmentRead(CandidateAssignmentBase):
 
 
 class ResumeArtifactBase(BaseModel):
-    person_id: str | None = None
-    application_id: str | None = Field(default=None, validation_alias=AliasChoices("application_id", "applicationId"))
+    model_config = ConfigDict(populate_by_name=True)
+
+    person_id: str | None = Field(default=None, exclude=True)
+    application_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("application_id", "applicationId"),
+        serialization_alias="applicationId",
+    )
     source: str = "site"
     artifact_type: str = "resume"
-    file_name: str | None = None
-    file_path: str | None = None
-    extracted_text: str | None = None
-    contact_snapshot: dict[str, Any] = Field(default_factory=dict)
+    file_name: str | None = Field(default=None, serialization_alias="fileName")
+    file_path: str | None = Field(default=None, serialization_alias="filePath")
+    extracted_text: str | None = Field(default=None, serialization_alias="extractedText")
+    contact_snapshot: dict[str, Any] = Field(default_factory=dict, serialization_alias="contactSnapshot")
     artifact_metadata: dict[str, Any] = Field(
         default_factory=dict,
         validation_alias=AliasChoices("artifact_metadata", "metadata"),
+        serialization_alias="artifactMetadata",
     )
-    captured_at: datetime | None = None
+    captured_at: datetime | None = Field(default=None, serialization_alias="capturedAt")
 
 
 class ResumeArtifactCreate(ResumeArtifactBase):
@@ -631,25 +697,31 @@ class ResumeArtifactRead(ResumeArtifactBase):
 
 
 class CandidateScorecardBase(BaseModel):
-    person_id: str
-    application_id: str | None = None
-    stage_key: str | None = None
+    model_config = ConfigDict(populate_by_name=True)
+
+    person_id: str | None = Field(default=None, exclude=True)
+    application_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("application_id", "applicationId"),
+        serialization_alias="applicationId",
+    )
+    stage_key: str | None = Field(default=None, serialization_alias="stageKey")
     source: str = "ai"
-    rubric_version: str = "recruit-scorecard-v1"
-    score_total: int | None = None
+    rubric_version: str = Field(default="recruit-scorecard-v1", serialization_alias="rubricVersion")
+    score_total: int | None = Field(default=None, serialization_alias="scoreTotal")
     verdict: str | None = None
     summary: str | None = None
-    dimension_scores: dict[str, Any] = Field(default_factory=dict)
-    evidence_refs: list[Any] = Field(default_factory=list)
+    dimension_scores: dict[str, Any] = Field(default_factory=dict, serialization_alias="dimensionScores")
+    evidence_refs: list[Any] = Field(default_factory=list, serialization_alias="evidenceRefs")
     scorecard_metadata: dict[str, Any] = Field(
         default_factory=dict,
         validation_alias=AliasChoices("scorecard_metadata", "metadata"),
+        serialization_alias="scorecardMetadata",
     )
 
 
 class CandidateScorecardCreate(CandidateScorecardBase):
-    person_id: str | None = None
-    application_id: str | None = Field(default=None, validation_alias=AliasChoices("application_id", "applicationId"))
+    pass
 
 
 class CandidateScorecardRead(CandidateScorecardBase):
@@ -661,24 +733,30 @@ class CandidateScorecardRead(CandidateScorecardBase):
 
 
 class CandidateReviewDecisionBase(BaseModel):
-    person_id: str
-    application_id: str | None = None
-    stage_key: str | None = None
+    model_config = ConfigDict(populate_by_name=True)
+
+    person_id: str | None = Field(default=None, exclude=True)
+    application_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("application_id", "applicationId"),
+        serialization_alias="applicationId",
+    )
+    stage_key: str | None = Field(default=None, serialization_alias="stageKey")
     decision: str
     rationale: str | None = None
-    decision_source: str = "manual"
-    decided_by: str | None = None
-    scorecard_id: str | None = None
+    decision_source: str = Field(default="manual", serialization_alias="decisionSource")
+    decided_by: str | None = Field(default=None, serialization_alias="decidedBy")
+    scorecard_id: str | None = Field(default=None, serialization_alias="scorecardId")
     review_metadata: dict[str, Any] = Field(
         default_factory=dict,
         validation_alias=AliasChoices("review_metadata", "metadata"),
+        serialization_alias="reviewMetadata",
     )
-    decided_at: datetime | None = None
+    decided_at: datetime | None = Field(default=None, serialization_alias="decidedAt")
 
 
 class CandidateReviewDecisionCreate(CandidateReviewDecisionBase):
-    person_id: str | None = None
-    application_id: str | None = Field(default=None, validation_alias=AliasChoices("application_id", "applicationId"))
+    pass
 
 
 class CandidateReviewDecisionRead(CandidateReviewDecisionBase):
@@ -690,24 +768,30 @@ class CandidateReviewDecisionRead(CandidateReviewDecisionBase):
 
 
 class TalentPoolSyncRecordBase(BaseModel):
-    person_id: str
-    application_id: str | None = None
+    model_config = ConfigDict(populate_by_name=True)
+
+    person_id: str | None = Field(default=None, exclude=True)
+    application_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("application_id", "applicationId"),
+        serialization_alias="applicationId",
+    )
     destination: str = "talent_pool"
     status: str = "pending"
-    external_ref: str | None = None
-    payload_snapshot: dict[str, Any] = Field(default_factory=dict)
-    error_message: str | None = None
-    synced_at: datetime | None = None
-    last_attempted_at: datetime | None = None
+    external_ref: str | None = Field(default=None, serialization_alias="externalRef")
+    payload_snapshot: dict[str, Any] = Field(default_factory=dict, serialization_alias="payloadSnapshot")
+    error_message: str | None = Field(default=None, serialization_alias="errorMessage")
+    synced_at: datetime | None = Field(default=None, serialization_alias="syncedAt")
+    last_attempted_at: datetime | None = Field(default=None, serialization_alias="lastAttemptedAt")
     sync_metadata: dict[str, Any] = Field(
         default_factory=dict,
         validation_alias=AliasChoices("sync_metadata", "metadata"),
+        serialization_alias="syncMetadata",
     )
 
 
 class TalentPoolSyncRecordCreate(TalentPoolSyncRecordBase):
-    person_id: str | None = None
-    application_id: str | None = Field(default=None, validation_alias=AliasChoices("application_id", "applicationId"))
+    pass
 
 
 class TalentPoolSyncRecordRead(TalentPoolSyncRecordBase):
@@ -759,11 +843,20 @@ class EvolutionArtifactRead(EvolutionArtifactBase):
 class CandidateThreadRead(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
-    application_id: str | None = Field(default=None, validation_alias=AliasChoices("application_id", "applicationId"))
-    person_id: str | None = Field(default=None, validation_alias=AliasChoices("person_id", "personId"))
+    application_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("application_id", "applicationId"),
+        serialization_alias="applicationId",
+    )
+    person_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("person_id", "personId"),
+        serialization_alias="personId",
+    )
     job_description_id: str | None = Field(
         default=None,
         validation_alias=AliasChoices("job_description_id", "jobDescriptionId"),
+        serialization_alias="jobDescriptionId",
     )
     application: ApplicationSubjectRead = Field(
         validation_alias=AliasChoices("application", "candidate"),

@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from "react";
-import type { CandidateTransitionPayload, HumanActionDefinition, RecruitmentStateMachine } from "@scene-pilot/shared";
+import type { ApplicationTransitionPayload, HumanActionDefinition, RecruitmentStateMachine } from "@scene-pilot/shared";
 import { SectionTabs, StatusBadge } from "../../components";
 import { useI18n } from "../../lib/i18n";
 import { deriveHumanActionsForNode, nodeTone } from "./kanbanUtils";
@@ -11,7 +11,7 @@ interface CandidateDetailDrawerProps {
   record: ApplicationViewModel | null;
   stateMachine: RecruitmentStateMachine;
   onClose(): void;
-  onTransition(applicationId: string, payload: CandidateTransitionPayload): Promise<unknown> | void;
+  onTransition(applicationId: string, payload: ApplicationTransitionPayload): Promise<unknown> | void;
   onRequestOverride(): void;
 }
 

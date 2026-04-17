@@ -25,7 +25,7 @@ type InboxItem =
       at: string;
       tone: "positive" | "neutral" | "warning" | "critical";
       interaction: OperatorInteractionRecord;
-      candidateId?: string | null;
+      applicationId?: string | null;
     }
   | {
       key: string;
@@ -35,7 +35,7 @@ type InboxItem =
       at: string;
       tone: "positive" | "neutral" | "warning" | "critical";
       approval: ApprovalItem;
-      candidateId?: string | null;
+      applicationId?: string | null;
     }
   | {
       key: string;
@@ -260,7 +260,7 @@ export function AgentInboxView({
   const interactionItems = useMemo<InteractionInboxItem[]>(
     () =>
       interactions
-        .filter((item) => !item.candidateId)
+        .filter((item) => !item.applicationId)
         .map<InteractionInboxItem>((interaction) => ({
           key: `interaction:${interaction.id}`,
           kind: "interaction",
@@ -269,7 +269,7 @@ export function AgentInboxView({
           at: interaction.updatedAt ?? interaction.surfacedAt,
           tone: toneFromInteraction(interaction),
           interaction,
-          candidateId: interaction.candidateId,
+          applicationId: interaction.applicationId,
         })),
     [copy, interactions],
   );
@@ -277,7 +277,7 @@ export function AgentInboxView({
   const runtimeItems = useMemo<ApprovalInboxItem[]>(
     () =>
       approvals
-        .filter((item) => !item.relatedCandidateId)
+        .filter((item) => !item.relatedApplicationId)
         .map<ApprovalInboxItem>((approval) => ({
           key: `approval:${approval.id}`,
           kind: "approval",
@@ -286,7 +286,7 @@ export function AgentInboxView({
           at: approval.updatedAt ?? approval.createdAt,
           tone: toneFromApproval(approval),
           approval,
-          candidateId: approval.relatedCandidateId,
+          applicationId: approval.relatedApplicationId,
         })),
     [approvals, copy],
   );
@@ -534,8 +534,8 @@ export function AgentInboxView({
                     </button>
                   );
                 })}
-                {selected.interaction.candidateId ? (
-                  <button type="button" onClick={() => onOpenApplication(selected.interaction.candidateId!)} style={buttonStyle}>
+                {selected.interaction.applicationId ? (
+                  <button type="button" onClick={() => onOpenApplication(String(selected.interaction.applicationId))} style={buttonStyle}>
                     {copy("Open candidate", "打开候选人")}
                   </button>
                 ) : null}
@@ -561,8 +561,8 @@ export function AgentInboxView({
                 <button type="button" onClick={() => onOpenEvolution("inbox", selected.artifact.id)} style={buttonStyle}>
                   {copy("Review in strategy view", "在策略视图中审查")}
                 </button>
-                {selected.artifact.relatedCandidateId ? (
-                  <button type="button" onClick={() => onOpenApplication(selected.artifact.relatedCandidateId!)} style={buttonStyle}>
+                {selected.artifact.relatedApplicationId ? (
+                  <button type="button" onClick={() => onOpenApplication(String(selected.artifact.relatedApplicationId))} style={buttonStyle}>
                     {copy("Open candidate", "打开候选人")}
                   </button>
                 ) : null}
@@ -644,8 +644,8 @@ export function AgentInboxView({
                 <div>{copy("Target", "目标")}: {selected.approval.targetType ?? selected.approval.kind}</div>
                 <div>{copy("Status", "状态")}: {translateUiToken(selected.approval.status, copy)}</div>
               </div>
-              {selected.approval.relatedCandidateId ? (
-                <button type="button" onClick={() => onOpenApplication(selected.approval.relatedCandidateId!)} style={buttonStyle}>
+              {selected.approval.relatedApplicationId ? (
+                <button type="button" onClick={() => onOpenApplication(String(selected.approval.relatedApplicationId))} style={buttonStyle}>
                   {copy("Open candidate thread", "打开候选人线程")}
                 </button>
               ) : null}

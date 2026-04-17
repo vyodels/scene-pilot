@@ -1,4 +1,4 @@
-import type { CandidateStatusTransition } from "./stateMachine";
+import type { ApplicationStatusTransition } from "./stateMachine";
 
 export interface FunnelMilestone {
   id: string;
@@ -226,7 +226,7 @@ export function advanceDeepestMilestoneByStatus(
   return advanceDeepestMilestone(currentMilestoneId, getTriggeredMilestoneIds(status));
 }
 
-export function extractMilestonesFromTransitions(transitions: Array<Pick<CandidateStatusTransition, "toStatus">>): string[] {
+export function extractMilestonesFromTransitions(transitions: Array<Pick<ApplicationStatusTransition, "toStatus">>): string[] {
   const reached = new Set<string>();
   let current: string | undefined;
   for (const transition of transitions) {

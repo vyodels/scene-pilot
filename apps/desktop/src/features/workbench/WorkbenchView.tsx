@@ -672,7 +672,7 @@ export function WorkbenchView({
                           <StatusBadge tone="neutral">{item.status}</StatusBadge>
                         </div>
                         <div style={{ color: "var(--text-secondary)", fontSize: "var(--font-size-sm)" }}>
-                          {item.candidateId ?? copy("global request", "全局请求")} · {copy(`priority ${item.priority}`, `优先级 ${item.priority}`)}
+                          {item.applicationId ?? item.personId ?? copy("global request", "全局请求")} · {copy(`priority ${item.priority}`, `优先级 ${item.priority}`)}
                         </div>
                       </article>
                     ))}

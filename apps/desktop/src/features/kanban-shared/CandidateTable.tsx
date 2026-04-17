@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from "react";
-import type { CandidateTransitionPayload, HumanActionDefinition, RecruitmentStateMachine } from "@scene-pilot/shared";
+import type { ApplicationTransitionPayload, HumanActionDefinition, RecruitmentStateMachine } from "@scene-pilot/shared";
 import { StatusBadge } from "../../components";
 import { formatCompactDate } from "../../lib/format";
 import { useI18n } from "../../lib/i18n";
@@ -15,7 +15,7 @@ interface CandidateTableProps {
   emptyMessage: string;
   onOpenDetail(applicationId: string): void;
   onOpenCommunication(applicationId: string): void;
-  onTransition(applicationId: string, payload: CandidateTransitionPayload): Promise<unknown> | void;
+  onTransition(applicationId: string, payload: ApplicationTransitionPayload): Promise<unknown> | void;
 }
 
 interface PendingNoteAction {

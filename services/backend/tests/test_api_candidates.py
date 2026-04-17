@@ -32,7 +32,7 @@ def test_candidate_crud(tmp_path):
         assert candidate["name"] == "Ada Lovelace"
         assert candidate["resume_path"] == "/resumes/ada.pdf"
 
-        candidate_id = candidate["candidatePersonId"]
+        candidate_id = candidate["personId"]
         shadow_application = client.get(f"/api/candidate-applications/{candidate_id}")
         assert shadow_application.status_code == 404
 
@@ -62,7 +62,7 @@ def test_job_description_and_application_crud(tmp_path):
             },
         )
         assert person_response.status_code == 201
-        person_id = person_response.json()["candidatePersonId"]
+        person_id = person_response.json()["personId"]
 
         job_response = client.post(
             "/api/job-descriptions",
@@ -94,10 +94,13 @@ def test_job_description_and_application_crud(tmp_path):
         )
         assert application_response.status_code == 201
         application = application_response.json()
-        assert application["candidatePersonId"] == person_id
+        assert application["personId"] == person_id
         assert application["jobDescriptionId"] == job_description_id
+        assert application["applicationWindow"] == make_application_window(person_id, job_description_id)
+        assert "personId" in application
+        assert "sourcePlatformCandidatePersonId" not in application
 
-        application_id = application["candidateApplicationId"]
+        application_id = application["applicationId"]
         get_application = client.get(f"/api/candidate-applications/{application_id}")
         assert get_application.status_code == 200
         assert get_application.json()["sourcePlatform"] == "boss"

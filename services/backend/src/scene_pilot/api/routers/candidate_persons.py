@@ -32,7 +32,19 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 def _as_candidate_person_read(candidate) -> CandidatePersonRead:
-    return CandidatePersonRead.model_validate(candidate)
+    return CandidatePersonRead.model_validate(
+        {
+            "person_id": candidate.candidate_person_id,
+            "name": candidate.name,
+            "platform": candidate.platform,
+            "platform_candidate_id": candidate.platform_candidate_id,
+            "contact_info": dict(candidate.contact_info or {}),
+            "resume_path": candidate.resume_path,
+            "online_resume_text": candidate.online_resume_text,
+            "created_at": candidate.created_at,
+            "updated_at": candidate.updated_at,
+        }
+    )
 
 
 @router.get("", response_model=list[CandidatePersonRead])

@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from scene_pilot.db.base import utcnow
 from scene_pilot.models import Candidate, CandidateApplication
-from scene_pilot.repositories import CandidateRepository
+from scene_pilot.repositories import CandidatePlatformIdxRepository, CandidateRepository
 
 
 def normalize_phone(raw: str | None) -> str | None:
@@ -72,6 +72,24 @@ def resolve_candidate_by_contact_info(
         if _candidate_matches_identities(candidate, identities):
             return candidate
     return None
+
+
+def resolve_candidate_by_platform_identity(
+    session: Session,
+    *,
+    platform: str,
+    platform_candidate_id: str,
+) -> Candidate | None:
+    platform_key = str(platform or "").strip()
+    platform_identity = str(platform_candidate_id or "").strip()
+    if not platform_key or not platform_identity:
+        return None
+    idx = CandidatePlatformIdxRepository(session).by_platform_identity(platform_key, platform_identity)
+    if idx is not None:
+        candidate = CandidateRepository(session).get(idx.candidate_id)
+        if candidate is not None:
+            return candidate
+    return CandidateRepository(session).by_platform_candidate_id(platform_key, platform_identity)
 
 
 def relink_application_person_by_contact_info(

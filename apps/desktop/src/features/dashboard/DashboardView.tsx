@@ -465,8 +465,8 @@ export function DashboardView({
                     key={item.id}
                     type="button"
                     onClick={() => {
-                      if (item.relatedCandidateId) {
-                        onOpenCommunications?.("candidate", item.relatedCandidateId);
+                      if (item.relatedApplicationId) {
+                        onOpenCommunications?.("application", item.relatedApplicationId);
                         return;
                       }
                       onOpenAiReview?.();

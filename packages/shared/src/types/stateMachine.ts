@@ -125,9 +125,10 @@ export interface StateCriteriaOptimizationReport {
   summary: string;
 }
 
-export interface CandidateStatusTransition {
+export interface ApplicationStatusTransition {
   id: string;
-  candidateId: string;
+  applicationId: string;
+  personId?: string;
   fromStatus: string;
   toStatus: string;
   fromStatusLabel: string;
@@ -143,7 +144,7 @@ export interface CandidateStatusTransition {
   createdAt: string;
 }
 
-interface CandidateTransitionPayloadBase {
+interface ApplicationTransitionPayloadBase {
   toStatus: string;
   trigger: string;
   note?: string;
@@ -157,11 +158,11 @@ interface CandidateTransitionPayloadBase {
   contactChannels?: string[];
 }
 
-export type CandidateTransitionPayload =
-  | (CandidateTransitionPayloadBase & {
+export type ApplicationTransitionPayload =
+  | (ApplicationTransitionPayloadBase & {
       actor: TransitionActor;
     })
-  | (CandidateTransitionPayloadBase & {
+  | (ApplicationTransitionPayloadBase & {
       actor: "recruiter_override" | "agent_override";
       overrideReason: string;
     });

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import type { CandidateTransitionPayload, RecruitmentStateMachine, StateNode } from "@scene-pilot/shared";
+import type { ApplicationTransitionPayload, RecruitmentStateMachine, StateNode } from "@scene-pilot/shared";
 import { CandidateTable } from "../kanban-shared/CandidateTable";
 import { CandidateCommunicationPanel } from "../kanban-shared/CandidateCommunicationPanel";
 import {
@@ -28,7 +28,7 @@ interface StatusKanbanViewProps {
     applicationId: string,
     payload: { direction: string; content: string; messageType?: string; platform?: string },
   ): Promise<unknown> | void;
-  onTransition(applicationId: string, payload: CandidateTransitionPayload): Promise<unknown> | void;
+  onTransition(applicationId: string, payload: ApplicationTransitionPayload): Promise<unknown> | void;
 }
 
 function isGlobalTerminal(node: StateNode): boolean {

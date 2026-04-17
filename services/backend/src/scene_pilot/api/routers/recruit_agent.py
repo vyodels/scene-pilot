@@ -141,8 +141,8 @@ def _with_application_id(model_cls, item, application_id: str, person_id: str | 
     return model_cls.model_validate(payload)
 
 
-def _runtime_subject_filter_ids(session: Session, candidate_id: str | None) -> tuple[str | None, str | None]:
-    text = str(candidate_id or "").strip()
+def _runtime_subject_filter_ids(session: Session, subject_id: str | None) -> tuple[str | None, str | None]:
+    text = str(subject_id or "").strip()
     if not text:
         return None, None
     application = CandidateApplicationRepository(session).get(text)
@@ -937,18 +937,18 @@ def get_runtime_session(session: Session = Depends(get_session)) -> RuntimeSessi
 def list_runtime_runs(
     status: str | None = Query(default=None),
     lane: str | None = Query(default=None),
-    candidate_id: str | None = Query(default=None),
+    application_id: str | None = Query(default=None),
     limit: int = Query(default=100, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
     session: Session = Depends(get_session),
 ) -> list[RuntimeControlledRunRead]:
     session_record = _ensure_runtime_session(session)
-    resolved_candidate_id, resolved_application_id = _runtime_subject_filter_ids(session, candidate_id)
+    resolved_subject_id, resolved_application_id = _runtime_subject_filter_ids(session, application_id)
     items = AgentRunRepository(session).list_filtered(
         session_id=session_record.id,
         status=status,
         lane=lane,
-        candidate_id=resolved_candidate_id,
+        candidate_id=resolved_subject_id,
         limit=limit,
         offset=offset,
     )
@@ -1018,15 +1018,15 @@ def list_runtime_traces(
 @router.get("/runtime/graphs", response_model=list[ExecutionGraphProjectionRead])
 def list_runtime_graphs(
     goal_id: str | None = Query(default=None),
-    candidate_id: str | None = Query(default=None),
+    application_id: str | None = Query(default=None),
     limit: int = Query(default=100, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
     session: Session = Depends(get_session),
 ) -> list[ExecutionGraphProjectionRead]:
-    resolved_candidate_id, resolved_application_id = _runtime_subject_filter_ids(session, candidate_id)
+    resolved_subject_id, resolved_application_id = _runtime_subject_filter_ids(session, application_id)
     items = ExecutionGraphProjectionRepository(session).list_recent(
         goal_spec_id=goal_id,
-        candidate_id=resolved_candidate_id,
+        candidate_id=resolved_subject_id,
         limit=limit,
         offset=offset,
     )
@@ -1061,16 +1061,16 @@ def list_strategy_fragments(
 @router.get("/runtime/operator-interactions", response_model=list[OperatorInteractionRead])
 def list_operator_interactions(
     status: str | None = Query(default=None),
-    candidate_id: str | None = Query(default=None),
+    application_id: str | None = Query(default=None),
     limit: int = Query(default=100, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
     session: Session = Depends(get_session),
 ) -> list[OperatorInteractionRead]:
     session_record = _ensure_runtime_session(session)
-    resolved_candidate_id, resolved_application_id = _runtime_subject_filter_ids(session, candidate_id)
+    resolved_subject_id, resolved_application_id = _runtime_subject_filter_ids(session, application_id)
     items = OperatorInteractionRepository(session).list_recent(
         session_id=session_record.id,
-        candidate_id=resolved_candidate_id,
+        candidate_id=resolved_subject_id,
         status=status,
         limit=limit,
         offset=offset,

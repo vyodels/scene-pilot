@@ -1,5 +1,5 @@
 import React from "react";
-import type { CandidateTransitionPayload, RecruitmentStateMachine } from "@scene-pilot/shared";
+import type { ApplicationTransitionPayload, RecruitmentStateMachine } from "@scene-pilot/shared";
 import { useI18n } from "../../lib/i18n";
 import type { ApplicationFollowUpSummaryDefinition, ApplicationRecord, ApplicationThreadRecord } from "../../lib/types";
 import { FunnelKanbanView } from "../funnel-kanban/FunnelKanbanView";
@@ -22,7 +22,7 @@ interface CandidatesKanbanViewProps {
     applicationId: string,
     payload: { direction: string; content: string; messageType?: string; platform?: string },
   ): Promise<unknown> | void;
-  onTransition(applicationId: string, payload: CandidateTransitionPayload): Promise<unknown> | void;
+  onTransition(applicationId: string, payload: ApplicationTransitionPayload): Promise<unknown> | void;
 }
 
 export function CandidatesKanbanView({

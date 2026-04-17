@@ -82,13 +82,13 @@ def _as_candidate_application_read(session: Session, application) -> CandidateAp
     )
     return CandidateApplicationRead.model_validate(
         {
-            "candidate_application_id": application.candidate_application_id,
-            "candidate_person_id": person.candidate_person_id if person is not None else application.person_id,
+            "application_id": application.candidate_application_id,
+            "person_id": person.candidate_person_id if person is not None else application.person_id,
             "job_description_id": (
                 job_description.job_description_id if job_description is not None else application.job_description_id
             ),
             "source_platform": application.source_platform or application.platform,
-            "source_platform_candidate_person_id": application.source_platform_candidate_person_id,
+            "source_platform_person_id": application.source_platform_candidate_person_id,
             "current_status": application.current_status,
             "current_stage_key": application.current_stage_key,
             "deepest_milestone": application.deepest_milestone,
@@ -201,9 +201,17 @@ def list_candidate_application_assessments(
     applicationId: str,
     session: Session = Depends(get_session),
 ) -> list[CandidateAssessmentRead]:
-    application, _person = _get_application_with_person_or_404(session, applicationId)
+    application, person = _get_application_with_person_or_404(session, applicationId)
     items = ApplicationAssessmentRepository(session).by_application(application.id, limit=100, offset=0)
-    return [_with_application_id(CandidateAssessmentRead, item, application.id, application.person_id) for item in items]
+    return [
+        _with_application_id(
+            CandidateAssessmentRead,
+            item,
+            application.candidate_application_id,
+            person.candidate_person_id,
+        )
+        for item in items
+    ]
 
 
 @router.post("/{applicationId}/assessments", response_model=CandidateAssessmentRead, status_code=201)

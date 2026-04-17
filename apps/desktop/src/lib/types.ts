@@ -1,4 +1,4 @@
-import type { CandidateStatusTransition } from "@scene-pilot/shared";
+import type { ApplicationStatusTransition } from "@scene-pilot/shared";
 
 export type WorkspaceTab =
   | "home"
@@ -279,7 +279,7 @@ export interface ApprovalItem {
   notes?: string | null;
   updatedAt?: string;
   surface: ApprovalSurface;
-  relatedCandidateId?: string | null;
+  relatedApplicationId?: string | null;
 }
 
 export interface GoalSpecRecord {
@@ -310,7 +310,8 @@ export interface ExecutionTraceRecord {
   sessionId: string;
   runId?: string | null;
   goalSpecId?: string | null;
-  candidateId?: string | null;
+  personId?: string | null;
+  applicationId?: string | null;
   lane: string;
   traceKind: string;
   status: string;
@@ -330,7 +331,8 @@ export interface ExecutionGraphProjectionRecord {
   id: string;
   goalSpecId?: string | null;
   runId?: string | null;
-  candidateId?: string | null;
+  personId?: string | null;
+  applicationId?: string | null;
   graphKind: string;
   title: string;
   summary?: string | null;
@@ -347,8 +349,8 @@ export interface StrategyFragmentRecord {
   agentProfileId: string;
   goalSpecId?: string | null;
   runId?: string | null;
-  candidateId?: string | null;
-  jdId?: string | null;
+  personId?: string | null;
+  jobDescriptionId?: string | null;
   scope: string;
   fragmentKind: string;
   title: string;
@@ -370,7 +372,8 @@ export interface OperatorInteractionRecord {
   checkpointId?: string | null;
   approvalId?: string | null;
   goalSpecId?: string | null;
-  candidateId?: string | null;
+  personId?: string | null;
+  applicationId?: string | null;
   lane: string;
   interactionType: string;
   status: string;
@@ -485,7 +488,7 @@ export interface ApplicationThreadRecord {
   communicationLogs: ApplicationConversationEntry[];
   stateSnapshot: ApplicationStateSnapshotRecord;
   stageEvents: ApplicationStageEventRecord[];
-  statusTransitions: CandidateStatusTransition[];
+  statusTransitions: ApplicationStatusTransition[];
   assessments: ApplicationAssessmentRecord[];
   assignments: ApplicationAssignmentRecord[];
   resumeArtifacts: ResumeArtifactRecord[];
@@ -507,7 +510,7 @@ export interface EvolutionArtifactRecord {
   title: string;
   summary?: string | null;
   status: EvolutionArtifactStatus;
-  relatedCandidateId?: string | null;
+  relatedApplicationId?: string | null;
   relatedSkillId?: string | null;
   proposedBy?: string | null;
   reviewedBy?: string | null;
@@ -557,7 +560,8 @@ export interface AgentQueueItem {
   scheduledFor?: string | null;
   lockedAt?: string | null;
   lockedBy?: string | null;
-  candidateId?: string | null;
+  personId?: string | null;
+  applicationId?: string | null;
   payload: Record<string, unknown>;
   queueAudit: AgentQueueAuditEvent[];
   createdAt: string;

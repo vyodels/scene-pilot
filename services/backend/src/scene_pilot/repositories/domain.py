@@ -129,29 +129,73 @@ class PlaybookRepository(BaseRepository[Playbook]):
 class CandidateRepository(BaseRepository[Candidate]):
     model = Candidate
 
-    def get(self, item_id: str) -> Candidate | None:
-        stmt = select(Candidate).where(Candidate.candidate_person_id == item_id)
+    def get_by_business_id(self, candidate_person_id: str) -> Candidate | None:
+        stmt = select(Candidate).where(Candidate.candidate_person_id == candidate_person_id)
         return self.session.scalars(stmt).first()
 
     def get_by_internal_id(self, internal_id: str) -> Candidate | None:
         return self.session.get(Candidate, internal_id)
 
+    def get(self, item_id: str) -> Candidate | None:
+        candidate = self.get_by_business_id(item_id)
+        if candidate is not None:
+            return candidate
+        return self.get_by_internal_id(item_id)
+
     def by_platform_candidate_id(self, platform: str, platform_candidate_id: str) -> Candidate | None:
-        stmt = select(Candidate).where(
-            Candidate.platform == platform,
-            Candidate.platform_candidate_id == platform_candidate_id,
-        )
-        return self.session.scalars(stmt).first()
+        idx_repo = CandidatePlatformIdxRepository(self.session)
+        idx = idx_repo.by_platform_identity(platform, platform_candidate_id)
+        if idx is not None:
+            candidate = self.get_by_internal_id(idx.candidate_id)
+            if candidate is not None:
+                return candidate
+        return None
 
     def resolve(self, candidate_id: str) -> Candidate | None:
-        candidate = self.get(candidate_id)
-        if candidate is not None:
-            return candidate
-        candidate = self.get_by_internal_id(candidate_id)
-        if candidate is not None:
-            return candidate
-        stmt = select(Candidate).where(Candidate.platform_candidate_id == candidate_id)
-        return self.session.scalars(stmt).first()
+        return self.get(candidate_id)
+
+    def _sync_platform_identity(self, candidate: Candidate) -> None:
+        platform_candidate_id = str(candidate.platform_candidate_id or "").strip()
+        if not platform_candidate_id:
+            return
+        idx_repo = CandidatePlatformIdxRepository(self.session)
+        candidate_idx = idx_repo.by_candidate_and_platform(candidate.id, candidate.platform)
+        if candidate_idx is not None:
+            candidate_idx.platform_candidate_person_id = platform_candidate_id
+            self.session.flush()
+            return
+        idx = idx_repo.by_platform_identity(candidate.platform, platform_candidate_id)
+        if idx is None:
+            idx_repo.create(
+                {
+                    "candidate_id": candidate.id,
+                    "platform": candidate.platform,
+                    "platform_candidate_person_id": platform_candidate_id,
+                }
+            )
+            return
+        if idx.candidate_id != candidate.id:
+            idx.candidate_id = candidate.id
+            self.session.flush()
+
+    def create(self, data: BaseModel | dict[str, Any]) -> Candidate:
+        payload = data.model_dump(exclude_unset=True) if isinstance(data, BaseModel) else dict(data)
+        instance = self.model(**payload)  # type: ignore[call-arg]
+        self.session.add(instance)
+        self.session.flush()
+        self._sync_platform_identity(instance)
+        self.session.commit()
+        self.session.refresh(instance)
+        return instance
+
+    def update(self, instance: Candidate, data: BaseModel | dict[str, Any]) -> Candidate:
+        payload = data.model_dump(exclude_unset=True) if isinstance(data, BaseModel) else dict(data)
+        _apply_update(instance, payload)
+        self.session.flush()
+        self._sync_platform_identity(instance)
+        self.session.commit()
+        self.session.refresh(instance)
+        return instance
 
 
 class CandidatePlatformIdxRepository(BaseRepository[CandidatePlatformIdx]):
@@ -164,13 +208,30 @@ class CandidatePlatformIdxRepository(BaseRepository[CandidatePlatformIdx]):
         )
         return self.session.scalars(stmt).first()
 
+    def by_candidate_and_platform(self, candidate_id: str, platform: str) -> CandidatePlatformIdx | None:
+        stmt = (
+            select(CandidatePlatformIdx)
+            .where(
+                CandidatePlatformIdx.candidate_id == candidate_id,
+                CandidatePlatformIdx.platform == platform,
+            )
+            .order_by(CandidatePlatformIdx.updated_at.desc(), CandidatePlatformIdx.id.asc())
+        )
+        return self.session.scalars(stmt).first()
+
 
 class JobDescriptionRepository(BaseRepository[JobDescription]):
     model = JobDescription
 
-    def get(self, item_id: str) -> JobDescription | None:
-        stmt = select(JobDescription).where(JobDescription.job_description_id == item_id)
+    def get_by_business_id(self, job_description_id: str) -> JobDescription | None:
+        stmt = select(JobDescription).where(JobDescription.job_description_id == job_description_id)
         return self.session.scalars(stmt).first()
+
+    def get(self, item_id: str) -> JobDescription | None:
+        job_description = self.get_by_business_id(item_id)
+        if job_description is not None:
+            return job_description
+        return self.session.get(JobDescription, item_id)
 
     def get_by_internal_id(self, internal_id: str) -> JobDescription | None:
         return self.session.get(JobDescription, internal_id)
@@ -190,12 +251,18 @@ class JobDescriptionPlatformIdxRepository(BaseRepository[JobDescriptionPlatformI
 class CandidateApplicationRepository(BaseRepository[CandidateApplication]):
     model = CandidateApplication
 
-    def get(self, item_id: str) -> CandidateApplication | None:
-        stmt = select(CandidateApplication).where(CandidateApplication.candidate_application_id == item_id)
+    def get_by_business_id(self, candidate_application_id: str) -> CandidateApplication | None:
+        stmt = select(CandidateApplication).where(CandidateApplication.candidate_application_id == candidate_application_id)
         return self.session.scalars(stmt).first()
 
     def get_by_internal_id(self, internal_id: str) -> CandidateApplication | None:
         return self.session.get(CandidateApplication, internal_id)
+
+    def get(self, item_id: str) -> CandidateApplication | None:
+        application = self.get_by_business_id(item_id)
+        if application is not None:
+            return application
+        return self.get_by_internal_id(item_id)
 
     def _normalize_payload(self, data: BaseModel | dict[str, Any]) -> dict[str, Any]:
         payload = data.model_dump(exclude_unset=True) if isinstance(data, BaseModel) else dict(data)
@@ -215,9 +282,12 @@ class CandidateApplicationRepository(BaseRepository[CandidateApplication]):
             if provided_window and provided_window != canonical_window:
                 raise ValueError("application_window must match the canonical person/job/month format")
             payload["application_window"] = canonical_window
-        payload.setdefault("source_platform", str(payload.get("platform") or "site"))
-        if person is not None:
-            payload.setdefault("source_platform_candidate_person_id", person.platform_candidate_id)
+        source_platform = str(payload.get("source_platform") or payload.get("platform") or "site").strip() or "site"
+        payload.setdefault("source_platform", source_platform)
+        if person is not None and not str(payload.get("source_platform_candidate_person_id") or "").strip():
+            idx = CandidatePlatformIdxRepository(self.session).by_candidate_and_platform(person.id, source_platform)
+            if idx is not None:
+                payload["source_platform_candidate_person_id"] = idx.platform_candidate_person_id
         return payload
 
     def create(self, data: BaseModel | dict[str, Any]) -> CandidateApplication:

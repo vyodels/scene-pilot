@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { funnelMilestones } from "@scene-pilot/shared";
-import type { CandidateTransitionPayload, RecruitmentStateMachine } from "@scene-pilot/shared";
+import type { ApplicationTransitionPayload, RecruitmentStateMachine } from "@scene-pilot/shared";
 import { CandidateTable } from "../kanban-shared/CandidateTable";
 import { CandidateCommunicationPanel } from "../kanban-shared/CandidateCommunicationPanel";
 import {
@@ -28,7 +28,7 @@ interface FunnelKanbanViewProps {
     applicationId: string,
     payload: { direction: string; content: string; messageType?: string; platform?: string },
   ): Promise<unknown> | void;
-  onTransition(applicationId: string, payload: CandidateTransitionPayload): Promise<unknown> | void;
+  onTransition(applicationId: string, payload: ApplicationTransitionPayload): Promise<unknown> | void;
 }
 
 export function FunnelKanbanView({

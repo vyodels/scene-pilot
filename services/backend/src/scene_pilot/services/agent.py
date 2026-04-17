@@ -50,7 +50,7 @@ from scene_pilot.services.candidate_progression_selector import (
     ApplicationProgressionTarget,
     select_next_application_progression,
 )
-from scene_pilot.services.candidate_identity import resolve_candidate_by_contact_info
+from scene_pilot.services.candidate_identity import resolve_candidate_by_contact_info, resolve_candidate_by_platform_identity
 from scene_pilot.services.candidate_waiting_retry_selector import (
     ApplicationWaitingRetryPolicy,
     ApplicationWaitingRetryTarget,
@@ -1747,7 +1747,15 @@ class AgentControlService:
                     "current_status": current_status,
                     "goal_spec_id": str(task.metadata.get("goal_spec_id") or task.payload.get("goal_id") or "") or None,
                     "task_type": task.task_type,
-                    "resume_available": bool(candidate.resume_path or candidate.online_resume_text),
+                    "resume_available": bool(
+                        application is not None
+                        and (
+                            bool((application.application_metadata or {}).get("resume_available"))
+                            or bool((application.state_snapshot or {}).get("resume_available"))
+                            or str((application.application_metadata or {}).get("resume_status") or "").strip().lower()
+                            in {"received", "available", "ready", "present"}
+                        )
+                    ),
                     "state_machine_version": state_machine_snapshot.get("version"),
                     "execution_mode": execution_mode,
                 }
@@ -1761,21 +1769,39 @@ class AgentControlService:
             candidate_session.facts = facts
             session.commit()
 
+            application_metadata = dict(application.application_metadata or {}) if application is not None else {}
+            application_state = dict(application.state_snapshot or {}) if application is not None else {}
+            resume_summary = (
+                str(application_metadata.get("resume_summary") or "").strip()
+                or str(application_state.get("latest_note") or "").strip()
+                or str(application.ai_reasoning or "").strip()
+                if application is not None
+                else None
+            )
             return {
                 "candidate": {
                     "id": person_id,
                     "application_id": application_business_id,
                     "person_id": person_id,
-                    "platform_candidate_id": candidate.platform_candidate_id,
                     "name": candidate.name,
-                    "platform": candidate.platform,
+                    "platform": (
+                        application.source_platform
+                        if application is not None and str(application.source_platform or "").strip()
+                        else candidate.platform
+                    ),
+                    "source_platform_candidate_person_id": (
+                        str(application.source_platform_candidate_person_id or "").strip()
+                        if application is not None
+                        else None
+                    )
+                    or None,
                     "current_status": current_status,
                     "current_stage_key": application.current_stage_key if application is not None else None,
                     "deepest_milestone": application.deepest_milestone if application is not None else None,
                     "job_description_id": job_description_id,
                     "contact_info": dict(candidate.contact_info or {}),
-                    "resume_path": candidate.resume_path,
-                    "online_resume_text": candidate.online_resume_text,
+                    "resume_available": bool(facts.get("resume_available")),
+                    "resume_summary": resume_summary,
                     "ai_scores": dict(application.ai_scores or {}) if application is not None else {},
                     "ai_reasoning": application.ai_reasoning if application is not None else None,
                 },
@@ -2109,9 +2135,10 @@ class AgentControlService:
             if isinstance(candidate_ref, str) and candidate_ref.strip():
                 existing = candidate_repo.resolve(candidate_ref.strip())
             if existing is None and normalized.get("platform_candidate_id"):
-                existing = candidate_repo.by_platform_candidate_id(
-                    normalized["platform"],
-                    normalized["platform_candidate_id"],
+                existing = resolve_candidate_by_platform_identity(
+                    session,
+                    platform=normalized["platform"],
+                    platform_candidate_id=normalized["platform_candidate_id"],
                 )
             if existing is None:
                 existing = resolve_candidate_by_contact_info(
@@ -2134,8 +2161,6 @@ class AgentControlService:
                         "platform": normalized["platform"],
                         "platform_candidate_id": normalized.get("platform_candidate_id"),
                         "contact_info": normalized["contact_info"],
-                        "resume_path": normalized.get("resume_path"),
-                        "online_resume_text": normalized.get("online_resume_text"),
                     }
                 )
                 created = True
@@ -2146,8 +2171,6 @@ class AgentControlService:
                 existing.platform = normalized["platform"] or existing.platform
                 existing.platform_candidate_id = normalized.get("platform_candidate_id") or existing.platform_candidate_id
                 existing.contact_info = merged_contact
-                existing.resume_path = normalized.get("resume_path") or existing.resume_path
-                existing.online_resume_text = normalized.get("online_resume_text") or existing.online_resume_text
                 session.flush()
 
             resolved_job_description_id = (
@@ -2335,26 +2358,14 @@ class AgentControlService:
             existing_path = str(existing.file_path or "").strip()
             existing_text = str(existing.extracted_text or "").strip()
             if local_resume_path and existing_path == local_resume_path:
-                if not candidate.resume_path:
-                    candidate.resume_path = local_resume_path
-                    session.flush()
                 return
             if synthesized_resume_text and existing_text == synthesized_resume_text:
-                if local_resume_path and not candidate.resume_path:
-                    candidate.resume_path = local_resume_path
-                    session.flush()
                 return
-
-        if local_resume_path:
-            candidate.resume_path = local_resume_path
-        elif source_resume_path and not candidate.resume_path:
-            candidate.resume_path = source_resume_path
-        session.flush()
 
         resume_repo.create(
             {
                 "application_id": application_id,
-                "source": normalized.get("platform") or candidate.platform or task.platform,
+                "source": normalized.get("platform") or task.platform,
                 "artifact_type": "resume",
                 "file_name": file_name,
                 "file_path": local_resume_path or source_resume_path or None,
@@ -3657,9 +3668,10 @@ class AgentControlService:
                 matching_resume_paths.append(text)
 
         for application, candidate in candidate_records:
-            if str(candidate.resume_path or "").strip() or str(candidate.online_resume_text or "").strip():
+            application_metadata = dict(application.application_metadata or {}) if application is not None else {}
+            application_state = dict(application.state_snapshot or {}) if application is not None else {}
+            if bool(application_metadata.get("resume_available")) or bool(application_state.get("resume_available")):
                 has_resume_or_profile = True
-            _remember_local_path(candidate.resume_path)
             artifacts = (
                 resume_repo.by_application(application.id, limit=50, offset=0)
                 if application is not None
@@ -4164,16 +4176,32 @@ class AgentControlService:
         session_context: dict[str, Any],
     ) -> dict[str, Any]:
         candidate = dict((session_context or {}).get("candidate") or {})
+        application = dict(candidate.get("application") or {})
+        application_state = dict(application.get("state_snapshot") or {})
+        application_metadata = dict(application.get("application_metadata") or {})
         ai_scores = dict(candidate.get("ai_scores") or {})
         selection = dict(task.payload.get("selection") or {})
+        resume_status = str(
+            application_metadata.get("resume_status")
+            or application_state.get("resume_status")
+            or ""
+        ).strip().lower()
         return {
             "applicationId": candidate.get("application_id") or task.application_id or task.candidate_id,
             "candidateId": candidate.get("id") or task.metadata.get("person_id") or task.candidate_id,
             "currentStatus": candidate.get("current_status"),
             "deepestMilestone": candidate.get("deepest_milestone"),
             "jobDescriptionId": candidate.get("job_description_id") or candidate.get("jd_id"),
-            "hasResume": bool(candidate.get("resume_path") or candidate.get("online_resume_text")),
-            "hasContactInfo": bool(dict(candidate.get("contact_info") or {})),
+            "hasResume": bool(
+                application.get("resume_available")
+                or application_metadata.get("resume_available")
+                or application_state.get("resume_available")
+                or resume_status in {"received", "available", "ready", "present"}
+            ),
+            "hasContactInfo": bool(
+                dict(candidate.get("contact_info") or {})
+                or dict((candidate.get("person") or {}).get("contact_info") or {})
+            ),
             "aiScore": ai_scores.get("overall") or ai_scores.get("score"),
             "aiDecision": ai_scores.get("decision") or ai_scores.get("status"),
             "selectionReason": selection.get("reason"),

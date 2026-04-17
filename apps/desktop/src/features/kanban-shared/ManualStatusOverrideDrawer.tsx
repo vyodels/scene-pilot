@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import type { CandidateTransitionPayload, RecruitmentStateMachine } from "@scene-pilot/shared";
+import type { ApplicationTransitionPayload, RecruitmentStateMachine } from "@scene-pilot/shared";
 import { StatusBadge } from "../../components";
 import { useI18n } from "../../lib/i18n";
 import type { ApplicationViewModel } from "./kanbanUtils";
@@ -9,7 +9,7 @@ interface ManualStatusOverrideDrawerProps {
   record: ApplicationViewModel | null;
   stateMachine: RecruitmentStateMachine;
   onClose(): void;
-  onSubmit(applicationId: string, payload: CandidateTransitionPayload): Promise<unknown> | void;
+  onSubmit(applicationId: string, payload: ApplicationTransitionPayload): Promise<unknown> | void;
 }
 
 export function ManualStatusOverrideDrawer({

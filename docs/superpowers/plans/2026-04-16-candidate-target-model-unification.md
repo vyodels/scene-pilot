@@ -8,6 +8,8 @@
 
 **Tech Stack:** FastAPI、SQLAlchemy ORM、SQLite migrations、Pydantic schemas、TypeScript 桌面端、shared protocol types。
 
+**Update (2026-04-17):** application-centric API / frontend surface 已经在代码中继续推进，详见 `docs/superpowers/plans/2026-04-17-canonical-entity-naming-and-schema-plan.md`。当前已确认 `/api/candidate-persons`、`/api/candidate-applications`、`/api/job-descriptions` 以及 `applicationId` / `personId` / `jobDescriptionId` 的前后端主字段消费；canonical 物理表名、双 ID 全量落库、秒级 int64 时间字段与最终全量验证仍以后续计划为准。
+
 ---
 
 ## 文件结构

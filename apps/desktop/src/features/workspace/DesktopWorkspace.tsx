@@ -1,6 +1,6 @@
 import React, { startTransition, useEffect, useMemo, useState } from "react";
 import type {
-  CandidateTransitionPayload,
+  ApplicationTransitionPayload,
   RecruitmentStateMachine,
   RecruitmentStateMachineUpdatePayload,
 } from "@scene-pilot/shared";
@@ -462,7 +462,7 @@ export function DesktopWorkspace(): JSX.Element {
       ({
         "ai-strategy": summary.skills.filter((skill) => skill.status !== "active" || skill.health !== "healthy").length,
         "ai-review":
-          operatorInteractions.filter((item) => !item.candidateId && item.status === "pending").length +
+          operatorInteractions.filter((item) => !item.applicationId && item.status === "pending").length +
           summary.skills.filter((skill) => skill.status !== "active" || skill.health !== "healthy").length +
           evolutionArtifacts.filter((artifact) => /(pending|draft|review)/i.test(artifact.status)).length,
         candidates: summary.applications.filter((application) => !/(rejected|cooldown)/i.test(application.currentStatus)).length,
@@ -774,7 +774,7 @@ export function DesktopWorkspace(): JSX.Element {
 
   const handleTransitionApplicationState = async (
     applicationId: string,
-    payload: CandidateTransitionPayload,
+    payload: ApplicationTransitionPayload,
   ) => {
     await apiClient.transitionApplicationState(applicationId, payload);
     await loadWorkspace(copy("Application state updated.", "申请状态已更新。"));
@@ -922,7 +922,7 @@ export function DesktopWorkspace(): JSX.Element {
                   label: copy("Review queue", "审阅队列"),
                   detail: copy("Approvals, operator interactions, and blocked work.", "审批、人工介入项和阻塞任务。"),
                   count:
-                    operatorInteractions.filter((item) => !item.candidateId && item.status === "pending").length +
+                    operatorInteractions.filter((item) => !item.applicationId && item.status === "pending").length +
                     summary.approvals.filter((approval) => approval.status === "pending").length,
                 },
                 {

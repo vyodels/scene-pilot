@@ -3,8 +3,8 @@ export * from "./data/defaultStateMachine";
 export * from "./types/milestone";
 export * from "./types/stateMachine";
 export type {
-  CandidateStatusTransition,
-  CandidateTransitionPayload,
+  ApplicationStatusTransition,
+  ApplicationTransitionPayload,
   RecruitmentStateMachine,
   StateCriteriaOptimizationMetrics,
   StateCriteriaOptimizationReport,

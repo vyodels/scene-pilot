@@ -222,7 +222,7 @@ export function EvolutionView({
     }
     return mapping;
   }, [applications]);
-  const evolutionApprovals = useMemo(() => approvals.filter((item) => !item.relatedCandidateId), [approvals]);
+  const evolutionApprovals = useMemo(() => approvals.filter((item) => !item.relatedApplicationId), [approvals]);
 
   useEffect(() => {
     if (requestedSection === "inbox" || requestedSection === "skills" || requestedSection === "memory" || requestedSection === "prompts" || requestedSection === "playbook" || requestedSection === "approvals" || requestedSection === "history") {
@@ -955,7 +955,7 @@ export function EvolutionView({
           <div style={{ display: "flex", gap: "var(--space-2)", flexWrap: "wrap" }}>
             <StatusBadge tone={toneFromStatus(selectedArtifact.status)}>{translateUiToken(selectedArtifact.status, copy)}</StatusBadge>
             <StatusBadge tone="neutral">{selectedArtifact.artifactKind}</StatusBadge>
-            {selectedArtifact.relatedCandidateId ? <StatusBadge tone="warning">{applicationDisplayNameById.get(selectedArtifact.relatedCandidateId) ?? selectedArtifact.relatedCandidateId}</StatusBadge> : null}
+            {selectedArtifact.relatedApplicationId ? <StatusBadge tone="warning">{applicationDisplayNameById.get(selectedArtifact.relatedApplicationId) ?? selectedArtifact.relatedApplicationId}</StatusBadge> : null}
           </div>
           <label style={{ display: "grid", gap: "var(--space-2)" }}>
             <span>{copy("Summary", "摘要")}</span>
@@ -981,8 +981,8 @@ export function EvolutionView({
           </label>
           <div style={{ display: "flex", gap: "var(--space-2)", flexWrap: "wrap" }}>
             <button type="button" onClick={() => void saveArtifact()} style={buttonStyle}>{copy("Save artifact", "保存产物")}</button>
-            {selectedArtifact.relatedCandidateId ? (
-              <button type="button" onClick={() => onOpenApplication(selectedArtifact.relatedCandidateId!)} style={buttonStyle}>
+            {selectedArtifact.relatedApplicationId ? (
+              <button type="button" onClick={() => onOpenApplication(String(selectedArtifact.relatedApplicationId))} style={buttonStyle}>
                 {copy("Open candidate", "打开候选人")}
               </button>
             ) : null}

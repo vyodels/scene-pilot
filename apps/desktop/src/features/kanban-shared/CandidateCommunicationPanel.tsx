@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from "react";
-import type { CandidateTransitionPayload, HumanActionDefinition, RecruitmentStateMachine } from "@scene-pilot/shared";
+import type { ApplicationTransitionPayload, HumanActionDefinition, RecruitmentStateMachine } from "@scene-pilot/shared";
 import { StatusBadge } from "../../components";
 import { formatCompactDate } from "../../lib/format";
 import { useI18n } from "../../lib/i18n";
@@ -23,7 +23,7 @@ interface CandidateCommunicationPanelProps {
     applicationId: string,
     payload: { direction: string; content: string; messageType?: string; platform?: string },
   ): Promise<unknown> | void;
-  onTransition(applicationId: string, payload: CandidateTransitionPayload): Promise<unknown> | void;
+  onTransition(applicationId: string, payload: ApplicationTransitionPayload): Promise<unknown> | void;
 }
 
 function asObject(value: unknown): Record<string, unknown> {
