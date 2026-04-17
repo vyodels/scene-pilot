@@ -37,12 +37,10 @@ def test_initialize_database_records_baseline_version(tmp_path):
             ).fetchall()
         }
         assert SCHEMA_MIGRATIONS_TABLE in tables
-        assert "candidates" in tables
-        assert "candidate_assignments" in tables
+        assert "candidate_persons" in tables
+        assert "candidate_applications" in tables
+        assert "job_descriptions" in tables
         assert "resume_artifacts" in tables
-        assert "candidate_scorecards" in tables
-        assert "candidate_review_decisions" in tables
-        assert "talent_pool_sync_records" in tables
         assert current_schema_version(connection) == CURRENT_SCHEMA_VERSION
 
 

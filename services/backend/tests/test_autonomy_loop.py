@@ -6,17 +6,56 @@ from fastapi.testclient import TestClient
 from scene_pilot.core.app import create_app
 from scene_pilot.core.settings import AppSettings, FeatureFlags
 from scene_pilot.db.base import utcnow
-from scene_pilot.models import Candidate, Skill
+from scene_pilot.models import Candidate, CandidateApplication, Skill
 from scene_pilot.repositories import (
     AgentRunRepository,
     AgentWorkItemRepository,
-    CandidateStatusTransitionRepository,
+    ApplicationStatusTransitionRepository,
     TaskQueueRepository,
 )
 from scene_pilot.runtime.models import LLMResponse
 from scene_pilot.runtime.providers import ScriptedProvider
 from scene_pilot.runtime.tools import ToolDefinition
 from scene_pilot.services.runtime_control import RuntimeControlService
+
+
+def _create_subject(
+    session,
+    *,
+    name: str,
+    platform: str,
+    platform_candidate_id: str,
+    current_status: str,
+    ai_scores: dict | None = None,
+    last_contacted_at=None,
+    state_snapshot: dict | None = None,
+):
+    candidate = Candidate(
+        name=name,
+        platform=platform,
+        platform_candidate_id=platform_candidate_id,
+        current_status=current_status,
+        ai_scores=dict(ai_scores or {}),
+        last_contacted_at=last_contacted_at,
+        state_snapshot=dict(state_snapshot or {}),
+    )
+    session.add(candidate)
+    session.flush()
+    application = CandidateApplication(
+        person_id=candidate.id,
+        platform=platform,
+        platform_application_id=platform_candidate_id,
+        application_window=f"{candidate.id}:{platform_candidate_id}:{current_status}",
+        current_status=current_status,
+        ai_scores=dict(ai_scores or {}),
+        last_contacted_at=last_contacted_at,
+        state_snapshot=dict(state_snapshot or {}),
+    )
+    session.add(application)
+    session.commit()
+    session.refresh(candidate)
+    session.refresh(application)
+    return candidate, application
 
 
 def test_autonomy_loop_disabled_by_default(tmp_path):
@@ -204,22 +243,22 @@ def test_agent_control_prioritizes_high_potential_candidate_for_progression(tmp_
         )
 
     with container.session_factory() as session:
-        lower_rank = Candidate(
+        _lower_person, lower_rank = _create_subject(
+            session,
             name="Recent Candidate",
             platform="boss",
             platform_candidate_id="boss_priority_recent",
             current_status="discovered",
             ai_scores={"overall": 62},
         )
-        higher_rank = Candidate(
+        _higher_person, higher_rank = _create_subject(
+            session,
             name="Priority Candidate",
             platform="boss",
             platform_candidate_id="boss_priority_high",
             current_status="discovered",
             ai_scores={"overall": 96},
         )
-        session.add_all([lower_rank, higher_rank])
-        session.commit()
         higher_candidate_id = higher_rank.id
         lower_rank.updated_at = utcnow()
         higher_rank.updated_at = utcnow() - timedelta(days=2)
@@ -228,16 +267,16 @@ def test_agent_control_prioritizes_high_potential_candidate_for_progression(tmp_
     task = container.agent_control.maybe_enqueue_priority_candidate_progression()
     assert task is not None
     assert task.task_type == "candidate_probe"
-    assert task.candidate_id == higher_candidate_id
+    assert task.application_id == higher_candidate_id
     assert task.payload["selection"]["candidateId"] == higher_candidate_id
     assert task.payload["selection"]["selectedTaskType"] == "candidate_probe"
     assert task.payload["selection"]["scoreBreakdown"]["total"] > 0
     assert "reason" in task.payload["selection"]
 
     with container.session_factory() as session:
-        selected = session.get(Candidate, task.candidate_id)
+        selected = session.get(CandidateApplication, task.application_id)
         assert selected is not None
-        assert selected.platform_candidate_id == "boss_priority_high"
+        assert selected.platform_application_id == "boss_priority_high"
         queue_item = TaskQueueRepository(session).get(task.task_id)
         assert queue_item is not None
         assert queue_item.priority == task.priority
@@ -267,22 +306,22 @@ def test_agent_control_skips_candidates_that_already_have_open_task(tmp_path):
         )
 
     with container.session_factory() as session:
-        blocked = Candidate(
+        _blocked_person, blocked = _create_subject(
+            session,
             name="Blocked Candidate",
             platform="boss",
             platform_candidate_id="boss_priority_blocked",
             current_status="discovered",
             ai_scores={"overall": 99},
         )
-        fallback = Candidate(
+        _fallback_person, fallback = _create_subject(
+            session,
             name="Fallback Candidate",
             platform="boss",
             platform_candidate_id="boss_priority_fallback",
             current_status="discovered",
             ai_scores={"overall": 76},
         )
-        session.add_all([blocked, fallback])
-        session.commit()
         blocked_candidate_id = blocked.id
         fallback_candidate_id = fallback.id
         blocked.updated_at = utcnow() - timedelta(days=1)
@@ -291,14 +330,14 @@ def test_agent_control_skips_candidates_that_already_have_open_task(tmp_path):
 
     container.agent_control.enqueue_task(
         "candidate_probe",
-        candidate_id=blocked_candidate_id,
+        application_id=blocked_candidate_id,
         payload={"seed": "existing-open-task"},
         priority=280,
     )
 
     task = container.agent_control.maybe_enqueue_priority_candidate_progression()
     assert task is not None
-    assert task.candidate_id == fallback_candidate_id
+    assert task.application_id == fallback_candidate_id
     assert task.payload["selection"]["candidateId"] == fallback_candidate_id
 
 
@@ -333,15 +372,14 @@ def test_autonomy_loop_queues_priority_candidate_progression_when_idle(tmp_path)
         )
 
     with container.session_factory() as session:
-        candidate = Candidate(
+        _person, _application = _create_subject(
+            session,
             name="Autonomy Priority Candidate",
             platform="boss",
             platform_candidate_id="boss_priority_loop",
             current_status="discovered",
             ai_scores={"overall": 91},
         )
-        session.add(candidate)
-        session.commit()
 
     with TestClient(app) as client:
         autonomy = client.app.state.autonomy_loop
@@ -381,7 +419,8 @@ def test_agent_control_queues_waiting_candidate_retry_when_window_elapsed(tmp_pa
         )
 
     with container.session_factory() as session:
-        candidate = Candidate(
+        _person, candidate = _create_subject(
+            session,
             name="Retry Candidate",
             platform="boss",
             platform_candidate_id="boss_retry_candidate",
@@ -397,14 +436,12 @@ def test_agent_control_queues_waiting_candidate_retry_when_window_elapsed(tmp_pa
                 }
             },
         )
-        session.add(candidate)
-        session.commit()
         candidate_id = candidate.id
 
     task = container.agent_control.maybe_process_waiting_candidate_retry()
     assert task is not None
     assert task.task_type == "candidate_outreach"
-    assert task.candidate_id == candidate_id
+    assert task.application_id == candidate_id
     assert task.payload["autonomy_source"] == "waiting_candidate_retry"
     assert task.payload["retryContext"]["retryCount"] == 1
     assert task.payload["retryContext"]["reason"] == "retry_window_elapsed"
@@ -423,7 +460,8 @@ def test_agent_control_closes_waiting_candidate_to_no_response_after_retry_exhau
 
     with container.session_factory() as session:
         last_contacted_at = utcnow() - timedelta(hours=200)
-        candidate = Candidate(
+        _person, candidate = _create_subject(
+            session,
             name="Close Candidate",
             platform="boss",
             platform_candidate_id="boss_retry_close",
@@ -442,20 +480,18 @@ def test_agent_control_closes_waiting_candidate_to_no_response_after_retry_exhau
                 }
             },
         )
-        session.add(candidate)
-        session.commit()
         candidate_id = candidate.id
 
     result = container.agent_control.maybe_process_waiting_candidate_retry()
     assert result == {
         "action": "close_to_no_response",
-        "candidate_id": candidate_id,
+        "application_id": candidate_id,
         "current_status": "outreach_sent",
         "reason": "retry_limit_reached + close_window_elapsed",
     }
 
     with container.session_factory() as session:
-        refreshed = session.get(Candidate, candidate_id)
+        refreshed = session.get(CandidateApplication, candidate_id)
         assert refreshed is not None
         assert refreshed.current_status == "no_response"
         waiting_retry = refreshed.state_snapshot["snapshot_metadata"]["waiting_retry"]
@@ -463,7 +499,7 @@ def test_agent_control_closes_waiting_candidate_to_no_response_after_retry_exhau
         assert waiting_retry["retry_count"] == 2
         assert waiting_retry["close_reason"] == "retry_policy_timeout"
         assert waiting_retry["closed_at"]
-        transition = CandidateStatusTransitionRepository(session).latest_for_candidate(candidate_id)
+        transition = ApplicationStatusTransitionRepository(session).latest_for_application(candidate_id)
         assert transition is not None
         assert transition.to_status == "no_response"
         assert transition.actor == "agent"
@@ -488,7 +524,7 @@ def test_runtime_recovery_restores_recently_interrupted_run_on_restart(tmp_path)
             platform="boss",
             platform_candidate_id="boss_recovery_001",
             current_status="screening",
-            jd_id="jd-recovery",
+            job_description_id="jd-recovery",
         )
         session.add(candidate)
         session.commit()

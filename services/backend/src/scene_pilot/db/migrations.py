@@ -205,7 +205,7 @@ def _extend_candidate_fact_tables(connection: Connection) -> None:
                 """
                 CREATE TABLE candidate_assignments (
                     id TEXT PRIMARY KEY,
-                    candidate_id TEXT NOT NULL REFERENCES candidates(id) ON DELETE CASCADE,
+                    candidate_id TEXT NOT NULL REFERENCES candidate_persons(id) ON DELETE CASCADE,
                     assignee TEXT NOT NULL,
                     owner_role TEXT NOT NULL DEFAULT 'operator',
                     status TEXT NOT NULL DEFAULT 'active',
@@ -225,7 +225,7 @@ def _extend_candidate_fact_tables(connection: Connection) -> None:
                 """
                 CREATE TABLE resume_artifacts (
                     id TEXT PRIMARY KEY,
-                    candidate_id TEXT NOT NULL REFERENCES candidates(id) ON DELETE CASCADE,
+                    application_id TEXT NOT NULL REFERENCES candidate_applications(id) ON DELETE CASCADE,
                     source TEXT NOT NULL DEFAULT 'site',
                     artifact_type TEXT NOT NULL DEFAULT 'resume',
                     file_name TEXT,
@@ -246,7 +246,7 @@ def _extend_candidate_fact_tables(connection: Connection) -> None:
                 """
                 CREATE TABLE candidate_scorecards (
                     id TEXT PRIMARY KEY,
-                    candidate_id TEXT NOT NULL REFERENCES candidates(id) ON DELETE CASCADE,
+                    candidate_id TEXT NOT NULL REFERENCES candidate_persons(id) ON DELETE CASCADE,
                     stage_key TEXT,
                     source TEXT NOT NULL DEFAULT 'ai',
                     rubric_version TEXT NOT NULL DEFAULT 'recruit-scorecard-v1',
@@ -268,7 +268,7 @@ def _extend_candidate_fact_tables(connection: Connection) -> None:
                 """
                 CREATE TABLE candidate_review_decisions (
                     id TEXT PRIMARY KEY,
-                    candidate_id TEXT NOT NULL REFERENCES candidates(id) ON DELETE CASCADE,
+                    candidate_id TEXT NOT NULL REFERENCES candidate_persons(id) ON DELETE CASCADE,
                     stage_key TEXT,
                     decision TEXT NOT NULL,
                     rationale TEXT,
@@ -289,7 +289,7 @@ def _extend_candidate_fact_tables(connection: Connection) -> None:
                 """
                 CREATE TABLE talent_pool_sync_records (
                     id TEXT PRIMARY KEY,
-                    candidate_id TEXT NOT NULL REFERENCES candidates(id) ON DELETE CASCADE,
+                    candidate_id TEXT NOT NULL REFERENCES candidate_persons(id) ON DELETE CASCADE,
                     destination TEXT NOT NULL DEFAULT 'talent_pool',
                     status TEXT NOT NULL DEFAULT 'pending',
                     external_ref TEXT,
@@ -315,7 +315,7 @@ def _extend_candidate_fact_tables(connection: Connection) -> None:
         )
     if "resume_artifacts" in indexed_tables:
         connection.execute(
-            text("CREATE INDEX IF NOT EXISTS ix_resume_artifacts_candidate_captured_at ON resume_artifacts (candidate_id, captured_at)")
+            text("CREATE INDEX IF NOT EXISTS ix_resume_artifacts_application_captured_at ON resume_artifacts (application_id, captured_at)")
         )
     if "candidate_scorecards" in indexed_tables:
         connection.execute(
@@ -364,7 +364,7 @@ def _create_agent_runtime_control_tables(connection: Connection) -> None:
                     id TEXT PRIMARY KEY,
                     session_id TEXT NOT NULL REFERENCES agent_sessions(id) ON DELETE CASCADE,
                     execution_episode_id TEXT REFERENCES execution_episodes(id) ON DELETE SET NULL,
-                    candidate_id TEXT REFERENCES candidates(id) ON DELETE SET NULL,
+                    candidate_id TEXT REFERENCES candidate_persons(id) ON DELETE SET NULL,
                     jd_id TEXT,
                     platform TEXT NOT NULL DEFAULT 'site',
                     lane TEXT NOT NULL DEFAULT 'agent',
@@ -394,7 +394,7 @@ def _create_agent_runtime_control_tables(connection: Connection) -> None:
                     session_id TEXT NOT NULL REFERENCES agent_sessions(id) ON DELETE CASCADE,
                     run_id TEXT REFERENCES agent_runs(id) ON DELETE SET NULL,
                     queue_task_id TEXT,
-                    candidate_id TEXT REFERENCES candidates(id) ON DELETE SET NULL,
+                    candidate_id TEXT REFERENCES candidate_persons(id) ON DELETE SET NULL,
                     platform TEXT NOT NULL DEFAULT 'site',
                     lane TEXT NOT NULL DEFAULT 'agent',
                     item_type TEXT NOT NULL,
@@ -422,7 +422,7 @@ def _create_agent_runtime_control_tables(connection: Connection) -> None:
                     id TEXT PRIMARY KEY,
                     session_id TEXT NOT NULL REFERENCES agent_sessions(id) ON DELETE CASCADE,
                     run_id TEXT NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
-                    candidate_id TEXT REFERENCES candidates(id) ON DELETE SET NULL,
+                    candidate_id TEXT REFERENCES candidate_persons(id) ON DELETE SET NULL,
                     approval_id TEXT REFERENCES approval_items(id) ON DELETE SET NULL,
                     checkpoint_kind TEXT NOT NULL,
                     status TEXT NOT NULL DEFAULT 'open',
@@ -445,7 +445,7 @@ def _create_agent_runtime_control_tables(connection: Connection) -> None:
                     id TEXT PRIMARY KEY,
                     session_id TEXT NOT NULL REFERENCES agent_sessions(id) ON DELETE CASCADE,
                     run_id TEXT REFERENCES agent_runs(id) ON DELETE SET NULL,
-                    candidate_id TEXT REFERENCES candidates(id) ON DELETE SET NULL,
+                    candidate_id TEXT REFERENCES candidate_persons(id) ON DELETE SET NULL,
                     level TEXT NOT NULL DEFAULT 'info',
                     source TEXT NOT NULL,
                     event_type TEXT NOT NULL,
@@ -546,7 +546,7 @@ def _create_goal_runtime_tables(connection: Connection) -> None:
                     session_id TEXT NOT NULL REFERENCES agent_sessions(id) ON DELETE CASCADE,
                     run_id TEXT REFERENCES agent_runs(id) ON DELETE SET NULL,
                     goal_spec_id TEXT,
-                    candidate_id TEXT REFERENCES candidates(id) ON DELETE SET NULL,
+                    candidate_id TEXT REFERENCES candidate_persons(id) ON DELETE SET NULL,
                     lane TEXT NOT NULL DEFAULT 'agent',
                     trace_kind TEXT NOT NULL DEFAULT 'adaptive_run',
                     status TEXT NOT NULL DEFAULT 'captured',
@@ -573,7 +573,7 @@ def _create_goal_runtime_tables(connection: Connection) -> None:
                     agent_profile_id TEXT NOT NULL REFERENCES recruit_agent_profiles(id) ON DELETE CASCADE,
                     goal_spec_id TEXT,
                     run_id TEXT,
-                    candidate_id TEXT REFERENCES candidates(id) ON DELETE SET NULL,
+                    candidate_id TEXT REFERENCES candidate_persons(id) ON DELETE SET NULL,
                     jd_id TEXT,
                     scope TEXT NOT NULL DEFAULT 'agent',
                     fragment_kind TEXT NOT NULL DEFAULT 'strategy',
@@ -599,7 +599,7 @@ def _create_goal_runtime_tables(connection: Connection) -> None:
                     id TEXT PRIMARY KEY,
                     goal_spec_id TEXT,
                     run_id TEXT,
-                    candidate_id TEXT REFERENCES candidates(id) ON DELETE SET NULL,
+                    candidate_id TEXT REFERENCES candidate_persons(id) ON DELETE SET NULL,
                     graph_kind TEXT NOT NULL DEFAULT 'execution_projection',
                     title TEXT NOT NULL,
                     summary TEXT,
@@ -624,7 +624,7 @@ def _create_goal_runtime_tables(connection: Connection) -> None:
                     checkpoint_id TEXT,
                     approval_id TEXT REFERENCES approval_items(id) ON DELETE SET NULL,
                     goal_spec_id TEXT,
-                    candidate_id TEXT REFERENCES candidates(id) ON DELETE SET NULL,
+                    candidate_id TEXT REFERENCES candidate_persons(id) ON DELETE SET NULL,
                     lane TEXT NOT NULL DEFAULT 'agent',
                     interaction_type TEXT NOT NULL DEFAULT 'confirm',
                     status TEXT NOT NULL DEFAULT 'pending',
@@ -1255,7 +1255,7 @@ def _create_state_machine_tables(connection: Connection) -> None:
                 """
                 CREATE TABLE candidate_status_transitions (
                     id TEXT PRIMARY KEY NOT NULL,
-                    candidate_id TEXT NOT NULL REFERENCES candidates(id) ON DELETE CASCADE,
+                    candidate_id TEXT NOT NULL REFERENCES candidate_persons(id) ON DELETE CASCADE,
                     from_status TEXT NOT NULL,
                     to_status TEXT NOT NULL,
                     from_status_label TEXT NOT NULL,
@@ -1292,6 +1292,377 @@ def _create_state_machine_tables(connection: Connection) -> None:
 
     if "candidate_stage_events" in tables:
         connection.execute(text("DROP TABLE candidate_stage_events"))
+
+
+def _create_candidate_subject_tables(connection: Connection) -> None:
+    tables = {
+        row[0]
+        for row in connection.execute(text("SELECT name FROM sqlite_master WHERE type='table'")).fetchall()
+    }
+
+    if "candidate_persons" not in tables:
+        connection.execute(
+            text(
+                """
+                CREATE TABLE candidate_persons (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    name TEXT NOT NULL,
+                    platform TEXT NOT NULL DEFAULT 'site',
+                    platform_candidate_id TEXT,
+                    current_status TEXT NOT NULL DEFAULT 'discovered',
+                    current_stage_key TEXT,
+                    deepest_milestone TEXT,
+                    job_description_id TEXT,
+                    contact_info TEXT NOT NULL DEFAULT '{}',
+                    state_snapshot TEXT NOT NULL DEFAULT '{}',
+                    resume_path TEXT,
+                    online_resume_text TEXT,
+                    ai_scores TEXT NOT NULL DEFAULT '{}',
+                    ai_reasoning TEXT,
+                    cooldown_until TEXT,
+                    last_contacted_at TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+        )
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_candidate_persons_name ON candidate_persons (name)"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_candidate_persons_platform ON candidate_persons (platform)"))
+        connection.execute(
+            text("CREATE INDEX IF NOT EXISTS ix_candidate_persons_platform_candidate_id ON candidate_persons (platform_candidate_id)")
+        )
+
+    if "candidates_platform_idx" not in tables:
+        connection.execute(
+            text(
+                """
+                CREATE TABLE candidates_platform_idx (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    candidate_id TEXT NOT NULL REFERENCES candidate_persons(id) ON DELETE CASCADE,
+                    platform TEXT NOT NULL,
+                    platform_candidate_id TEXT NOT NULL,
+                    profile_url TEXT,
+                    raw_profile TEXT NOT NULL DEFAULT '{}',
+                    first_seen_at TEXT,
+                    last_seen_at TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    CONSTRAINT uq_candidate_platform_identity UNIQUE (platform, platform_candidate_id)
+                )
+                """
+            )
+        )
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_candidates_platform_idx_candidate_id ON candidates_platform_idx (candidate_id)"))
+
+    if "job_descriptions" not in tables:
+        connection.execute(
+            text(
+                """
+                CREATE TABLE job_descriptions (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    title TEXT NOT NULL,
+                    department TEXT,
+                    location TEXT,
+                    headcount INTEGER,
+                    salary_min INTEGER,
+                    salary_max INTEGER,
+                    description TEXT,
+                    requirements TEXT,
+                    status TEXT NOT NULL DEFAULT 'active',
+                    source TEXT NOT NULL DEFAULT 'manual',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+        )
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_job_descriptions_title ON job_descriptions (title)"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_job_descriptions_department ON job_descriptions (department)"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_job_descriptions_status ON job_descriptions (status)"))
+
+    if "job_descriptions_platform_idx" not in tables:
+        connection.execute(
+            text(
+                """
+                CREATE TABLE job_descriptions_platform_idx (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    job_description_id TEXT NOT NULL REFERENCES job_descriptions(id) ON DELETE CASCADE,
+                    platform TEXT NOT NULL,
+                    external_id TEXT NOT NULL,
+                    external_url TEXT,
+                    sync_status TEXT NOT NULL DEFAULT 'pending',
+                    sync_metadata TEXT NOT NULL DEFAULT '{}',
+                    last_synced_at TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    CONSTRAINT uq_job_description_platform_identity UNIQUE (platform, external_id)
+                )
+                """
+            )
+        )
+        connection.execute(
+            text("CREATE INDEX IF NOT EXISTS ix_job_descriptions_platform_idx_job_description_id ON job_descriptions_platform_idx (job_description_id)")
+        )
+
+    if "candidate_applications" not in tables:
+        connection.execute(
+            text(
+                """
+                CREATE TABLE candidate_applications (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    person_id TEXT NOT NULL REFERENCES candidate_persons(id) ON DELETE CASCADE,
+                    job_description_id TEXT REFERENCES job_descriptions(id) ON DELETE SET NULL,
+                    platform TEXT NOT NULL DEFAULT 'site',
+                    platform_application_id TEXT,
+                    current_status TEXT NOT NULL DEFAULT 'discovered',
+                    current_stage_key TEXT,
+                    deepest_milestone TEXT,
+                    state_snapshot TEXT NOT NULL DEFAULT '{}',
+                    ai_scores TEXT NOT NULL DEFAULT '{}',
+                    ai_reasoning TEXT,
+                    cooldown_until TEXT,
+                    last_contacted_at TEXT,
+                    application_metadata TEXT NOT NULL DEFAULT '{}',
+                    application_window TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    CONSTRAINT uq_candidate_application_window UNIQUE (application_window)
+                )
+                """
+            )
+        )
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_candidate_applications_person_id ON candidate_applications (person_id)"))
+        connection.execute(
+            text("CREATE INDEX IF NOT EXISTS ix_candidate_applications_job_description_id ON candidate_applications (job_description_id)")
+        )
+        connection.execute(
+            text("CREATE INDEX IF NOT EXISTS ix_candidate_applications_current_status ON candidate_applications (current_status)")
+        )
+
+    if "application_sessions" not in tables:
+        connection.execute(
+            text(
+                """
+                CREATE TABLE application_sessions (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    application_id TEXT NOT NULL REFERENCES candidate_applications(id) ON DELETE CASCADE,
+                    status TEXT NOT NULL DEFAULT 'active',
+                    context_summary TEXT,
+                    recent_messages TEXT NOT NULL DEFAULT '[]',
+                    facts TEXT NOT NULL DEFAULT '{}',
+                    suspend_reason TEXT,
+                    last_active_at TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    CONSTRAINT uq_application_sessions_application_id UNIQUE (application_id)
+                )
+                """
+            )
+        )
+
+    if "application_communication_logs" not in tables:
+        connection.execute(
+            text(
+                """
+                CREATE TABLE application_communication_logs (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    application_id TEXT NOT NULL REFERENCES candidate_applications(id) ON DELETE CASCADE,
+                    direction TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    message_type TEXT NOT NULL DEFAULT 'text',
+                    platform TEXT NOT NULL DEFAULT 'site',
+                    metadata TEXT NOT NULL DEFAULT '{}',
+                    timestamp TEXT NOT NULL
+                )
+                """
+            )
+        )
+        connection.execute(
+            text("CREATE INDEX IF NOT EXISTS ix_application_communication_logs_application_id ON application_communication_logs (application_id)")
+        )
+
+    if "application_status_transitions" not in tables:
+        connection.execute(
+            text(
+                """
+                CREATE TABLE application_status_transitions (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    application_id TEXT NOT NULL REFERENCES candidate_applications(id) ON DELETE CASCADE,
+                    from_status TEXT NOT NULL,
+                    to_status TEXT NOT NULL,
+                    from_status_label TEXT NOT NULL,
+                    to_status_label TEXT NOT NULL,
+                    actor TEXT NOT NULL,
+                    actor_id TEXT,
+                    trigger TEXT NOT NULL,
+                    note TEXT,
+                    override_reason TEXT,
+                    is_override INTEGER NOT NULL DEFAULT 0,
+                    milestone_updated TEXT,
+                    metadata TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+        )
+        connection.execute(
+            text("CREATE INDEX IF NOT EXISTS ix_application_status_transitions_application_created_at ON application_status_transitions (application_id, created_at)")
+        )
+
+    if "application_assessments" not in tables:
+        connection.execute(
+            text(
+                """
+                CREATE TABLE application_assessments (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    application_id TEXT NOT NULL REFERENCES candidate_applications(id) ON DELETE CASCADE,
+                    assessment_type TEXT NOT NULL DEFAULT 'ai',
+                    stage_key TEXT,
+                    status TEXT NOT NULL DEFAULT 'completed',
+                    decision TEXT,
+                    score INTEGER,
+                    summary TEXT,
+                    evidence_refs TEXT NOT NULL DEFAULT '[]',
+                    metadata TEXT NOT NULL DEFAULT '{}',
+                    created_by TEXT,
+                    reviewed_by TEXT,
+                    reviewed_at TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+        )
+        connection.execute(
+            text("CREATE INDEX IF NOT EXISTS ix_application_assessments_application_created_at ON application_assessments (application_id, created_at)")
+        )
+
+    if "application_assignments" not in tables:
+        connection.execute(
+            text(
+                """
+                CREATE TABLE application_assignments (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    application_id TEXT NOT NULL REFERENCES candidate_applications(id) ON DELETE CASCADE,
+                    assignee TEXT NOT NULL,
+                    owner_role TEXT NOT NULL DEFAULT 'operator',
+                    status TEXT NOT NULL DEFAULT 'active',
+                    note TEXT,
+                    assignment_metadata TEXT NOT NULL DEFAULT '{}',
+                    assigned_at TEXT NOT NULL,
+                    released_at TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+        )
+        connection.execute(
+            text("CREATE INDEX IF NOT EXISTS ix_application_assignments_application_assigned_at ON application_assignments (application_id, assigned_at)")
+        )
+
+    if "person_resume_artifacts" not in tables:
+        connection.execute(
+            text(
+                """
+                CREATE TABLE person_resume_artifacts (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    person_id TEXT NOT NULL REFERENCES candidate_persons(id) ON DELETE CASCADE,
+                    source TEXT NOT NULL DEFAULT 'site',
+                    artifact_type TEXT NOT NULL DEFAULT 'resume',
+                    file_name TEXT,
+                    file_path TEXT,
+                    extracted_text TEXT,
+                    contact_snapshot TEXT NOT NULL DEFAULT '{}',
+                    artifact_metadata TEXT NOT NULL DEFAULT '{}',
+                    captured_at TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+        )
+        connection.execute(
+            text("CREATE INDEX IF NOT EXISTS ix_person_resume_artifacts_person_captured_at ON person_resume_artifacts (person_id, captured_at)")
+        )
+
+    if "application_scorecards" not in tables:
+        connection.execute(
+            text(
+                """
+                CREATE TABLE application_scorecards (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    application_id TEXT NOT NULL REFERENCES candidate_applications(id) ON DELETE CASCADE,
+                    stage_key TEXT,
+                    source TEXT NOT NULL DEFAULT 'ai',
+                    rubric_version TEXT NOT NULL DEFAULT 'recruit-scorecard-v1',
+                    score_total INTEGER,
+                    verdict TEXT,
+                    summary TEXT,
+                    dimension_scores TEXT NOT NULL DEFAULT '{}',
+                    evidence_refs TEXT NOT NULL DEFAULT '[]',
+                    scorecard_metadata TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+        )
+        connection.execute(
+            text("CREATE INDEX IF NOT EXISTS ix_application_scorecards_application_created_at ON application_scorecards (application_id, created_at)")
+        )
+
+    if "application_review_decisions" not in tables:
+        connection.execute(
+            text(
+                """
+                CREATE TABLE application_review_decisions (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    application_id TEXT NOT NULL REFERENCES candidate_applications(id) ON DELETE CASCADE,
+                    stage_key TEXT,
+                    decision TEXT NOT NULL,
+                    rationale TEXT,
+                    decision_source TEXT NOT NULL DEFAULT 'manual',
+                    decided_by TEXT,
+                    scorecard_id TEXT REFERENCES application_scorecards(id) ON DELETE SET NULL,
+                    review_metadata TEXT NOT NULL DEFAULT '{}',
+                    decided_at TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+        )
+        connection.execute(
+            text("CREATE INDEX IF NOT EXISTS ix_application_review_decisions_application_decided_at ON application_review_decisions (application_id, decided_at)")
+        )
+
+    if "application_sync_records" not in tables:
+        connection.execute(
+            text(
+                """
+                CREATE TABLE application_sync_records (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    application_id TEXT NOT NULL REFERENCES candidate_applications(id) ON DELETE CASCADE,
+                    destination TEXT NOT NULL DEFAULT 'talent_pool',
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    external_ref TEXT,
+                    payload_snapshot TEXT NOT NULL DEFAULT '{}',
+                    error_message TEXT,
+                    synced_at TEXT,
+                    last_attempted_at TEXT,
+                    sync_metadata TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+        )
+        connection.execute(
+            text("CREATE INDEX IF NOT EXISTS ix_application_sync_records_application_created_at ON application_sync_records (application_id, created_at)")
+        )
 
 
 MIGRATIONS: tuple[SchemaMigration, ...] = (
@@ -1374,6 +1745,11 @@ MIGRATIONS: tuple[SchemaMigration, ...] = (
         version=16,
         name="create_state_machine_tables",
         apply=_create_state_machine_tables,
+    ),
+    SchemaMigration(
+        version=17,
+        name="create_candidate_subject_tables",
+        apply=_create_candidate_subject_tables,
     ),
 )
 

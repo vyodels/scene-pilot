@@ -12,6 +12,8 @@ SRC = Path(__file__).resolve().parents[1] / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
+from scene_pilot.services.application_window import make_application_window
+
 try:
     from fastapi.testclient import TestClient
 except ModuleNotFoundError:
@@ -22,6 +24,89 @@ PLAYBOOKS_API_BASE = "/api/recruit-agent/playbooks"
 
 @unittest.skipIf(TestClient is None, "FastAPI test dependencies are not installed")
 class ApiPlaybookRuntimeTests(unittest.TestCase):
+    def _create_person(self, **payload) -> dict:
+        response = self.client.post("/api/candidate-persons", json=payload)
+        self.assertEqual(response.status_code, 201, response.text)
+        return response.json()
+
+    def _create_application(
+        self,
+        *,
+        person_id: str,
+        platform: str = "site",
+        current_status: str = "discovered",
+        current_stage_key: str | None = None,
+        deepest_milestone: str | None = None,
+        state_snapshot: dict | None = None,
+        ai_scores: dict | None = None,
+        ai_reasoning: str | None = None,
+        cooldown_until: str | None = None,
+        last_contacted_at: str | None = None,
+        job_description_id: str | None = None,
+        platform_application_id: str | None = None,
+        application_window: str | None = None,
+    ) -> dict:
+        payload = {
+            "person_id": person_id,
+            "job_description_id": job_description_id,
+            "platform": platform,
+            "platform_application_id": platform_application_id,
+            "current_status": current_status,
+            "current_stage_key": current_stage_key,
+            "deepest_milestone": deepest_milestone,
+            "state_snapshot": state_snapshot or {},
+            "ai_scores": ai_scores or {},
+            "ai_reasoning": ai_reasoning,
+            "cooldown_until": cooldown_until,
+            "last_contacted_at": last_contacted_at,
+            "application_window": application_window or make_application_window(person_id, job_description_id or "job-unassigned"),
+        }
+        response = self.client.post("/api/candidate-applications", json=payload)
+        self.assertEqual(response.status_code, 201, response.text)
+        return response.json()
+
+    def _create_subject(
+        self,
+        *,
+        name: str,
+        platform: str = "site",
+        platform_candidate_id: str | None = None,
+        contact_info: dict | None = None,
+        current_status: str = "discovered",
+        current_stage_key: str | None = None,
+        deepest_milestone: str | None = None,
+        state_snapshot: dict | None = None,
+        ai_scores: dict | None = None,
+        ai_reasoning: str | None = None,
+        cooldown_until: str | None = None,
+        last_contacted_at: str | None = None,
+        job_description_id: str | None = None,
+        platform_application_id: str | None = None,
+        application_window: str | None = None,
+    ) -> dict:
+        person = self._create_person(
+            name=name,
+            platform=platform,
+            platform_candidate_id=platform_candidate_id,
+            contact_info=contact_info or {},
+        )
+        application = self._create_application(
+            person_id=person["id"],
+            platform=platform,
+            current_status=current_status,
+            current_stage_key=current_stage_key,
+            deepest_milestone=deepest_milestone,
+            state_snapshot=state_snapshot,
+            ai_scores=ai_scores,
+            ai_reasoning=ai_reasoning,
+            cooldown_until=cooldown_until,
+            last_contacted_at=last_contacted_at,
+            job_description_id=job_description_id,
+            platform_application_id=platform_application_id,
+            application_window=application_window,
+        )
+        return {"person": person, "application": application}
+
     def setUp(self) -> None:
         from scene_pilot.models import ApprovalItem
         from scene_pilot.core.settings import load_settings
@@ -45,18 +130,13 @@ class ApiPlaybookRuntimeTests(unittest.TestCase):
             ]
             * 64,
         )
-        created_candidate = self.client.post(
-            "/api/candidates",
-            json={
-                "name": "Baseline Candidate",
-                "platform": "site",
-                "current_status": "discovered",
-                "jd_id": "jd-baseline",
-            },
+        subject = self._create_subject(
+            name="Baseline Candidate",
+            platform="site",
+            current_status="discovered",
         )
-        if created_candidate.status_code != 201:
-            raise RuntimeError(f"failed to bootstrap baseline candidate: {created_candidate.text}")
-        self.default_candidate_id = created_candidate.json()["id"]
+        self.default_person_id = subject["person"]["id"]
+        self.default_candidate_id = subject["application"]["id"]
         with container.session_factory() as session:
             session.add(
                 ApprovalItem(
@@ -79,23 +159,23 @@ class ApiPlaybookRuntimeTests(unittest.TestCase):
 
     def test_candidate_crud_and_approval(self) -> None:
         created = self.client.post(
-            "/api/candidates",
+            "/api/candidate-persons",
             json={
                 "name": "Test Candidate",
                 "platform": "boss",
                 "current_status": "discovered",
-                "jd_id": "jd-test",
+                "job_description_id": "jd-test",
             },
         )
         self.assertEqual(created.status_code, 201)
         candidate_id = created.json()["id"]
 
         updated = self.client.patch(
-            f"/api/candidates/{candidate_id}",
-            json={"current_status": "screening", "current_stage_key": "candidate_probe"},
+            f"/api/candidate-persons/{candidate_id}",
+            json={"contact_info": {"wechat": "test-candidate"}},
         )
         self.assertEqual(updated.status_code, 200)
-        self.assertEqual(updated.json()["current_status"], "screening")
+        self.assertEqual(updated.json()["contact_info"]["wechat"], "test-candidate")
 
         approvals = self.client.get("/api/approvals")
         self.assertEqual(approvals.status_code, 200)
@@ -111,6 +191,10 @@ class ApiPlaybookRuntimeTests(unittest.TestCase):
         dashboard = self.client.get("/api/dashboard")
         self.assertEqual(dashboard.status_code, 200)
         candidate_id = dashboard.json()["candidates"][0]["id"]
+        first_row = dashboard.json()["candidates"][0]
+        self.assertEqual(first_row["applicationId"], candidate_id)
+        self.assertIn("personId", first_row)
+        self.assertIn("jobDescriptionId", first_row)
 
         queued = self.client.post(
             "/api/agent/tasks",
@@ -186,7 +270,9 @@ class ApiPlaybookRuntimeTests(unittest.TestCase):
         )
 
         dashboard = self.client.get("/api/dashboard")
-        candidate_id = dashboard.json()["candidates"][0]["id"]
+        row = dashboard.json()["candidates"][0]
+        candidate_id = row["id"]
+        person_id = row["personId"]
         queued = self.client.post(
             "/api/agent/tasks",
             json={
@@ -311,7 +397,8 @@ class ApiPlaybookRuntimeTests(unittest.TestCase):
         artifact = matched[0]
         self.assertEqual(artifact["artifact_kind"], "skill_draft")
         self.assertEqual(artifact["status"], "pending_review")
-        self.assertEqual(artifact["related_candidate_id"], self.default_candidate_id)
+        self.assertEqual(artifact["related_candidate_id"], self.default_person_id)
+        self.assertEqual(artifact["artifact_metadata"]["application_id"], self.default_candidate_id)
         self.assertIn("skill_contract", artifact["artifact_body"])
         self.assertIn("decision_trace", artifact["artifact_body"])
         self.assertIn("model_skill_draft", artifact["artifact_body"])
@@ -359,7 +446,9 @@ class ApiPlaybookRuntimeTests(unittest.TestCase):
         self.assertEqual(created_skill.status_code, 201)
 
         dashboard = self.client.get("/api/dashboard")
-        candidate_id = dashboard.json()["candidates"][0]["id"]
+        row = dashboard.json()["candidates"][0]
+        candidate_id = row["id"]
+        person_id = row["personId"]
 
         queued = self.client.post(
             "/api/agent/tasks",
@@ -386,15 +475,15 @@ class ApiPlaybookRuntimeTests(unittest.TestCase):
         self.assertEqual(second_run.json()["status"], "failed")
 
         with container.session_factory() as session:
-            traces = session.query(ExecutionTrace).filter(ExecutionTrace.candidate_id == candidate_id).all()
+            traces = session.query(ExecutionTrace).filter(ExecutionTrace.candidate_id == person_id).all()
             trace = next((item for item in traces if (item.raw_trace or {}).get("task_snapshot", {}).get("task_id") == task_id), None)
             self.assertIsNotNone(trace)
             self.assertEqual(trace.status, "completed")
             self.assertEqual(trace.raw_trace["task_snapshot"]["task_id"], task_id)
             self.assertEqual(trace.distilled_trace["attempt"]["task_type"], "candidate_probe")
-            self.assertEqual(trace.raw_trace["session_context"]["candidate"]["id"], candidate_id)
+            self.assertEqual(trace.raw_trace["session_context"]["candidate"]["id"], person_id)
 
-            candidate_session = session.query(CandidateSession).filter(CandidateSession.candidate_id == candidate_id).first()
+            candidate_session = session.query(CandidateSession).filter(CandidateSession.candidate_id == person_id).first()
             self.assertIsNotNone(candidate_session)
             self.assertEqual(candidate_session.status, "active")
             self.assertEqual(candidate_session.facts["active_skill"]["skill_id"], "screening_active_v1")
@@ -424,7 +513,9 @@ class ApiPlaybookRuntimeTests(unittest.TestCase):
         )
 
         dashboard = self.client.get("/api/dashboard")
-        candidate_id = dashboard.json()["candidates"][0]["id"]
+        row = dashboard.json()["candidates"][0]
+        candidate_id = row["id"]
+        person_id = row["personId"]
 
         queued = self.client.post(
             "/api/agent/tasks",
@@ -507,11 +598,13 @@ class ApiPlaybookRuntimeTests(unittest.TestCase):
         self.assertEqual(update_profile.status_code, 200)
 
         dashboard = self.client.get("/api/dashboard")
-        candidate_id = dashboard.json()["candidates"][0]["id"]
-        self.assertEqual(self.client.get(f"/api/recruit-agent/candidate-memories/{candidate_id}").status_code, 200)
+        row = dashboard.json()["candidates"][0]
+        candidate_id = row["id"]
+        person_id = row["personId"]
+        self.assertEqual(self.client.get(f"/api/recruit-agent/candidate-memories/{person_id}").status_code, 200)
         self.assertEqual(self.client.get("/api/recruit-agent/global-memory").status_code, 200)
         entry = self.client.post(
-            f"/api/recruit-agent/candidate-threads/{candidate_id}/entries",
+            f"/api/candidate-applications/{candidate_id}/entries",
             json={
                 "direction": "inbound",
                 "content": "可以先发我岗位详细信息和简历要求吗？",
@@ -571,7 +664,9 @@ class ApiPlaybookRuntimeTests(unittest.TestCase):
         )
 
         dashboard = self.client.get("/api/dashboard")
-        candidate_id = dashboard.json()["candidates"][0]["id"]
+        row = dashboard.json()["candidates"][0]
+        candidate_id = row["id"]
+        person_id = row["personId"]
 
         queued = self.client.post(
             "/api/agent/tasks",
@@ -589,13 +684,13 @@ class ApiPlaybookRuntimeTests(unittest.TestCase):
         self.assertEqual(run_once.json()["status"], "completed")
 
         with container.session_factory() as session:
-            traces = session.query(ExecutionTrace).filter(ExecutionTrace.candidate_id == candidate_id).all()
+            traces = session.query(ExecutionTrace).filter(ExecutionTrace.candidate_id == person_id).all()
             trace = next((item for item in traces if (item.raw_trace or {}).get("task_snapshot", {}).get("task_id") == task_id), None)
             self.assertIsNotNone(trace)
             outcome = dict(trace.outcome or {})
             self.assertEqual(outcome["status"], "completed")
 
-            candidate_session = session.query(CandidateSession).filter(CandidateSession.candidate_id == candidate_id).first()
+            candidate_session = session.query(CandidateSession).filter(CandidateSession.candidate_id == person_id).first()
             self.assertIsNotNone(candidate_session)
             self.assertEqual(candidate_session.facts["last_result_status"], "pass")
             self.assertEqual(candidate_session.facts["last_execution_status"], "completed")
@@ -636,7 +731,8 @@ class ApiPlaybookRuntimeTests(unittest.TestCase):
         skill_id = created_skill.json()["id"]
 
         dashboard = self.client.get("/api/dashboard")
-        candidate_id = dashboard.json()["candidates"][0]["id"]
+        row = dashboard.json()["candidates"][0]
+        candidate_id = row["id"]
 
         queued = self.client.post(
             "/api/agent/tasks",
@@ -741,24 +837,16 @@ class ApiPlaybookRuntimeTests(unittest.TestCase):
         )
         self.assertEqual(settings_response.status_code, 200)
 
-        blocker_candidate = self.client.post(
-            "/api/candidates",
-            json={
-                "name": "Blocking Candidate",
-                "platform": "site",
-                "current_status": "screening",
-                "jd_id": "jd-runtime",
-            },
-        ).json()
-        target_candidate = self.client.post(
-            "/api/candidates",
-            json={
-                "name": "Queued Candidate",
-                "platform": "site",
-                "current_status": "discovered",
-                "jd_id": "jd-runtime",
-            },
-        ).json()
+        blocker_candidate = self._create_subject(
+            name="Blocking Candidate",
+            platform="site",
+            current_status="screening",
+        )["application"]
+        target_candidate = self._create_subject(
+            name="Queued Candidate",
+            platform="site",
+            current_status="discovered",
+        )["application"]
 
         container = self.client.app.state.container
         with container.session_factory() as session:
@@ -768,17 +856,17 @@ class ApiPlaybookRuntimeTests(unittest.TestCase):
             if runtime_session is None:
                 runtime_session = session_repo.create(
                     {
-                        "agent_profile_id": profile.id,
-                        "session_key": "primary",
-                        "status": "active",
-                        "runtime_metadata": {"agent_key": profile.agent_key},
-                    }
-                )
+                    "agent_profile_id": profile.id,
+                    "session_key": "primary",
+                    "status": "active",
+                    "runtime_metadata": {"agent_key": profile.agent_key},
+                }
+            )
             AgentRunRepository(session).create(
                 {
                     "session_id": runtime_session.id,
-                    "candidate_id": blocker_candidate["id"],
-                    "jd_id": blocker_candidate["jd_id"],
+                    "candidate_id": blocker_candidate["person_id"],
+                    "job_description_id": blocker_candidate["job_description_id"],
                     "platform": "site",
                     "lane": "candidate",
                     "run_type": "candidate_probe",
@@ -874,15 +962,11 @@ class ApiPlaybookRuntimeTests(unittest.TestCase):
             ],
         )
 
-        candidate = self.client.post(
-            "/api/candidates",
-            json={
-                "name": "AI Auto Candidate",
-                "platform": "site",
-                "current_status": "outreach_pending",
-                "jd_id": "jd-ai-auto",
-            },
-        ).json()
+        candidate = self._create_subject(
+            name="AI Auto Candidate",
+            platform="site",
+            current_status="outreach_pending",
+        )["application"]
 
         queued = self.client.post(
             "/api/agent/tasks",
@@ -913,15 +997,11 @@ class ApiPlaybookRuntimeTests(unittest.TestCase):
         container = self.client.app.state.container
         container.agent_control.agent_loop.provider = _ShouldNotRunProvider()
 
-        candidate = self.client.post(
-            "/api/candidates",
-            json={
-                "name": "Locked Review Candidate",
-                "platform": "site",
-                "current_status": "offer_pending",
-                "jd_id": "jd-offer",
-            },
-        ).json()
+        candidate = self._create_subject(
+            name="Locked Review Candidate",
+            platform="site",
+            current_status="offer_pending",
+        )["application"]
 
         queued = self.client.post(
             "/api/agent/tasks",
@@ -977,16 +1057,12 @@ class ApiPlaybookRuntimeTests(unittest.TestCase):
             ],
         )
 
-        candidate = self.client.post(
-            "/api/candidates",
-            json={
-                "name": "Offline Score Candidate",
-                "platform": "site",
-                "current_status": "offline_scoring",
-                "deepest_milestone": "M06",
-                "jd_id": "jd-offline",
-            },
-        ).json()
+        candidate = self._create_subject(
+            name="Offline Score Candidate",
+            platform="site",
+            current_status="offline_scoring",
+            deepest_milestone="M06",
+        )["application"]
         container.agent_control.agent_loop.provider.responses[0].result_data["candidates"][0]["candidate_id"] = candidate["id"]
 
         queued = self.client.post(
@@ -1004,14 +1080,15 @@ class ApiPlaybookRuntimeTests(unittest.TestCase):
         self.assertEqual(run_once.status_code, 200)
         self.assertEqual(run_once.json()["status"], "completed")
 
-        refreshed = self.client.get(f"/api/candidates/{candidate['id']}")
+        refreshed = self.client.get(f"/api/candidate-applications/{candidate['id']}")
         self.assertEqual(refreshed.status_code, 200)
         self.assertEqual(refreshed.json()["current_status"], "offline_score_passed")
         self.assertEqual(refreshed.json()["deepest_milestone"], "M08")
 
-        transitions = self.client.get(f"/api/recruit-agent/candidates/{candidate['id']}/transitions")
+        transitions = self.client.get(f"/api/candidate-applications/{candidate['id']}/transitions")
         self.assertEqual(transitions.status_code, 200)
         latest = transitions.json()[-1]
+        self.assertEqual(latest["application_id"], candidate["id"])
         self.assertEqual(latest["actor"], "agent")
         self.assertEqual(latest["to_status"], "offline_score_passed")
         self.assertEqual(latest["milestone_updated"], "M08")
@@ -1040,28 +1117,24 @@ class ApiPlaybookRuntimeTests(unittest.TestCase):
         )
 
         previous_contacted_at = utcnow() - timedelta(hours=96)
-        candidate = self.client.post(
-            "/api/candidates",
-            json={
-                "name": "Retry Follow Up Candidate",
-                "platform": "boss",
-                "current_status": "outreach_sent",
-                "jd_id": "jd-retry-follow-up",
-                "last_contacted_at": previous_contacted_at.isoformat(),
-                "state_snapshot": {
-                    "snapshot_metadata": {
-                        "waiting_retry": {
-                            "status": "outreach_sent",
-                            "retry_count": 1,
-                            "last_outbound_at": previous_contacted_at.isoformat(),
-                            "max_retries": 2,
-                            "retry_after_hours": 72,
-                            "close_after_hours": 168,
-                        }
+        candidate = self._create_subject(
+            name="Retry Follow Up Candidate",
+            platform="boss",
+            current_status="outreach_sent",
+            last_contacted_at=previous_contacted_at.isoformat(),
+            state_snapshot={
+                "snapshot_metadata": {
+                    "waiting_retry": {
+                        "status": "outreach_sent",
+                        "retry_count": 1,
+                        "last_outbound_at": previous_contacted_at.isoformat(),
+                        "max_retries": 2,
+                        "retry_after_hours": 72,
+                        "close_after_hours": 168,
                     }
-                },
+                }
             },
-        ).json()
+        )["application"]
 
         queued = self.client.post(
             "/api/agent/tasks",
@@ -1087,7 +1160,7 @@ class ApiPlaybookRuntimeTests(unittest.TestCase):
         self.assertEqual(run_once.status_code, 200)
         self.assertEqual(run_once.json()["status"], "completed")
 
-        refreshed = self.client.get(f"/api/candidates/{candidate['id']}")
+        refreshed = self.client.get(f"/api/candidate-applications/{candidate['id']}")
         self.assertEqual(refreshed.status_code, 200)
         payload = refreshed.json()
         self.assertEqual(payload["current_status"], "outreach_sent")
@@ -1101,7 +1174,6 @@ class ApiPlaybookRuntimeTests(unittest.TestCase):
         self.assertEqual(waiting_retry["close_after_hours"], 168)
 
     def test_agent_applies_conversation_rollback_signal_without_fake_outbound_message(self) -> None:
-        from scene_pilot.models import CommunicationLog
         from scene_pilot.runtime.models import LLMResponse
         from scene_pilot.runtime.providers import ScriptedProvider
 
@@ -1125,18 +1197,14 @@ class ApiPlaybookRuntimeTests(unittest.TestCase):
             ],
         )
 
-        candidate = self.client.post(
-            "/api/candidates",
-            json={
-                "name": "Rollback Candidate",
-                "platform": "boss",
-                "current_status": "in_conversation",
-                "deepest_milestone": "M04",
-                "jd_id": "jd-rollback",
-            },
-        ).json()
+        candidate = self._create_subject(
+            name="Rollback Candidate",
+            platform="boss",
+            current_status="in_conversation",
+            deepest_milestone="M04",
+        )["application"]
         entry = self.client.post(
-            f"/api/recruit-agent/candidate-threads/{candidate['id']}/entries",
+            f"/api/candidate-applications/{candidate['id']}/entries",
             json={
                 "direction": "inbound",
                 "content": "我已经接了别的 offer，先不继续了。",
@@ -1161,28 +1229,25 @@ class ApiPlaybookRuntimeTests(unittest.TestCase):
         self.assertEqual(run_once.status_code, 200)
         self.assertEqual(run_once.json()["status"], "completed")
 
-        refreshed = self.client.get(f"/api/candidates/{candidate['id']}")
+        refreshed = self.client.get(f"/api/candidate-applications/{candidate['id']}")
         self.assertEqual(refreshed.status_code, 200)
         self.assertEqual(refreshed.json()["current_status"], "candidate_withdrew")
 
-        transitions = self.client.get(f"/api/recruit-agent/candidates/{candidate['id']}/transitions")
+        transitions = self.client.get(f"/api/candidate-applications/{candidate['id']}/transitions")
         self.assertEqual(transitions.status_code, 200)
         latest = transitions.json()[-1]
+        self.assertEqual(latest["application_id"], candidate["id"])
         self.assertEqual(latest["actor"], "agent_override")
         self.assertEqual(latest["trigger"], "conversation_signal")
         self.assertEqual(latest["to_status"], "candidate_withdrew")
         self.assertEqual(latest["override_reason"], "候选人明确表示已接受其他 Offer。")
         self.assertEqual(latest["metadata"]["signal_kind"], "conversation_signal")
 
-        with container.session_factory() as session:
-            logs = (
-                session.query(CommunicationLog)
-                .filter(CommunicationLog.candidate_id == candidate["id"])
-                .order_by(CommunicationLog.timestamp.asc())
-                .all()
-            )
-            self.assertEqual(len(logs), 1)
-            self.assertEqual(logs[0].direction, "inbound")
+        entries = self.client.get(f"/api/candidate-applications/{candidate['id']}/entries")
+        self.assertEqual(entries.status_code, 200)
+        payload = entries.json()
+        self.assertEqual(len(payload), 1)
+        self.assertEqual(payload[0]["direction"], "inbound")
 
     def test_agent_applies_cooldown_rollback_signal_and_sets_cooldown_until(self) -> None:
         from scene_pilot.db.base import utcnow
@@ -1211,16 +1276,13 @@ class ApiPlaybookRuntimeTests(unittest.TestCase):
             ],
         )
 
-        candidate = self.client.post(
-            "/api/candidates",
-            json={
-                "name": "Cooldown Candidate",
-                "platform": "boss",
-                "current_status": "in_conversation",
-                "deepest_milestone": "M04",
-                "jd_id": "jd-cooldown",
-            },
-        ).json()
+        subject = self._create_subject(
+            name="Cooldown Candidate",
+            platform="boss",
+            current_status="in_conversation",
+            deepest_milestone="M04",
+        )
+        candidate = subject["application"]
 
         queued = self.client.post(
             "/api/agent/tasks",
@@ -1238,7 +1300,7 @@ class ApiPlaybookRuntimeTests(unittest.TestCase):
         self.assertEqual(run_once.json()["status"], "completed")
 
         with container.session_factory() as session:
-            refreshed = session.get(Candidate, candidate["id"])
+            refreshed = session.get(Candidate, subject["person"]["id"])
             self.assertIsNotNone(refreshed)
             assert refreshed is not None
             self.assertEqual(refreshed.current_status, "cooldown")
@@ -1247,9 +1309,10 @@ class ApiPlaybookRuntimeTests(unittest.TestCase):
             self.assertGreaterEqual(remaining_days, 13)
             self.assertLessEqual(remaining_days, 14)
 
-        transitions = self.client.get(f"/api/recruit-agent/candidates/{candidate['id']}/transitions")
+        transitions = self.client.get(f"/api/candidate-applications/{candidate['id']}/transitions")
         self.assertEqual(transitions.status_code, 200)
         latest = transitions.json()[-1]
+        self.assertEqual(latest["application_id"], candidate["id"])
         self.assertEqual(latest["actor"], "agent_override")
         self.assertEqual(latest["trigger"], "conversation_signal")
         self.assertEqual(latest["to_status"], "cooldown")

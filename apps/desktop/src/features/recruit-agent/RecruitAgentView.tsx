@@ -284,10 +284,19 @@ export function RecruitAgentView({
     setSkillHealthConfigDraft(stringifyJson(selectedSkill.healthCheckConfig));
   }, [selectedSkill]);
 
-  const candidateNameById = useMemo(
-    () => new Map(candidates.map((candidate) => [candidate.id, candidate.name])),
-    [candidates],
-  );
+  const candidateNameById = useMemo(() => {
+    const mapping = new Map<string, string>();
+    for (const candidate of candidates) {
+      mapping.set(candidate.id, candidate.name);
+      if (candidate.applicationId) {
+        mapping.set(candidate.applicationId, candidate.name);
+      }
+      if (candidate.personId) {
+        mapping.set(candidate.personId, candidate.name);
+      }
+    }
+    return mapping;
+  }, [candidates]);
 
   const memoryTargets = useMemo(() => {
     const items: Array<{ key: MemoryTargetKey; label: string; detail: string }> = [

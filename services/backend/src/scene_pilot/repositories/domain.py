@@ -12,6 +12,14 @@ from scene_pilot.db.base import utcnow
 from scene_pilot.models import (
     AgentLearning,
     AgentGlobalMemory,
+    ApplicationAssessment,
+    ApplicationAssignment,
+    ApplicationCommunicationLog,
+    ApplicationReviewDecision,
+    ApplicationScorecard,
+    ApplicationSession,
+    ApplicationStatusTransition,
+    ApplicationSyncRecord,
     ExecutionGraphProjection,
     ExecutionTrace,
     GoalSpec,
@@ -24,9 +32,11 @@ from scene_pilot.models import (
     ApprovalItem,
     AppSetting,
     Candidate,
+    CandidateApplication,
     CandidateAssessment,
     CandidateAssignment,
     CandidateMemory,
+    CandidatePlatformIdx,
     CandidateReviewDecision,
     CandidateScorecard,
     CandidateSession,
@@ -37,10 +47,13 @@ from scene_pilot.models import (
     EvolutionArtifact,
     ExecutionEpisode,
     ExecutionPlan,
+    JobDescription,
+    JobDescriptionPlatformIdx,
     JobMemory,
     McpServer,
     McpTool,
     RecruitAgentProfile,
+    PersonResumeArtifact,
     ResumeArtifact,
     Skill,
     StrategyFragment,
@@ -174,6 +187,259 @@ class CandidateRepository(BaseRepository[Candidate]):
         return candidate
 
 
+class CandidatePlatformIdxRepository(BaseRepository[CandidatePlatformIdx]):
+    model = CandidatePlatformIdx
+
+    def by_platform_identity(self, platform: str, platform_candidate_id: str) -> CandidatePlatformIdx | None:
+        stmt = select(CandidatePlatformIdx).where(
+            CandidatePlatformIdx.platform == platform,
+            CandidatePlatformIdx.platform_candidate_id == platform_candidate_id,
+        )
+        return self.session.scalars(stmt).first()
+
+
+class JobDescriptionRepository(BaseRepository[JobDescription]):
+    model = JobDescription
+
+
+class JobDescriptionPlatformIdxRepository(BaseRepository[JobDescriptionPlatformIdx]):
+    model = JobDescriptionPlatformIdx
+
+    def by_platform_identity(self, platform: str, external_id: str) -> JobDescriptionPlatformIdx | None:
+        stmt = select(JobDescriptionPlatformIdx).where(
+            JobDescriptionPlatformIdx.platform == platform,
+            JobDescriptionPlatformIdx.external_id == external_id,
+        )
+        return self.session.scalars(stmt).first()
+
+
+class CandidateApplicationRepository(BaseRepository[CandidateApplication]):
+    model = CandidateApplication
+
+    def _normalize_payload(self, data: BaseModel | dict[str, Any]) -> dict[str, Any]:
+        payload = data.model_dump(exclude_unset=True) if isinstance(data, BaseModel) else dict(data)
+        person_id = str(payload.get("person_id") or "").strip()
+        job_description_id = str(payload.get("job_description_id") or "").strip()
+        if person_id and job_description_id:
+            from scene_pilot.services.application_window import make_application_window
+
+            canonical_window = make_application_window(person_id, job_description_id)
+            provided_window = str(payload.get("application_window") or "").strip()
+            if provided_window and provided_window != canonical_window:
+                raise ValueError("application_window must match the canonical person/job/month format")
+            payload["application_window"] = canonical_window
+        return payload
+
+    def create(self, data: BaseModel | dict[str, Any]) -> CandidateApplication:
+        return super().create(self._normalize_payload(data))
+
+    def update(self, instance: CandidateApplication, data: BaseModel | dict[str, Any]) -> CandidateApplication:
+        payload = self._normalize_payload(data)
+        return super().update(instance, payload)
+
+    def count(self) -> int:
+        stmt = select(func.count()).select_from(CandidateApplication)
+        return int(self.session.scalar(stmt) or 0)
+
+    def count_by_status(self) -> dict[str, int]:
+        stmt = select(CandidateApplication.current_status, func.count()).group_by(CandidateApplication.current_status)
+        return {status: count for status, count in self.session.execute(stmt).all()}
+
+    def count_by_current_statuses(self, statuses: list[str]) -> int:
+        normalized = [str(status).strip() for status in statuses if str(status).strip()]
+        if not normalized:
+            return 0
+        stmt = select(func.count()).select_from(CandidateApplication).where(CandidateApplication.current_status.in_(normalized))
+        return int(self.session.scalar(stmt) or 0)
+
+    def by_current_statuses(self, statuses: list[str], *, limit: int = 500, offset: int = 0) -> list[CandidateApplication]:
+        normalized = [str(status).strip() for status in statuses if str(status).strip()]
+        if not normalized:
+            return []
+        stmt = (
+            select(CandidateApplication)
+            .where(CandidateApplication.current_status.in_(normalized))
+            .order_by(CandidateApplication.updated_at.desc(), CandidateApplication.id.asc())
+            .offset(offset)
+            .limit(limit)
+        )
+        return list(self.session.scalars(stmt).all())
+
+    def by_person(self, person_id: str, *, limit: int = 100, offset: int = 0) -> list[CandidateApplication]:
+        stmt = (
+            select(CandidateApplication)
+            .where(CandidateApplication.person_id == person_id)
+            .order_by(CandidateApplication.updated_at.desc(), CandidateApplication.id.asc())
+            .offset(offset)
+            .limit(limit)
+        )
+        return list(self.session.scalars(stmt).all())
+
+    def by_application_window(self, application_window: str) -> CandidateApplication | None:
+        stmt = select(CandidateApplication).where(CandidateApplication.application_window == application_window)
+        return self.session.scalars(stmt).first()
+
+
+class ApplicationSessionRepository(BaseRepository[ApplicationSession]):
+    model = ApplicationSession
+
+    def by_application_id(self, application_id: str) -> ApplicationSession | None:
+        stmt = select(ApplicationSession).where(ApplicationSession.application_id == application_id)
+        return self.session.scalars(stmt).first()
+
+    def get_or_create(self, application_id: str, *, defaults: dict[str, Any] | None = None) -> ApplicationSession:
+        existing = self.by_application_id(application_id)
+        if existing is not None:
+            return existing
+        payload = {"application_id": application_id, **dict(defaults or {})}
+        return self.create(payload)
+
+    def append_recent_message(
+        self,
+        application_session: ApplicationSession,
+        *,
+        direction: str,
+        content: str,
+        message_type: str = "text",
+        metadata: dict[str, Any] | None = None,
+    ) -> ApplicationSession:
+        history = list(application_session.recent_messages or [])
+        history.append(
+            {
+                "direction": direction,
+                "content": content,
+                "message_type": message_type,
+                "metadata": dict(metadata or {}),
+                "timestamp": utcnow().isoformat(),
+            }
+        )
+        application_session.recent_messages = history[-20:]
+        application_session.last_active_at = utcnow()
+        self.session.commit()
+        self.session.refresh(application_session)
+        return application_session
+
+
+class ApplicationCommunicationLogRepository(BaseRepository[ApplicationCommunicationLog]):
+    model = ApplicationCommunicationLog
+
+    def by_application(self, application_id: str, limit: int = 100, offset: int = 0) -> list[ApplicationCommunicationLog]:
+        stmt = (
+            select(ApplicationCommunicationLog)
+            .where(ApplicationCommunicationLog.application_id == application_id)
+            .order_by(ApplicationCommunicationLog.timestamp.asc(), ApplicationCommunicationLog.id.asc())
+            .offset(offset)
+            .limit(limit)
+        )
+        return list(self.session.scalars(stmt).all())
+
+
+class ApplicationStatusTransitionRepository(BaseRepository[ApplicationStatusTransition]):
+    model = ApplicationStatusTransition
+
+    def by_application(self, application_id: str, limit: int = 200, offset: int = 0) -> list[ApplicationStatusTransition]:
+        stmt = (
+            select(ApplicationStatusTransition)
+            .where(ApplicationStatusTransition.application_id == application_id)
+            .order_by(ApplicationStatusTransition.created_at.asc(), ApplicationStatusTransition.id.asc())
+            .offset(offset)
+            .limit(limit)
+        )
+        return list(self.session.scalars(stmt).all())
+
+    def latest_for_application(self, application_id: str) -> ApplicationStatusTransition | None:
+        stmt = (
+            select(ApplicationStatusTransition)
+            .where(ApplicationStatusTransition.application_id == application_id)
+            .order_by(ApplicationStatusTransition.created_at.desc(), ApplicationStatusTransition.id.desc())
+        )
+        return self.session.scalars(stmt).first()
+
+
+class ApplicationAssessmentRepository(BaseRepository[ApplicationAssessment]):
+    model = ApplicationAssessment
+
+    def by_application(self, application_id: str, limit: int = 50, offset: int = 0) -> list[ApplicationAssessment]:
+        stmt = (
+            select(ApplicationAssessment)
+            .where(ApplicationAssessment.application_id == application_id)
+            .order_by(ApplicationAssessment.created_at.desc(), ApplicationAssessment.id.desc())
+            .offset(offset)
+            .limit(limit)
+        )
+        return list(self.session.scalars(stmt).all())
+
+
+class ApplicationAssignmentRepository(BaseRepository[ApplicationAssignment]):
+    model = ApplicationAssignment
+
+    def by_application(self, application_id: str, limit: int = 50, offset: int = 0) -> list[ApplicationAssignment]:
+        stmt = (
+            select(ApplicationAssignment)
+            .where(ApplicationAssignment.application_id == application_id)
+            .order_by(ApplicationAssignment.assigned_at.desc(), ApplicationAssignment.id.desc())
+            .offset(offset)
+            .limit(limit)
+        )
+        return list(self.session.scalars(stmt).all())
+
+
+class PersonResumeArtifactRepository(BaseRepository[PersonResumeArtifact]):
+    model = PersonResumeArtifact
+
+    def by_person(self, person_id: str, limit: int = 50, offset: int = 0) -> list[PersonResumeArtifact]:
+        stmt = (
+            select(PersonResumeArtifact)
+            .where(PersonResumeArtifact.person_id == person_id)
+            .order_by(PersonResumeArtifact.captured_at.desc(), PersonResumeArtifact.id.desc())
+            .offset(offset)
+            .limit(limit)
+        )
+        return list(self.session.scalars(stmt).all())
+
+
+class ApplicationScorecardRepository(BaseRepository[ApplicationScorecard]):
+    model = ApplicationScorecard
+
+    def by_application(self, application_id: str, limit: int = 100, offset: int = 0) -> list[ApplicationScorecard]:
+        stmt = (
+            select(ApplicationScorecard)
+            .where(ApplicationScorecard.application_id == application_id)
+            .order_by(ApplicationScorecard.created_at.desc(), ApplicationScorecard.id.desc())
+            .offset(offset)
+            .limit(limit)
+        )
+        return list(self.session.scalars(stmt).all())
+
+
+class ApplicationReviewDecisionRepository(BaseRepository[ApplicationReviewDecision]):
+    model = ApplicationReviewDecision
+
+    def by_application(self, application_id: str, limit: int = 100, offset: int = 0) -> list[ApplicationReviewDecision]:
+        stmt = (
+            select(ApplicationReviewDecision)
+            .where(ApplicationReviewDecision.application_id == application_id)
+            .order_by(ApplicationReviewDecision.decided_at.desc(), ApplicationReviewDecision.id.desc())
+            .offset(offset)
+            .limit(limit)
+        )
+        return list(self.session.scalars(stmt).all())
+
+
+class ApplicationSyncRecordRepository(BaseRepository[ApplicationSyncRecord]):
+    model = ApplicationSyncRecord
+
+    def by_application(self, application_id: str, limit: int = 50, offset: int = 0) -> list[ApplicationSyncRecord]:
+        stmt = (
+            select(ApplicationSyncRecord)
+            .where(ApplicationSyncRecord.application_id == application_id)
+            .order_by(ApplicationSyncRecord.created_at.desc(), ApplicationSyncRecord.id.desc())
+            .offset(offset)
+            .limit(limit)
+        )
+        return list(self.session.scalars(stmt).all())
+
+
 class CandidateSessionRepository(BaseRepository[CandidateSession]):
     model = CandidateSession
 
@@ -281,10 +547,10 @@ class CandidateAssignmentRepository(BaseRepository[CandidateAssignment]):
 class ResumeArtifactRepository(BaseRepository[ResumeArtifact]):
     model = ResumeArtifact
 
-    def by_candidate(self, candidate_id: str, limit: int = 50, offset: int = 0) -> list[ResumeArtifact]:
+    def by_application(self, application_id: str, limit: int = 50, offset: int = 0) -> list[ResumeArtifact]:
         stmt = (
             select(ResumeArtifact)
-            .where(ResumeArtifact.candidate_id == candidate_id)
+            .where(ResumeArtifact.application_id == application_id)
             .order_by(ResumeArtifact.captured_at.desc(), ResumeArtifact.id.desc())
             .offset(offset)
             .limit(limit)
@@ -1179,7 +1445,7 @@ class TaskQueueRepository:
         candidate_ids: set[str] = set()
         for payload in self.session.scalars(stmt).all():
             envelope = dict(payload or {})
-            candidate_id = str(envelope.get("candidate_id") or "").strip()
+            candidate_id = str(envelope.get("application_id") or envelope.get("candidate_id") or "").strip()
             if candidate_id:
                 candidate_ids.add(candidate_id)
         return candidate_ids

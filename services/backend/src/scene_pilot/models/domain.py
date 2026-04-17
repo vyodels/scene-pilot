@@ -10,7 +10,7 @@ from scene_pilot.db.base import Base, TimestampMixin, generate_id, utcnow
 
 
 class Candidate(Base, TimestampMixin):
-    __tablename__ = "candidates"
+    __tablename__ = "candidate_persons"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=generate_id)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -19,7 +19,7 @@ class Candidate(Base, TimestampMixin):
     current_status: Mapped[str] = mapped_column(String(64), nullable=False, default="discovered", index=True)
     current_stage_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
     deepest_milestone: Mapped[str | None] = mapped_column(String(16), nullable=True, index=True)
-    jd_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    job_description_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     contact_info: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     state_snapshot: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     resume_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
@@ -30,12 +30,296 @@ class Candidate(Base, TimestampMixin):
     last_contacted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class CandidatePlatformIdx(Base, TimestampMixin):
+    __tablename__ = "candidates_platform_idx"
+    __table_args__ = (UniqueConstraint("platform", "platform_candidate_id", name="uq_candidate_platform_identity"),)
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=generate_id)
+    candidate_id: Mapped[str] = mapped_column(ForeignKey("candidate_persons.id", ondelete="CASCADE"), nullable=False, index=True)
+    platform: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    platform_candidate_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    profile_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    raw_profile: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    first_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class JobDescription(Base, TimestampMixin):
+    __tablename__ = "job_descriptions"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=generate_id)
+    title: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    department: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    location: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    headcount: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    salary_min: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    salary_max: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    requirements: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(64), nullable=False, default="active", index=True)
+    source: Mapped[str] = mapped_column(String(64), nullable=False, default="manual", index=True)
+
+
+class JobDescriptionPlatformIdx(Base, TimestampMixin):
+    __tablename__ = "job_descriptions_platform_idx"
+    __table_args__ = (UniqueConstraint("platform", "external_id", name="uq_job_description_platform_identity"),)
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=generate_id)
+    job_description_id: Mapped[str] = mapped_column(
+        ForeignKey("job_descriptions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    platform: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    external_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    external_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    sync_status: Mapped[str] = mapped_column(String(64), nullable=False, default="pending", index=True)
+    sync_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class CandidateApplication(Base, TimestampMixin):
+    __tablename__ = "candidate_applications"
+    __table_args__ = (UniqueConstraint("application_window", name="uq_candidate_application_window"),)
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=generate_id)
+    person_id: Mapped[str] = mapped_column(
+        ForeignKey("candidate_persons.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    job_description_id: Mapped[str | None] = mapped_column(
+        ForeignKey("job_descriptions.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    platform: Mapped[str] = mapped_column(String(64), nullable=False, default="site", index=True)
+    platform_application_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    application_window: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    current_status: Mapped[str] = mapped_column(String(64), nullable=False, default="discovered", index=True)
+    current_stage_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    deepest_milestone: Mapped[str | None] = mapped_column(String(16), nullable=True, index=True)
+    state_snapshot: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    ai_scores: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    ai_reasoning: Mapped[str | None] = mapped_column(Text, nullable=True)
+    cooldown_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_contacted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    application_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+
+
+class ApplicationSession(Base, TimestampMixin):
+    __tablename__ = "application_sessions"
+    __table_args__ = (UniqueConstraint("application_id", name="uq_application_sessions_application_id"),)
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=generate_id)
+    application_id: Mapped[str] = mapped_column(
+        ForeignKey("candidate_applications.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="active", index=True)
+    context_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    recent_messages: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
+    facts: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    suspend_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_active_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ApplicationCommunicationLog(Base):
+    __tablename__ = "application_communication_logs"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=generate_id)
+    application_id: Mapped[str] = mapped_column(
+        ForeignKey("candidate_applications.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    direction: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    message_type: Mapped[str] = mapped_column(String(32), nullable=False, default="text")
+    platform: Mapped[str] = mapped_column(String(64), nullable=False, default="site", index=True)
+    message_metadata: Mapped[dict[str, Any]] = mapped_column("metadata", JSON, nullable=False, default=dict)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class ApplicationStatusTransition(Base, TimestampMixin):
+    __tablename__ = "application_status_transitions"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=generate_id)
+    application_id: Mapped[str] = mapped_column(
+        ForeignKey("candidate_applications.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    from_status: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    to_status: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    from_status_label: Mapped[str] = mapped_column(String(255), nullable=False)
+    to_status_label: Mapped[str] = mapped_column(String(255), nullable=False)
+    actor: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    actor_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    trigger: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    override_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_override: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, index=True)
+    milestone_updated: Mapped[str | None] = mapped_column(String(16), nullable=True, index=True)
+    transition_metadata: Mapped[dict[str, Any]] = mapped_column("metadata", JSON, nullable=False, default=dict)
+
+    __table_args__ = (
+        Index("ix_application_status_transitions_application_created_at", "application_id", "created_at"),
+    )
+
+
+class ApplicationAssessment(Base, TimestampMixin):
+    __tablename__ = "application_assessments"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=generate_id)
+    application_id: Mapped[str] = mapped_column(
+        ForeignKey("candidate_applications.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    assessment_type: Mapped[str] = mapped_column(String(32), nullable=False, index=True, default="ai")
+    stage_key: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="completed", index=True)
+    decision: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    evidence_refs: Mapped[list[Any]] = mapped_column(JSON, nullable=False, default=list)
+    assessment_metadata: Mapped[dict[str, Any]] = mapped_column("metadata", JSON, nullable=False, default=dict)
+    created_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    reviewed_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        Index("ix_application_assessments_application_created_at", "application_id", "created_at"),
+    )
+
+
+class ApplicationAssignment(Base, TimestampMixin):
+    __tablename__ = "application_assignments"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=generate_id)
+    application_id: Mapped[str] = mapped_column(
+        ForeignKey("candidate_applications.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    assignee: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    owner_role: Mapped[str] = mapped_column(String(64), nullable=False, default="operator", index=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="active", index=True)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    assignment_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    assigned_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow, index=True)
+    released_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        Index("ix_application_assignments_application_assigned_at", "application_id", "assigned_at"),
+    )
+
+
+class PersonResumeArtifact(Base, TimestampMixin):
+    __tablename__ = "person_resume_artifacts"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=generate_id)
+    person_id: Mapped[str] = mapped_column(
+        ForeignKey("candidate_persons.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    source: Mapped[str] = mapped_column(String(64), nullable=False, default="site", index=True)
+    artifact_type: Mapped[str] = mapped_column(String(64), nullable=False, default="resume", index=True)
+    file_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    file_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    extracted_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    contact_snapshot: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    artifact_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow, index=True)
+
+    __table_args__ = (
+        Index("ix_person_resume_artifacts_person_captured_at", "person_id", "captured_at"),
+    )
+
+
+class ApplicationScorecard(Base, TimestampMixin):
+    __tablename__ = "application_scorecards"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=generate_id)
+    application_id: Mapped[str] = mapped_column(
+        ForeignKey("candidate_applications.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    stage_key: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    source: Mapped[str] = mapped_column(String(32), nullable=False, default="ai", index=True)
+    rubric_version: Mapped[str] = mapped_column(String(64), nullable=False, default="recruit-scorecard-v1")
+    score_total: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    verdict: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    dimension_scores: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    evidence_refs: Mapped[list[Any]] = mapped_column(JSON, nullable=False, default=list)
+    scorecard_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+
+    __table_args__ = (
+        Index("ix_application_scorecards_application_created_at", "application_id", "created_at"),
+    )
+
+
+class ApplicationReviewDecision(Base, TimestampMixin):
+    __tablename__ = "application_review_decisions"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=generate_id)
+    application_id: Mapped[str] = mapped_column(
+        ForeignKey("candidate_applications.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    stage_key: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    decision: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    rationale: Mapped[str | None] = mapped_column(Text, nullable=True)
+    decision_source: Mapped[str] = mapped_column(String(32), nullable=False, default="manual", index=True)
+    decided_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    scorecard_id: Mapped[str | None] = mapped_column(
+        ForeignKey("application_scorecards.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    review_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    decided_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow, index=True)
+
+    __table_args__ = (
+        Index("ix_application_review_decisions_application_decided_at", "application_id", "decided_at"),
+    )
+
+
+class ApplicationSyncRecord(Base, TimestampMixin):
+    __tablename__ = "application_sync_records"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=generate_id)
+    application_id: Mapped[str] = mapped_column(
+        ForeignKey("candidate_applications.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    destination: Mapped[str] = mapped_column(String(128), nullable=False, default="talent_pool", index=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending", index=True)
+    external_ref: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    payload_snapshot: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_attempted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    sync_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+
+    __table_args__ = (
+        Index("ix_application_sync_records_application_created_at", "application_id", "created_at"),
+    )
+
+
 class CandidateSession(Base, TimestampMixin):
     __tablename__ = "candidate_sessions"
     __table_args__ = (UniqueConstraint("candidate_id", name="uq_candidate_sessions_candidate_id"),)
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=generate_id)
-    candidate_id: Mapped[str] = mapped_column(ForeignKey("candidates.id", ondelete="CASCADE"), nullable=False, index=True)
+    candidate_id: Mapped[str] = mapped_column(ForeignKey("candidate_persons.id", ondelete="CASCADE"), nullable=False, index=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="active", index=True)
     context_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     recent_messages: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
@@ -48,7 +332,7 @@ class CommunicationLog(Base):
     __tablename__ = "communication_logs"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=generate_id)
-    candidate_id: Mapped[str] = mapped_column(ForeignKey("candidates.id", ondelete="CASCADE"), nullable=False, index=True)
+    candidate_id: Mapped[str] = mapped_column(ForeignKey("candidate_persons.id", ondelete="CASCADE"), nullable=False, index=True)
     direction: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     message_type: Mapped[str] = mapped_column(String(32), nullable=False, default="text")
@@ -61,7 +345,7 @@ class CandidateStatusTransition(Base, TimestampMixin):
     __tablename__ = "candidate_status_transitions"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=generate_id)
-    candidate_id: Mapped[str] = mapped_column(ForeignKey("candidates.id", ondelete="CASCADE"), nullable=False, index=True)
+    candidate_id: Mapped[str] = mapped_column(ForeignKey("candidate_persons.id", ondelete="CASCADE"), nullable=False, index=True)
     from_status: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     to_status: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     from_status_label: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -84,7 +368,7 @@ class CandidateAssessment(Base, TimestampMixin):
     __tablename__ = "candidate_assessments"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=generate_id)
-    candidate_id: Mapped[str] = mapped_column(ForeignKey("candidates.id", ondelete="CASCADE"), nullable=False, index=True)
+    candidate_id: Mapped[str] = mapped_column(ForeignKey("candidate_persons.id", ondelete="CASCADE"), nullable=False, index=True)
     assessment_type: Mapped[str] = mapped_column(String(32), nullable=False, index=True, default="ai")
     stage_key: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="completed", index=True)
@@ -106,7 +390,7 @@ class CandidateAssignment(Base, TimestampMixin):
     __tablename__ = "candidate_assignments"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=generate_id)
-    candidate_id: Mapped[str] = mapped_column(ForeignKey("candidates.id", ondelete="CASCADE"), nullable=False, index=True)
+    candidate_id: Mapped[str] = mapped_column(ForeignKey("candidate_persons.id", ondelete="CASCADE"), nullable=False, index=True)
     assignee: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     owner_role: Mapped[str] = mapped_column(String(64), nullable=False, default="operator", index=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="active", index=True)
@@ -124,7 +408,11 @@ class ResumeArtifact(Base, TimestampMixin):
     __tablename__ = "resume_artifacts"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=generate_id)
-    candidate_id: Mapped[str] = mapped_column(ForeignKey("candidates.id", ondelete="CASCADE"), nullable=False, index=True)
+    application_id: Mapped[str] = mapped_column(
+        ForeignKey("candidate_applications.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
     source: Mapped[str] = mapped_column(String(64), nullable=False, default="site", index=True)
     artifact_type: Mapped[str] = mapped_column(String(64), nullable=False, default="resume", index=True)
     file_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -135,7 +423,7 @@ class ResumeArtifact(Base, TimestampMixin):
     captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow, index=True)
 
     __table_args__ = (
-        Index("ix_resume_artifacts_candidate_captured_at", "candidate_id", "captured_at"),
+        Index("ix_resume_artifacts_application_captured_at", "application_id", "captured_at"),
     )
 
 
@@ -143,7 +431,7 @@ class CandidateScorecard(Base, TimestampMixin):
     __tablename__ = "candidate_scorecards"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=generate_id)
-    candidate_id: Mapped[str] = mapped_column(ForeignKey("candidates.id", ondelete="CASCADE"), nullable=False, index=True)
+    candidate_id: Mapped[str] = mapped_column(ForeignKey("candidate_persons.id", ondelete="CASCADE"), nullable=False, index=True)
     stage_key: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     source: Mapped[str] = mapped_column(String(32), nullable=False, default="ai", index=True)
     rubric_version: Mapped[str] = mapped_column(String(64), nullable=False, default="recruit-scorecard-v1")
@@ -163,7 +451,7 @@ class CandidateReviewDecision(Base, TimestampMixin):
     __tablename__ = "candidate_review_decisions"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=generate_id)
-    candidate_id: Mapped[str] = mapped_column(ForeignKey("candidates.id", ondelete="CASCADE"), nullable=False, index=True)
+    candidate_id: Mapped[str] = mapped_column(ForeignKey("candidate_persons.id", ondelete="CASCADE"), nullable=False, index=True)
     stage_key: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     decision: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     rationale: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -186,7 +474,7 @@ class TalentPoolSyncRecord(Base, TimestampMixin):
     __tablename__ = "talent_pool_sync_records"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=generate_id)
-    candidate_id: Mapped[str] = mapped_column(ForeignKey("candidates.id", ondelete="CASCADE"), nullable=False, index=True)
+    candidate_id: Mapped[str] = mapped_column(ForeignKey("candidate_persons.id", ondelete="CASCADE"), nullable=False, index=True)
     destination: Mapped[str] = mapped_column(String(128), nullable=False, default="talent_pool", index=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending", index=True)
     external_ref: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
@@ -215,7 +503,7 @@ class EvolutionArtifact(Base, TimestampMixin):
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending_review", index=True)
     related_candidate_id: Mapped[str | None] = mapped_column(
-        ForeignKey("candidates.id", ondelete="SET NULL"),
+        ForeignKey("candidate_persons.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )
@@ -313,9 +601,39 @@ class CandidateMemory(Base, TimestampMixin):
         nullable=False,
         index=True,
     )
-    candidate_id: Mapped[str] = mapped_column(ForeignKey("candidates.id", ondelete="CASCADE"), nullable=False, index=True)
+    candidate_id: Mapped[str] = mapped_column(ForeignKey("candidate_persons.id", ondelete="CASCADE"), nullable=False, index=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="active", index=True)
     memory_schema_version: Mapped[str] = mapped_column(String(64), nullable=False, default="candidate-memory-v1")
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    raw_content: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    content: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    disclosure: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    token_estimate: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    source_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    compacted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    compacted_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    memory_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+
+
+class CandidatePersonMemory(Base, TimestampMixin):
+    __tablename__ = "candidate_person_memories"
+    __table_args__ = (
+        UniqueConstraint("agent_profile_id", "person_id", name="uq_candidate_person_memories_agent_person"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=generate_id)
+    agent_profile_id: Mapped[str] = mapped_column(
+        ForeignKey("recruit_agent_profiles.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    person_id: Mapped[str] = mapped_column(
+        ForeignKey("candidate_persons.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="active", index=True)
+    memory_schema_version: Mapped[str] = mapped_column(String(64), nullable=False, default="candidate-person-memory-v1")
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     raw_content: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     content: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
@@ -342,6 +660,36 @@ class JobMemory(Base, TimestampMixin):
     jd_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="active", index=True)
     memory_schema_version: Mapped[str] = mapped_column(String(64), nullable=False, default="job-memory-v1")
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    raw_content: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    content: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    disclosure: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    token_estimate: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    source_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    compacted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    compacted_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    memory_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+
+
+class JobDescriptionMemory(Base, TimestampMixin):
+    __tablename__ = "job_description_memories"
+    __table_args__ = (
+        UniqueConstraint("agent_profile_id", "job_description_id", name="uq_job_description_memories_agent_job"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=generate_id)
+    agent_profile_id: Mapped[str] = mapped_column(
+        ForeignKey("recruit_agent_profiles.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    job_description_id: Mapped[str] = mapped_column(
+        ForeignKey("job_descriptions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="active", index=True)
+    memory_schema_version: Mapped[str] = mapped_column(String(64), nullable=False, default="job-description-memory-v1")
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     raw_content: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     content: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
@@ -410,8 +758,8 @@ class AgentRun(Base, TimestampMixin):
         index=True,
     )
     goal_spec_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
-    candidate_id: Mapped[str | None] = mapped_column(ForeignKey("candidates.id", ondelete="SET NULL"), nullable=True, index=True)
-    jd_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    candidate_id: Mapped[str | None] = mapped_column(ForeignKey("candidate_persons.id", ondelete="SET NULL"), nullable=True, index=True)
+    job_description_id: Mapped[str | None] = mapped_column("jd_id", String(128), nullable=True, index=True)
     platform: Mapped[str] = mapped_column(String(64), nullable=False, default="site", index=True)
     lane: Mapped[str] = mapped_column(String(32), nullable=False, default="agent", index=True)
     run_type: Mapped[str] = mapped_column(String(64), nullable=False, default="generic", index=True)
@@ -443,7 +791,7 @@ class AgentWorkItem(Base, TimestampMixin):
     run_id: Mapped[str | None] = mapped_column(ForeignKey("agent_runs.id", ondelete="SET NULL"), nullable=True, index=True)
     queue_task_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
     goal_spec_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
-    candidate_id: Mapped[str | None] = mapped_column(ForeignKey("candidates.id", ondelete="SET NULL"), nullable=True, index=True)
+    candidate_id: Mapped[str | None] = mapped_column(ForeignKey("candidate_persons.id", ondelete="SET NULL"), nullable=True, index=True)
     platform: Mapped[str] = mapped_column(String(64), nullable=False, default="site", index=True)
     lane: Mapped[str] = mapped_column(String(32), nullable=False, default="agent", index=True)
     item_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
@@ -464,7 +812,7 @@ class AgentRunCheckpoint(Base, TimestampMixin):
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=generate_id)
     session_id: Mapped[str] = mapped_column(ForeignKey("agent_sessions.id", ondelete="CASCADE"), nullable=False, index=True)
     run_id: Mapped[str] = mapped_column(ForeignKey("agent_runs.id", ondelete="CASCADE"), nullable=False, index=True)
-    candidate_id: Mapped[str | None] = mapped_column(ForeignKey("candidates.id", ondelete="SET NULL"), nullable=True, index=True)
+    candidate_id: Mapped[str | None] = mapped_column(ForeignKey("candidate_persons.id", ondelete="SET NULL"), nullable=True, index=True)
     approval_id: Mapped[str | None] = mapped_column(ForeignKey("approval_items.id", ondelete="SET NULL"), nullable=True, index=True)
     checkpoint_kind: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="open", index=True)
@@ -485,7 +833,7 @@ class AgentRuntimeEvent(Base, TimestampMixin):
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=generate_id)
     session_id: Mapped[str] = mapped_column(ForeignKey("agent_sessions.id", ondelete="CASCADE"), nullable=False, index=True)
     run_id: Mapped[str | None] = mapped_column(ForeignKey("agent_runs.id", ondelete="SET NULL"), nullable=True, index=True)
-    candidate_id: Mapped[str | None] = mapped_column(ForeignKey("candidates.id", ondelete="SET NULL"), nullable=True, index=True)
+    candidate_id: Mapped[str | None] = mapped_column(ForeignKey("candidate_persons.id", ondelete="SET NULL"), nullable=True, index=True)
     level: Mapped[str] = mapped_column(String(32), nullable=False, default="info", index=True)
     source: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     event_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
@@ -537,7 +885,7 @@ class ExecutionTrace(Base, TimestampMixin):
     session_id: Mapped[str] = mapped_column(ForeignKey("agent_sessions.id", ondelete="CASCADE"), nullable=False, index=True)
     run_id: Mapped[str | None] = mapped_column(ForeignKey("agent_runs.id", ondelete="SET NULL"), nullable=True, index=True)
     goal_spec_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
-    candidate_id: Mapped[str | None] = mapped_column(ForeignKey("candidates.id", ondelete="SET NULL"), nullable=True, index=True)
+    candidate_id: Mapped[str | None] = mapped_column(ForeignKey("candidate_persons.id", ondelete="SET NULL"), nullable=True, index=True)
     lane: Mapped[str] = mapped_column(String(32), nullable=False, default="agent", index=True)
     trace_kind: Mapped[str] = mapped_column(String(64), nullable=False, default="adaptive_run", index=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="captured", index=True)
@@ -567,8 +915,8 @@ class StrategyFragment(Base, TimestampMixin):
     )
     goal_spec_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
     run_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
-    candidate_id: Mapped[str | None] = mapped_column(ForeignKey("candidates.id", ondelete="SET NULL"), nullable=True, index=True)
-    jd_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    candidate_id: Mapped[str | None] = mapped_column(ForeignKey("candidate_persons.id", ondelete="SET NULL"), nullable=True, index=True)
+    job_description_id: Mapped[str | None] = mapped_column("jd_id", String(128), nullable=True, index=True)
     scope: Mapped[str] = mapped_column(String(32), nullable=False, default="agent", index=True)
     fragment_kind: Mapped[str] = mapped_column(String(64), nullable=False, default="strategy", index=True)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -592,7 +940,7 @@ class ExecutionGraphProjection(Base, TimestampMixin):
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=generate_id)
     goal_spec_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
     run_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
-    candidate_id: Mapped[str | None] = mapped_column(ForeignKey("candidates.id", ondelete="SET NULL"), nullable=True, index=True)
+    candidate_id: Mapped[str | None] = mapped_column(ForeignKey("candidate_persons.id", ondelete="SET NULL"), nullable=True, index=True)
     graph_kind: Mapped[str] = mapped_column(String(64), nullable=False, default="execution_projection", index=True)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -616,7 +964,7 @@ class OperatorInteraction(Base, TimestampMixin):
     checkpoint_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
     approval_id: Mapped[str | None] = mapped_column(ForeignKey("approval_items.id", ondelete="SET NULL"), nullable=True, index=True)
     goal_spec_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
-    candidate_id: Mapped[str | None] = mapped_column(ForeignKey("candidates.id", ondelete="SET NULL"), nullable=True, index=True)
+    candidate_id: Mapped[str | None] = mapped_column(ForeignKey("candidate_persons.id", ondelete="SET NULL"), nullable=True, index=True)
     lane: Mapped[str] = mapped_column(String(32), nullable=False, default="agent", index=True)
     interaction_type: Mapped[str] = mapped_column(String(64), nullable=False, default="confirm", index=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending", index=True)
@@ -871,7 +1219,7 @@ class DecisionLog(Base):
     __tablename__ = "decision_logs"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=generate_id)
-    candidate_id: Mapped[str | None] = mapped_column(ForeignKey("candidates.id", ondelete="SET NULL"), nullable=True, index=True)
+    candidate_id: Mapped[str | None] = mapped_column(ForeignKey("candidate_persons.id", ondelete="SET NULL"), nullable=True, index=True)
     task_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     decision_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     decision: Mapped[str] = mapped_column(String(64), nullable=False, index=True)

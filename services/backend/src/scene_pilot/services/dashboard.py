@@ -10,12 +10,15 @@ from scene_pilot.repositories import (
     AgentLearningRepository,
     PlaybookRepository,
     ApprovalRepository,
+    CandidateApplicationRepository,
     CandidateRepository,
+    JobDescriptionRepository,
     MetricsRepository,
     SettingsRepository,
     SkillRepository,
 )
 from scene_pilot.schemas.domain import AgentStatusRead, DashboardRead
+from scene_pilot.services.application_subjects import application_payload_from_application
 from scene_pilot.services.events import EventStreamService
 from scene_pilot.services.state_machine import ensure_latest_state_machine
 from scene_pilot.services.sync import SyncService
@@ -220,6 +223,8 @@ class DashboardService:
 
     def build_dashboard(self, session: Session, *, queue_depth: int = 0) -> DashboardRead:
         candidate_repo = CandidateRepository(session)
+        application_repo = CandidateApplicationRepository(session)
+        job_description_repo = JobDescriptionRepository(session)
         playbook_repo = PlaybookRepository(session)
         skill_repo = SkillRepository(session)
         approval_repo = ApprovalRepository(session)
@@ -229,11 +234,13 @@ class DashboardService:
 
         metrics = metrics_repo.summary()
         settings = AppSettings.model_validate(settings_repo.load(self.settings).model_dump())
-        candidates = candidate_repo.list(limit=50)
+        applications = application_repo.list(limit=50)
         playbooks = playbook_repo.list(limit=50)
         skills = skill_repo.list(limit=50)
         approvals = approval_repo.list(limit=50)
         learnings = learning_repo.list(limit=50)
+        application_count = application_repo.count()
+        application_by_status = application_repo.count_by_status()
 
         pipeline_map = {
             "发现": 0,
@@ -242,8 +249,8 @@ class DashboardService:
             "简历/评估": 0,
             "面试/结果": 0,
         }
-        for candidate in candidates:
-            status = candidate.current_status
+        for application in applications:
+            status = application.current_status
             if status in {"discovered", "ai_online_pending", "ai_online_passed", "ai_online_rejected", "outreach_pending"}:
                 pipeline_map["发现"] += 1
             elif status in {"offline_scoring", "offline_score_passed", "offline_score_rejected", "human_review_pending", "human_review_passed", "human_review_rejected"}:
@@ -259,15 +266,15 @@ class DashboardService:
             "metrics": [
                 {
                     "label": "候选人",
-                    "value": str(metrics.candidate_count),
-                    "delta": f"{metrics.by_status.get('offline_scoring', 0) + metrics.by_status.get('human_review_pending', 0)} 个正在初筛",
-                    "tone": "positive" if metrics.candidate_count else "neutral",
+                    "value": str(application_count),
+                    "delta": f"{application_by_status.get('offline_scoring', 0) + application_by_status.get('human_review_pending', 0)} 个正在初筛",
+                    "tone": "positive" if application_count else "neutral",
                     "caption": "已记录到本地 SQLite",
                 },
                 {
                     "label": "执行蓝图",
                     "value": str(metrics.playbook_count),
-                    "delta": f"{metrics.by_status.get('offer_accepted', 0)} 位已进入后续交接",
+                    "delta": f"{application_by_status.get('offer_accepted', 0)} 位已进入后续交接",
                     "tone": "neutral",
                     "caption": "Recruit Agent 当前可用的 Playbook 蓝图",
                 },
@@ -334,27 +341,41 @@ class DashboardService:
             ],
             "candidates": [
                 {
-                    "id": item.id,
-                    "name": item.name,
-                    "title": item.contact_info.get("title", "候选人"),
-                    "platform": item.platform,
-                    "location": item.contact_info.get("location", "未知"),
-                    "currentStatus": item.current_status,
-                    "stageKey": item.current_stage_key or "candidate_probe",
-                    "jdTitle": item.jd_id or "未分配岗位",
-                    "matchScore": int(item.ai_scores.get("overall", 0) or 0),
-                    "experienceYears": int(item.contact_info.get("experience_years", 0) or 0),
-                    "nextAction": item.contact_info.get("next_action", "查看候选人并决定下一步动作。"),
-                    "summary": item.ai_reasoning or item.online_resume_text or "候选人档案正在等待审查。",
-                    "tags": item.contact_info.get("tags", []),
-                    "resumeAvailable": bool(item.resume_path or item.online_resume_text),
-                    "stateSnapshot": dict(item.state_snapshot or {}),
-                    "contactInfo": dict(item.contact_info or {}),
-                    "aiScores": dict(item.ai_scores or {}),
-                    "cooldownUntil": item.cooldown_until.isoformat() if item.cooldown_until else None,
-                    "lastContactedAt": item.last_contacted_at.isoformat() if item.last_contacted_at else None,
+                    "id": payload["application_id"],
+                    "applicationId": payload["application_id"],
+                    "personId": payload["person_id"],
+                    "jobDescriptionId": payload["job_description_id"],
+                    "name": payload["name"],
+                    "title": str((payload.get("contact_info") or {}).get("title") or "候选人"),
+                    "platform": payload["platform"],
+                    "location": payload["location"],
+                    "currentStatus": payload["current_status"],
+                    "stageKey": payload["stage_key"],
+                    "jdTitle": payload["job_description_title"],
+                    "matchScore": payload["match_score"],
+                    "experienceYears": payload["experience_years"],
+                    "nextAction": payload["next_action"],
+                    "summary": payload["summary"],
+                    "tags": payload["tags"],
+                    "resumeAvailable": payload["resume_available"],
+                    "stateSnapshot": payload["state_snapshot"],
+                    "contactInfo": payload["contact_info"],
+                    "aiScores": payload["ai_scores"],
+                    "cooldownUntil": payload["cooldown_until"].isoformat() if payload["cooldown_until"] else None,
+                    "lastContactedAt": payload["last_contacted_at"].isoformat() if payload["last_contacted_at"] else None,
                 }
-                for item in candidates
+                for payload in (
+                    application_payload_from_application(
+                        application,
+                        person=candidate_repo.resolve(application.person_id),
+                        job_description=(
+                            job_description_repo.get(application.job_description_id)
+                            if getattr(application, "job_description_id", None)
+                            else None
+                        ),
+                    )
+                    for application in applications
+                )
             ],
             "candidateFollowUpSummaryDefinitions": _candidate_followup_summary_definitions(session),
             "playbooks": [

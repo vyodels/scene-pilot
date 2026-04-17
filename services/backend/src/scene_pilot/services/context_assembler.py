@@ -10,6 +10,11 @@ from scene_pilot.runtime.models import Message
 from scene_pilot.runtime.providers import LLMProvider, ProviderError
 from scene_pilot.repositories import (
     AgentGlobalMemoryRepository,
+    ApplicationAssessmentRepository,
+    ApplicationReviewDecisionRepository,
+    ApplicationScorecardRepository,
+    ApplicationSessionRepository,
+    CandidateApplicationRepository,
     ApprovalRepository,
     CandidateAssessmentRepository,
     CandidateMemoryRepository,
@@ -99,6 +104,7 @@ class ContextAssemblerService:
                 "task_type": task.task_type,
                 "adaptive_stage": str(task.metadata.get("adaptive_stage") or task.payload.get("adaptive_stage") or task.task_type),
                 "goal_spec_id": str(task.metadata.get("goal_spec_id") or task.payload.get("goal_id") or "") or None,
+                "application_id": task.application_id or task.payload.get("application_id") or task.metadata.get("application_id"),
                 "candidate_id": task.candidate_id,
                 "payload": dict(task.payload or {}),
                 "metadata": dict(task.metadata or {}),
@@ -118,32 +124,42 @@ class ContextAssemblerService:
                 score=92,
             )
 
+        application = None
+        application_id = str(task.application_id or task.payload.get("application_id") or task.metadata.get("application_id") or "").strip()
+        if application_id:
+            application = CandidateApplicationRepository(self.session).get(application_id)
         candidate = None
         if task.candidate_id:
             candidate = CandidateRepository(self.session).resolve(task.candidate_id)
+        if candidate is None and application is not None:
+            candidate = CandidateRepository(self.session).resolve(application.person_id)
         if candidate is not None:
             add_fragment(
-                source="candidate",
+                source="application" if application is not None else "candidate",
                 policy_key="candidate_progress",
                 kind="candidate_progress",
                 tier="required",
                 content={
+                    "application_id": application.id if application is not None else None,
                     "candidate_id": candidate.id,
-                    "current_status": candidate.current_status,
-                    "current_stage_key": candidate.current_stage_key,
-                    "jd_id": candidate.jd_id,
-                    "state_snapshot": dict(candidate.state_snapshot or {}),
+                    "person_id": application.person_id if application is not None else candidate.id,
+                    "current_status": application.current_status if application is not None else candidate.current_status,
+                    "current_stage_key": application.current_stage_key if application is not None else candidate.current_stage_key,
+                    "job_description_id": application.job_description_id if application is not None else candidate.job_description_id,
+                    "state_snapshot": dict(application.state_snapshot or {}) if application is not None else dict(candidate.state_snapshot or {}),
                 },
                 required=True,
                 score=98,
             )
 
+            application_session = ApplicationSessionRepository(self.session).by_application_id(application.id) if application is not None else None
             candidate_session = CandidateSessionRepository(self.session).by_candidate_id(candidate.id)
-            if candidate_session is not None:
-                recent_messages = list(candidate_session.recent_messages or [])[-8:]
+            active_session = application_session or candidate_session
+            if active_session is not None:
+                recent_messages = list(active_session.recent_messages or [])[-8:]
                 if recent_messages:
                     add_fragment(
-                        source="candidate_session",
+                        source="application_session" if application_session is not None else "candidate_session",
                         policy_key="recent_messages",
                         kind="recent_messages",
                         tier="operator_summary",
@@ -185,10 +201,11 @@ class ContextAssemblerService:
                     score=75,
                 )
 
-            if candidate.jd_id:
+            jd_id = application.job_description_id if application is not None else candidate.job_description_id
+            if jd_id:
                 job_memory = JobMemoryRepository(self.session).by_agent_and_jd(
                     agent_profile_id=profile.id,
-                    jd_id=candidate.jd_id,
+                    jd_id=jd_id,
                 )
                 if job_memory is not None:
                     disclosure = dict(job_memory.disclosure or {})
@@ -224,7 +241,11 @@ class ContextAssemblerService:
                     score=58,
                 )
 
-            latest_assessments = CandidateAssessmentRepository(self.session).by_candidate(candidate.id, limit=3, offset=0)
+            latest_assessments = (
+                ApplicationAssessmentRepository(self.session).by_application(application.id, limit=3, offset=0)
+                if application is not None
+                else CandidateAssessmentRepository(self.session).by_candidate(candidate.id, limit=3, offset=0)
+            )
             if latest_assessments:
                 add_fragment(
                     source="assessments",
@@ -235,7 +256,11 @@ class ContextAssemblerService:
                     required=False,
                     score=88,
                 )
-            latest_scorecards = CandidateScorecardRepository(self.session).by_candidate(candidate.id, limit=2, offset=0)
+            latest_scorecards = (
+                ApplicationScorecardRepository(self.session).by_application(application.id, limit=2, offset=0)
+                if application is not None
+                else CandidateScorecardRepository(self.session).by_candidate(candidate.id, limit=2, offset=0)
+            )
             if latest_scorecards:
                 add_fragment(
                     source="scorecards",
@@ -246,7 +271,11 @@ class ContextAssemblerService:
                     required=False,
                     score=84,
                 )
-            latest_decisions = CandidateReviewDecisionRepository(self.session).by_candidate(candidate.id, limit=2, offset=0)
+            latest_decisions = (
+                ApplicationReviewDecisionRepository(self.session).by_application(application.id, limit=2, offset=0)
+                if application is not None
+                else CandidateReviewDecisionRepository(self.session).by_candidate(candidate.id, limit=2, offset=0)
+            )
             if latest_decisions:
                 add_fragment(
                     source="review_decisions",
@@ -364,8 +393,9 @@ class ContextAssemblerService:
         return {
             "lane": lane,
             "run_type": task.task_type,
+            "application_id": application.id if application is not None else application_id or None,
             "candidate_id": candidate.id if candidate is not None else None,
-            "job_id": candidate.jd_id if candidate is not None else None,
+            "job_id": candidate.job_description_id if candidate is not None else None,
             "token_budget": token_budget,
             "context_policy": context_policy,
             "selected_token_estimate": used_tokens,

@@ -37,6 +37,9 @@ export interface TimelineEvent {
 
 export interface CandidateRecord {
   id: string;
+  applicationId: string;
+  personId?: string | null;
+  jobDescriptionId?: string | null;
   name: string;
   title: string;
   platform: string;
@@ -452,6 +455,9 @@ export interface CandidateConversationEntry {
 }
 
 export interface CandidateThreadRecord {
+  applicationId?: string | null;
+  personId?: string | null;
+  jobDescriptionId?: string | null;
   candidate: CandidateRecord;
   sessionStatus: string;
   contextSummary?: string;

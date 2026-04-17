@@ -9,6 +9,8 @@ from sqlalchemy.orm import Session
 
 from scene_pilot.db.base import utcnow
 from scene_pilot.repositories import (
+    ApplicationStatusTransitionRepository,
+    CandidateApplicationRepository,
     CandidateRepository,
     CandidateStatusTransitionRepository,
     RecruitmentStateMachineVersionRepository,
@@ -23,6 +25,7 @@ class StateMachineValidationError(ValueError):
 
 @dataclass(slots=True)
 class StateMachineTransitionResult:
+    application_id: str | None
     candidate_id: str
     from_status: str
     to_status: str
@@ -244,9 +247,14 @@ def apply_transition_snapshot(
     payload: CandidateStateTransitionRequest,
     *,
     state_machine: dict[str, Any],
+    status_subject: Any | None = None,
+    contact_source: Any | None = None,
 ) -> dict[str, Any]:
-    current_status = resolve_candidate_current_status(candidate)
-    snapshot = dict(candidate.state_snapshot or {}) or default_candidate_state_snapshot(status=current_status)
+    subject = status_subject or candidate
+    contact_subject = contact_source or candidate
+    current_status = resolve_candidate_current_status(subject)
+    application_id = str(getattr(subject, "id", None) or "").strip() or None
+    snapshot = dict(getattr(subject, "state_snapshot", None) or {}) or default_candidate_state_snapshot(status=current_status)
     nodes = _node_index(state_machine)
     target_node = nodes.get(payload.to_status, {})
     transition_at = utcnow().isoformat()
@@ -260,7 +268,7 @@ def apply_transition_snapshot(
         snapshot["contact_acquired"] = bool(unique_channels)
         snapshot["contact_status"] = "acquired" if unique_channels else "missing"
     if payload.to_status == "contact_acquired" and not snapshot.get("contact_channels"):
-        contact_info = dict(candidate.contact_info or {})
+        contact_info = dict(getattr(contact_subject, "contact_info", None) or {})
         channels = [key for key in ("phone", "mobile", "wechat") if contact_info.get(key)]
         snapshot["contact_channels"] = channels
         snapshot["contact_acquired"] = bool(channels)
@@ -313,6 +321,7 @@ def apply_transition_snapshot(
     snapshot["latest_transition_at"] = transition_at
     snapshot["latest_transition_source"] = payload.source
     snapshot.setdefault("snapshot_metadata", {})
+    snapshot["snapshot_metadata"]["application_id"] = application_id
     snapshot["snapshot_metadata"]["status_machine_version"] = state_machine["version"]
     snapshot["snapshot_metadata"]["current_status"] = payload.to_status
     snapshot["snapshot_metadata"]["manual_override"] = bool(payload.override_reason)
@@ -323,11 +332,14 @@ def transition_candidate(
     session: Session,
     *,
     candidate: Any,
+    application: Any | None = None,
     payload: CandidateStateTransitionRequest,
 ) -> StateMachineTransitionResult:
     state_machine = ensure_latest_state_machine(session)
+    status_subject = application or candidate
+    application_id = str(getattr(application, "id", None) or getattr(candidate, "id", None) or "").strip() or None
     nodes = _node_index(state_machine)
-    current_status = resolve_candidate_current_status(candidate)
+    current_status = resolve_candidate_current_status(status_subject)
     if current_status not in nodes:
         current_status = "discovered"
     if payload.to_status not in nodes:
@@ -339,11 +351,21 @@ def transition_candidate(
 
     next_deepest_milestone = _advance_milestone(
         state_machine,
-        current_milestone=getattr(candidate, "deepest_milestone", None),
+        current_milestone=getattr(status_subject, "deepest_milestone", None),
         target_status=payload.to_status,
     )
-    milestone_updated = next_deepest_milestone if next_deepest_milestone != getattr(candidate, "deepest_milestone", None) else None
-    snapshot = apply_transition_snapshot(candidate, payload, state_machine=state_machine)
+    milestone_updated = (
+        next_deepest_milestone
+        if next_deepest_milestone != getattr(status_subject, "deepest_milestone", None)
+        else None
+    )
+    snapshot = apply_transition_snapshot(
+        candidate,
+        payload,
+        state_machine=state_machine,
+        status_subject=status_subject,
+        contact_source=candidate,
+    )
     candidate_repo = CandidateRepository(session)
     history_repo = CandidateStatusTransitionRepository(session)
     contact_info = dict(candidate.contact_info or {})
@@ -389,6 +411,7 @@ def transition_candidate(
             "milestone_updated": milestone_updated,
             "transition_metadata": {
                 **dict(payload.metadata or {}),
+                "application_id": application_id,
                 "matched_transition_id": (matched_transition or {}).get("id"),
                 "matched_trigger": (matched_transition or {}).get("trigger"),
                 "phase": str(to_node.get("phase") or ""),
@@ -398,7 +421,53 @@ def transition_candidate(
             },
         }
     )
+    application_repo = CandidateApplicationRepository(session)
+    if application is None and application_id:
+        application = application_repo.get(application_id)
+    if application is None:
+        applications = application_repo.by_person(updated_candidate.id, limit=1, offset=0)
+        application = applications[0] if applications else None
+    if application is not None:
+        application_id = application.id
+        application_repo.update(
+            application,
+            {
+                "current_status": payload.to_status,
+                "current_stage_key": payload.stage_key or payload.to_status,
+                "deepest_milestone": next_deepest_milestone,
+                "state_snapshot": snapshot,
+                "cooldown_until": getattr(updated_candidate, "cooldown_until", None),
+                "last_contacted_at": getattr(updated_candidate, "last_contacted_at", None),
+            },
+        )
+        ApplicationStatusTransitionRepository(session).create(
+            {
+                "application_id": application.id,
+                "from_status": current_status,
+                "to_status": payload.to_status,
+                "from_status_label": str(from_node.get("label") or current_status),
+                "to_status_label": str(to_node.get("label") or payload.to_status),
+                "actor": actor,
+                "actor_id": payload.actor_id or payload.actor,
+                "trigger": trigger,
+                "note": payload.note,
+                "override_reason": payload.override_reason,
+                "is_override": bool(payload.override_reason),
+                "milestone_updated": milestone_updated,
+                "transition_metadata": {
+                    **dict(payload.metadata or {}),
+                    "application_id": application.id,
+                    "matched_transition_id": (matched_transition or {}).get("id"),
+                    "matched_trigger": (matched_transition or {}).get("trigger"),
+                    "phase": str(to_node.get("phase") or ""),
+                    "phase_label": str(to_node.get("phaseLabel") or ""),
+                    "interview_round": payload.interview_round,
+                    "contact_channels": payload.contact_channels,
+                },
+            }
+        )
     return StateMachineTransitionResult(
+        application_id=application_id,
         candidate_id=updated_candidate.id,
         from_status=current_status,
         to_status=payload.to_status,

@@ -780,11 +780,27 @@ export function DesktopWorkspace(): JSX.Element {
     await loadWorkspace(copy("Candidate state updated.", "候选人状态已更新。"));
   };
 
+  const resolveCandidateApplicationId = (subjectId?: string) => {
+    const normalized = String(subjectId ?? "").trim();
+    if (!normalized) {
+      return undefined;
+    }
+    const direct = summary.candidates.find(
+      (candidate) => candidate.id === normalized || candidate.applicationId === normalized,
+    );
+    if (direct) {
+      return direct.applicationId || direct.id;
+    }
+    const byPerson = summary.candidates.find((candidate) => candidate.personId === normalized);
+    return byPerson ? byPerson.applicationId || byPerson.id : undefined;
+  };
+
   const openCandidateWorkspace = (statusFilter?: string, candidateId?: string) => {
+    const applicationId = resolveCandidateApplicationId(candidateId);
     setCandidateKanbanTab("status");
     setCandidateWorkspaceFocus((current) => ({
-      candidateId,
-      conversationToken: candidateId ? current.conversationToken + 1 : current.conversationToken,
+      candidateId: applicationId,
+      conversationToken: applicationId ? current.conversationToken + 1 : current.conversationToken,
     }));
     setTab("candidates");
   };

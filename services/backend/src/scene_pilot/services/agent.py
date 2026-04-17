@@ -21,6 +21,8 @@ from scene_pilot.repositories import (
     AgentRunCheckpointRepository,
     AgentRunRepository,
     AgentSessionRepository,
+    ApplicationSessionRepository,
+    CandidateApplicationRepository,
     ExecutionGraphProjectionRepository,
     ExecutionTraceRepository,
     GoalSpecRepository,
@@ -47,6 +49,7 @@ from scene_pilot.services.candidate_progression_selector import (
     CandidateProgressionTarget,
     select_next_candidate_progression,
 )
+from scene_pilot.services.candidate_identity import resolve_candidate_by_contact_info
 from scene_pilot.services.candidate_waiting_retry_selector import (
     CandidateWaitingRetryPolicy,
     CandidateWaitingRetryTarget,
@@ -55,6 +58,7 @@ from scene_pilot.services.candidate_waiting_retry_selector import (
 from scene_pilot.services.events import EventStreamService
 from scene_pilot.services.feature_flags import FeatureFlagService
 from scene_pilot.services.adaptive_runtime import resolve_adaptive_stage
+from scene_pilot.services.application_window import make_application_window
 from scene_pilot.services.recruit_agent import (
     default_candidate_state_snapshot,
     ensure_primary_recruit_agent_profile,
@@ -105,8 +109,20 @@ class AgentControlService:
         payload: dict[str, Any] | None = None,
         metadata: dict[str, Any] | None = None,
         priority: int = 100,
+        application_id: str | None = None,
         candidate_id: str | None = None,
     ) -> TaskEnvelope:
+        resolved_application_id = str(
+            application_id
+            or (payload or {}).get("application_id")
+            or (payload or {}).get("applicationId")
+            or (metadata or {}).get("application_id")
+            or (metadata or {}).get("applicationId")
+            or ""
+        ).strip() or None
+        resolved_candidate_id = str(candidate_id or "").strip() or None
+        if resolved_application_id and resolved_candidate_id == resolved_application_id:
+            resolved_candidate_id = None
         adaptive_stage = resolve_adaptive_stage(
             task_type=task_type,
             explicit_stage=str((metadata or {}).get("adaptive_stage") or (payload or {}).get("adaptive_stage") or "").strip() or None,
@@ -116,8 +132,9 @@ class AgentControlService:
             task_type=adaptive_stage,
             payload=payload or {},
             priority=priority,
-            candidate_id=candidate_id,
-            metadata={**(metadata or {}), "adaptive_stage": adaptive_stage},
+            application_id=resolved_application_id,
+            candidate_id=resolved_candidate_id,
+            metadata={**(metadata or {}), "adaptive_stage": adaptive_stage, "application_id": resolved_application_id},
         )
         if self.session_factory is not None:
             with self.session_factory() as session:
@@ -202,7 +219,7 @@ class AgentControlService:
             funnel_status_ids = self._autonomy_funnel_status_ids(state_machine)
             if not funnel_status_ids:
                 return None
-            candidate_count = CandidateRepository(session).count_by_current_statuses(funnel_status_ids)
+            candidate_count = CandidateApplicationRepository(session).count_by_current_statuses(funnel_status_ids)
             if candidate_count >= minimum_candidates:
                 return None
             if TaskQueueRepository(session).has_open_task_types(["candidate_discovery"]):
@@ -263,9 +280,9 @@ class AgentControlService:
             return None
 
         selection = None
-        selected_candidate_id = ""
+        selected_application_id = ""
         selected_status = ""
-        candidate_name = ""
+        application_name = ""
         with self.session_factory() as session:
             queue_repo = TaskQueueRepository(session)
             state_machine = ensure_latest_state_machine(session)
@@ -275,44 +292,47 @@ class AgentControlService:
                 for node in nodes
                 if str(node.get("id") or "").strip()
             }
-            open_candidate_ids = queue_repo.open_candidate_ids_for_task_types(self._autonomy_candidate_progression_task_types())
+            open_application_ids = queue_repo.open_candidate_ids_for_task_types(self._autonomy_candidate_progression_task_types())
             targets: list[CandidateProgressionTarget] = []
-            candidate_names: dict[str, str] = {}
-            for candidate in CandidateRepository(session).list(limit=500):
-                current_status = resolve_candidate_current_status(candidate)
+            application_names: dict[str, str] = {}
+            application_repo = CandidateApplicationRepository(session)
+            candidate_repo = CandidateRepository(session)
+            for application in application_repo.list(limit=500):
+                current_status = str(application.current_status or "").strip()
                 node = node_by_id.get(current_status)
                 if node is None:
                     continue
                 execution_config = dict(node.get("executionConfig") or {})
-                candidate_names[candidate.id] = str(getattr(candidate, "name", "") or "")
+                person = candidate_repo.resolve(application.person_id)
+                application_names[application.id] = str(getattr(person, "name", "") or "")
                 targets.append(
                     CandidateProgressionTarget(
-                        candidate_id=candidate.id,
+                        candidate_id=application.id,
                         current_status=current_status,
                         node_id=str(node.get("id") or current_status),
                         node_label=str(node.get("label") or current_status),
                         phase=str(node.get("phase") or ""),
                         default_waiting_party=str(node.get("defaultWaitingParty") or ""),
                         sort_order=int(node.get("sortOrder") or node.get("sort_order") or 0),
-                        ai_scores=dict(getattr(candidate, "ai_scores", None) or {}),
+                        ai_scores=dict(getattr(application, "ai_scores", None) or {}),
                         is_terminal=bool(node.get("isTerminal")),
                         is_soft_terminal=bool(node.get("isSoftTerminal")),
                         is_transient=bool(node.get("isTransient")),
                         effective_execution_mode=str(execution_config.get("mode") or "none").strip() or "none",
                         locked=bool(execution_config.get("locked")),
-                        created_at=getattr(candidate, "created_at", None),
-                        updated_at=getattr(candidate, "updated_at", None),
-                        last_contacted_at=getattr(candidate, "last_contacted_at", None),
-                        cooldown_until=getattr(candidate, "cooldown_until", None),
-                        has_open_task=candidate.id in open_candidate_ids,
+                        created_at=getattr(application, "created_at", None),
+                        updated_at=getattr(application, "updated_at", None),
+                        last_contacted_at=getattr(application, "last_contacted_at", None),
+                        cooldown_until=getattr(application, "cooldown_until", None),
+                        has_open_task=application.id in open_application_ids,
                     )
                 )
             selection = select_next_candidate_progression(targets)
             if selection is None:
                 return None
-            selected_candidate_id = selection.candidate_id
+            selected_application_id = selection.candidate_id
             selected_status = selection.current_status
-            candidate_name = candidate_names.get(selection.candidate_id, "")
+            application_name = application_names.get(selection.candidate_id, "")
 
         if selection is None:
             return None
@@ -323,13 +343,14 @@ class AgentControlService:
         task = TaskEnvelope(
             task_id=uuid4().hex,
             task_type=task_type,
-            candidate_id=selected_candidate_id,
+            application_id=selected_application_id,
             priority=priority,
             payload={
                 "autonomy_source": "candidate_priority_queue",
                 "current_status": selected_status,
                 "selection": {
                     "candidateId": selection.candidate_id,
+                    "applicationId": selection.candidate_id,
                     "selectedTaskType": selection.selected_task_type,
                     "scoreBreakdown": score_breakdown,
                     "reason": selection.reason,
@@ -354,7 +375,7 @@ class AgentControlService:
                 "autonomy",
                 "Candidate priority scheduling skipped because required capabilities are unavailable.",
                 missing_capabilities=missing_capabilities,
-                candidate_id=selected_candidate_id,
+                application_id=selected_application_id,
                 task_type=task_type,
                 reason=selection.reason,
             )
@@ -362,7 +383,7 @@ class AgentControlService:
 
         queued_task = self.enqueue_task(
             task_type,
-            candidate_id=selected_candidate_id,
+            application_id=selected_application_id,
             payload=dict(task.payload),
             metadata=dict(task.metadata),
             priority=priority,
@@ -372,8 +393,8 @@ class AgentControlService:
             "info",
             "autonomy",
             "Queued priority candidate progression task.",
-            candidate_id=selected_candidate_id,
-            candidate_name=candidate_name,
+            application_id=selected_application_id,
+            candidate_name=application_name,
             task_type=task_type,
             priority=priority,
             candidate_priority_score=round(float(selection.score_breakdown.total), 4),
@@ -395,6 +416,7 @@ class AgentControlService:
         selected_policy: dict[str, int] | None = None
         with self.session_factory() as session:
             queue_repo = TaskQueueRepository(session)
+            application_repo = CandidateApplicationRepository(session)
             candidate_repo = CandidateRepository(session)
             state_machine = ensure_latest_state_machine(session)
             nodes = list(state_machine.get("nodes") or [])
@@ -415,24 +437,25 @@ class AgentControlService:
             if not waiting_status_ids:
                 return None
 
-            open_candidate_ids = queue_repo.open_candidate_ids_for_task_types(self._autonomy_candidate_progression_task_types())
+            open_application_ids = queue_repo.open_candidate_ids_for_task_types(self._autonomy_candidate_progression_task_types())
             targets: list[CandidateWaitingRetryTarget] = []
             candidate_names: dict[str, str] = {}
-            for candidate in candidate_repo.by_current_statuses(waiting_status_ids, limit=500):
-                current_status = resolve_candidate_current_status(candidate)
+            for application in application_repo.by_current_statuses(waiting_status_ids, limit=500):
+                current_status = str(application.current_status or "").strip()
                 node = node_by_id.get(current_status)
                 retry_policy = self._state_machine_retry_policy(node)
                 if node is None or retry_policy is None:
                     continue
-                candidate_names[candidate.id] = str(getattr(candidate, "name", "") or "")
-                retry_state = self._candidate_retry_state(candidate, current_status=current_status)
+                person = candidate_repo.resolve(application.person_id)
+                candidate_names[application.id] = str(getattr(person, "name", "") or "")
+                retry_state = self._candidate_retry_state(application, current_status=current_status)
                 try:
                     retry_count = max(int(retry_state.get("retry_count") or 0), 0)
                 except (TypeError, ValueError):
                     retry_count = 0
                 targets.append(
                     CandidateWaitingRetryTarget(
-                        candidate_id=candidate.id,
+                        candidate_id=application.id,
                         current_status=current_status,
                         node_id=str(node.get("id") or current_status),
                         node_label=str(node.get("label") or current_status),
@@ -445,10 +468,10 @@ class AgentControlService:
                         is_terminal=bool(node.get("isTerminal")),
                         is_soft_terminal=bool(node.get("isSoftTerminal")),
                         is_transient=bool(node.get("isTransient")),
-                        has_open_task=candidate.id in open_candidate_ids,
-                        created_at=getattr(candidate, "created_at", None),
-                        updated_at=getattr(candidate, "updated_at", None),
-                        last_contacted_at=getattr(candidate, "last_contacted_at", None),
+                        has_open_task=application.id in open_application_ids,
+                        created_at=getattr(application, "created_at", None),
+                        updated_at=getattr(application, "updated_at", None),
+                        last_contacted_at=getattr(application, "last_contacted_at", None),
                     )
                 )
 
@@ -459,12 +482,16 @@ class AgentControlService:
             selected_candidate_name = candidate_names.get(selected_action.candidate_id, "")
             selected_policy = self._state_machine_retry_policy(node_by_id.get(selected_action.current_status))
             if selected_action.action_kind == "close":
-                candidate = candidate_repo.resolve(selected_action.candidate_id)
+                application = application_repo.get(selected_action.candidate_id)
+                if application is None:
+                    return None
+                candidate = candidate_repo.resolve(application.person_id)
                 if candidate is None:
                     return None
                 transition_result = transition_candidate(
                     session,
                     candidate=candidate,
+                    application=application,
                     payload=CandidateStateTransitionRequest(
                         to_status="no_response",
                         note="超过重试上限且在配置时限内仍未收到回复，自动关闭为无回复。",
@@ -482,17 +509,18 @@ class AgentControlService:
                     ),
                 )
                 candidate = candidate_repo.resolve(transition_result.candidate_id) or candidate
+                application = application_repo.get(selected_action.candidate_id) or application
                 self._set_candidate_retry_state(
-                    candidate,
+                    application,
                     status="no_response",
                     retry_count=selected_action.current_retry_count,
-                    last_outbound_at=getattr(candidate, "last_contacted_at", None),
+                    last_outbound_at=getattr(application, "last_contacted_at", None),
                     policy=selected_policy,
                     closed_at=utcnow(),
                     close_reason="retry_policy_timeout",
                 )
                 session.commit()
-                session.refresh(candidate)
+                session.refresh(application)
 
         if selected_action is None:
             return None
@@ -503,7 +531,7 @@ class AgentControlService:
                 "info",
                 "autonomy",
                 "Closed waiting candidate into no_response after retry policy exhaustion.",
-                candidate_id=selected_action.candidate_id,
+                application_id=selected_action.candidate_id,
                 candidate_name=selected_candidate_name,
                 current_status=selected_action.current_status,
                 reason=selected_action.reason,
@@ -512,7 +540,7 @@ class AgentControlService:
             )
             return {
                 "action": "close_to_no_response",
-                "candidate_id": selected_action.candidate_id,
+                "application_id": selected_action.candidate_id,
                 "current_status": selected_action.current_status,
                 "reason": selected_action.reason,
             }
@@ -544,7 +572,7 @@ class AgentControlService:
         }
         queued_task = self.enqueue_task(
             task_type,
-            candidate_id=selected_action.candidate_id,
+            application_id=selected_action.candidate_id,
             payload=retry_payload,
             metadata=retry_metadata,
             priority=priority,
@@ -554,7 +582,7 @@ class AgentControlService:
             "info",
             "autonomy",
             "Queued waiting candidate retry task.",
-            candidate_id=selected_action.candidate_id,
+            application_id=selected_action.candidate_id,
             candidate_name=selected_candidate_name,
             task_type=task_type,
             current_status=selected_action.current_status,
@@ -641,6 +669,7 @@ class AgentControlService:
         *,
         task: TaskEnvelope,
         candidate: Any,
+        application: Any | None = None,
         to_status: str,
         stage_key: str | None = None,
         stage_label: str | None = None,
@@ -651,6 +680,10 @@ class AgentControlService:
         contact_channels: list[str] | None = None,
         interview_round: int | None = None,
     ):
+        if application is None:
+            application_id = str(task.application_id or task.metadata.get("application_id") or task.candidate_id or "").strip()
+            if application_id:
+                application = CandidateApplicationRepository(session).get(application_id)
         criteria_ref = dict(task.metadata.get("state_machine_criteria_ref") or {})
         trigger_fallback = str(task.task_type or self._adaptive_stage_for_task(task) or "").strip() or "agent_transition"
         transition_metadata = {
@@ -676,7 +709,7 @@ class AgentControlService:
             interview_round=interview_round,
             contact_channels=contact_channels,
         )
-        transition_result = transition_candidate(session, candidate=candidate, payload=payload)
+        transition_result = transition_candidate(session, candidate=candidate, application=application, payload=payload)
         matched_transition = dict(transition_result.matched_transition or {})
         transition_record = transition_result.transition_record
         transition_record.trigger = str(
@@ -1614,6 +1647,7 @@ class AgentControlService:
     def _build_platform_context(self, task: TaskEnvelope) -> dict[str, Any]:
         return {
             "platform": task.platform,
+            "application_id": task.application_id,
             "candidate_id": task.candidate_id,
             "requires_real_environment": True,
         }
@@ -1624,17 +1658,21 @@ class AgentControlService:
         *,
         state_machine: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        if self.session_factory is None or not task.candidate_id:
+        application_id = str(task.application_id or task.payload.get("application_id") or task.metadata.get("application_id") or "").strip()
+        if self.session_factory is None or (not application_id and not task.candidate_id):
             return {}
 
         with self.session_factory() as session:
+            application = CandidateApplicationRepository(session).get(application_id) if application_id else None
             candidate_repo = CandidateRepository(session)
-            candidate = candidate_repo.resolve(task.candidate_id)
+            candidate = candidate_repo.resolve(task.candidate_id) if task.candidate_id else None
+            if candidate is None and application is not None:
+                candidate = candidate_repo.resolve(application.person_id)
             if candidate is None:
                 return {}
 
             state_machine_snapshot = dict(state_machine or self._load_state_machine_snapshot() or {})
-            current_status = resolve_candidate_current_status(candidate)
+            current_status = str(application.current_status if application is not None else resolve_candidate_current_status(candidate))
             current_node = self._state_machine_node(state_machine_snapshot, current_status)
             execution_config = dict((current_node or {}).get("executionConfig") or {})
             execution_mode = str(execution_config.get("mode") or "").strip() or None
@@ -1646,16 +1684,28 @@ class AgentControlService:
                 if isinstance(action, dict)
             ]
 
-            session_repo = CandidateSessionRepository(session)
-            candidate_session = session_repo.get_or_create(
-                candidate.id,
-                defaults={
-                    "status": "active",
-                    "context_summary": candidate.ai_reasoning or f"{candidate.name} is currently in {current_status}.",
-                    "facts": {},
-                    "recent_messages": [],
-                    "last_active_at": utcnow(),
-                },
+            candidate_session = (
+                ApplicationSessionRepository(session).get_or_create(
+                    application.id,
+                    defaults={
+                        "status": "active",
+                        "context_summary": candidate.ai_reasoning or f"{candidate.name} is currently in {current_status}.",
+                        "facts": {},
+                        "recent_messages": [],
+                        "last_active_at": utcnow(),
+                    },
+                )
+                if application is not None
+                else CandidateSessionRepository(session).get_or_create(
+                    candidate.id,
+                    defaults={
+                        "status": "active",
+                        "context_summary": candidate.ai_reasoning or f"{candidate.name} is currently in {current_status}.",
+                        "facts": {},
+                        "recent_messages": [],
+                        "last_active_at": utcnow(),
+                    },
+                )
             )
             candidate_session.last_active_at = utcnow()
 
@@ -1663,6 +1713,7 @@ class AgentControlService:
             adaptive_stage = self._adaptive_stage_for_task(task)
             facts.update(
                 {
+                    "application_id": application.id if application is not None else application_id or candidate.id,
                     "candidate_status": current_status,
                     "current_status": current_status,
                     "goal_spec_id": str(task.metadata.get("goal_spec_id") or task.payload.get("goal_id") or "") or None,
@@ -1684,13 +1735,14 @@ class AgentControlService:
             return {
                 "candidate": {
                     "id": candidate.id,
+                    "application_id": application.id if application is not None else application_id or candidate.id,
                     "platform_candidate_id": candidate.platform_candidate_id,
                     "name": candidate.name,
                     "platform": candidate.platform,
                     "current_status": current_status,
-                    "current_stage_key": candidate.current_stage_key,
-                    "deepest_milestone": candidate.deepest_milestone,
-                    "jd_id": candidate.jd_id,
+                    "current_stage_key": application.current_stage_key if application is not None else candidate.current_stage_key,
+                    "deepest_milestone": application.deepest_milestone if application is not None else candidate.deepest_milestone,
+                    "job_description_id": application.job_description_id if application is not None else candidate.job_description_id,
                     "contact_info": dict(candidate.contact_info or {}),
                     "resume_path": candidate.resume_path,
                     "online_resume_text": candidate.online_resume_text,
@@ -1779,12 +1831,22 @@ class AgentControlService:
 
         try:
             with self.session_factory() as session:
+                application_id = str(
+                    task.application_id
+                    or task.payload.get("application_id")
+                    or task.metadata.get("application_id")
+                    or task.candidate_id
+                    or ""
+                ).strip()
+                application = CandidateApplicationRepository(session).get(application_id) if application_id else None
                 candidate_repo = CandidateRepository(session)
                 session_repo = CandidateSessionRepository(session)
                 decision_repo = DecisionLogRepository(session)
                 communication_repo = CommunicationLogRepository(session)
 
                 candidate = candidate_repo.resolve(task.candidate_id) if task.candidate_id else None
+                if candidate is None and application is not None:
+                    candidate = candidate_repo.resolve(application.person_id)
                 candidate_session = None
                 adaptive_stage = self._adaptive_stage_for_task(task)
                 learning_stage = adaptive_stage == "strategy_distill"
@@ -1807,6 +1869,9 @@ class AgentControlService:
                     if not learning_stage:
                         candidate.current_stage_key = adaptive_stage
                         candidate.ai_reasoning = result.content or candidate.ai_reasoning
+                        if application is not None:
+                            application.current_stage_key = adaptive_stage
+                            application.ai_reasoning = result.content or application.ai_reasoning
 
                     facts = dict(candidate_session.facts or {})
                     if learning_stage:
@@ -1858,6 +1923,9 @@ class AgentControlService:
                     )
                     if task.task_type == "candidate_scoring" and isinstance(result.data, dict) and result.success:
                         candidate.ai_scores = dict(result.data)
+                        if application is not None:
+                            application.ai_scores = dict(result.data)
+                            application.ai_reasoning = result.content or application.ai_reasoning
                         self._append_progression_action(
                             result,
                             {
@@ -1996,6 +2064,7 @@ class AgentControlService:
 
         candidate_repo = CandidateRepository(session)
         session_repo = CandidateSessionRepository(session)
+        application_repo = CandidateApplicationRepository(session)
         resume_repo = ResumeArtifactRepository(session)
         persisted_ids: list[str] = []
         goal_spec_id = str(task.metadata.get("goal_spec_id") or task.payload.get("goal_id") or "").strip() or None
@@ -2017,6 +2086,11 @@ class AgentControlService:
                     normalized["platform"],
                     normalized["platform_candidate_id"],
                 )
+            if existing is None:
+                existing = resolve_candidate_by_contact_info(
+                    session,
+                    contact_info=normalized.get("contact_info"),
+                )
             if existing is None and normalized.get("name"):
                 for item in candidate_repo.list(limit=200, offset=0):
                     if item.platform == normalized["platform"] and item.name == normalized["name"]:
@@ -2035,7 +2109,7 @@ class AgentControlService:
                         "current_status": "discovered",
                         "current_stage_key": "discovered",
                         "deepest_milestone": initial_milestone,
-                        "jd_id": normalized.get("jd_id"),
+                        "job_description_id": normalized.get("job_description_id") or normalized.get("jd_id"),
                         "contact_info": normalized["contact_info"],
                         "state_snapshot": default_candidate_state_snapshot(status="discovered"),
                         "resume_path": normalized.get("resume_path"),
@@ -2051,7 +2125,11 @@ class AgentControlService:
                 existing.name = normalized["name"] or existing.name
                 existing.platform = normalized["platform"] or existing.platform
                 existing.platform_candidate_id = normalized.get("platform_candidate_id") or existing.platform_candidate_id
-                existing.jd_id = normalized.get("jd_id") or existing.jd_id
+                existing.job_description_id = (
+                    normalized.get("job_description_id")
+                    or normalized.get("jd_id")
+                    or existing.job_description_id
+                )
                 existing.contact_info = merged_contact
                 existing.resume_path = normalized.get("resume_path") or existing.resume_path
                 existing.online_resume_text = normalized.get("online_resume_text") or existing.online_resume_text
@@ -2062,6 +2140,45 @@ class AgentControlService:
                         state_machine_snapshot,
                         resolve_candidate_current_status(existing),
                     )
+                session.flush()
+
+            resolved_job_description_id = (
+                normalized.get("job_description_id")
+                or normalized.get("jd_id")
+                or existing.job_description_id
+            )
+            application = None
+            explicit_application_id = str(task.application_id or task.metadata.get("application_id") or "").strip() or None
+            if explicit_application_id is not None:
+                application = application_repo.get(explicit_application_id)
+            if application is None and resolved_job_description_id:
+                application_window = make_application_window(existing.id, resolved_job_description_id)
+                application = application_repo.by_application_window(application_window)
+            if application is None and resolved_job_description_id:
+                application = application_repo.create(
+                    {
+                        "person_id": existing.id,
+                        "job_description_id": resolved_job_description_id,
+                        "platform": normalized["platform"],
+                        "platform_application_id": normalized.get("platform_application_id"),
+                        "current_status": "discovered",
+                        "current_stage_key": "discovered",
+                        "deepest_milestone": initial_milestone,
+                        "state_snapshot": default_candidate_state_snapshot(status="discovered"),
+                        "ai_scores": normalized.get("ai_scores", {}),
+                        "ai_reasoning": normalized.get("ai_reasoning"),
+                        "application_metadata": {
+                            "created_from": "discovery",
+                            "source_task_id": task.task_id,
+                            "source_task_type": task.task_type,
+                        },
+                    }
+                )
+            elif application is not None:
+                application.person_id = existing.id
+                application.platform = normalized["platform"] or application.platform
+                if resolved_job_description_id:
+                    application.job_description_id = resolved_job_description_id
                 session.flush()
 
             candidate_session = session_repo.get_or_create(
@@ -2092,17 +2209,20 @@ class AgentControlService:
                 session,
                 resume_repo=resume_repo,
                 candidate=existing,
+                application=application,
                 normalized=normalized,
                 task=task,
                 adaptive_stage=adaptive_stage,
             )
 
-            current_status = resolve_candidate_current_status(existing)
+            status_subject = application if application is not None else existing
+            current_status = resolve_candidate_current_status(status_subject)
             if target_status != current_status:
                 transition_result = self._agent_transition_candidate(
                     session,
                     task=task,
                     candidate=existing,
+                    application=application,
                     to_status=target_status,
                     stage_key=normalized["current_stage_key"],
                     stage_label=str((normalized["state_snapshot"] or {}).get("current_stage_label") or ""),
@@ -2116,6 +2236,8 @@ class AgentControlService:
                     },
                 )
                 existing = candidate_repo.resolve(transition_result.candidate_id) or existing
+                if application is not None:
+                    application = application_repo.get(application.id) or application
                 merged_snapshot = dict(existing.state_snapshot or {})
                 merged_snapshot["latest_note"] = normalized.get("ai_reasoning") or merged_snapshot.get("latest_note")
                 merged_metadata = dict(merged_snapshot.get("snapshot_metadata") or {})
@@ -2130,15 +2252,17 @@ class AgentControlService:
                 existing.state_snapshot = merged_snapshot
                 session.flush()
             else:
-                existing.current_status = target_status or existing.current_status
-                existing.current_stage_key = normalized["current_stage_key"] or existing.current_stage_key
-                existing.state_snapshot = normalized["state_snapshot"] or existing.state_snapshot
-                if created and not existing.deepest_milestone:
-                    existing.deepest_milestone = self._state_machine_milestone_for_status(state_machine_snapshot, target_status)
+                target_entity = application if application is not None else existing
+                target_entity.current_status = target_status or target_entity.current_status
+                target_entity.current_stage_key = normalized["current_stage_key"] or target_entity.current_stage_key
+                target_entity.state_snapshot = normalized["state_snapshot"] or target_entity.state_snapshot
+                if created and not target_entity.deepest_milestone:
+                    target_entity.deepest_milestone = self._state_machine_milestone_for_status(state_machine_snapshot, target_status)
                 session.flush()
 
-            if existing.id not in persisted_ids:
-                persisted_ids.append(existing.id)
+            persisted_subject_id = application.id if application is not None else existing.id
+            if persisted_subject_id not in persisted_ids:
+                persisted_ids.append(persisted_subject_id)
 
         session.commit()
         return persisted_ids
@@ -2149,6 +2273,7 @@ class AgentControlService:
         *,
         resume_repo: ResumeArtifactRepository,
         candidate,
+        application,
         normalized: dict[str, Any],
         task: TaskEnvelope,
         adaptive_stage: str,
@@ -2183,7 +2308,10 @@ class AgentControlService:
             file_name = Path(source_resume_path).name or None
             local_resume_path = source_resume_path
 
-        existing_artifacts = resume_repo.by_candidate(candidate.id, limit=20, offset=0)
+        application_id = str(getattr(application, "id", None) or task.application_id or task.metadata.get("application_id") or "").strip() or None
+        if application_id is None:
+            return
+        existing_artifacts = resume_repo.by_application(application_id, limit=20, offset=0)
         for existing in existing_artifacts:
             existing_path = str(existing.file_path or "").strip()
             existing_text = str(existing.extracted_text or "").strip()
@@ -2206,7 +2334,7 @@ class AgentControlService:
 
         resume_repo.create(
             {
-                "candidate_id": candidate.id,
+                "application_id": application_id,
                 "source": normalized.get("platform") or candidate.platform or task.platform,
                 "artifact_type": "resume",
                 "file_name": file_name,
@@ -2525,7 +2653,12 @@ class AgentControlService:
             "platform_candidate_id": platform_candidate_id,
             "status": status,
             "current_stage_key": current_stage_key,
-            "jd_id": payload.get("jd_id") or task.payload.get("jd_id"),
+            "job_description_id": (
+                payload.get("job_description_id")
+                or payload.get("jd_id")
+                or task.payload.get("job_description_id")
+                or task.payload.get("jd_id")
+            ),
             "contact_info": normalized_contact,
             "state_snapshot": state_snapshot,
             "resume_path": payload.get("resume_path"),
@@ -2824,6 +2957,7 @@ class AgentControlService:
 
         try:
             with self.session_factory() as session:
+                application_id, person_id, _application = self._task_subject_ids(session, task)
                 approval_repo = ApprovalRepository(session)
                 existing = (
                     session.query(ApprovalItem)
@@ -2861,7 +2995,8 @@ class AgentControlService:
                         "approval_id": approval.id,
                         "task_id": task.task_id,
                         "task_type": task.task_type,
-                        "candidate_id": task.candidate_id,
+                        "candidate_id": person_id,
+                        "application_id": application_id,
                         "blocked_task": payload.get("blocked_task"),
                     },
                     approval_id=approval.id,
@@ -2905,6 +3040,7 @@ class AgentControlService:
 
         try:
             with self.session_factory() as session:
+                application_id, person_id, _application = self._task_subject_ids(session, task)
                 approval = (
                     session.query(ApprovalItem)
                     .filter(
@@ -2929,7 +3065,8 @@ class AgentControlService:
                             "interaction_metadata": {
                                 **dict(existing.interaction_metadata or {}),
                                 "task_type": task.task_type,
-                                "candidate_id": task.candidate_id,
+                                "candidate_id": person_id,
+                                "application_id": application_id,
                                 "execution_mode": execution_mode or None,
                                 "current_status": task.metadata.get("state_machine_current_status"),
                                 "state_machine_version": task.metadata.get("state_machine_version"),
@@ -2946,8 +3083,8 @@ class AgentControlService:
                         "checkpoint_id": checkpoint.id if checkpoint is not None else None,
                         "approval_id": approval.id,
                         "goal_spec_id": str(task.metadata.get("goal_spec_id") or task.payload.get("goal_id") or "") or None,
-                        "candidate_id": task.candidate_id,
-                        "lane": str(task.metadata.get("lane") or ("candidate" if task.candidate_id else "agent")),
+                        "candidate_id": person_id,
+                        "lane": str(task.metadata.get("lane") or ("candidate" if person_id or application_id else "agent")),
                         "interaction_type": "confirm",
                         "status": "pending",
                         "title": approval.title,
@@ -2958,7 +3095,8 @@ class AgentControlService:
                             "task_id": task.task_id,
                             "task_type": task.task_type,
                             "approval_id": approval.id,
-                            "candidate_id": task.candidate_id,
+                            "candidate_id": person_id,
+                            "application_id": application_id,
                             "execution_mode": execution_mode or None,
                             "current_status": task.metadata.get("state_machine_current_status"),
                             "state_machine_version": task.metadata.get("state_machine_version"),
@@ -2991,6 +3129,7 @@ class AgentControlService:
                 session_id = str(task.metadata.get("agent_session_id") or "").strip()
                 goal_spec_id = str(task.metadata.get("goal_spec_id") or task.payload.get("goal_id") or "").strip() or None
                 run = AgentRunRepository(session).get(run_id) if run_id else None
+                application_id, person_id, _application = self._task_subject_ids(session, task, run=run)
                 goal = GoalSpecRepository(session).get(goal_spec_id) if goal_spec_id else None
 
                 title = goal.title if goal is not None else self._humanize_task_label(self._adaptive_stage_for_task(task))
@@ -3023,7 +3162,8 @@ class AgentControlService:
                     "attempt": {
                         "task_type": task.task_type,
                         "lane": str(run.lane if run is not None else task.metadata.get("lane") or "agent"),
-                        "candidate_id": task.candidate_id,
+                        "candidate_id": person_id,
+                        "application_id": application_id,
                     },
                     "signals": list((context_manifest or {}).get("selected_fragments") or []),
                     "blocked": result.status in {"waiting_human", "waiting_candidate", "blocked"},
@@ -3044,7 +3184,7 @@ class AgentControlService:
                     "session_id": session_id or (run.session_id if run is not None else ""),
                     "run_id": run_id or None,
                     "goal_spec_id": goal_spec_id,
-                    "candidate_id": task.candidate_id,
+                    "candidate_id": person_id,
                     "lane": str(run.lane if run is not None else task.metadata.get("lane") or "agent"),
                     "trace_kind": "adaptive_run",
                     "status": "blocked" if result.status in {"waiting_human", "blocked"} else ("completed" if result.success else result.status),
@@ -3056,6 +3196,8 @@ class AgentControlService:
                     "trace_metadata": {
                         "task_id": task.task_id,
                         "task_type": task.task_type,
+                        "application_id": application_id,
+                        "person_id": person_id,
                     },
                     "started_at": run.started_at if run is not None else None,
                     "finished_at": run.finished_at if run is not None else None,
@@ -3067,7 +3209,13 @@ class AgentControlService:
 
                 graph_repo = ExecutionGraphProjectionRepository(session)
                 existing_graph = graph_repo.by_run(run_id) if run_id else None
-                graph_payload = self._build_graph_projection_payload(task=task, goal=goal, result=result)
+                graph_payload = self._build_graph_projection_payload(
+                    task=task,
+                    goal=goal,
+                    result=result,
+                    person_id=person_id,
+                    application_id=application_id,
+                )
                 graph_payload = _json_ready(graph_payload)
                 if existing_graph is not None:
                     graph_repo.update(existing_graph, graph_payload)
@@ -3088,9 +3236,9 @@ class AgentControlService:
                         "agent_profile_id": agent_profile_id,
                         "goal_spec_id": goal_spec_id,
                         "run_id": run_id or None,
-                        "candidate_id": task.candidate_id,
-                        "jd_id": getattr(run, "jd_id", None),
-                        "scope": "candidate" if task.candidate_id else "agent",
+                        "candidate_id": person_id,
+                        "job_description_id": getattr(run, "job_description_id", None),
+                        "scope": "candidate" if person_id or application_id else "agent",
                         "fragment_kind": "adaptive_strategy",
                         "title": f"{title} · {self._humanize_task_label(task.task_type)}",
                         "summary": self._strategy_fragment_summary(task=task, result=result),
@@ -3098,12 +3246,15 @@ class AgentControlService:
                             "suggested_path": self._next_step_hint(result.status),
                             "task_type": task.task_type,
                             "result_status": result.status,
-                            "candidate_id": task.candidate_id,
+                            "candidate_id": person_id,
+                            "application_id": application_id,
                         },
                         "evidence": {
                             "run_id": run_id or None,
                             "goal_spec_id": goal_spec_id,
                             "result_status": result.status,
+                            "application_id": application_id,
+                            "person_id": person_id,
                         },
                         "status": "draft" if not result.success else "active",
                         "fragment_metadata": {
@@ -3162,14 +3313,15 @@ class AgentControlService:
                 run_id = str(task.metadata.get("agent_run_id") or "").strip()
                 session_id = str(task.metadata.get("agent_session_id") or "").strip()
                 goal_spec_id = str(task.metadata.get("goal_spec_id") or task.payload.get("goal_id") or "").strip() or None
+                application_id, person_id, _application = self._task_subject_ids(session, task)
                 trace_repo = ExecutionTraceRepository(session)
                 existing = trace_repo.by_run(run_id) if run_id else None
                 payload = {
                     "session_id": session_id,
                     "run_id": run_id or None,
                     "goal_spec_id": goal_spec_id,
-                    "candidate_id": task.candidate_id,
-                    "lane": str(task.metadata.get("lane") or ("candidate" if task.candidate_id else "agent")),
+                    "candidate_id": person_id,
+                    "lane": str(task.metadata.get("lane") or ("candidate" if person_id or application_id else "agent")),
                     "trace_kind": "adaptive_run",
                     "status": "failed",
                     "title": self._humanize_task_label(self._adaptive_stage_for_task(task)),
@@ -3182,9 +3334,16 @@ class AgentControlService:
                     "distilled_trace": {
                         "goal": str(task.payload.get("goal_text") or self._adaptive_stage_for_task(task)),
                         "failure": error,
+                        "application_id": application_id,
+                        "candidate_id": person_id,
                     },
                     "outcome": {"status": "failed", "success": False},
-                    "trace_metadata": {"task_id": task.task_id, "task_type": task.task_type},
+                    "trace_metadata": {
+                        "task_id": task.task_id,
+                        "task_type": task.task_type,
+                        "application_id": application_id,
+                        "person_id": person_id,
+                    },
                 }
                 payload = _json_ready(payload)
                 if existing is not None:
@@ -3207,7 +3366,7 @@ class AgentControlService:
 
     def _build_operator_prompt(self, task: TaskEnvelope, result: AgentResult) -> str:
         task_label = self._humanize_task_label(task.task_type)
-        if task.candidate_id:
+        if task.application_id or task.candidate_id:
             return f"{task_label} 在候选人上下文中暂停了。当前问题：{result.content or '需要你确认下一步处理方式。'}"
         return f"{task_label} 暂时无法继续。当前问题：{result.content or '需要你确认下一步处理方式。'}"
 
@@ -3266,7 +3425,7 @@ class AgentControlService:
                 "description": "把这次经验记录为后续策略输入。",
             },
         ]
-        if task.candidate_id:
+        if task.application_id or task.candidate_id:
             options.append(
                 {
                     "id": "handoff",
@@ -3286,7 +3445,44 @@ class AgentControlService:
             )
         return options
 
-    def _build_graph_projection_payload(self, *, task: TaskEnvelope, goal, result: AgentResult) -> dict[str, Any]:
+    def _task_subject_ids(
+        self,
+        session: Session | None,
+        task: TaskEnvelope,
+        *,
+        run: Any | None = None,
+    ) -> tuple[str | None, str | None, Any | None]:
+        application_id = str(
+            task.application_id
+            or task.metadata.get("application_id")
+            or task.payload.get("application_id")
+            or task.payload.get("applicationId")
+            or ""
+        ).strip() or None
+        person_id = str(
+            task.metadata.get("person_id")
+            or getattr(run, "candidate_id", None)
+            or (
+                task.candidate_id
+                if str(task.candidate_id or "").strip() and str(task.candidate_id or "").strip() != str(application_id or "")
+                else ""
+            )
+            or ""
+        ).strip() or None
+        application = CandidateApplicationRepository(session).get(application_id) if session is not None and application_id else None
+        if person_id is None and application is not None:
+            person_id = str(application.person_id or "").strip() or None
+        return application_id, person_id, application
+
+    def _build_graph_projection_payload(
+        self,
+        *,
+        task: TaskEnvelope,
+        goal,
+        result: AgentResult,
+        person_id: str | None,
+        application_id: str | None,
+    ) -> dict[str, Any]:
         title = goal.title if goal is not None else self._humanize_task_label(task.task_type)
         blocked = result.status in {"waiting_human", "blocked"}
         stage_label = self._humanize_task_label(self._adaptive_stage_for_task(task))
@@ -3316,7 +3512,7 @@ class AgentControlService:
         return {
             "goal_spec_id": goal.id if goal is not None else str(task.metadata.get("goal_spec_id") or task.payload.get("goal_id") or "") or None,
             "run_id": str(task.metadata.get("agent_run_id") or "") or None,
-            "candidate_id": task.candidate_id,
+            "candidate_id": person_id,
             "graph_kind": "execution_projection",
             "title": title,
             "summary": result.content or f"{title} 当前状态为 {result.status}。",
@@ -3326,6 +3522,8 @@ class AgentControlService:
             "graph_metadata": {
                 "result_status": result.status,
                 "task_type": task.task_type,
+                "application_id": application_id,
+                "person_id": person_id,
             },
         }
 
@@ -3395,16 +3593,28 @@ class AgentControlService:
             }
         )
         candidate_ids = self._goal_candidate_ids_for_evaluation(task=task, result=result)
+        application_repo = CandidateApplicationRepository(session)
         candidate_repo = CandidateRepository(session)
         resume_repo = ResumeArtifactRepository(session)
-        candidate_records = [
+        application_records = [
             item
             for item in (
-                candidate_repo.resolve(candidate_id)
+                application_repo.get(candidate_id)
                 for candidate_id in candidate_ids
             )
             if item is not None
         ]
+        candidate_records = []
+        for application in application_records:
+            candidate = candidate_repo.resolve(application.person_id)
+            if candidate is not None:
+                candidate_records.append((application, candidate))
+        for candidate_id in candidate_ids:
+            if any(application.id == candidate_id for application, _candidate in candidate_records):
+                continue
+            candidate = candidate_repo.resolve(candidate_id)
+            if candidate is not None:
+                candidate_records.append((None, candidate))
         local_resume_paths: list[str] = []
         matching_resume_paths: list[str] = []
         has_resume_or_profile = False
@@ -3421,11 +3631,16 @@ class AgentControlService:
             if required_resume_extensions and suffix in required_resume_extensions and text not in matching_resume_paths:
                 matching_resume_paths.append(text)
 
-        for candidate in candidate_records:
+        for application, candidate in candidate_records:
             if str(candidate.resume_path or "").strip() or str(candidate.online_resume_text or "").strip():
                 has_resume_or_profile = True
             _remember_local_path(candidate.resume_path)
-            for artifact in resume_repo.by_candidate(candidate.id, limit=50, offset=0):
+            artifacts = (
+                resume_repo.by_application(application.id, limit=50, offset=0)
+                if application is not None
+                else []
+            )
+            for artifact in artifacts:
                 if str(artifact.file_path or "").strip() or str(artifact.extracted_text or "").strip():
                     has_resume_or_profile = True
                 _remember_local_path(artifact.file_path)
@@ -3767,7 +3982,9 @@ class AgentControlService:
         candidate: Any,
         outbound_message: str,
     ):
-        current_status = resolve_candidate_current_status(candidate)
+        application_id, _person_id, application = self._task_subject_ids(session, task)
+        subject = application or candidate
+        current_status = resolve_candidate_current_status(subject)
         waiting_status = self._waiting_status_for_outbound_task(task=task, current_status=current_status)
         if waiting_status is None:
             return candidate
@@ -3782,7 +3999,7 @@ class AgentControlService:
         except (TypeError, ValueError):
             retry_count = 0
         if retry_count == 0:
-            retry_state = self._candidate_retry_state(candidate, current_status=waiting_status)
+            retry_state = self._candidate_retry_state(subject, current_status=waiting_status)
             try:
                 retry_count = max(int(retry_state.get("retry_count") or 0), 0)
             except (TypeError, ValueError):
@@ -3794,6 +4011,7 @@ class AgentControlService:
                     session,
                     task=task,
                     candidate=candidate,
+                    application=application,
                     to_status=waiting_status,
                     note=outbound_message,
                     trigger="retry_policy_retry" if retry_count > 0 else None,
@@ -3803,13 +4021,18 @@ class AgentControlService:
                     },
                 )
                 candidate = CandidateRepository(session).resolve(transition_result.candidate_id) or candidate
+                if application_id:
+                    application = CandidateApplicationRepository(session).get(application_id) or application
+                    subject = application or candidate
             except StateMachineValidationError:
                 return candidate
 
         contacted_at = utcnow()
         candidate.last_contacted_at = contacted_at
+        if application is not None:
+            application.last_contacted_at = contacted_at
         self._set_candidate_retry_state(
-            candidate,
+            subject,
             status=waiting_status,
             retry_count=retry_count,
             last_outbound_at=contacted_at,
@@ -3844,6 +4067,7 @@ class AgentControlService:
             "priority": task.priority,
             "payload": dict(task.payload or {}),
             "metadata": dict(task.metadata or {}),
+            "application_id": task.application_id,
             "candidate_id": task.candidate_id,
             "platform": task.platform,
             "attempts": task.attempts,
@@ -3881,7 +4105,7 @@ class AgentControlService:
         return deduped
 
     def _should_persist_candidate_progression_evolution_artifact(self, task: TaskEnvelope, result: AgentResult) -> bool:
-        if self.session_factory is None or not task.candidate_id:
+        if self.session_factory is None or not (task.application_id or task.candidate_id):
             return False
         if not result.success:
             return False
@@ -3903,10 +4127,11 @@ class AgentControlService:
         ai_scores = dict(candidate.get("ai_scores") or {})
         selection = dict(task.payload.get("selection") or {})
         return {
-            "candidateId": candidate.get("id") or task.candidate_id,
+            "applicationId": candidate.get("application_id") or task.application_id or task.candidate_id,
+            "candidateId": candidate.get("id") or task.metadata.get("person_id") or task.candidate_id,
             "currentStatus": candidate.get("current_status"),
             "deepestMilestone": candidate.get("deepest_milestone"),
-            "jdId": candidate.get("jd_id"),
+            "jobDescriptionId": candidate.get("job_description_id") or candidate.get("jd_id"),
             "hasResume": bool(candidate.get("resume_path") or candidate.get("online_resume_text")),
             "hasContactInfo": bool(dict(candidate.get("contact_info") or {})),
             "aiScore": ai_scores.get("overall") or ai_scores.get("score"),
@@ -4029,7 +4254,8 @@ class AgentControlService:
                 "artifact_origin": "candidate_progression",
                 "source_task_id": task.task_id,
                 "source_task_type": task.task_type,
-                "candidate_id": task.candidate_id,
+                "application_id": task.application_id,
+                "candidate_id": task.metadata.get("person_id") or task.candidate_id,
                 "state_machine_version": task.metadata.get("state_machine_version"),
                 "criteria_ref": criteria_ref or None,
             },
@@ -4090,6 +4316,8 @@ class AgentControlService:
                 )
 
                 candidate = dict((session_context or {}).get("candidate") or {})
+                person_id = str(candidate.get("id") or task.metadata.get("person_id") or task.candidate_id or "").strip() or None
+                application_id = str(candidate.get("application_id") or task.application_id or "").strip() or None
                 candidate_name = str(candidate.get("name") or task.candidate_id or "candidate").strip()
                 title = f"{candidate_name} · {self._humanize_task_label(adaptive_stage)} 技能草案"
                 summary = str(result.data.get("summary") or result.content or "").strip() or "自动沉淀了一次候选人推进策略。"
@@ -4097,7 +4325,8 @@ class AgentControlService:
                     "source_task_id": task.task_id,
                     "task_type": task.task_type,
                     "adaptive_stage": adaptive_stage,
-                    "candidate_id": task.candidate_id,
+                    "application_id": application_id,
+                    "candidate_id": person_id,
                     "goal_spec_id": str(task.metadata.get("goal_spec_id") or task.payload.get("goal_id") or "").strip() or None,
                     "state_machine_version": task.metadata.get("state_machine_version"),
                     "promotion_fallback_platform": str((skill_context or {}).get("platform") or task.platform or "runtime-scene"),
@@ -4111,7 +4340,7 @@ class AgentControlService:
                         "title": title,
                         "summary": summary,
                         "status": "pending_review",
-                        "related_candidate_id": task.candidate_id,
+                        "related_candidate_id": person_id,
                         "related_skill_id": (skill_context or {}).get("id"),
                         "proposed_by": "runtime",
                         "artifact_body": artifact_body,
@@ -4126,7 +4355,7 @@ class AgentControlService:
                     "Captured candidate progression skill draft for review.",
                     artifact_id=item.id,
                     task_id=task.task_id,
-                    candidate_id=task.candidate_id,
+                    candidate_id=person_id,
                 )
         except Exception as exc:  # pragma: no cover - defensive guard
             result.metadata["candidate_progression_artifact_error"] = str(exc)
@@ -4135,7 +4364,7 @@ class AgentControlService:
                 "evolution",
                 "Failed to persist candidate progression skill draft artifact.",
                 task_id=task.task_id,
-                candidate_id=task.candidate_id,
+                candidate_id=task.metadata.get("person_id") or task.candidate_id,
                 error=str(exc),
             )
 
@@ -4186,6 +4415,7 @@ class AgentControlService:
                 payload=dict(snapshot.get("payload") or {}),
                 metadata=dict(snapshot.get("metadata") or {}),
                 priority=int(snapshot.get("priority", 100) or 100),
+                application_id=snapshot.get("application_id"),
                 candidate_id=snapshot.get("candidate_id"),
             )
             return True
@@ -4253,6 +4483,7 @@ class AgentControlService:
             TaskEnvelope(
                 task_id=f"{task.task_id}:{follow_up_stage}",
                 task_type=follow_up_stage,
+                application_id=task.application_id or task.candidate_id,
                 candidate_id=task.candidate_id,
                 priority=max(task.priority - 1, 1),
                 payload=payload,

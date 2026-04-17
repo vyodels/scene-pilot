@@ -1,9 +1,11 @@
 __all__ = [
     "agent",
     "approvals",
-    "candidates",
+    "candidate_applications",
+    "candidate_persons",
     "dashboard",
     "health",
+    "job_descriptions",
     "metrics",
     "runtime",
     "settings",

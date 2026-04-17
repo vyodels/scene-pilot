@@ -12,6 +12,7 @@ from scene_pilot.repositories import (
     AgentRuntimeEventRepository,
     AgentSessionRepository,
     AgentWorkItemRepository,
+    CandidateApplicationRepository,
     CandidateRepository,
     GoalSpecRepository,
     RecruitAgentProfileRepository,
@@ -42,9 +43,33 @@ class RuntimeControlService:
     def ensure_run_for_task(self, task: TaskEnvelope) -> dict[str, Any]:
         session_record = self._ensure_session()
         lane = self.resolve_lane(task)
-        candidate = CandidateRepository(self.session).resolve(task.candidate_id) if task.candidate_id else None
+        application_id = str(task.application_id or "").strip() or None
+        application = CandidateApplicationRepository(self.session).get(application_id) if application_id else None
+        candidate = (
+            CandidateRepository(self.session).resolve(task.candidate_id)
+            if task.candidate_id
+            else CandidateRepository(self.session).resolve(application.person_id)
+            if application is not None
+            else None
+        )
+        person_anchor_id = (
+            candidate.id
+            if candidate is not None
+            else application.person_id
+            if application is not None
+            else None
+        )
+        workflow_anchor_id = application_id or person_anchor_id
         adaptive_stage = self._adaptive_stage_for_task(task)
         task.metadata["adaptive_stage"] = adaptive_stage
+        if application_id:
+            task.application_id = application_id
+            task.metadata["application_id"] = application_id
+            task.payload.setdefault("application_id", application_id)
+        if application is not None:
+            task.metadata.setdefault("person_id", application.person_id)
+            if application.job_description_id:
+                task.metadata.setdefault("job_description_id", application.job_description_id)
         goal_spec_id = self._ensure_goal_for_task(
             task,
             agent_profile_id=session_record.agent_profile_id,
@@ -57,15 +82,21 @@ class RuntimeControlService:
         existing_run_id = str(task.metadata.get("agent_run_id") or "").strip()
         run = run_repo.get(existing_run_id) if existing_run_id else None
         reuse_existing_run = not bool(task.metadata.get("spawn_new_run"))
-        if run is None and candidate is not None and lane == "candidate" and reuse_existing_run:
-            run = run_repo.latest_open_for_candidate(session_id=session_record.id, candidate_id=candidate.id, lane=lane)
+        if run is None and person_anchor_id is not None and lane == "candidate" and reuse_existing_run:
+            run = run_repo.latest_open_for_candidate(session_id=session_record.id, candidate_id=person_anchor_id, lane=lane)
         if run is None:
             run = run_repo.create(
                 {
                     "session_id": session_record.id,
                     "goal_spec_id": goal_spec_id,
-                    "candidate_id": candidate.id if candidate is not None else None,
-                    "jd_id": candidate.jd_id if candidate is not None else None,
+                    "candidate_id": person_anchor_id,
+                    "job_description_id": (
+                        application.job_description_id
+                        if application is not None
+                        else candidate.job_description_id
+                        if candidate is not None
+                        else None
+                    ),
                     "platform": task.platform or (candidate.platform if candidate is not None else "site"),
                     "lane": lane,
                     "run_type": adaptive_stage,
@@ -76,6 +107,13 @@ class RuntimeControlService:
                         "task_ids": [task.task_id],
                         "task_types": [task.task_type],
                         "adaptive_stage": adaptive_stage,
+                        "application_id": application_id,
+                        "person_id": application.person_id if application is not None else None,
+                        "job_description_id": (
+                            application.job_description_id
+                            if application is not None
+                            else getattr(candidate, "job_description_id", None)
+                        ),
                         "requested_by": task.metadata.get("requested_by"),
                     },
                 }
@@ -103,13 +141,13 @@ class RuntimeControlService:
                     "run_id": run.id,
                     "queue_task_id": task.task_id,
                     "goal_spec_id": goal_spec_id,
-                    "candidate_id": candidate.id if candidate is not None else None,
+                    "candidate_id": person_anchor_id,
                     "platform": task.platform or (candidate.platform if candidate is not None else "site"),
                     "lane": lane,
                     "item_type": adaptive_stage,
                     "status": "queued",
                     "priority": task.priority,
-                    "dedupe_key": self._work_item_dedupe_key(task=task, candidate_id=candidate.id if candidate is not None else None, lane=lane),
+                    "dedupe_key": self._work_item_dedupe_key(task=task, candidate_id=workflow_anchor_id, lane=lane),
                     "payload": {
                         "task_snapshot": self._task_snapshot(task),
                         "payload": dict(task.payload or {}),
@@ -135,12 +173,12 @@ class RuntimeControlService:
         self.publish_event(
             session_id=session_record.id,
             run_id=run.id,
-            candidate_id=candidate.id if candidate is not None else None,
+            candidate_id=person_anchor_id,
             level="info",
             source="runtime_control",
             event_type="task_enqueued",
             message=f"Queued {task.task_type} into {lane} lane.",
-            payload={"task_id": task.task_id, "work_item_id": work_item.id},
+            payload={"task_id": task.task_id, "work_item_id": work_item.id, "application_id": application_id},
         )
         return {"session_id": session_record.id, "run_id": run.id, "work_item_id": work_item.id, "lane": lane}
 
@@ -293,6 +331,22 @@ class RuntimeControlService:
         session_id = str(task.metadata.get("agent_session_id") or "").strip()
         if not run_id or not session_id:
             return
+        run = AgentRunRepository(self.session).get(run_id)
+        candidate_anchor_id = str(
+            task.metadata.get("person_id")
+            or (run.candidate_id if run is not None else None)
+            or (
+                task.candidate_id
+                if str(task.candidate_id or "").strip() != str(task.application_id or "")
+                else ""
+            )
+            or ""
+        ).strip() or None
+        payload_data = dict(payload or {})
+        if candidate_anchor_id:
+            payload_data["candidate_id"] = candidate_anchor_id
+        if task.application_id:
+            payload_data["application_id"] = task.application_id
         checkpoint_repo = AgentRunCheckpointRepository(self.session)
         existing = checkpoint_repo.open_for_run(run_id)
         if existing is None:
@@ -300,16 +354,15 @@ class RuntimeControlService:
                 {
                     "session_id": session_id,
                     "run_id": run_id,
-                    "candidate_id": task.candidate_id,
+                    "candidate_id": candidate_anchor_id,
                     "approval_id": approval_id,
                     "checkpoint_kind": checkpoint_kind,
                     "status": "open",
                     "title": title,
                     "summary": summary,
-                    "payload": payload,
+                    "payload": payload_data,
                 }
             )
-        run = AgentRunRepository(self.session).get(run_id)
         if run is not None:
             AgentRunRepository(self.session).update(
                 run,
@@ -485,7 +538,7 @@ class RuntimeControlService:
         explicit = str(task.metadata.get("lane") or task.payload.get("lane") or "").strip().lower()
         if explicit in {"agent", "candidate"}:
             return explicit
-        return "candidate" if task.candidate_id else "agent"
+        return "candidate" if (task.application_id or task.candidate_id) else "agent"
 
     def _resolve_concurrent_limit(self, *, platform: str) -> int:
         config = self.settings.provider_config or {}
@@ -504,6 +557,7 @@ class RuntimeControlService:
             "priority": task.priority,
             "payload": dict(task.payload or {}),
             "metadata": dict(task.metadata or {}),
+            "application_id": task.application_id,
             "candidate_id": task.candidate_id,
             "platform": task.platform,
             "attempts": task.attempts,
@@ -544,12 +598,14 @@ class RuntimeControlService:
                 "source_text": goal_text,
                 "requested_by": str(task.metadata.get("requested_by") or "runtime"),
                 "constraints": {
+                    "application_id": task.application_id,
                     "candidate_id": candidate.id if candidate is not None else task.candidate_id,
                     "platform": task.platform,
                 },
                 "context_hints": {
+                    "application_id": task.application_id,
                     "candidate_id": candidate.id if candidate is not None else task.candidate_id,
-                    "jd_id": getattr(candidate, "jd_id", None),
+                    "job_description_id": getattr(candidate, "job_description_id", None),
                     "adaptive_stage": adaptive_stage,
                 },
                 "summary": f"从 {adaptive_stage} 阶段启动的目标驱动任务。",
@@ -615,6 +671,7 @@ class RuntimeControlService:
         return {
             "payload": dict(snapshot.get("payload") or {}),
             "platform": str(snapshot.get("platform") or work_item.platform or run.platform or "site"),
+            "application_id": snapshot.get("application_id") or snapshot.get("candidate_id") or work_item.candidate_id or run.candidate_id,
             "candidate_id": snapshot.get("candidate_id") or work_item.candidate_id or run.candidate_id,
             "due_at": snapshot.get("due_at"),
             "created_at": snapshot.get("created_at") or datetime.now(timezone.utc).isoformat(),

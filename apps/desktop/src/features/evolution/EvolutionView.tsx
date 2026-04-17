@@ -209,7 +209,19 @@ export function EvolutionView({
   const [selectedKey, setSelectedKey] = useState<SelectionKey>();
   const [errorMessage, setErrorMessage] = useState<string>();
 
-  const candidateNameById = useMemo(() => new Map(candidates.map((candidate) => [candidate.id, candidate.name])), [candidates]);
+  const candidateNameById = useMemo(() => {
+    const mapping = new Map<string, string>();
+    for (const candidate of candidates) {
+      mapping.set(candidate.id, candidate.name);
+      if (candidate.applicationId) {
+        mapping.set(candidate.applicationId, candidate.name);
+      }
+      if (candidate.personId) {
+        mapping.set(candidate.personId, candidate.name);
+      }
+    }
+    return mapping;
+  }, [candidates]);
   const evolutionApprovals = useMemo(() => approvals.filter((item) => !item.relatedCandidateId), [approvals]);
 
   useEffect(() => {

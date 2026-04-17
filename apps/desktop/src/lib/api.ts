@@ -489,8 +489,24 @@ function normalizeCandidateRecord(raw: unknown): CandidateRecord {
   const record = asRecord(raw);
   const contactInfo = asRecord(record.contactInfo ?? record.contact_info);
   const aiScores = asRecord(record.aiScores ?? record.ai_scores);
+  const applicationId = String(record.applicationId ?? record.application_id ?? record.id ?? "");
+  const personId =
+    record.personId != null ? String(record.personId) : record.person_id != null ? String(record.person_id) : null;
+  const jobDescriptionId =
+    record.jobDescriptionId != null
+      ? String(record.jobDescriptionId)
+      : record.job_description_id != null
+        ? String(record.job_description_id)
+        : record.jdId != null
+          ? String(record.jdId)
+          : record.jd_id != null
+            ? String(record.jd_id)
+            : null;
   return {
-    id: String(record.id ?? ""),
+    id: applicationId,
+    applicationId,
+    personId,
+    jobDescriptionId,
     name: String(record.name ?? "Unknown candidate"),
     title: String(record.title ?? contactInfo.title ?? "候选人"),
     platform: String(record.platform ?? "site"),
@@ -503,7 +519,7 @@ function normalizeCandidateRecord(raw: unknown): CandidateRecord {
         : record.deepest_milestone
           ? String(record.deepest_milestone)
           : null,
-    jdTitle: String(record.jdTitle ?? record.jd_title ?? record.jdId ?? record.jd_id ?? "未分配岗位"),
+    jdTitle: String(record.jdTitle ?? record.jd_title ?? jobDescriptionId ?? "未分配岗位"),
     matchScore: Number(record.matchScore ?? record.match_score ?? aiScores.overall ?? 0),
     experienceYears: Number(record.experienceYears ?? record.experience_years ?? contactInfo.experience_years ?? 0),
     nextAction: String(
@@ -1165,6 +1181,20 @@ function normalizeEvolutionArtifact(raw: unknown): EvolutionArtifactRecord {
 function normalizeCandidateThread(raw: unknown): CandidateThreadRecord {
   const record = asRecord(raw);
   return {
+    applicationId:
+      record.applicationId != null
+        ? String(record.applicationId)
+        : record.application_id != null
+          ? String(record.application_id)
+          : null,
+    personId:
+      record.personId != null ? String(record.personId) : record.person_id != null ? String(record.person_id) : null,
+    jobDescriptionId:
+      record.jobDescriptionId != null
+        ? String(record.jobDescriptionId)
+        : record.job_description_id != null
+          ? String(record.job_description_id)
+          : null,
     candidate: normalizeCandidateRecord(record.candidate),
     sessionStatus: String(record.sessionStatus ?? record.session_status ?? "active"),
     contextSummary: record.contextSummary ? String(record.contextSummary) : record.context_summary ? String(record.context_summary) : undefined,
@@ -2286,9 +2316,9 @@ function createFetchClient(baseUrl: string): DesktopApiClient {
         }),
       ),
     listCandidateThreads: async () =>
-      asArray(await requestJson<unknown>(baseUrl, "/api/recruit-agent/candidate-threads")).map(normalizeCandidateThread),
+      asArray(await requestJson<unknown>(baseUrl, "/api/candidate-applications/threads")).map(normalizeCandidateThread),
     getCandidateThread: async (candidateId) =>
-      normalizeCandidateThread(await requestJson<unknown>(baseUrl, `/api/recruit-agent/candidate-threads/${candidateId}`)),
+      normalizeCandidateThread(await requestJson<unknown>(baseUrl, `/api/candidate-applications/${candidateId}/thread`)),
     getStateMachine: async () =>
       normalizeRecruitmentStateMachine(await requestJson<unknown>(baseUrl, "/api/state-machine")),
     listStateMachineCriteriaSuggestions: async () =>
@@ -2316,12 +2346,12 @@ function createFetchClient(baseUrl: string): DesktopApiClient {
         }),
       ),
     listCandidateTransitions: async (candidateId) =>
-      asArray(await requestJson<unknown>(baseUrl, `/api/recruit-agent/candidates/${candidateId}/transitions`)).map(
+      asArray(await requestJson<unknown>(baseUrl, `/api/candidate-applications/${candidateId}/transitions`)).map(
         normalizeCandidateStatusTransition,
       ),
     createCandidateThreadEntry: async (candidateId, payload) =>
       normalizeConversationEntry(
-        await requestJson<unknown>(baseUrl, `/api/recruit-agent/candidate-threads/${candidateId}/entries`, {
+        await requestJson<unknown>(baseUrl, `/api/candidate-applications/${candidateId}/entries`, {
           method: "POST",
           body: JSON.stringify({
             direction: payload.direction,
@@ -2334,7 +2364,7 @@ function createFetchClient(baseUrl: string): DesktopApiClient {
       ),
     transitionCandidateState: async (candidateId, payload) =>
       normalizeCandidateThread(
-        await requestJson<unknown>(baseUrl, `/api/recruit-agent/candidates/${candidateId}/transition`, {
+        await requestJson<unknown>(baseUrl, `/api/candidate-applications/${candidateId}/transitions`, {
           method: "POST",
           body: JSON.stringify({
             to_status: payload.toStatus,
@@ -2356,10 +2386,9 @@ function createFetchClient(baseUrl: string): DesktopApiClient {
       ),
     createCandidateAssessment: async (candidateId, payload) =>
       normalizeCandidateAssessment(
-        await requestJson<unknown>(baseUrl, `/api/recruit-agent/candidates/${candidateId}/assessments`, {
+        await requestJson<unknown>(baseUrl, `/api/candidate-applications/${candidateId}/assessments`, {
           method: "POST",
           body: JSON.stringify({
-            candidate_id: candidateId,
             assessment_type: payload.assessmentType,
             stage_key: payload.stageKey,
             status: payload.status ?? "completed",
