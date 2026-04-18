@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from dataclasses import asdict, is_dataclass
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
@@ -23,6 +26,59 @@ from scene_pilot.services.skills import SkillHealthCheckService, SkillHealthSwee
 router = APIRouter(prefix="/api/skills", tags=["skills"])
 
 
+def _timestamp(value):
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return int(value.timestamp())
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        if text.isdigit():
+            return int(text)
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return int(parsed.timestamp())
+    return None
+
+
+def _payload(item):
+    if is_dataclass(item):
+        return asdict(item)
+    if hasattr(item, "model_dump"):
+        return item.model_dump(exclude_unset=True)
+    if hasattr(item, "__dict__"):
+        return {key: value for key, value in vars(item).items() if not key.startswith("_")}
+    return dict(item)
+
+
+def _skill_read(item) -> SkillRead:
+    payload = _payload(item)
+    payload["last_health_check"] = _timestamp(payload.get("last_health_check"))
+    payload["confirmed_at"] = _timestamp(payload.get("confirmed_at"))
+    payload["created_at"] = _timestamp(payload.get("created_at"))
+    payload["updated_at"] = _timestamp(payload.get("updated_at"))
+    return SkillRead.model_validate(payload)
+
+
+def _learning_read(item) -> LearningDraftRead:
+    payload = _payload(item)
+    payload["consolidated_at"] = _timestamp(payload.get("consolidated_at"))
+    payload["created_at"] = _timestamp(payload.get("created_at"))
+    payload["updated_at"] = _timestamp(payload.get("updated_at"))
+    return LearningDraftRead.model_validate(payload)
+
+
 def _get_skill_or_404(repo: SkillRepository, skill_id: str):
     item = repo.get(skill_id)
     if item is None:
@@ -43,13 +99,13 @@ def list_skills(
     offset: int = Query(default=0, ge=0),
     session: Session = Depends(get_session),
 ) -> list[SkillRead]:
-    return [SkillRead.model_validate(item) for item in SkillRepository(session).list(limit=limit, offset=offset)]
+    return [_skill_read(item) for item in SkillRepository(session).list(limit=limit, offset=offset)]
 
 
 @router.post("", response_model=SkillRead, status_code=201)
 def create_skill(payload: SkillCreate, session: Session = Depends(get_session)) -> SkillRead:
     item = SkillRepository(session).create(payload)
-    return SkillRead.model_validate(item)
+    return _skill_read(item)
 
 
 @router.get("/learnings", response_model=list[LearningDraftRead])
@@ -61,7 +117,7 @@ def list_learning_drafts(
 ) -> list[LearningDraftRead]:
     repo = AgentLearningRepository(session)
     items = repo.list_active(limit=limit, offset=offset) if active_only else repo.list(limit=limit, offset=offset)
-    return [LearningDraftRead.model_validate(item) for item in items]
+    return [_learning_read(item) for item in items]
 
 
 @router.post("/learnings", response_model=LearningDraftRead, status_code=201)
@@ -70,7 +126,7 @@ def create_learning_draft(
     session: Session = Depends(get_session),
 ) -> LearningDraftRead:
     item = AgentLearningRepository(session).create(payload)
-    return LearningDraftRead.model_validate(item)
+    return _learning_read(item)
 
 
 @router.post("/learnings/{learning_id}/activate", response_model=LearningDraftRead)
@@ -78,7 +134,7 @@ def activate_learning_draft(learning_id: str, session: Session = Depends(get_ses
     repo = AgentLearningRepository(session)
     item = _get_learning_or_404(repo, learning_id)
     updated = repo.set_active(item, True)
-    return LearningDraftRead.model_validate(updated)
+    return _learning_read(updated)
 
 
 @router.post("/learnings/{learning_id}/deactivate", response_model=LearningDraftRead)
@@ -86,13 +142,13 @@ def deactivate_learning_draft(learning_id: str, session: Session = Depends(get_s
     repo = AgentLearningRepository(session)
     item = _get_learning_or_404(repo, learning_id)
     updated = repo.set_active(item, False)
-    return LearningDraftRead.model_validate(updated)
+    return _learning_read(updated)
 
 
 @router.get("/{skill_id}", response_model=SkillRead)
 def get_skill(skill_id: str, session: Session = Depends(get_session)) -> SkillRead:
     item = _get_skill_or_404(SkillRepository(session), skill_id)
-    return SkillRead.model_validate(item)
+    return _skill_read(item)
 
 
 @router.patch("/{skill_id}", response_model=SkillRead)
@@ -100,7 +156,7 @@ def update_skill(skill_id: str, payload: SkillUpdate, session: Session = Depends
     repo = SkillRepository(session)
     item = _get_skill_or_404(repo, skill_id)
     updated = repo.update(item, payload)
-    return SkillRead.model_validate(updated)
+    return _skill_read(updated)
 
 
 @router.delete("/{skill_id}", status_code=204)
@@ -123,7 +179,7 @@ def submit_skill_for_review(skill_id: str, session: Session = Depends(get_sessio
             "updated_at": item.updated_at,
         },
     )
-    return SkillRead.model_validate(updated)
+    return _skill_read(updated)
 
 
 @router.post("/{skill_id}/approve", response_model=SkillRead)
@@ -146,7 +202,7 @@ def approve_skill(
             "last_health_status": payload.reason or item.last_health_status,
         },
     )
-    return SkillRead.model_validate(updated)
+    return _skill_read(updated)
 
 
 @router.post("/{skill_id}/activate", response_model=SkillRead)
@@ -171,7 +227,7 @@ def activate_skill(
             "updated_at": item.updated_at,
         },
     )
-    return SkillRead.model_validate(updated)
+    return _skill_read(updated)
 
 
 @router.post("/{skill_id}/health-check", response_model=SkillHealthCheckRead)
@@ -197,7 +253,7 @@ def run_skill_health_check(
         skill_id=updated.id,
         status=updated.status,
         health=updated.last_health_status or result.health,
-        checked_at=updated.last_health_check or result.checked_at,
+        checked_at=_timestamp(updated.last_health_check) or _timestamp(result.checked_at) or 0,
         issues=result.issues,
     )
 
@@ -239,7 +295,7 @@ def run_skill_health_check_sweep(
                 skill_id=updated.id,
                 status=updated.status,
                 health=updated.last_health_status or result.health,
-                checked_at=updated.last_health_check or result.checked_at,
+                checked_at=_timestamp(updated.last_health_check) or _timestamp(result.checked_at) or 0,
                 issues=result.issues,
                 degraded=updated.status == "degraded",
             )

@@ -80,7 +80,6 @@ def application_payload_from_application(
         "title": str(getattr(job_description, "title", None) or job_description_id or "未分配岗位"),
     }
     return {
-        "id": application_id,
         "application_id": application_id,
         "person_id": person_id,
         "job_description_id": job_description_id,

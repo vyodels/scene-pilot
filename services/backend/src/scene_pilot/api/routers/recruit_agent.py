@@ -111,6 +111,35 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _timestamp(value: Any) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return int(value.timestamp())
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        if text.isdigit():
+            return int(text)
+        try:
+            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return int(parsed.timestamp())
+    return None
+
+
 def _get_candidate_or_404(session: Session, candidate_id: str):
     item = CandidateRepository(session).resolve(candidate_id)
     if item is None:
@@ -156,6 +185,19 @@ def _runtime_subject_filter_ids(session: Session, subject_id: str | None) -> tup
     if person is not None:
         return str(person.candidate_person_id or "").strip() or None, None
     return text, None
+
+
+def _with_runtime_subjects(model_cls, item, *, application_id: str | None = None):
+    payload = item
+    if hasattr(item, "model_dump"):
+        payload = dict(item.model_dump(exclude_unset=True))
+    elif hasattr(item, "__dict__"):
+        payload = {key: value for key, value in vars(item).items() if not key.startswith("_")}
+    if isinstance(payload, dict):
+        if application_id and not str(payload.get("application_id") or "").strip():
+            payload["application_id"] = application_id
+        return model_cls.model_validate(payload)
+    return model_cls.model_validate(item)
 
 
 def _application_subject_read_for_application(person, application, job_description=None) -> ApplicationSubjectRead:
@@ -226,6 +268,7 @@ def _application_state_snapshot(application) -> CandidateStateSnapshotRead:
         payload["contact_channels"] = []
     if payload.get("interview_plan") is None:
         payload["interview_plan"] = default_candidate_state_snapshot(status=current_status)["interview_plan"]
+    payload["latest_transition_at"] = _timestamp(payload.get("latest_transition_at"))
     return CandidateStateSnapshotRead.model_validate(payload)
 
 
@@ -1003,13 +1046,18 @@ def list_runtime_events(
     session: Session = Depends(get_session),
 ) -> list[RuntimeEventRead]:
     session_record = _ensure_runtime_session(session)
+    fallback_application_id = None
+    if run_id:
+        run_item = AgentRunRepository(session).get(run_id)
+        if run_item is not None:
+            fallback_application_id = str((run_item.runtime_metadata or {}).get("application_id") or "").strip() or None
     items = AgentRuntimeEventRepository(session).recent(
         session_id=session_record.id,
         run_id=run_id,
         limit=limit,
         offset=offset,
     )
-    return [RuntimeEventRead.model_validate(item) for item in items]
+    return [ _with_runtime_subjects(RuntimeEventRead, item, application_id=fallback_application_id) for item in items ]
 
 
 @router.get("/runtime/traces", response_model=list[ExecutionTraceRead])

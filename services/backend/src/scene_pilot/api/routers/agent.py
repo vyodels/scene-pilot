@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -20,6 +21,35 @@ from scene_pilot.services.container import AppContainer
 from scene_pilot.services.system_commands import SystemCommandApprovalError, SystemCommandDisabledError, SystemCommandPolicyError
 
 router = APIRouter(prefix="/api/agent", tags=["agent"])
+
+
+def _timestamp(value: Any) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return int(value.timestamp())
+    if isinstance(value, str):
+        raw = value.strip()
+        if not raw:
+            return None
+        if raw.isdigit():
+            return int(raw)
+        try:
+            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return int(parsed.timestamp())
+    return None
 
 
 class SystemCommandRequest(BaseModel):
@@ -183,12 +213,12 @@ def _build_queue_item_read(item) -> AgentQueueItemRead:
         scheduled_for=item.scheduled_for,
         locked_at=item.locked_at,
         locked_by=item.locked_by,
-        candidate_id=_payload_value(serialized_payload, "candidate_id"),
+        application_id=_payload_value(serialized_payload, "application_id") or _payload_value(serialized_payload, "candidate_id"),
         payload=display_payload,
         queue_audit=[
             {
                 "kind": str(event.get("kind") or "unknown"),
-                "at": str(event.get("at") or ""),
+                "at": _timestamp(event.get("at")),
                 "status": str(event.get("status")) if event.get("status") is not None else None,
                 "priority": int(event["priority"]) if event.get("priority") is not None else None,
                 "attempts": int(event["attempts"]) if event.get("attempts") is not None else None,

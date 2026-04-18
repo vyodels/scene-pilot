@@ -1,4 +1,16 @@
 function parseDateCandidate(value: string): Date | null {
+  const numeric = value.trim();
+  if (/^\d+$/.test(numeric)) {
+    const timestamp = Number(numeric);
+    if (!Number.isNaN(timestamp)) {
+      const millis = timestamp > 1_000_000_000_000 ? timestamp : timestamp * 1000;
+      const fromTimestamp = new Date(millis);
+      if (!Number.isNaN(fromTimestamp.getTime())) {
+        return fromTimestamp;
+      }
+    }
+  }
+
   const direct = new Date(value);
   if (!Number.isNaN(direct.getTime())) {
     return direct;

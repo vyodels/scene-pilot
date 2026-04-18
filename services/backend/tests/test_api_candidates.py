@@ -102,6 +102,7 @@ def test_job_description_and_application_crud(tmp_path):
         assert application["jobDescriptionId"] == job_description_id
         assert application["applicationWindow"] == make_application_window(person_id, job_description_id)
         assert "personId" in application
+        assert "id" not in application
         assert "sourcePlatformCandidatePersonId" not in application
 
         application_id = application["applicationId"]

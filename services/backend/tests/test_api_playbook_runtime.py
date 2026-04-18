@@ -449,6 +449,8 @@ class ApiPlaybookRuntimeTests(unittest.TestCase):
         row = dashboard.json()["applications"][0]
         application_id = row["applicationId"]
         person_id = row["personId"]
+        self.assertNotIn("id", row)
+        self.assertNotIn("candidate_id", row)
 
         queued = self.client.post(
             "/api/agent/tasks",
@@ -541,11 +543,21 @@ class ApiPlaybookRuntimeTests(unittest.TestCase):
         run_payload = next(item for item in runtime_runs.json() if item["queue_task_id"] == task_id)
         self.assertEqual(run_payload["lane"], "candidate")
         self.assertEqual(run_payload["status"], "completed")
+        self.assertEqual(run_payload["applicationId"], application_id)
+        self.assertEqual(run_payload["personId"], person_id)
+        self.assertNotIn("candidate_id", run_payload)
+        self.assertIsInstance(run_payload["created_at"], int)
+        self.assertTrue(run_payload["started_at"] is None or isinstance(run_payload["started_at"], int))
+        self.assertTrue(run_payload["finished_at"] is None or isinstance(run_payload["finished_at"], int))
         self.assertGreater(run_payload["context_manifest"]["fragment_count"], 0)
         self.assertGreater(run_payload["context_manifest"]["selected_token_estimate"], 0)
 
         runtime_events = self.client.get(f"/api/recruit-agent/runtime/events?run_id={run_payload['id']}")
         self.assertEqual(runtime_events.status_code, 200)
+        self.assertTrue(all(isinstance(item["occurred_at"], int) for item in runtime_events.json()))
+        self.assertTrue(all("candidate_id" not in item for item in runtime_events.json()))
+        self.assertTrue(all(item.get("personId") == person_id for item in runtime_events.json()))
+        self.assertTrue(all(item.get("applicationId") == application_id for item in runtime_events.json()))
         event_types = {item["event_type"] for item in runtime_events.json()}
         self.assertIn("task_enqueued", event_types)
         self.assertIn("run_started", event_types)

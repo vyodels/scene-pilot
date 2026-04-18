@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Query
 
@@ -11,12 +12,40 @@ from scene_pilot.services.container import AppContainer
 router = APIRouter(prefix="/api/sync", tags=["sync"])
 
 
+def _timestamp(value) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return int(value.timestamp())
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        if text.isdigit():
+            return int(text)
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return int(parsed.timestamp())
+    return None
+
+
 @router.get("/status", response_model=SyncStatusRead)
 def get_sync_status(
     container: AppContainer = Depends(get_container),
 ) -> SyncStatusRead:
     snapshot = container.sync.status_snapshot()
-    return SyncStatusRead(**asdict(snapshot))
+    payload = asdict(snapshot)
+    payload["next_attempt_at"] = _timestamp(payload.get("next_attempt_at"))
+    return SyncStatusRead(**payload)
 
 
 @router.get("/backlog", response_model=list[SyncBacklogRead])
@@ -37,13 +66,13 @@ def list_sync_backlog(
             payload=dict(item.payload),
             status=item.status,
             attempt_count=item.attempt_count,
-            last_attempted_at=_last_attempted_at(item),
-            next_attempt_at=item.next_attempt_at,
+            last_attempted_at=_timestamp(_last_attempted_at(item)),
+            next_attempt_at=_timestamp(item.next_attempt_at),
             last_error=item.last_error,
             delivery_mode=item.delivery_mode,
-            synced_at=item.synced_at,
-            created_at=item.created_at or item.updated_at or item.synced_at,
-            updated_at=item.updated_at or item.created_at or item.synced_at,
+            synced_at=_timestamp(item.synced_at),
+            created_at=_timestamp(item.created_at or item.updated_at or item.synced_at) or 0,
+            updated_at=_timestamp(item.updated_at or item.created_at or item.synced_at) or 0,
         )
         for item in items
     ]
@@ -63,7 +92,7 @@ def flush_sync_backlog(
         pending=result.pending,
         remote_available=container.sync.remote_available(),
         target=dict(container.sync.target),
-        next_attempt_at=result.next_attempt_at,
+        next_attempt_at=_timestamp(result.next_attempt_at),
     )
 
 

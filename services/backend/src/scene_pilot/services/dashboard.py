@@ -363,7 +363,6 @@ class DashboardService:
             ],
             "applications": [
                 {
-                    "id": payload["id"],
                     "applicationId": payload["application_id"],
                     "personId": payload["person_id"],
                     "jobDescriptionId": payload["job_description_id"],

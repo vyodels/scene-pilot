@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, AliasPath, BaseModel, ConfigDict, Field
 
 
 class FeatureFlags(BaseModel):
@@ -277,13 +277,8 @@ class JobDescriptionSummaryRead(BaseModel):
 class ApplicationSubjectRead(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
-    id: str | None = Field(
-        default=None,
-        validation_alias=AliasChoices("id", "application_id", "applicationId"),
-        serialization_alias="id",
-    )
     application_id: str = Field(
-        validation_alias=AliasChoices("application_id", "applicationId", "candidate_application_id", "candidateApplicationId", "id"),
+        validation_alias=AliasChoices("application_id", "applicationId", "candidate_application_id", "candidateApplicationId"),
         serialization_alias="applicationId",
     )
     person_id: str | None = Field(
@@ -317,10 +312,10 @@ class ApplicationSubjectRead(BaseModel):
         validation_alias=AliasChoices("job_description", "jobDescription"),
         serialization_alias="jobDescription",
     )
-    cooldown_until: datetime | None = Field(default=None, serialization_alias="cooldownUntil")
-    last_contacted_at: datetime | None = Field(default=None, serialization_alias="lastContactedAt")
-    created_at: datetime | None = Field(default=None, serialization_alias="createdAt")
-    updated_at: datetime | None = Field(default=None, serialization_alias="updatedAt")
+    cooldown_until: int | None = Field(default=None, serialization_alias="cooldownUntil")
+    last_contacted_at: int | None = Field(default=None, serialization_alias="lastContactedAt")
+    created_at: int | None = Field(default=None, serialization_alias="createdAt")
+    updated_at: int | None = Field(default=None, serialization_alias="updatedAt")
 
 
 class RecruitAgentProfileBase(BaseModel):
@@ -361,8 +356,8 @@ class RecruitAgentProfileRead(RecruitAgentProfileBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
-    created_at: datetime
-    updated_at: datetime
+    created_at: int
+    updated_at: int
 
 
 class CandidateMemoryBase(BaseModel):
@@ -403,8 +398,9 @@ class CandidateMemoryRead(CandidateMemoryBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
-    created_at: datetime
-    updated_at: datetime
+    compacted_at: int | None = None
+    created_at: int
+    updated_at: int
 
 
 class JobMemoryBase(BaseModel):
@@ -445,8 +441,9 @@ class JobMemoryRead(JobMemoryBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
-    created_at: datetime
-    updated_at: datetime
+    compacted_at: int | None = None
+    created_at: int
+    updated_at: int
 
 
 class AgentGlobalMemoryBase(BaseModel):
@@ -486,8 +483,9 @@ class AgentGlobalMemoryRead(AgentGlobalMemoryBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
-    created_at: datetime
-    updated_at: datetime
+    compacted_at: int | None = None
+    created_at: int
+    updated_at: int
 
 
 class MemoryCompactRequest(BaseModel):
@@ -512,6 +510,7 @@ class CandidateConversationEntryRead(CandidateConversationEntryBase):
     model_config = ConfigDict(populate_by_name=True)
 
     id: str
+    timestamp: int | None = None
     application_id: str | None = Field(
         default=None,
         validation_alias=AliasChoices("application_id", "applicationId"),
@@ -534,7 +533,7 @@ class CandidateStateSnapshotRead(BaseModel):
     next_recommended_stages: list[str] = Field(default_factory=list)
     interview_plan: dict[str, Any] = Field(default_factory=dict)
     latest_note: str | None = None
-    latest_transition_at: datetime | None = None
+    latest_transition_at: int | None = None
     latest_transition_source: str | None = None
     snapshot_metadata: dict[str, Any] = Field(default_factory=dict)
 
@@ -589,8 +588,8 @@ class CandidateStatusTransitionRead(CandidateStatusTransitionBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
-    created_at: datetime
-    updated_at: datetime
+    created_at: int
+    updated_at: int
 
 
 class CandidateAssessmentBase(BaseModel):
@@ -623,8 +622,9 @@ class CandidateAssessmentRead(CandidateAssessmentBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
-    created_at: datetime
-    updated_at: datetime
+    reviewed_at: int | None = Field(default=None, serialization_alias="reviewedAt")
+    created_at: int
+    updated_at: int
 
 
 class CandidateAssignmentBase(BaseModel):
@@ -657,8 +657,10 @@ class CandidateAssignmentRead(CandidateAssignmentBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
-    created_at: datetime
-    updated_at: datetime
+    assigned_at: int | None = Field(default=None, serialization_alias="assignedAt")
+    released_at: int | None = Field(default=None, serialization_alias="releasedAt")
+    created_at: int
+    updated_at: int
 
 
 class ResumeArtifactBase(BaseModel):
@@ -692,8 +694,9 @@ class ResumeArtifactRead(ResumeArtifactBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
-    created_at: datetime
-    updated_at: datetime
+    captured_at: int | None = Field(default=None, serialization_alias="capturedAt")
+    created_at: int
+    updated_at: int
 
 
 class CandidateScorecardBase(BaseModel):
@@ -728,8 +731,8 @@ class CandidateScorecardRead(CandidateScorecardBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
-    created_at: datetime
-    updated_at: datetime
+    created_at: int
+    updated_at: int
 
 
 class CandidateReviewDecisionBase(BaseModel):
@@ -763,8 +766,9 @@ class CandidateReviewDecisionRead(CandidateReviewDecisionBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
-    created_at: datetime
-    updated_at: datetime
+    decided_at: int | None = Field(default=None, serialization_alias="decidedAt")
+    created_at: int
+    updated_at: int
 
 
 class TalentPoolSyncRecordBase(BaseModel):
@@ -798,8 +802,10 @@ class TalentPoolSyncRecordRead(TalentPoolSyncRecordBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
-    created_at: datetime
-    updated_at: datetime
+    synced_at: int | None = Field(default=None, serialization_alias="syncedAt")
+    last_attempted_at: int | None = Field(default=None, serialization_alias="lastAttemptedAt")
+    created_at: int
+    updated_at: int
 
 
 class EvolutionArtifactBase(BaseModel):
@@ -836,8 +842,10 @@ class EvolutionArtifactRead(EvolutionArtifactBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
-    created_at: datetime
-    updated_at: datetime
+    reviewed_at: int | None = None
+    applied_at: int | None = None
+    created_at: int
+    updated_at: int
 
 
 class CandidateThreadRead(BaseModel):
@@ -902,9 +910,9 @@ class RecruitmentStateMachineUpdate(RecruitmentStateMachineBase):
 
 class RecruitmentStateMachineRead(RecruitmentStateMachineBase):
     version: int
-    published_at: datetime = Field(validation_alias=AliasChoices("published_at", "publishedAt"))
-    created_at: datetime = Field(validation_alias=AliasChoices("created_at", "createdAt"))
-    updated_at: datetime = Field(validation_alias=AliasChoices("updated_at", "updatedAt"))
+    published_at: int = Field(validation_alias=AliasChoices("published_at", "publishedAt"))
+    created_at: int = Field(validation_alias=AliasChoices("created_at", "createdAt"))
+    updated_at: int = Field(validation_alias=AliasChoices("updated_at", "updatedAt"))
 
 
 class StateCriteriaOptimizationMetricsRead(BaseModel):
@@ -990,8 +998,8 @@ class PlaybookRead(PlaybookBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
-    created_at: datetime
-    updated_at: datetime
+    created_at: int
+    updated_at: int
 
 
 class TaskSpecBase(BaseModel):
@@ -1040,8 +1048,8 @@ class TaskSpecRead(TaskSpecBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
-    created_at: datetime
-    updated_at: datetime
+    created_at: int
+    updated_at: int
 
 
 class DomainPackRead(BaseModel):
@@ -1154,8 +1162,8 @@ class ExecutionPlanRead(ExecutionPlanBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
-    created_at: datetime
-    updated_at: datetime
+    created_at: int
+    updated_at: int
 
 
 class ExecutionEpisodeBase(BaseModel):
@@ -1204,8 +1212,10 @@ class ExecutionEpisodeRead(ExecutionEpisodeBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
-    created_at: datetime
-    updated_at: datetime
+    started_at: int | None = None
+    finished_at: int | None = None
+    created_at: int
+    updated_at: int
 
 
 class TrialRunExecuteRequest(BaseModel):
@@ -1264,8 +1274,9 @@ class PlaybookVersionRead(PlaybookVersionBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
-    created_at: datetime
-    updated_at: datetime
+    last_validated_at: int | None = None
+    created_at: int
+    updated_at: int
 
 
 class PlaybookPatchBase(BaseModel):
@@ -1320,8 +1331,10 @@ class PlaybookPatchRead(PlaybookPatchBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
-    created_at: datetime
-    updated_at: datetime
+    reviewed_at: int | None = None
+    applied_at: int | None = None
+    created_at: int
+    updated_at: int
 
 
 class EnvironmentSnapshotBase(BaseModel):
@@ -1364,8 +1377,8 @@ class EnvironmentSnapshotRead(EnvironmentSnapshotBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
-    created_at: datetime
-    updated_at: datetime
+    created_at: int
+    updated_at: int
 
 
 class EnvironmentSnapshotContextRead(BaseModel):
@@ -1491,7 +1504,7 @@ class ExecutionPlanReplanRead(BaseModel):
     compiler_notes: list[str] = Field(default_factory=list)
     recommended_capability_keys: list[str] = Field(default_factory=list)
     audit_metadata: dict[str, Any] = Field(default_factory=dict)
-    created_at: datetime | None = None
+    created_at: int | None = None
 
 
 class SkillBase(BaseModel):
@@ -1546,8 +1559,10 @@ class SkillRead(SkillBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
-    created_at: datetime
-    updated_at: datetime
+    last_health_check: int | None = None
+    confirmed_at: int | None = None
+    created_at: int
+    updated_at: int
 
 
 class SkillHealthCheckRequest(BaseModel):
@@ -1558,7 +1573,7 @@ class SkillHealthCheckRead(BaseModel):
     skill_id: str
     status: str
     health: str
-    checked_at: datetime
+    checked_at: int
     issues: list[str] = Field(default_factory=list)
 
 
@@ -1605,8 +1620,9 @@ class LearningDraftRead(LearningDraftBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
-    created_at: datetime
-    updated_at: datetime
+    consolidated_at: int | None = None
+    created_at: int
+    updated_at: int
 
 
 class RuntimeLearningOutcomeRead(BaseModel):
@@ -1624,7 +1640,7 @@ class RuntimeReplayEventRead(BaseModel):
     kind: str
     title: str
     detail: str | None = None
-    occurred_at: datetime | None = None
+    occurred_at: int | None = None
     payload: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -1665,13 +1681,13 @@ class SyncBacklogRead(BaseModel):
     payload: dict[str, Any] = Field(default_factory=dict)
     status: str
     attempt_count: int = 0
-    last_attempted_at: datetime | None = None
-    next_attempt_at: datetime | None = None
+    last_attempted_at: int | None = None
+    next_attempt_at: int | None = None
     last_error: str | None = None
     delivery_mode: str | None = None
-    synced_at: datetime | None = None
-    created_at: datetime
-    updated_at: datetime
+    synced_at: int | None = None
+    created_at: int
+    updated_at: int
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -1689,7 +1705,7 @@ class SyncStatusRead(BaseModel):
     backlog_total: int = 0
     by_status: dict[str, int] = Field(default_factory=dict)
     latest_error: str | None = None
-    next_attempt_at: datetime | None = None
+    next_attempt_at: int | None = None
 
 
 class SyncFlushRead(BaseModel):
@@ -1700,7 +1716,7 @@ class SyncFlushRead(BaseModel):
     pending: int = 0
     remote_available: bool = False
     target: dict[str, Any] = Field(default_factory=dict)
-    next_attempt_at: datetime | None = None
+    next_attempt_at: int | None = None
 
 
 class ApprovalBase(BaseModel):
@@ -1735,8 +1751,9 @@ class ApprovalRead(ApprovalBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
-    created_at: datetime
-    updated_at: datetime
+    reviewed_at: int | None = None
+    created_at: int
+    updated_at: int
 
 
 class MetricsSummary(BaseModel):
@@ -1879,8 +1896,8 @@ class McpToolRead(McpToolBase):
 
     id: str
     server_id: str
-    created_at: datetime
-    updated_at: datetime
+    created_at: int
+    updated_at: int
 
 
 class McpServerBase(BaseModel):
@@ -1918,10 +1935,10 @@ class McpServerRead(McpServerBase):
     id: str
     health_status: str
     health_error: str | None = None
-    last_health_at: datetime | None = None
+    last_health_at: int | None = None
     tools: list[McpToolRead] = Field(default_factory=list)
-    created_at: datetime
-    updated_at: datetime
+    created_at: int
+    updated_at: int
 
 
 class McpPresetTemplateRead(BaseModel):
@@ -1963,7 +1980,6 @@ class TimelineEventRead(BaseModel):
 
 
 class ApplicationDashboardRead(BaseModel):
-    id: str
     applicationId: str | None = None
     personId: str | None = None
     jobDescriptionId: str | None = None
@@ -2095,7 +2111,7 @@ class AgentRunRead(BaseModel):
 
 class AgentQueueAuditEventRead(BaseModel):
     kind: str
-    at: str
+    at: int | None = None
     status: str | None = None
     priority: int | None = None
     attempts: int | None = None
@@ -2110,14 +2126,25 @@ class AgentQueueItemRead(BaseModel):
     priority: int
     status: str
     attempts: int
-    scheduled_for: datetime | None = None
-    locked_at: datetime | None = None
+    scheduled_for: int | None = None
+    locked_at: int | None = None
     locked_by: str | None = None
-    candidate_id: str | None = None
+    application_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "application_id",
+            "applicationId",
+            AliasPath("payload", "application_id"),
+            AliasPath("payload", "applicationId"),
+            AliasPath("payload", "candidate_id"),
+            AliasPath("payload", "candidateId"),
+        ),
+        serialization_alias="applicationId",
+    )
     payload: dict[str, Any] = Field(default_factory=dict)
     queue_audit: list[AgentQueueAuditEventRead] = Field(default_factory=list)
-    created_at: datetime
-    updated_at: datetime
+    created_at: int
+    updated_at: int
 
 
 class AgentQueueRecoveryRead(BaseModel):
@@ -2134,11 +2161,11 @@ class RuntimeSessionRead(BaseModel):
     status: str
     current_goal_id: str | None = None
     current_lane: str | None = None
-    last_active_at: datetime | None = None
-    last_run_at: datetime | None = None
+    last_active_at: int | None = None
+    last_run_at: int | None = None
     runtime_metadata: dict[str, Any] = Field(default_factory=dict)
-    created_at: datetime
-    updated_at: datetime
+    created_at: int
+    updated_at: int
 
 
 class RuntimeControlledRunRead(BaseModel):
@@ -2148,10 +2175,25 @@ class RuntimeControlledRunRead(BaseModel):
     session_id: str
     execution_episode_id: str | None = None
     goal_spec_id: str | None = None
-    candidate_id: str | None = None
+    person_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("person_id", "personId", "candidate_id", "candidateId"),
+        serialization_alias="personId",
+    )
+    application_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "application_id",
+            "applicationId",
+            AliasPath("runtime_metadata", "application_id"),
+            AliasPath("runtime_metadata", "applicationId"),
+        ),
+        serialization_alias="applicationId",
+    )
     job_description_id: str | None = Field(
         default=None,
         validation_alias=AliasChoices("job_description_id", "jobDescriptionId", "jd_id"),
+        serialization_alias="jobDescriptionId",
     )
     platform: str
     lane: str
@@ -2162,12 +2204,12 @@ class RuntimeControlledRunRead(BaseModel):
     checkpoint_status: str
     context_manifest: dict[str, Any] = Field(default_factory=dict)
     runtime_metadata: dict[str, Any] = Field(default_factory=dict)
-    started_at: datetime | None = None
-    finished_at: datetime | None = None
+    started_at: int | None = None
+    finished_at: int | None = None
     blocked_reason: str | None = None
     last_error: str | None = None
-    created_at: datetime
-    updated_at: datetime
+    created_at: int
+    updated_at: int
 
 
 class RuntimeWorkItemRead(BaseModel):
@@ -2178,7 +2220,21 @@ class RuntimeWorkItemRead(BaseModel):
     run_id: str | None = None
     queue_task_id: str | None = None
     goal_spec_id: str | None = None
-    candidate_id: str | None = None
+    person_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("person_id", "personId", "candidate_id", "candidateId"),
+        serialization_alias="personId",
+    )
+    application_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "application_id",
+            "applicationId",
+            AliasPath("payload", "application_id"),
+            AliasPath("payload", "applicationId"),
+        ),
+        serialization_alias="applicationId",
+    )
     platform: str
     lane: str
     item_type: str
@@ -2186,13 +2242,13 @@ class RuntimeWorkItemRead(BaseModel):
     priority: int
     dedupe_key: str | None = None
     payload: dict[str, Any] = Field(default_factory=dict)
-    scheduled_for: datetime | None = None
-    claimed_at: datetime | None = None
-    completed_at: datetime | None = None
-    deferred_until: datetime | None = None
+    scheduled_for: int | None = None
+    claimed_at: int | None = None
+    completed_at: int | None = None
+    deferred_until: int | None = None
     last_error: str | None = None
-    created_at: datetime
-    updated_at: datetime
+    created_at: int
+    updated_at: int
 
 
 class RuntimeCheckpointRead(BaseModel):
@@ -2201,7 +2257,21 @@ class RuntimeCheckpointRead(BaseModel):
     id: str
     session_id: str
     run_id: str
-    candidate_id: str | None = None
+    person_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("person_id", "personId", "candidate_id", "candidateId"),
+        serialization_alias="personId",
+    )
+    application_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "application_id",
+            "applicationId",
+            AliasPath("payload", "application_id"),
+            AliasPath("payload", "applicationId"),
+        ),
+        serialization_alias="applicationId",
+    )
     approval_id: str | None = None
     checkpoint_kind: str
     status: str
@@ -2209,9 +2279,9 @@ class RuntimeCheckpointRead(BaseModel):
     summary: str | None = None
     payload: dict[str, Any] = Field(default_factory=dict)
     resolved_by: str | None = None
-    resolved_at: datetime | None = None
-    created_at: datetime
-    updated_at: datetime
+    resolved_at: int | None = None
+    created_at: int
+    updated_at: int
 
 
 class RuntimeEventRead(BaseModel):
@@ -2220,15 +2290,29 @@ class RuntimeEventRead(BaseModel):
     id: str
     session_id: str
     run_id: str | None = None
-    candidate_id: str | None = None
+    person_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("person_id", "personId", "candidate_id", "candidateId"),
+        serialization_alias="personId",
+    )
+    application_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "application_id",
+            "applicationId",
+            AliasPath("payload", "application_id"),
+            AliasPath("payload", "applicationId"),
+        ),
+        serialization_alias="applicationId",
+    )
     level: str
     source: str
     event_type: str
     message: str
     payload: dict[str, Any] = Field(default_factory=dict)
-    occurred_at: datetime
-    created_at: datetime
-    updated_at: datetime
+    occurred_at: int
+    created_at: int
+    updated_at: int
 
 
 class GoalSpecBase(BaseModel):
@@ -2288,8 +2372,9 @@ class GoalSpecRead(GoalSpecBase):
 
     id: str
     agent_profile_id: str
-    created_at: datetime
-    updated_at: datetime
+    last_activity_at: int | None = None
+    created_at: int
+    updated_at: int
 
 
 class ExecutionTraceRead(BaseModel):
@@ -2299,7 +2384,21 @@ class ExecutionTraceRead(BaseModel):
     session_id: str
     run_id: str | None = None
     goal_spec_id: str | None = None
-    candidate_id: str | None = None
+    person_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("person_id", "personId", "candidate_id", "candidateId"),
+        serialization_alias="personId",
+    )
+    application_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "application_id",
+            "applicationId",
+            AliasPath("trace_metadata", "application_id"),
+            AliasPath("trace_metadata", "applicationId"),
+        ),
+        serialization_alias="applicationId",
+    )
     lane: str
     trace_kind: str
     status: str
@@ -2309,10 +2408,10 @@ class ExecutionTraceRead(BaseModel):
     distilled_trace: dict[str, Any] = Field(default_factory=dict)
     outcome: dict[str, Any] = Field(default_factory=dict)
     trace_metadata: dict[str, Any] = Field(default_factory=dict)
-    started_at: datetime | None = None
-    finished_at: datetime | None = None
-    created_at: datetime
-    updated_at: datetime
+    started_at: int | None = None
+    finished_at: int | None = None
+    created_at: int
+    updated_at: int
 
 
 class StrategyFragmentRead(BaseModel):
@@ -2322,10 +2421,25 @@ class StrategyFragmentRead(BaseModel):
     agent_profile_id: str
     goal_spec_id: str | None = None
     run_id: str | None = None
-    candidate_id: str | None = None
+    person_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("person_id", "personId", "candidate_id", "candidateId"),
+        serialization_alias="personId",
+    )
+    application_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "application_id",
+            "applicationId",
+            AliasPath("fragment_metadata", "application_id"),
+            AliasPath("fragment_metadata", "applicationId"),
+        ),
+        serialization_alias="applicationId",
+    )
     job_description_id: str | None = Field(
         default=None,
         validation_alias=AliasChoices("job_description_id", "jobDescriptionId", "jd_id"),
+        serialization_alias="jobDescriptionId",
     )
     scope: str
     fragment_kind: str
@@ -2335,10 +2449,10 @@ class StrategyFragmentRead(BaseModel):
     evidence: dict[str, Any] = Field(default_factory=dict)
     status: str
     adoption_count: int = 0
-    last_applied_at: datetime | None = None
+    last_applied_at: int | None = None
     fragment_metadata: dict[str, Any] = Field(default_factory=dict)
-    created_at: datetime
-    updated_at: datetime
+    created_at: int
+    updated_at: int
 
 
 class ExecutionGraphProjectionRead(BaseModel):
@@ -2347,7 +2461,21 @@ class ExecutionGraphProjectionRead(BaseModel):
     id: str
     goal_spec_id: str | None = None
     run_id: str | None = None
-    candidate_id: str | None = None
+    person_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("person_id", "personId", "candidate_id", "candidateId"),
+        serialization_alias="personId",
+    )
+    application_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "application_id",
+            "applicationId",
+            AliasPath("graph_metadata", "application_id"),
+            AliasPath("graph_metadata", "applicationId"),
+        ),
+        serialization_alias="applicationId",
+    )
     graph_kind: str
     title: str
     summary: str | None = None
@@ -2355,8 +2483,8 @@ class ExecutionGraphProjectionRead(BaseModel):
     edges: list[dict[str, Any]] = Field(default_factory=list)
     rendered_text: str | None = None
     graph_metadata: dict[str, Any] = Field(default_factory=dict)
-    created_at: datetime
-    updated_at: datetime
+    created_at: int
+    updated_at: int
 
 
 class OperatorInteractionRead(BaseModel):
@@ -2368,7 +2496,21 @@ class OperatorInteractionRead(BaseModel):
     checkpoint_id: str | None = None
     approval_id: str | None = None
     goal_spec_id: str | None = None
-    candidate_id: str | None = None
+    person_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("person_id", "personId", "candidate_id", "candidateId"),
+        serialization_alias="personId",
+    )
+    application_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "application_id",
+            "applicationId",
+            AliasPath("interaction_metadata", "application_id"),
+            AliasPath("interaction_metadata", "applicationId"),
+        ),
+        serialization_alias="applicationId",
+    )
     lane: str
     interaction_type: str
     status: str
@@ -2379,11 +2521,11 @@ class OperatorInteractionRead(BaseModel):
     effect_summary: str | None = None
     scope: str = "run_only"
     interaction_metadata: dict[str, Any] = Field(default_factory=dict)
-    surfaced_at: datetime
-    resolved_at: datetime | None = None
+    surfaced_at: int
+    resolved_at: int | None = None
     resolved_by: str | None = None
-    created_at: datetime
-    updated_at: datetime
+    created_at: int
+    updated_at: int
 
 
 class OperatorInteractionResolveRequest(BaseModel):
