@@ -1,0 +1,1 @@
+"""Shared agent kernel package."""

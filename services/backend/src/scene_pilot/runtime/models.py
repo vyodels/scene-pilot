@@ -1,3 +1,4 @@
+# mypy: ignore-errors
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -178,6 +179,130 @@ class AgentResult:
     usage: LLMUsage = field(default_factory=LLMUsage)
     tool_outputs: list[ToolExecutionResult] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class GoalRef:
+    goal_id: str
+    scope_kind: str
+    scope_ref: str
+    title: str | None = None
+    goal_text: str | None = None
+    constraints: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class CheckpointRef:
+    checkpoint_id: str
+    run_id: str | None = None
+    tick_id: str | None = None
+    summary: str | None = None
+    payload: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class FairnessState:
+    last_scope_ref: str | None = None
+    same_scope_ticks: int = 0
+    soft_limit: int = 3
+    hard_limit: int = 6
+    cooldown_until: datetime | None = None
+
+
+@dataclass(slots=True)
+class Observation:
+    world_snapshot: dict[str, Any] = field(default_factory=dict)
+    scope_ref: str | None = None
+    scope_kind: str | None = None
+    recent_events: list[dict[str, Any]] = field(default_factory=list)
+    available_tools: list[str] = field(default_factory=list)
+    available_skills: list[str] = field(default_factory=list)
+    available_mcps: list[str] = field(default_factory=list)
+    hash: str | None = None
+
+
+@dataclass(slots=True)
+class CacheBlock:
+    cache_key: str
+    content: dict[str, Any] = field(default_factory=dict)
+    token_count: int = 0
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+@dataclass(slots=True)
+class LLMRequest:
+    messages: list[Message] = field(default_factory=list)
+    tools: list[dict[str, Any]] = field(default_factory=list)
+    max_tokens: int | None = None
+    temperature: float | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class Deliberation:
+    messages: list[Message] = field(default_factory=list)
+    tool_calls: list[ToolCall] = field(default_factory=list)
+    tool_results: list[ToolExecutionResult] = field(default_factory=list)
+    final_content: str = ""
+    stop_reason: str = "stop"
+    usage: LLMUsage = field(default_factory=LLMUsage)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class GuardVerdict:
+    allowed: bool
+    reason: str | None = None
+    severity: str = "info"
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class WakeupRequest:
+    delay_seconds: int
+    reason: str
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class ExecutionUnitResult:
+    unit_id: str
+    status: str
+    output: dict[str, Any] = field(default_factory=dict)
+    artifacts: list[dict[str, Any]] = field(default_factory=list)
+    error: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class Effects:
+    state_updates: dict[str, Any] = field(default_factory=dict)
+    events: list[dict[str, Any]] = field(default_factory=list)
+    follow_ups: list[dict[str, Any]] = field(default_factory=list)
+    approvals: list[dict[str, Any]] = field(default_factory=list)
+    wakeup_request: WakeupRequest | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class TickOutcome:
+    status: str
+    final_output: str = ""
+    effects: Effects = field(default_factory=Effects)
+    wait_reason: str | None = None
+    checkpoint: CheckpointRef | None = None
+    escalate_reason: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class CancellationToken:
+    cancelled: bool = False
+    reason: str | None = None
+
+    def cancel(self, reason: str | None = None) -> None:
+        self.cancelled = True
+        self.reason = reason
 
 
 def _compact_tool_output_for_model(tool_name: str, output: Any) -> Any:

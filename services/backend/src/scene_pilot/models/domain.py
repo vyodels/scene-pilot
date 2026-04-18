@@ -559,6 +559,10 @@ class McpServer(Base, TimestampMixin):
     health_status: Mapped[str] = mapped_column(String(32), nullable=False, default="unknown", index=True)
     health_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     last_health_at: Mapped[datetime | None] = mapped_column(UnixTimestamp, nullable=True, index=True)
+    capabilities: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    circuit_state: Mapped[str] = mapped_column(String(32), nullable=False, default="closed", index=True)
+    circuit_until: Mapped[datetime | None] = mapped_column(UnixTimestamp, nullable=True, index=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class McpTool(Base, TimestampMixin):
@@ -615,9 +619,6 @@ class RecruitAgentProfile(Base, TimestampMixin):
 
 class CandidatePersonMemory(Base, TimestampMixin):
     __tablename__ = "candidate_person_memories"
-    __table_args__ = (
-        UniqueConstraint("agent_profile_id", "person_id", name="uq_candidate_person_memories_agent_person"),
-    )
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=generate_id)
     agent_profile_id: Mapped[str] = mapped_column(
@@ -641,13 +642,21 @@ class CandidatePersonMemory(Base, TimestampMixin):
     compacted_at: Mapped[datetime | None] = mapped_column(UnixTimestamp, nullable=True)
     compacted_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     memory_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    memory_item_id: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True, index=True)
+    kind: Mapped[str] = mapped_column(String(64), nullable=False, default="fact", index=True)
+    index_name: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    index_description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    confidence: Mapped[float] = mapped_column(nullable=False, default=0.5)
+    evidence_refs: Mapped[list[Any]] = mapped_column(JSON, nullable=False, default=list)
+    trust_level: Mapped[str] = mapped_column(String(32), nullable=False, default="unverified", index=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    supersedes_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    expires_at: Mapped[datetime | None] = mapped_column(UnixTimestamp, nullable=True, index=True)
+    item_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
 
 
 class JobDescriptionMemory(Base, TimestampMixin):
     __tablename__ = "job_description_memories"
-    __table_args__ = (
-        UniqueConstraint("agent_profile_id", "job_description_id", name="uq_job_description_memories_agent_job"),
-    )
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=generate_id)
     agent_profile_id: Mapped[str] = mapped_column(
@@ -671,13 +680,21 @@ class JobDescriptionMemory(Base, TimestampMixin):
     compacted_at: Mapped[datetime | None] = mapped_column(UnixTimestamp, nullable=True)
     compacted_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     memory_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    memory_item_id: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True, index=True)
+    kind: Mapped[str] = mapped_column(String(64), nullable=False, default="pattern", index=True)
+    index_name: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    index_description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    confidence: Mapped[float] = mapped_column(nullable=False, default=0.5)
+    evidence_refs: Mapped[list[Any]] = mapped_column(JSON, nullable=False, default=list)
+    trust_level: Mapped[str] = mapped_column(String(32), nullable=False, default="unverified", index=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    supersedes_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    expires_at: Mapped[datetime | None] = mapped_column(UnixTimestamp, nullable=True, index=True)
+    item_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
 
 
 class AgentGlobalMemory(Base, TimestampMixin):
     __tablename__ = "agent_global_memories"
-    __table_args__ = (
-        UniqueConstraint("agent_profile_id", name="uq_agent_global_memories_agent"),
-    )
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=generate_id)
     agent_profile_id: Mapped[str] = mapped_column(
@@ -696,6 +713,67 @@ class AgentGlobalMemory(Base, TimestampMixin):
     compacted_at: Mapped[datetime | None] = mapped_column(UnixTimestamp, nullable=True)
     compacted_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     memory_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    memory_item_id: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True, index=True)
+    kind: Mapped[str] = mapped_column(String(64), nullable=False, default="global_lesson", index=True)
+    index_name: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    index_description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    confidence: Mapped[float] = mapped_column(nullable=False, default=0.5)
+    evidence_refs: Mapped[list[Any]] = mapped_column(JSON, nullable=False, default=list)
+    trust_level: Mapped[str] = mapped_column(String(32), nullable=False, default="unverified", index=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    supersedes_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    expires_at: Mapped[datetime | None] = mapped_column(UnixTimestamp, nullable=True, index=True)
+    item_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+
+
+class JobAssembly(Base, TimestampMixin):
+    __tablename__ = "job_assemblies"
+    __table_args__ = (
+        UniqueConstraint("job_description_id", "version", name="uq_job_assemblies_job_version"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=generate_id)
+    job_description_id: Mapped[str] = mapped_column(
+        ForeignKey("job_descriptions.job_description_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    agent_profile_id: Mapped[str] = mapped_column(
+        ForeignKey("recruit_agent_profiles.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="active", index=True)
+    prompt_overlay: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    scoring_rubric: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    tool_allowlist: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    guard_override: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    context_policy: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    kernel_tuning: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+
+
+class PromptOverlayRevision(Base, TimestampMixin):
+    __tablename__ = "prompt_overlay_revisions"
+    __table_args__ = (
+        UniqueConstraint("job_description_id", "version", name="uq_prompt_overlay_revisions_job_version"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=generate_id)
+    job_description_id: Mapped[str] = mapped_column(
+        ForeignKey("job_descriptions.job_description_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    content: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="draft", index=True)
+    baseline_metrics: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    trial_metrics: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    metrics_schema_version: Mapped[str] = mapped_column(String(64), nullable=False, default="prompt-trial-v1")
+    activated_at: Mapped[datetime | None] = mapped_column(UnixTimestamp, nullable=True)
+    archived_at: Mapped[datetime | None] = mapped_column(UnixTimestamp, nullable=True)
+    created_by: Mapped[str] = mapped_column(String(255), nullable=False, default="system")
 
 
 class AgentSession(Base, TimestampMixin):
@@ -749,6 +827,17 @@ class AgentRun(Base, TimestampMixin):
     finished_at: Mapped[datetime | None] = mapped_column(UnixTimestamp, nullable=True, index=True)
     blocked_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    run_id: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True, index=True)
+    agent_kind: Mapped[str] = mapped_column(String(32), nullable=False, default="autonomous", index=True)
+    turns_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    ticks_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    prompt_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    completion_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    cache_hit_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    escalate_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    lock_scope: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    idempotency_key: Mapped[str | None] = mapped_column(String(255), nullable=True, unique=True, index=True)
+    wakeup_state: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
 
     __table_args__ = (
         Index("ix_agent_runs_session_status_priority", "session_id", "status", "priority"),
@@ -828,6 +917,10 @@ class AgentRuntimeEvent(Base, TimestampMixin):
     message: Mapped[str] = mapped_column(Text, nullable=False)
     payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     occurred_at: Mapped[datetime] = mapped_column(UnixTimestamp, nullable=False, default=utcnow, index=True)
+    tick_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    turn_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    conversation_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    seq: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
     __table_args__ = (
         Index("ix_agent_runtime_events_session_occurred_at", "session_id", "occurred_at"),
@@ -988,6 +1081,16 @@ class OperatorInteraction(Base, TimestampMixin):
         Index("ix_operator_interactions_candidate_status", "candidate_id", "status"),
         Index("ix_operator_interactions_approval_status", "approval_id", "status"),
     )
+
+
+class AgentGlobalState(Base, TimestampMixin):
+    __tablename__ = "agent_global_state"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default="singleton")
+    autonomous_paused: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, index=True)
+    pause_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    pause_updated_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    state_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
 
 
 class TaskSpec(Base, TimestampMixin):
@@ -1182,6 +1285,11 @@ class Skill(Base, TimestampMixin):
     last_health_status: Mapped[str | None] = mapped_column(String(64), nullable=True)
     confirmed_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
     confirmed_at: Mapped[datetime | None] = mapped_column(UnixTimestamp, nullable=True)
+    trigger_hint: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    body: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    trial_metrics: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    requires_human_gate: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, index=True)
+    human_gate_policy: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
 
 
 class ApprovalItem(Base, TimestampMixin):
@@ -1197,6 +1305,150 @@ class ApprovalItem(Base, TimestampMixin):
     reviewed_at: Mapped[datetime | None] = mapped_column(UnixTimestamp, nullable=True)
     payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    run_pk: Mapped[str | None] = mapped_column(ForeignKey("agent_runs.id", ondelete="SET NULL"), nullable=True, index=True)
+    tick_pk: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    conversation_pk: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    source_kind: Mapped[str] = mapped_column(String(32), nullable=False, default="autonomous", index=True)
+    tool_name: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    args_digest: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    expires_at: Mapped[datetime | None] = mapped_column(UnixTimestamp, nullable=True, index=True)
+    executed_at: Mapped[datetime | None] = mapped_column(UnixTimestamp, nullable=True)
+    idempotency_key: Mapped[str | None] = mapped_column(String(255), nullable=True, unique=True, index=True)
+
+
+class AgentTickRecord(Base, TimestampMixin):
+    __tablename__ = "agent_tick_records"
+    __table_args__ = (
+        UniqueConstraint("run_pk", "seq", name="uq_agent_tick_records_run_seq"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=generate_id)
+    tick_id: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True, default=generate_business_id)
+    run_pk: Mapped[str] = mapped_column(ForeignKey("agent_runs.id", ondelete="CASCADE"), nullable=False, index=True)
+    seq: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    trigger_type: Mapped[str] = mapped_column(String(64), nullable=False, default="manual", index=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="started", index=True)
+    phase: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    outcome_kind: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    prompt_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    completion_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    cache_hit_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    tick_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+
+
+class AgentTurnRecord(Base, TimestampMixin):
+    __tablename__ = "agent_turn_records"
+    __table_args__ = (
+        UniqueConstraint("tick_pk", "seq", name="uq_agent_turn_records_tick_seq"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=generate_id)
+    turn_id: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True, default=generate_business_id)
+    tick_pk: Mapped[str] = mapped_column(ForeignKey("agent_tick_records.id", ondelete="CASCADE"), nullable=False, index=True)
+    seq: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    role: Mapped[str] = mapped_column(String(32), nullable=False, default="assistant", index=True)
+    stop_reason: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    prompt_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    completion_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    cache_hit_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    turn_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+
+
+class ToolInvocation(Base, TimestampMixin):
+    __tablename__ = "tool_invocations"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=generate_id)
+    invocation_id: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True, default=generate_business_id)
+    tick_pk: Mapped[str | None] = mapped_column(ForeignKey("agent_tick_records.id", ondelete="SET NULL"), nullable=True, index=True)
+    turn_pk: Mapped[str | None] = mapped_column(ForeignKey("agent_turn_records.id", ondelete="SET NULL"), nullable=True, index=True)
+    tool_name: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    category: Mapped[str] = mapped_column(String(64), nullable=False, default="core", index=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="started", index=True)
+    external_target: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, index=True)
+    resource_target_kind: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    args_digest: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    request_payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    response_payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(UnixTimestamp, nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(UnixTimestamp, nullable=True)
+
+
+class ConversationSession(Base, TimestampMixin):
+    __tablename__ = "conversation_sessions"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=generate_id)
+    conversation_id: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True, default=generate_business_id)
+    user_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    assistant_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    assistant_assembly_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    assistant_assembly_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    title: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="active", index=True)
+    jsonl_path: Mapped[str] = mapped_column(String(1024), nullable=False)
+    context_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    messages_token_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_compact_at: Mapped[datetime | None] = mapped_column(UnixTimestamp, nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(UnixTimestamp, nullable=True, index=True)
+    last_active_at: Mapped[datetime | None] = mapped_column(UnixTimestamp, nullable=True, index=True)
+    closed_at: Mapped[datetime | None] = mapped_column(UnixTimestamp, nullable=True)
+
+
+class ConversationTurn(Base, TimestampMixin):
+    __tablename__ = "conversation_turns"
+    __table_args__ = (
+        UniqueConstraint("conversation_pk", "seq", name="uq_conversation_turns_conversation_seq"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=generate_id)
+    turn_id: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True, default=generate_business_id)
+    conversation_pk: Mapped[str] = mapped_column(
+        ForeignKey("conversation_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    seq: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    role: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    content: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    tool_calls: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
+    tool_results: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="completed", index=True)
+    cancel_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    cancelled_at: Mapped[datetime | None] = mapped_column(UnixTimestamp, nullable=True)
+    turn_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+
+
+class CompactionEvent(Base, TimestampMixin):
+    __tablename__ = "compaction_events"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=generate_id)
+    level: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    target_ref: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    tokens_before: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    tokens_after: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    items_before: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    items_after: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    summary_digest: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    triggered_by: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+
+
+class CandidateAutonomousLock(Base, TimestampMixin):
+    __tablename__ = "candidate_autonomous_locks"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=generate_id)
+    candidate_person_id: Mapped[str] = mapped_column(
+        ForeignKey("candidate_persons.candidate_person_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    locked_at: Mapped[datetime] = mapped_column(UnixTimestamp, nullable=False, default=utcnow, index=True)
+    locked_by: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(UnixTimestamp, nullable=True, index=True)
+    released_at: Mapped[datetime | None] = mapped_column(UnixTimestamp, nullable=True, index=True)
+    released_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    handover_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    handover_next_hint: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class AppSetting(Base, TimestampMixin):

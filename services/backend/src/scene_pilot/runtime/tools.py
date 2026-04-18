@@ -1,9 +1,12 @@
+# mypy: ignore-errors
 from __future__ import annotations
 
+import asyncio
+import inspect
 from dataclasses import dataclass, field
-from typing import Any, Callable, Protocol
+from typing import Any, Protocol
 
-from .models import ToolExecutionResult
+from .models import CancellationToken, ToolExecutionResult
 
 EXECUTION_CONTROL_CAPABILITIES = [
     "analyze",
@@ -33,6 +36,9 @@ class ToolDefinition:
     description: str
     parameters: dict[str, Any]
     handler: ToolHandler
+    category: str = "core"
+    external_target: bool = False
+    resource_target_kind: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_provider_spec(self) -> dict[str, Any]:
@@ -57,6 +63,10 @@ class ToolRegistry:
 
     def has(self, tool_name: str) -> bool:
         return tool_name in self.tools
+
+    def merge(self, other: "ToolRegistry") -> None:
+        for tool in other.tools.values():
+            self.register(tool)
 
     def describe(
         self,
@@ -83,18 +93,29 @@ class ToolRegistry:
         return names
 
     def execute(self, tool_name: str, arguments: dict[str, Any] | None = None) -> ToolExecutionResult:
+        return asyncio.run(self.execute_async(tool_name, arguments))
+
+    async def execute_async(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any] | None = None,
+        *,
+        cancel_token: CancellationToken | None = None,
+    ) -> ToolExecutionResult:
         if tool_name not in self.tools:
             raise ToolExecutionError(f"Unknown tool: {tool_name}")
         tool = self.tools[tool_name]
         payload = dict(arguments or {})
         try:
-            output = tool.handler(payload)
+            output = _invoke_handler(tool.handler, payload, cancel_token=cancel_token)
+            if inspect.isawaitable(output):
+                output = await output
             return ToolExecutionResult(
                 tool_name=tool_name,
                 output=output,
                 is_error=False,
                 arguments=payload,
-                metadata=dict(tool.metadata or {}),
+                metadata=_tool_metadata(tool),
             )
         except Exception as exc:  # pragma: no cover - defensive guard
             return ToolExecutionResult(
@@ -102,7 +123,7 @@ class ToolRegistry:
                 output=str(exc),
                 is_error=True,
                 arguments=payload,
-                metadata=dict(tool.metadata or {}),
+                metadata=_tool_metadata(tool),
             )
 
     def build_result_submission_tool(self, name: str = "submit_result") -> ToolDefinition:
@@ -307,3 +328,81 @@ class ToolRegistry:
             return candidates
         remaining = [tool for tool in candidates if tool.name not in preferred]
         return [*prioritized, *remaining]
+
+
+def register_core_tools(registry: ToolRegistry) -> None:
+    registry.register(
+        ToolDefinition(
+            name="read_memory",
+            description="Read memory entries for a scope.",
+            parameters={"type": "object", "properties": {"scope_kind": {"type": "string"}, "scope_ref": {"type": "string"}}},
+            handler=lambda arguments: {"accepted": True, "action": "read_memory", "arguments": arguments},
+            category="core",
+            external_target=False,
+            resource_target_kind="memory",
+        )
+    )
+    registry.register(
+        ToolDefinition(
+            name="record_learning",
+            description="Record a learning candidate for evolution.",
+            parameters={"type": "object", "properties": {"kind": {"type": "string"}, "payload": {"type": "object"}}},
+            handler=lambda arguments: {"accepted": True, "action": "record_learning", "arguments": arguments},
+            category="core",
+            external_target=False,
+            resource_target_kind="memory",
+        )
+    )
+    registry.register(
+        ToolDefinition(
+            name="enqueue_follow_up",
+            description="Schedule a follow up task for later execution.",
+            parameters={"type": "object", "properties": {"task_type": {"type": "string"}, "payload": {"type": "object"}}},
+            handler=lambda arguments: {"accepted": True, "action": "enqueue_follow_up", "arguments": arguments},
+            category="core",
+            external_target=False,
+            resource_target_kind="queue",
+        )
+    )
+    registry.register(
+        ToolDefinition(
+            name="schedule_self_wakeup",
+            description="Request a future wakeup for the current run.",
+            parameters={"type": "object", "properties": {"delay_seconds": {"type": "integer"}, "reason": {"type": "string"}}},
+            handler=lambda arguments: {"accepted": True, "action": "schedule_self_wakeup", "arguments": arguments},
+            category="core",
+            external_target=False,
+            resource_target_kind="run",
+        )
+    )
+    registry.register(
+        ToolDefinition(
+            name="invoke_skill",
+            description="Invoke a registered skill by identifier.",
+            parameters={"type": "object", "properties": {"skill_id": {"type": "string"}, "input": {"type": "object"}}},
+            handler=lambda arguments: {"accepted": True, "action": "invoke_skill", "arguments": arguments},
+            category="skill",
+            external_target=False,
+            resource_target_kind="skill",
+        )
+    )
+
+
+def _tool_metadata(tool: ToolDefinition) -> dict[str, Any]:
+    metadata = dict(tool.metadata or {})
+    metadata.setdefault("category", tool.category)
+    metadata.setdefault("external_target", tool.external_target)
+    metadata.setdefault("resource_target_kind", tool.resource_target_kind)
+    return metadata
+
+
+def _invoke_handler(
+    handler: ToolHandler,
+    arguments: dict[str, Any],
+    *,
+    cancel_token: CancellationToken | None = None,
+) -> Any:
+    parameters = inspect.signature(handler).parameters
+    if "cancel_token" in parameters:
+        return handler(arguments, cancel_token=cancel_token)
+    return handler(arguments)

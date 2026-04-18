@@ -1,0 +1,1 @@
+"""Recruit scenario capability pack."""

@@ -1,233 +1,193 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 
-from scene_pilot.api.deps import get_container
+from scene_pilot.models.domain import AgentRun, AgentTickRecord, AgentTurnRecord, JobAssembly, RecruitAgentProfile
 from scene_pilot.repositories.domain import TaskQueueRepository
-from scene_pilot.schemas.domain import (
-    AgentQueueItemRead,
-    AgentQueueRecoveryRead,
-    AgentRunRead,
-    AgentStatusRead,
-    AgentTaskCreate,
-    AgentTaskEnqueueRead,
-    ApprovalRead,
-)
 from scene_pilot.services.container import AppContainer
-from scene_pilot.services.system_commands import SystemCommandApprovalError, SystemCommandDisabledError, SystemCommandPolicyError
-
-router = APIRouter(prefix="/api/agent", tags=["agent"])
 
 
-def _timestamp(value: Any) -> int | None:
-    if value is None:
-        return None
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, int):
-        return value
-    if isinstance(value, float):
-        return int(value)
-    if isinstance(value, datetime):
-        if value.tzinfo is None:
-            value = value.replace(tzinfo=timezone.utc)
-        return int(value.timestamp())
-    if isinstance(value, str):
-        raw = value.strip()
-        if not raw:
-            return None
-        if raw.isdigit():
-            return int(raw)
-        try:
-            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-        except ValueError:
-            return None
-        if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=timezone.utc)
-        return int(parsed.timestamp())
-    return None
+class AgentTaskCreate(BaseModel):
+    task_type: str
+    priority: int = 100
+    payload: dict[str, Any] = Field(default_factory=dict)
 
 
-class SystemCommandRequest(BaseModel):
-    command: list[str] = Field(min_length=1)
-    rationale: str | None = None
-    requested_by: str = "desktop-user"
-    metadata: dict[str, Any] = Field(default_factory=dict)
+def build_router(container: AppContainer) -> APIRouter:
+    router = APIRouter(prefix="/api/agent", tags=["agent"])
 
+    @router.get("")
+    def get_agent_status() -> dict[str, Any]:
+        return {
+            "autonomous_paused": container.heartbeat.status()["autonomous_paused"],
+            "queue_depth": _queue_depth(container),
+        }
 
-class SystemCommandExecuteRequest(BaseModel):
-    requested_by: str = "desktop-user"
+    @router.post("/tasks")
+    def enqueue_task(payload: AgentTaskCreate) -> dict[str, Any]:
+        with container.session_factory() as session:
+            task = TaskQueueRepository(session).enqueue(
+                task_id=payload.payload.get("task_id") or payload.task_type,
+                task_type=payload.task_type,
+                priority=payload.priority,
+                payload=payload.payload,
+            )
+            return {"task_id": task.id, "task_type": task.task_type, "priority": task.priority}
 
+    @router.post("/run-once")
+    def run_once() -> dict[str, Any]:
+        return container.heartbeat.run_once()
 
-@router.get("", response_model=AgentStatusRead)
-def get_agent_status(container: AppContainer = Depends(get_container)) -> AgentStatusRead:
-    return container.dashboard.build_agent_status(queue_depth=container.scheduler.queue.size())
+    @router.get("/queue")
+    def list_queue() -> list[dict[str, Any]]:
+        with container.session_factory() as session:
+            return [
+                {
+                    "task_id": item.id,
+                    "task_type": item.task_type,
+                    "status": item.status,
+                    "priority": item.priority,
+                    "payload": dict(item.payload or {}),
+                }
+                for item in TaskQueueRepository(session).list()
+            ]
 
+    @router.post("/queue/recover")
+    def recover_queue() -> dict[str, Any]:
+        with container.session_factory() as session:
+            recovered = TaskQueueRepository(session).recover_stale_running()
+            return {"recovered_count": recovered}
 
-@router.post("/tasks", response_model=AgentTaskEnqueueRead)
-def enqueue_task(
-    payload: AgentTaskCreate,
-    container: AppContainer = Depends(get_container),
-) -> AgentTaskEnqueueRead:
-    resolved_application_id = str(payload.application_id or "").strip() or None
-    try:
-        task = container.agent_control.enqueue_task(
-            payload.task_type,
-            payload=payload.payload,
-            metadata={
-                "task_spec_id": payload.task_spec_id,
-                "execution_plan_id": payload.execution_plan_id,
-                "execution_episode_id": payload.execution_episode_id,
-                "requested_by": payload.requested_by,
-                "mode": payload.mode,
-            },
-            priority=payload.priority,
-            application_id=resolved_application_id,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return AgentTaskEnqueueRead(
-        task_id=task.task_id,
-        task_type=task.task_type,
-        priority=task.priority,
-        queue_depth=container.scheduler.queue.size(),
-    )
+    @router.get("/runs")
+    def list_runs(status: str | None = None) -> list[dict[str, Any]]:
+        with container.session_factory() as session:
+            stmt = select(AgentRun).order_by(AgentRun.updated_at.desc(), AgentRun.id.desc())
+            if status is not None:
+                stmt = stmt.where(AgentRun.status == status)
+            return [
+                {
+                    "id": run.id,
+                    "run_id": run.run_id,
+                    "status": run.status,
+                    "ticks_count": run.ticks_count,
+                    "turns_count": run.turns_count,
+                }
+                for run in session.scalars(stmt).all()
+            ]
 
-
-@router.post("/run-once", response_model=AgentRunRead)
-def run_once(container: AppContainer = Depends(get_container)) -> AgentRunRead:
-    outcome = container.agent_control.run_once()
-    if outcome is None:
-        return AgentRunRead(processed=False, status="idle")
-    return AgentRunRead(
-        processed=True,
-        status=outcome.result.status,
-        task_id=outcome.task.task_id,
-        enqueued_follow_ups=outcome.enqueued_follow_ups,
-        error=outcome.error,
-    )
-
-
-@router.get("/queue", response_model=list[AgentQueueItemRead])
-def list_agent_queue(
-    status: str | None = Query(default=None),
-    limit: int = Query(default=100, ge=1, le=500),
-    offset: int = Query(default=0, ge=0),
-    container: AppContainer = Depends(get_container),
-) -> list[AgentQueueItemRead]:
-    with container.session_factory() as session:
-        items = TaskQueueRepository(session).list(status=status, limit=limit, offset=offset)
-        return [
-            _build_queue_item_read(item)
-            for item in items
-        ]
-
-
-@router.post("/queue/recover", response_model=AgentQueueRecoveryRead)
-def recover_agent_queue(container: AppContainer = Depends(get_container)) -> AgentQueueRecoveryRead:
-    recover_stale = getattr(container.scheduler.queue, "recover_stale", None)
-    recovered = int(recover_stale()) if callable(recover_stale) else 0
-    with container.session_factory() as session:
-        counts = TaskQueueRepository(session).counts_by_status()
-    return AgentQueueRecoveryRead(recovered_count=recovered, by_status=counts)
-
-
-@router.get("/system-commands/policy")
-def get_system_command_policy(container: AppContainer = Depends(get_container)) -> dict[str, Any]:
-    return container.system_commands.policy_snapshot()
-
-
-@router.post("/system-commands/request", response_model=ApprovalRead, status_code=201)
-def request_system_command(
-    payload: SystemCommandRequest,
-    container: AppContainer = Depends(get_container),
-) -> ApprovalRead:
-    try:
-        approval = container.system_commands.request_command(
-            command=payload.command,
-            rationale=payload.rationale,
-            requested_by=payload.requested_by,
-            metadata=payload.metadata,
-        )
-    except SystemCommandDisabledError as exc:
-        raise HTTPException(status_code=403, detail=str(exc)) from exc
-    except SystemCommandPolicyError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return ApprovalRead.model_validate(approval)
-
-
-@router.post("/system-commands/{approval_id}/execute", response_model=ApprovalRead)
-def execute_system_command(
-    approval_id: str,
-    payload: SystemCommandExecuteRequest,
-    container: AppContainer = Depends(get_container),
-) -> ApprovalRead:
-    try:
-        approval = container.system_commands.execute_approval(approval_id, requested_by=payload.requested_by)
-    except SystemCommandDisabledError as exc:
-        raise HTTPException(status_code=403, detail=str(exc)) from exc
-    except SystemCommandPolicyError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except SystemCommandApprovalError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    return ApprovalRead.model_validate(approval)
-
-
-def _payload_value(payload: dict[str, Any] | None, key: str) -> str | None:
-    if not isinstance(payload, dict):
-        return None
-    value = payload.get(key)
-    if value is None:
-        return None
-    return str(value)
-
-
-def _build_queue_item_read(item) -> AgentQueueItemRead:
-    serialized_payload = dict(item.payload or {})
-    task_payload = dict(serialized_payload.get("payload") or {})
-    task_metadata = dict(serialized_payload.get("metadata") or {})
-    display_payload = {
-        **task_payload,
-        **{
-            key: value
-            for key, value in task_metadata.items()
-            if key in {"task_spec_id", "execution_plan_id", "execution_episode_id", "requested_by", "mode"}
-            and value is not None
-            and key not in task_payload
-        },
-    }
-    if task_metadata:
-        display_payload["_metadata"] = task_metadata
-
-    return AgentQueueItemRead(
-        task_id=item.id,
-        task_type=item.task_type,
-        adaptive_stage=_payload_value(serialized_payload.get("metadata"), "adaptive_stage") or item.task_type,
-        priority=int(item.priority or 0),
-        status=item.status,
-        attempts=int(item.attempts or 0),
-        scheduled_for=item.scheduled_for,
-        locked_at=item.locked_at,
-        locked_by=item.locked_by,
-        application_id=_payload_value(serialized_payload, "application_id") or _payload_value(serialized_payload, "candidate_id"),
-        payload=display_payload,
-        queue_audit=[
-            {
-                "kind": str(event.get("kind") or "unknown"),
-                "at": _timestamp(event.get("at")),
-                "status": str(event.get("status")) if event.get("status") is not None else None,
-                "priority": int(event["priority"]) if event.get("priority") is not None else None,
-                "attempts": int(event["attempts"]) if event.get("attempts") is not None else None,
-                "locked_by": str(event.get("locked_by")) if event.get("locked_by") is not None else None,
-                "error": str(event.get("error")) if event.get("error") is not None else None,
+    @router.get("/runs/{run_id}")
+    def get_run(run_id: str) -> dict[str, Any]:
+        with container.session_factory() as session:
+            run = _resolve_run(session, run_id)
+            return {
+                "id": run.id,
+                "run_id": run.run_id,
+                "status": run.status,
+                "ticks_count": run.ticks_count,
+                "turns_count": run.turns_count,
             }
-            for event in list(serialized_payload.get("queue_audit", {}).get("history") or [])
-            if isinstance(event, dict)
-        ],
-        created_at=item.created_at,
-        updated_at=item.updated_at,
-    )
+
+    @router.get("/runs/{run_id}/ticks")
+    def list_ticks(run_id: str) -> list[dict[str, Any]]:
+        with container.session_factory() as session:
+            run = _resolve_run(session, run_id)
+            stmt = select(AgentTickRecord).where(AgentTickRecord.run_pk == run.id).order_by(AgentTickRecord.seq.asc())
+            return [
+                {
+                    "id": tick.id,
+                    "tick_id": tick.tick_id,
+                    "seq": tick.seq,
+                    "status": tick.status,
+                    "outcome_kind": tick.outcome_kind,
+                }
+                for tick in session.scalars(stmt).all()
+            ]
+
+    @router.get("/runs/{run_id}/ticks/{tick_id}/turns")
+    def list_turns(run_id: str, tick_id: str) -> list[dict[str, Any]]:
+        with container.session_factory() as session:
+            run = _resolve_run(session, run_id)
+            tick = session.scalars(
+                select(AgentTickRecord).where(AgentTickRecord.run_pk == run.id, AgentTickRecord.tick_id == tick_id)
+            ).first()
+            if tick is None:
+                return []
+            stmt = select(AgentTurnRecord).where(AgentTurnRecord.tick_pk == tick.id).order_by(AgentTurnRecord.seq.asc())
+            return [
+                {
+                    "id": turn.id,
+                    "turn_id": turn.turn_id,
+                    "seq": turn.seq,
+                    "role": turn.role,
+                    "stop_reason": turn.stop_reason,
+                }
+                for turn in session.scalars(stmt).all()
+            ]
+
+    @router.post("/assemblies/{jd_id}")
+    def create_assembly(jd_id: str) -> dict[str, Any]:
+        with container.session_factory() as session:
+            profile = session.scalars(select(RecruitAgentProfile).order_by(RecruitAgentProfile.created_at.asc())).first()
+            if profile is None:
+                profile = RecruitAgentProfile(agent_key="default", name="Default", is_primary=True)
+                session.add(profile)
+                session.flush()
+            assembly = JobAssembly(job_description_id=jd_id, agent_profile_id=profile.id)
+            session.add(assembly)
+            session.commit()
+            session.refresh(assembly)
+            return {"id": assembly.id, "job_description_id": assembly.job_description_id, "version": assembly.version}
+
+    @router.get("/assemblies/{jd_id}/versions")
+    def list_assembly_versions(jd_id: str) -> list[dict[str, Any]]:
+        with container.session_factory() as session:
+            stmt = select(JobAssembly).where(JobAssembly.job_description_id == jd_id).order_by(JobAssembly.version.asc())
+            return [{"id": item.id, "version": item.version, "status": item.status} for item in session.scalars(stmt).all()]
+
+    @router.post("/heartbeat/pause")
+    def pause_heartbeat() -> dict[str, Any]:
+        state = container.heartbeat.pause(reason="manual")
+        return {"autonomous_paused": state.autonomous_paused, "pause_reason": state.pause_reason}
+
+    @router.post("/heartbeat/resume")
+    def resume_heartbeat() -> dict[str, Any]:
+        state = container.heartbeat.resume()
+        return {"autonomous_paused": state.autonomous_paused, "pause_reason": state.pause_reason}
+
+    @router.get("/heartbeat/status")
+    def heartbeat_status() -> dict[str, Any]:
+        return container.heartbeat.status()
+
+    @router.post("/autonomous/pause")
+    def pause_autonomous() -> dict[str, Any]:
+        state = container.heartbeat.pause(reason="manual")
+        return {"autonomous_paused": state.autonomous_paused, "pause_reason": state.pause_reason}
+
+    @router.post("/autonomous/resume")
+    def resume_autonomous() -> dict[str, Any]:
+        state = container.heartbeat.resume()
+        return {"autonomous_paused": state.autonomous_paused, "pause_reason": state.pause_reason}
+
+    @router.get("/autonomous/state")
+    def autonomous_state() -> dict[str, Any]:
+        return container.heartbeat.status()
+
+    return router
+
+
+def _queue_depth(container: AppContainer) -> int:
+    with container.session_factory() as session:
+        return TaskQueueRepository(session).pending_count()
+
+
+def _resolve_run(session, run_id: str) -> AgentRun:
+    run = session.scalars(select(AgentRun).where(AgentRun.run_id == run_id)).first()
+    if run is None:
+        run = session.get(AgentRun, run_id)
+    if run is None:
+        raise KeyError(f"unknown run: {run_id}")
+    return run

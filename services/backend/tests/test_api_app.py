@@ -36,31 +36,44 @@ class ApiAppTests(unittest.TestCase):
         os.environ.pop("RECRUIT_AGENT_DATA_DIR", None)
         self._load_settings.cache_clear()
 
-    def test_health_and_dashboard(self) -> None:
+    def test_health_and_agent_queue_surface(self) -> None:
         health = self.client.get("/health")
         self.assertEqual(health.status_code, 200)
         self.assertEqual(health.json()["status"], "ready")
 
-        dashboard = self.client.get("/api/dashboard")
-        self.assertEqual(dashboard.status_code, 200)
-        payload = dashboard.json()
-        self.assertIn("metrics", payload)
-        self.assertIn("applications", payload)
-        self.assertIn("agent", payload)
+        heartbeat = self.client.get("/api/agent/heartbeat/status")
+        self.assertEqual(heartbeat.status_code, 200)
+        self.assertIn("autonomous_paused", heartbeat.json())
 
-    def test_settings_patch(self) -> None:
-        response = self.client.patch(
-            "/api/settings",
-            json={
-                "intranetEnabled": True,
-                "platform": {"account": "boss-02", "allowOutboundMessaging": True},
-            },
+        task = self.client.post(
+            "/api/agent/tasks",
+            json={"task_type": "autonomous_tick", "priority": 100, "payload": {"scope_kind": "global", "scope_ref": "system"}},
         )
-        self.assertEqual(response.status_code, 200)
-        payload = response.json()
-        self.assertTrue(payload["intranetEnabled"])
-        self.assertEqual(payload["platform"]["account"], "boss-02")
-        self.assertTrue(payload["platform"]["allowOutboundMessaging"])
+        self.assertEqual(task.status_code, 200)
+
+        queue = self.client.get("/api/agent/queue")
+        self.assertEqual(queue.status_code, 200)
+        self.assertEqual(len(queue.json()), 1)
+
+    def test_assistant_recruit_and_evolution_surfaces(self) -> None:
+        conversation = self.client.post(
+            "/api/assistant/conversations",
+            json={"user_id": "user-1", "title": "Hiring"},
+        )
+        self.assertEqual(conversation.status_code, 200)
+        conversation_id = conversation.json()["conversation_id"]
+
+        listed = self.client.get("/api/assistant/conversations", params={"user_id": "user-1"})
+        self.assertEqual(listed.status_code, 200)
+        self.assertEqual(listed.json()[0]["conversation_id"], conversation_id)
+
+        recruit = self.client.get("/api/recruit/candidates/locks")
+        self.assertEqual(recruit.status_code, 200)
+        self.assertEqual(recruit.json(), [])
+
+        evolution = self.client.get("/api/evolution/queue", params={"status": "pending_review"})
+        self.assertEqual(evolution.status_code, 200)
+        self.assertEqual(evolution.json(), [])
 
 
 if __name__ == "__main__":
