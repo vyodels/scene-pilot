@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+from functools import lru_cache
+from pathlib import Path
 import re
 from typing import Any
 
@@ -7,6 +10,8 @@ from sqlalchemy.orm import Session
 
 from scene_pilot.db.base import utcnow
 from scene_pilot.repositories import SkillRepository
+from scene_pilot.runtime.models import LLMResponse, Message
+from scene_pilot.runtime.providers import LLMProvider
 
 
 def _slugify(value: str) -> str:
@@ -42,6 +47,89 @@ def _normalize_skill_contract(draft: dict[str, Any], *, fallback_title: str) -> 
     normalized = dict(draft)
     normalized.setdefault("name", fallback_title)
     return normalized
+
+
+def build_skill_distill_review_payload(
+    *,
+    run_id: str,
+    run_type: str | None,
+    goal_kind: str | None,
+    round_count: int,
+    final_output: str | None,
+    tool_activity: list[dict[str, Any]],
+    event_outline: list[dict[str, Any]],
+) -> dict[str, Any]:
+    return {
+        "run_id": run_id,
+        "run_type": str(run_type or "").strip() or None,
+        "goal_kind": str(goal_kind or "").strip() or None,
+        "round_count": max(int(round_count or 0), 0),
+        "final_output": str(final_output or "").strip() or None,
+        "tool_activity": [dict(item) for item in tool_activity if isinstance(item, dict)],
+        "event_outline": [dict(item) for item in event_outline if isinstance(item, dict)],
+    }
+
+
+def distill_skill_contract_from_run(
+    *,
+    provider: LLMProvider,
+    review_payload: dict[str, Any],
+    max_tokens: int = 1800,
+) -> tuple[dict[str, Any], LLMResponse]:
+    prompt = _load_prompt("tasks/skill_distill_from_run")
+    if not prompt:
+        raise ValueError("skill distill prompt is missing")
+    messages = [
+        Message(role="system", content=prompt),
+        Message(role="user", content=json.dumps(review_payload, ensure_ascii=False, default=str)),
+    ]
+    response = provider.generate(messages, max_tokens=max_tokens, temperature=0.2)
+    contract = _extract_skill_contract(response)
+    return contract, response
+
+
+def _extract_skill_contract(response: LLMResponse) -> dict[str, Any]:
+    if isinstance(response.skill_draft, dict):
+        return dict(response.skill_draft)
+    if isinstance(response.result_data, dict):
+        nested = response.result_data.get("skill_contract")
+        if isinstance(nested, dict):
+            return dict(nested)
+        return dict(response.result_data)
+
+    parsed = _parse_json_object(response.content)
+    if not isinstance(parsed, dict):
+        raise ValueError("skill distill response did not return a JSON object")
+    nested = parsed.get("skill_contract")
+    if isinstance(nested, dict):
+        return dict(nested)
+    return parsed
+
+
+def _parse_json_object(content: str | None) -> dict[str, Any] | None:
+    text = str(content or "").strip()
+    if not text:
+        return None
+    fenced = re.match(r"^```(?:json)?\s*(.*?)\s*```$", text, re.DOTALL | re.IGNORECASE)
+    if fenced:
+        text = fenced.group(1).strip()
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+@lru_cache(maxsize=8)
+def _load_prompt(prompt_key: str) -> str:
+    prompt_path = _prompts_root() / f"{prompt_key}.md"
+    if not prompt_path.exists():
+        return ""
+    return prompt_path.read_text(encoding="utf-8").strip()
+
+
+def _prompts_root() -> Path:
+    return Path(__file__).resolve().parent.parent / "prompts"
 
 
 def resolve_promoted_skill_snapshot(payload: dict[str, Any] | None) -> dict[str, object] | None:
@@ -92,6 +180,12 @@ def promote_skill_draft_contract(
         if isinstance(seed_instruction, str) and seed_instruction.strip():
             incoming_strategy = {"instruction": seed_instruction.strip()}
 
+    incoming_body = dict(contract.get("body") or {})
+    if not incoming_body:
+        seed_body = contract.get("summary") or contract.get("description")
+        if isinstance(seed_body, str) and seed_body.strip():
+            incoming_body = {"summary": seed_body.strip()}
+
     incoming_execution_hints = dict(contract.get("execution_hints") or {})
     incoming_version_governance = dict(contract.get("version_governance") or {})
     incoming_health_check_config = dict(contract.get("health_check_config") or {})
@@ -110,14 +204,21 @@ def promote_skill_draft_contract(
     next_version = int(existing.version) + 1 if existing is not None else 1
 
     existing_strategy = dict(existing.strategy or {}) if existing is not None else {}
+    existing_body = dict(existing.body or {}) if existing is not None else {}
     existing_execution_hints = dict(existing.execution_hints or {}) if existing is not None else {}
     existing_health_check_config = dict(existing.health_check_config or {}) if existing is not None else {}
     existing_skill_metadata = dict(existing.skill_metadata or {}) if existing is not None else {}
+    existing_human_gate_policy = dict(existing.human_gate_policy or {}) if existing is not None else {}
 
     merged_strategy = {**existing_strategy, **incoming_strategy}
     if existing_strategy or incoming_strategy:
         merged_strategy["learned_patterns"] = _merge_sequence_field(existing_strategy, incoming_strategy, "learned_patterns")
         merged_strategy["observed_actions"] = _merge_sequence_field(existing_strategy, incoming_strategy, "observed_actions")
+
+    merged_body = {**existing_body, **incoming_body}
+    if existing_body or incoming_body:
+        merged_body["checklist"] = _merge_sequence_field(existing_body, incoming_body, "checklist")
+        merged_body["anti_patterns"] = _merge_sequence_field(existing_body, incoming_body, "anti_patterns")
 
     merged_execution_hints = {**existing_execution_hints, **incoming_execution_hints}
     if existing_execution_hints or incoming_execution_hints:
@@ -165,6 +266,7 @@ def promote_skill_draft_contract(
         **governance_payload,
     }
 
+    existing_trigger_hint = str(existing.trigger_hint or "").strip() if existing is not None else ""
     defaults = {
         "skill_id": skill_key,
         "name": skill_name,
@@ -177,6 +279,7 @@ def promote_skill_draft_contract(
         "input_schema": dict(contract.get("input_schema") or {}),
         "output_schema": dict(contract.get("output_schema") or {}),
         "strategy": merged_strategy,
+        "body": merged_body,
         "execution_hints": merged_execution_hints,
         "risk_level": str(contract.get("risk_level") or "medium"),
         "health_check_config": merged_health_check_config,
@@ -184,6 +287,12 @@ def promote_skill_draft_contract(
         "confirmed_by": reviewer,
         "confirmed_at": utcnow(),
         "last_health_status": reason or ("healthy" if status == "active" else "approved"),
+        "trigger_hint": str(contract.get("trigger_hint") or existing_trigger_hint or skill_name),
+        "requires_human_gate": bool(contract.get("requires_human_gate") or False),
+        "human_gate_policy": {
+            **existing_human_gate_policy,
+            **dict(contract.get("human_gate_policy") or {}),
+        },
     }
 
     skill = repo.update(existing, defaults) if existing is not None else repo.create(defaults)
