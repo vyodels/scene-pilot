@@ -40,6 +40,9 @@ def test_turn_routes_expose_turns(tmp_path: Path) -> None:
         turns = client.get("/api/agent/runs/run-turn-route/turns")
         assert turns.status_code == 200
         assert turns.json()[0]["seq"] == 1
+
+        ticks = client.get("/api/agent/runs/run-turn-route/ticks")
+        assert ticks.status_code == 404
     finally:
         client.__exit__(None, None, None)
         os.environ.pop("RECRUIT_AGENT_DATA_DIR", None)
