@@ -75,11 +75,25 @@ def test_canonical_business_ids_and_timestamp_columns_exist(tmp_path):
             row[1]: row[2]
             for row in connection.execute(text("PRAGMA table_info(candidate_application_messages)")).fetchall()
         }
+        job_columns = {
+            row[1]: row[2]
+            for row in connection.execute(text("PRAGMA table_info(job_descriptions)")).fetchall()
+        }
 
     assert "candidate_person_id" in person_columns
     assert "candidate_application_id" in application_columns
     assert "platform_candidate_person_id" in platform_idx_columns
     assert "source_platform_candidate_person_id" in application_columns
+    assert {
+        "company_name",
+        "employment_type",
+        "compensation_text",
+        "experience_requirement",
+        "education_requirement",
+        "summary",
+        "benefit_tags",
+        "detail_metadata",
+    } <= set(job_columns)
 
     for column_map in (person_columns, application_columns, platform_idx_columns):
         assert column_map["created_at"].upper() in {"BIGINT", "INTEGER"}

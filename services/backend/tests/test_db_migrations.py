@@ -90,3 +90,64 @@ def test_run_migrations_creates_supporting_indexes(tmp_path):
         assert "ix_task_queue_status_scheduled_for" in indexes
         assert "ix_task_queue_locked_at" in indexes
         assert "ix_sync_backlog_status_item_type" in indexes
+
+
+def test_run_migrations_adds_job_description_detail_columns_for_existing_schema(tmp_path):
+    engine = _build_engine(tmp_path)
+
+    with engine.begin() as connection:
+        ensure_schema_migrations_table(connection)
+        connection.execute(
+            text(
+                """
+                CREATE TABLE job_descriptions (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    title TEXT NOT NULL,
+                    department TEXT,
+                    location TEXT,
+                    headcount INTEGER,
+                    salary_min INTEGER,
+                    salary_max INTEGER,
+                    description TEXT,
+                    requirements TEXT,
+                    status TEXT NOT NULL DEFAULT 'active',
+                    source TEXT NOT NULL DEFAULT 'manual',
+                    created_at BIGINT NOT NULL,
+                    updated_at BIGINT NOT NULL
+                )
+                """
+            )
+        )
+        for version in range(1, CURRENT_SCHEMA_VERSION):
+            connection.execute(
+                text(
+                    f"""
+                    INSERT INTO {SCHEMA_MIGRATIONS_TABLE} (version, name, applied_at)
+                    VALUES (:version, :name, :applied_at)
+                    """
+                ),
+                {
+                    "version": version,
+                    "name": f"migration-{version}",
+                    "applied_at": "2026-04-20T00:00:00+00:00",
+                },
+            )
+
+    run_migrations(engine)
+
+    with engine.connect() as connection:
+        job_columns = {
+            row[1]
+            for row in connection.execute(text("PRAGMA table_info(job_descriptions)")).fetchall()
+        }
+        assert current_schema_version(connection) == CURRENT_SCHEMA_VERSION
+        assert {
+            "company_name",
+            "employment_type",
+            "compensation_text",
+            "experience_requirement",
+            "education_requirement",
+            "summary",
+            "benefit_tags",
+            "detail_metadata",
+        } <= job_columns

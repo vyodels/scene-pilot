@@ -1933,6 +1933,40 @@ def _canonicalize_core_entity_schema(connection: Connection) -> None:
         )
 
 
+def _extend_job_description_detail_schema(connection: Connection) -> None:
+    tables = {
+        row[0]
+        for row in connection.execute(text("SELECT name FROM sqlite_master WHERE type='table'")).fetchall()
+    }
+    if "job_descriptions" not in tables:
+        return
+
+    columns = {
+        row[1]
+        for row in connection.execute(text("PRAGMA table_info(job_descriptions)")).fetchall()
+    }
+    statements = []
+    if "company_name" not in columns:
+        statements.append("ALTER TABLE job_descriptions ADD COLUMN company_name TEXT")
+    if "employment_type" not in columns:
+        statements.append("ALTER TABLE job_descriptions ADD COLUMN employment_type TEXT")
+    if "compensation_text" not in columns:
+        statements.append("ALTER TABLE job_descriptions ADD COLUMN compensation_text TEXT")
+    if "experience_requirement" not in columns:
+        statements.append("ALTER TABLE job_descriptions ADD COLUMN experience_requirement TEXT")
+    if "education_requirement" not in columns:
+        statements.append("ALTER TABLE job_descriptions ADD COLUMN education_requirement TEXT")
+    if "summary" not in columns:
+        statements.append("ALTER TABLE job_descriptions ADD COLUMN summary TEXT")
+    if "benefit_tags" not in columns:
+        statements.append("ALTER TABLE job_descriptions ADD COLUMN benefit_tags JSON NOT NULL DEFAULT '[]'")
+    if "detail_metadata" not in columns:
+        statements.append("ALTER TABLE job_descriptions ADD COLUMN detail_metadata JSON NOT NULL DEFAULT '{}'")
+
+    for statement in statements:
+        connection.execute(text(statement))
+
+
 MIGRATIONS: tuple[SchemaMigration, ...] = (
     SchemaMigration(
         version=1,
@@ -2023,6 +2057,11 @@ MIGRATIONS: tuple[SchemaMigration, ...] = (
         version=18,
         name="canonicalize_core_entity_schema",
         apply=_canonicalize_core_entity_schema,
+    ),
+    SchemaMigration(
+        version=19,
+        name="extend_job_description_detail_schema",
+        apply=_extend_job_description_detail_schema,
     ),
 )
 

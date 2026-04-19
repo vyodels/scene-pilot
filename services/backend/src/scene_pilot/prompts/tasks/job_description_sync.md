@@ -1,23 +1,18 @@
-# Task: Job Description Sync
+# 任务：同步 JD
 
-Synchronize job descriptions from the recruiting platform pages currently reachable in the human operator's regular browser, not an AI-mode browser, into the local shared workspace job-description store.
+把 human 当前使用的普通浏览器（非 AI 模式浏览器）中可访问的招聘平台岗位页面，同步到共享工作区的 JD 库。
 
-- Default recruiting source for this workflow: `zhipin.com`. If the human operator's regular browser does not currently have a reachable `zhipin.com` recruiting page open, ask the human to open `zhipin.com` to a relevant job list or job detail page before you continue.
-- Source of truth for this task: the recruiting pages you can currently inspect from the human operator's regular browser through generic browser tools across all open tabs that are reachable without human intervention.
-- Destination of this task: the local shared workspace job-description store, which you read with `list_job_descriptions` and write with `upsert_job_description`.
-- Interpret `constraints.sync_mode` literally.
-  - `initial`: perform a first-pass import for the visible and reachable recruiting scope. Capture every confirmed role you can reach in that scope and write it into the workspace.
-  - `incremental`: compare the roles you currently observe on the recruiting surface against the existing local workspace roles. Create missing local records, update records whose externally observable fields changed, and skip unchanged records.
-- For incremental sync, do not delete, archive, or close a local role only because it is absent from the currently visible remote scope unless the task explicitly asks for that mutation.
-- Use only generic recruiting reasoning. Do not assume any site-specific selectors, page labels, or pre-wired platform adapters.
-- Treat the regular browser state as something you must inspect and classify yourself. Do not assume the active tab is the correct tab, and do not ask the operator to switch tabs until you have exhausted the tabs that are already open.
-- Start by enumerating the currently open browser tabs, then classify each tab from visible evidence such as title, URL, and structured snapshot text into one of: likely job-description scene, likely unrelated scene, or uncertain scene.
-- For every tab that is likely job-description related or uncertain, inspect it further before you declare the sync blocked. Prefer `zhipin.com` tabs first, then prefer the tab with the strongest evidence of a recruiting surface, such as visible role cards, job lists, role detail panels, or recruiting workflow text.
-- Only return `blocked` when you have already checked the currently reachable tabs and still cannot find a usable `zhipin.com` recruiting scene, or when the remaining path clearly requires human help such as login, captcha, permissions, or a missing `zhipin.com` recruiting page.
-- Persist every confirmed role through `upsert_job_description`. Include stable external identity when you can observe one, such as a platform id, job id in the URL, or another durable site identifier.
-- Before writing, check existing local roles with `list_job_descriptions` whenever you need to match remote roles to existing workspace records, avoid duplicate work, or estimate sync progress.
-- Treat `title` as required. Capture other fields only when they are visible or directly derivable from evidence on the page. Do not guess salary, location, department, or requirements.
-- If the page requires navigation to reveal more roles, use the available generic browser tools to continue the sync loop. Stop only when the visible scope is exhausted, blocked, or requires human help.
-- If you decide the task is blocked, explain which tabs or browser scenes you inspected, why each one was rejected, and what minimal human action would unblock you, such as opening `zhipin.com` to the correct recruiting page. Do not pretend the sync is complete when you only verified that the current page is unrelated.
-- Do not perform outbound communication or other high-risk mutations on the external recruiting site during this task.
-- Finish with a concise structured summary of how many roles were created, updated, skipped, or blocked, and cite the observed evidence for anything uncertain.
+- 外部事实来源是当前可通过通用浏览器工具读取的招聘平台页面；目标存储是共享工作区 JD 库，读取用 `list_job_descriptions`，写入用 `upsert_job_description`。
+- 优先复用普通浏览器中已经打开且能够继续任务的活跃目标页。只有当当前工具可达范围内的证据足以支持“没有可复用目标页”时，才自行打开招聘平台并进入可执行页面。
+- 如果浏览器工具的 tab / page 可见范围只覆盖当前窗口，而不能确认其它普通浏览器窗口是否已存在可复用目标页，不要把“当前窗口未见目标页”当成直接新开页面的依据；应把这种工具作用域不足明确表述为 blocker。
+- 只有在登录、验证码、权限、设备绑定或其它明确的 human-only blocker 下，才请求 human 协助。human 的职责是解除阻塞，而不是代替 Agent 打开页面或完成站内导航。
+- 严格按 `constraints.sync_mode` 执行：
+  - `initial`：对当前可见且可达的招聘范围做首次同步，把确认仍处于活跃招聘中的 JD 写入共享工作区。
+  - `incremental`：将当前可见且可达的活跃 JD 与共享工作区现有 JD 做差异对比，只创建缺失记录、更新已变化记录、跳过未变化记录。
+- 增量同步中，除非任务明确要求，否则不要仅因当前可见远端范围里未出现某个 JD，就删除、归档或关闭本地记录。
+- 本任务只同步当前仍处于活跃招聘中的 JD。应依据页面上通用且可验证的活跃证据判断，例如正在招聘、开放中、发布中、进行中或等价的活跃岗位上下文；对于已关闭、已下线、已归档、已过期、已停止招聘或状态不明确的 JD，默认跳过并在结果中说明原因。
+- 同步时应尽量获取 JD 详细信息。`title` 为必填；其它字段仅在页面明确可见或可直接从证据推导时写入，不猜测薪资、地点、部门、要求等信息。若列表信息不足以确认岗位详情，应继续读取可达的详情页或等价详情区域。
+- 在写入前，如需去重、匹配、判断增量差异或估计同步进度，应先读取共享工作区现有 JD。
+- 只使用通用招聘页面语义进行判断，不假设任何站点专用 selector、按钮文案、路由、页面分支、词表或预接好的平台适配器。
+- 不在此任务中执行对外沟通或其它高风险外站变更。
+- 结束时返回紧凑的结构化摘要，至少包含 `created`、`updated`、`skipped`、`blocked`、活跃 JD 的确认依据、被跳过项目的原因，以及任何未解决 blocker 的最小解释。

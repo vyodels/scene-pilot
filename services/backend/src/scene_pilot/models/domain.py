@@ -7,6 +7,7 @@ from sqlalchemy import Boolean, ForeignKey, Index, Integer, JSON, String, Text, 
 from sqlalchemy.orm import Mapped, mapped_column
 
 from scene_pilot.db.base import Base, TimestampMixin, UnixTimestamp, generate_business_id, generate_id, utcnow
+from scene_pilot.memory.global_memory_projection import GLOBAL_MEMORY_SCHEMA_VERSION
 
 
 class Candidate(Base, TimestampMixin):
@@ -45,13 +46,21 @@ class JobDescription(Base, TimestampMixin):
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=generate_id)
     job_description_id: Mapped[str] = mapped_column(String(32), nullable=False, unique=True, index=True, default=generate_business_id)
     title: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    company_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     department: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     location: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    employment_type: Mapped[str | None] = mapped_column(String(128), nullable=True)
     headcount: Mapped[int | None] = mapped_column(Integer, nullable=True)
     salary_min: Mapped[int | None] = mapped_column(Integer, nullable=True)
     salary_max: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    compensation_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    experience_requirement: Mapped[str | None] = mapped_column(Text, nullable=True)
+    education_requirement: Mapped[str | None] = mapped_column(Text, nullable=True)
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     requirements: Mapped[str | None] = mapped_column(Text, nullable=True)
+    benefit_tags: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    detail_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     status: Mapped[str] = mapped_column(String(64), nullable=False, default="active", index=True)
     source: Mapped[str] = mapped_column(String(64), nullable=False, default="manual", index=True)
 
@@ -703,7 +712,7 @@ class AgentGlobalMemory(Base, TimestampMixin):
         index=True,
     )
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="active", index=True)
-    memory_schema_version: Mapped[str] = mapped_column(String(64), nullable=False, default="agent-global-memory-v1")
+    memory_schema_version: Mapped[str] = mapped_column(String(64), nullable=False, default=GLOBAL_MEMORY_SCHEMA_VERSION)
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     raw_content: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     content: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)

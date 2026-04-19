@@ -9,11 +9,11 @@
 
 ## Summary
 
-从 human 当前使用的普通浏览器（非 AI 模式浏览器）中已打开且可访问的 zhipin.com 招聘页面读取岗位，首次全量写入共享工作区的 JD 库。
+优先复用 human 当前使用的普通浏览器（非 AI 模式浏览器）中已打开且可继续任务的招聘平台 JD 页面；若当前可达范围内没有可复用目标页，则由 Agent 自行打开并进入可执行招聘页面。只把当前仍处于活跃招聘中的 JD 及其可确认详情首次同步到共享工作区 JD 库。
 
 ## Goal Text
 
-从 human 当前使用的普通浏览器（非 AI 模式浏览器）中已打开且可访问的 zhipin.com 招聘页面读取 JD，首次全量同步到共享工作区的 JD 库；逐条检查可见岗位列表与详情，把每个确认岗位写入工作区。若该普通浏览器里尚未打开 zhipin.com，则引导 human 打开正确页面后继续，并在结束时汇总 created、updated、skipped、blocked。
+在 human 当前使用的普通浏览器（非 AI 模式浏览器）中完成 JD 初始同步：先复用已打开且可继续任务的招聘平台 JD 页面；若当前工具可达范围内没有可复用目标页，则由 Agent 自行打开并进入可执行招聘页面。读取可确认的岗位列表与详情，只把当前仍处于活跃招聘中的 JD 及其可确认详情首次写入共享工作区，跳过已关闭、已下线、已归档、已过期、已停止招聘或状态不明确的岗位。只有在登录、验证码、权限、设备绑定或其它明确的 human-only blocker 下，才请求 human 协助，并在结束时汇总 `created`、`updated`、`skipped`、`blocked`。
 
 ## Constraints
 
@@ -31,7 +31,7 @@
 - entity: job_description
 - source: browser_accessible_recruiting_pages
 - target: shared_workspace_job_descriptions
-- write_policy: upsert_all_confirmed_roles
+- write_policy: upsert_all_confirmed_active_roles
 
 ## Context Hints
 

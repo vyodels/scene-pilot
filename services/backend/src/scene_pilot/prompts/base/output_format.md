@@ -1,3 +1,3 @@
-# Output Format
+# 输出格式
 
-Prefer structured results. When a task finishes, submit a compact payload with the task status, key evidence, and next step.
+优先返回结构化结果。任务完成、受阻或需要交接时，提交紧凑 payload，至少包含任务状态、关键证据、已完成结果、未完成原因（如有）和下一步建议。

@@ -5,6 +5,8 @@ from typing import Any, Literal
 
 from pydantic import AliasChoices, AliasPath, BaseModel, ConfigDict, Field
 
+from scene_pilot.memory.global_memory_projection import GLOBAL_MEMORY_SCHEMA_VERSION
+
 
 class FeatureFlags(BaseModel):
     enable_autonomy: bool = False
@@ -109,13 +111,21 @@ class CandidateRead(CandidatePersonRead):
 
 class JobDescriptionBase(BaseModel):
     title: str
+    company_name: str | None = None
     department: str | None = None
     location: str | None = None
+    employment_type: str | None = None
     headcount: int | None = None
     salary_min: int | None = None
     salary_max: int | None = None
+    compensation_text: str | None = None
+    experience_requirement: str | None = None
+    education_requirement: str | None = None
+    summary: str | None = None
     description: str | None = None
     requirements: str | None = None
+    benefit_tags: list[str] = Field(default_factory=list)
+    detail_metadata: dict[str, Any] = Field(default_factory=dict)
     status: str = "active"
     source: str = "manual"
 
@@ -126,13 +136,21 @@ class JobDescriptionCreate(JobDescriptionBase):
 
 class JobDescriptionUpdate(BaseModel):
     title: str | None = None
+    company_name: str | None = None
     department: str | None = None
     location: str | None = None
+    employment_type: str | None = None
     headcount: int | None = None
     salary_min: int | None = None
     salary_max: int | None = None
+    compensation_text: str | None = None
+    experience_requirement: str | None = None
+    education_requirement: str | None = None
+    summary: str | None = None
     description: str | None = None
     requirements: str | None = None
+    benefit_tags: list[str] | None = None
+    detail_metadata: dict[str, Any] | None = None
     status: str | None = None
     source: str | None = None
 
@@ -238,6 +256,13 @@ class CandidateApplicationRead(BaseModel):
     cooldown_until: int | None = Field(default=None, serialization_alias="cooldownUntil")
     last_contacted_at: int | None = Field(default=None, serialization_alias="lastContactedAt")
     application_metadata: dict[str, Any] = Field(default_factory=dict, serialization_alias="applicationMetadata")
+    person_name: str | None = Field(default=None, serialization_alias="personName")
+    contact_info: dict[str, Any] = Field(default_factory=dict, serialization_alias="contactInfo")
+    resume_path: str | None = Field(default=None, serialization_alias="resumePath")
+    online_resume_text: str | None = Field(default=None, serialization_alias="onlineResumeText")
+    contact_snapshot: dict[str, Any] = Field(default_factory=dict, serialization_alias="contactSnapshot")
+    resume_snapshot: dict[str, Any] = Field(default_factory=dict, serialization_alias="resumeSnapshot")
+    resume_available: bool = Field(default=False, serialization_alias="resumeAvailable")
     created_at: int = Field(serialization_alias="createdAt")
     updated_at: int = Field(serialization_alias="updatedAt")
 
@@ -261,6 +286,8 @@ class ApplicationPersonSummaryRead(BaseModel):
     experience_years: int = Field(default=0, serialization_alias="experienceYears")
     tags: list[str] = Field(default_factory=list)
     contact_info: dict[str, Any] = Field(default_factory=dict, serialization_alias="contactInfo")
+    resume_path: str | None = Field(default=None, serialization_alias="resumePath")
+    online_resume_text: str | None = Field(default=None, serialization_alias="onlineResumeText")
 
 
 class JobDescriptionSummaryRead(BaseModel):
@@ -292,6 +319,16 @@ class ApplicationSubjectRead(BaseModel):
         serialization_alias="jobDescriptionId",
     )
     platform: str = "site"
+    source_platform_candidate_person_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "source_platform_candidate_person_id",
+            "sourcePlatformCandidatePersonId",
+            "source_platform_person_id",
+            "sourcePlatformPersonId",
+        ),
+        serialization_alias="sourcePlatformPersonId",
+    )
     current_status: str = Field(default="discovered", serialization_alias="currentStatus")
     stage_key: str | None = Field(
         default=None,
@@ -306,6 +343,9 @@ class ApplicationSubjectRead(BaseModel):
     state_snapshot: dict[str, Any] = Field(default_factory=dict, serialization_alias="stateSnapshot")
     ai_scores: dict[str, Any] = Field(default_factory=dict, serialization_alias="aiScores")
     ai_reasoning: str | None = Field(default=None, serialization_alias="aiReasoning")
+    application_metadata: dict[str, Any] = Field(default_factory=dict, serialization_alias="applicationMetadata")
+    contact_snapshot: dict[str, Any] = Field(default_factory=dict, serialization_alias="contactSnapshot")
+    resume_snapshot: dict[str, Any] = Field(default_factory=dict, serialization_alias="resumeSnapshot")
     person: ApplicationPersonSummaryRead | None = None
     job_description: JobDescriptionSummaryRead | None = Field(
         default=None,
@@ -449,7 +489,7 @@ class JobMemoryRead(JobMemoryBase):
 class AgentGlobalMemoryBase(BaseModel):
     agent_profile_id: str
     status: str = "active"
-    memory_schema_version: str = "agent-global-memory-v1"
+    memory_schema_version: str = GLOBAL_MEMORY_SCHEMA_VERSION
     summary: str | None = None
     raw_content: dict[str, Any] = Field(default_factory=dict)
     content: dict[str, Any] = Field(default_factory=dict)
@@ -674,10 +714,26 @@ class ResumeArtifactBase(BaseModel):
     )
     source: str = "site"
     artifact_type: str = "resume"
-    file_name: str | None = Field(default=None, serialization_alias="fileName")
-    file_path: str | None = Field(default=None, serialization_alias="filePath")
-    extracted_text: str | None = Field(default=None, serialization_alias="extractedText")
-    contact_snapshot: dict[str, Any] = Field(default_factory=dict, serialization_alias="contactSnapshot")
+    file_name: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("file_name", "fileName"),
+        serialization_alias="fileName",
+    )
+    file_path: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("file_path", "filePath"),
+        serialization_alias="filePath",
+    )
+    extracted_text: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("extracted_text", "extractedText"),
+        serialization_alias="extractedText",
+    )
+    contact_snapshot: dict[str, Any] = Field(
+        default_factory=dict,
+        validation_alias=AliasChoices("contact_snapshot", "contactSnapshot"),
+        serialization_alias="contactSnapshot",
+    )
     artifact_metadata: dict[str, Any] = Field(
         default_factory=dict,
         validation_alias=AliasChoices("artifact_metadata", "metadata"),
@@ -869,22 +925,37 @@ class CandidateThreadRead(BaseModel):
     application: ApplicationSubjectRead = Field(
         validation_alias=AliasChoices("application", "candidate"),
     )
-    session_status: str = "active"
-    context_summary: str | None = None
+    session_status: str = Field(default="active", serialization_alias="sessionStatus")
+    context_summary: str | None = Field(default=None, serialization_alias="contextSummary")
     facts: dict[str, Any] = Field(default_factory=dict)
-    recent_messages: list[dict[str, Any]] = Field(default_factory=list)
-    communication_logs: list[CandidateConversationEntryRead] = Field(default_factory=list)
-    state_snapshot: CandidateStateSnapshotRead = Field(default_factory=CandidateStateSnapshotRead)
-    status_transitions: list[CandidateStatusTransitionRead] = Field(default_factory=list)
+    recent_messages: list[dict[str, Any]] = Field(default_factory=list, serialization_alias="recentMessages")
+    communication_logs: list[CandidateConversationEntryRead] = Field(
+        default_factory=list,
+        serialization_alias="communicationLogs",
+    )
+    state_snapshot: CandidateStateSnapshotRead = Field(
+        default_factory=CandidateStateSnapshotRead,
+        serialization_alias="stateSnapshot",
+    )
+    status_transitions: list[CandidateStatusTransitionRead] = Field(
+        default_factory=list,
+        serialization_alias="statusTransitions",
+    )
     assessments: list[CandidateAssessmentRead] = Field(default_factory=list)
     assignments: list[CandidateAssignmentRead] = Field(default_factory=list)
-    resume_artifacts: list[ResumeArtifactRead] = Field(default_factory=list)
+    resume_artifacts: list[ResumeArtifactRead] = Field(default_factory=list, serialization_alias="resumeArtifacts")
     scorecards: list[CandidateScorecardRead] = Field(default_factory=list)
-    review_decisions: list[CandidateReviewDecisionRead] = Field(default_factory=list)
-    sync_records: list[TalentPoolSyncRecordRead] = Field(default_factory=list)
-    available_statuses: list[str] = Field(default_factory=list)
-    runtime_approvals: list["ApprovalRead"] = Field(default_factory=list)
-    runtime_interactions: list["OperatorInteractionRead"] = Field(default_factory=list)
+    review_decisions: list[CandidateReviewDecisionRead] = Field(
+        default_factory=list,
+        serialization_alias="reviewDecisions",
+    )
+    sync_records: list[TalentPoolSyncRecordRead] = Field(default_factory=list, serialization_alias="syncRecords")
+    available_statuses: list[str] = Field(default_factory=list, serialization_alias="availableStatuses")
+    runtime_approvals: list["ApprovalRead"] = Field(default_factory=list, serialization_alias="runtimeApprovals")
+    runtime_interactions: list["OperatorInteractionRead"] = Field(
+        default_factory=list,
+        serialization_alias="runtimeInteractions",
+    )
 
 
 class RecruitmentStateMachineBase(BaseModel):
