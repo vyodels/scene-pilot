@@ -1,6 +1,5 @@
-import { contextBridge } from "electron";
+const { contextBridge } = require("electron");
 
 contextBridge.exposeInMainWorld("desktop", {
   platform: "electron",
 });
-

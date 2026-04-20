@@ -20,6 +20,8 @@ def update_memory(
     run_pk: str | None = None,
     conversation_pk: str | None = None,
     source_kind: str = "autonomous",
+    goal_kind: str | None = None,
+    goal_title: str | None = None,
 ) -> list[dict[str, Any]]:
     if memory_service is None and learning_writer is None:
         return []
@@ -38,26 +40,31 @@ def update_memory(
         and agent_profile_id is not None
         and deliberation.final_content
     ):
-        memory_record = memory_service.write(
-            scope_kind=scope_kind,
-            scope_ref=scope_ref,
-            agent_profile_id=agent_profile_id,
-            memory_item_id=f"{source_kind}-{uuid4().hex}",
-            kind=f"{source_kind}_summary",
-            index_name=f"{source_kind}_summary",
-            index_description="Latest durable summary captured from the shared kernel outcome.",
-            summary=deliberation.final_content[:240],
-            content={
+        normalized_scope_kind = str(scope_kind).strip().lower()
+        if normalized_scope_kind != "global":
+            memory_item_id = f"{source_kind}-{uuid4().hex}"
+            memory_summary = deliberation.final_content[:240]
+            memory_content = {
                 "text": deliberation.final_content,
                 "tool_results": [result.output for result in deliberation.tool_results if not result.is_error],
                 "run_pk": run_pk,
                 "conversation_pk": conversation_pk,
                 "source_kind": source_kind,
-            },
-            confidence=0.7,
-            trust_level="agent_reported",
-        )
-        writings.append({"memory": memory_record})
+            }
+            memory_record = memory_service.write(
+                scope_kind=scope_kind,
+                scope_ref=scope_ref,
+                agent_profile_id=agent_profile_id,
+                memory_item_id=memory_item_id,
+                kind=f"{source_kind}_summary",
+                index_name=f"{source_kind}_summary",
+                index_description="Latest durable summary captured from the shared kernel outcome.",
+                summary=memory_summary,
+                content=memory_content,
+                confidence=0.7,
+                trust_level="agent_reported",
+            )
+            writings.append({"memory": memory_record})
     if learning_writer is not None and deliberation.final_content:
         payload = learning_writer.record_learning(
             content=deliberation.final_content,

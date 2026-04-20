@@ -4,14 +4,15 @@ import { formatCompactDate } from "../../lib/format";
 import { useI18n } from "../../lib/i18n";
 import { translateUiToken } from "../../lib/uiText";
 import type { ApplicationRecord, DashboardSummary } from "../../lib/types";
+import { getContactChannels, resolveContactSummary } from "../kanban-shared/kanbanUtils";
 
 interface DashboardViewProps {
   summary: DashboardSummary;
   onOpenCandidates?(): void;
   onOpenJdWorkspace?(): void;
   onOpenCommunications?(filter?: string, applicationId?: string): void;
-  onOpenAiReview?(): void;
-  onOpenAiStrategy?(): void;
+  onOpenAgentApprovals?(): void;
+  onOpenAgentConfig?(): void;
 }
 
 type ApplicationLane = "review" | "followUp" | "resume" | "interview" | "decision" | "blocked" | "active";
@@ -202,6 +203,42 @@ function metricTone(count: number): "positive" | "neutral" | "warning" {
   return count > 0 ? "warning" : "neutral";
 }
 
+function contactChannelLabel(channel: string, copy: (en: string, zh: string) => string): string {
+  switch (channel) {
+    case "phone":
+      return copy("Phone", "电话");
+    case "wechat":
+      return copy("WeChat", "微信");
+    case "email":
+      return copy("Email", "邮箱");
+    default:
+      return copy("Other", "其他");
+  }
+}
+
+function summarizeCandidateSource(
+  application: ApplicationRecord,
+  copy: (en: string, zh: string) => string,
+): string {
+  const source = application.stateSnapshot?.latestTransitionSource?.trim().toLowerCase();
+  if (!source) {
+    return "—";
+  }
+  if (source === "operator") {
+    return copy("Operator", "人工");
+  }
+  if (source === "agent") {
+    return "Agent";
+  }
+  if (source === "system") {
+    return copy("System", "系统");
+  }
+  if (source === "site") {
+    return copy("Site import", "站点导入");
+  }
+  return application.stateSnapshot?.latestTransitionSource ?? "—";
+}
+
 function presentRecruitingText(text: string, copy: (en: string, zh: string) => string): string {
   const cleaned = text
     .trim()
@@ -222,8 +259,8 @@ export function DashboardView({
   onOpenCandidates,
   onOpenJdWorkspace,
   onOpenCommunications,
-  onOpenAiReview,
-  onOpenAiStrategy,
+  onOpenAgentApprovals,
+  onOpenAgentConfig,
 }: DashboardViewProps): JSX.Element {
   const { copy } = useI18n();
 
@@ -394,6 +431,9 @@ export function DashboardView({
             {prioritizedApplications.slice(0, 6).map((application) => {
               const lane = classifyApplication(application);
               const stateSnapshot = application.stateSnapshot;
+              const contactSummary = resolveContactSummary(application);
+              const contactChannels = getContactChannels(application).map((channel) => contactChannelLabel(channel, copy));
+              const signalTimestamp = stateSnapshot?.latestTransitionAt ?? application.lastContactedAt ?? null;
               return (
                 <button
                   key={application.id}
@@ -415,6 +455,22 @@ export function DashboardView({
                   </div>
                   <div style={{ color: "var(--text-regular)", fontSize: "var(--font-size-sm)", lineHeight: "var(--line-height-base)" }}>
                     {application.nextAction}
+                  </div>
+                  <div style={{ display: "grid", gap: "var(--space-1)", color: "var(--text-secondary)", fontSize: "var(--font-size-sm)", lineHeight: "var(--line-height-base)" }}>
+                    <div>
+                      {copy("Contact", "联系")}：
+                      {contactSummary !== "—"
+                        ? contactSummary
+                        : contactChannels.length
+                          ? contactChannels.join(" / ")
+                          : copy("No contact value exposed yet", "尚未暴露联系方式值")}
+                    </div>
+                    <div>
+                      {copy("Source", "来源")}：{summarizeCandidateSource(application, copy)}
+                      {" · "}
+                      {application.resumeAvailable ? copy("Resume ready", "简历已到位") : copy("Resume pending", "简历待补")}
+                      {signalTimestamp ? ` · ${copy("Updated", "更新")}：${formatCompactDate(signalTimestamp)}` : ""}
+                    </div>
                   </div>
                   <div style={{ display: "flex", gap: "var(--space-2)", flexWrap: "wrap" }}>
                     <StatusBadge tone={stateSnapshot?.contactAcquired ? "positive" : "warning"}>
@@ -469,7 +525,7 @@ export function DashboardView({
                         onOpenCommunications?.("application", item.relatedApplicationId);
                         return;
                       }
-                      onOpenAiReview?.();
+                      onOpenAgentApprovals?.();
                     }}
                     style={{
                       ...candidateButtonStyle,
@@ -525,11 +581,11 @@ export function DashboardView({
             <button type="button" style={actionButtonStyle} onClick={() => onOpenCommunications?.("active")}>
               {copy("Open candidate workspace", "打开候选人工作台")}
             </button>
-            <button type="button" style={actionButtonStyle} onClick={onOpenAiReview}>
-              {copy("Open AI review center", "打开 AI 审查中心")}
+            <button type="button" style={actionButtonStyle} onClick={onOpenAgentApprovals}>
+              {copy("Open autonomous approvals", "打开 Autonomous 审批")}
             </button>
-            <button type="button" style={actionButtonStyle} onClick={onOpenAiStrategy}>
-              {copy("Open AI strategy", "打开 AI 策略")}
+            <button type="button" style={actionButtonStyle} onClick={onOpenAgentConfig}>
+              {copy("Open assistant config", "打开 Assistant 配置")}
             </button>
           </div>
           <div style={{ display: "grid", gap: "var(--space-2)", marginTop: "var(--space-2)" }}>

@@ -37,7 +37,6 @@ from scene_pilot.services.recruit_agent import default_recruit_agent_profile, re
 from scene_pilot.services.dashboard import DashboardService
 from scene_pilot.services.events import EventStreamService
 from scene_pilot.services.feature_flags import FeatureFlagService
-from scene_pilot.services.browser_mcp_bridge import BrowserMcpBridgeManager
 from scene_pilot.services.mcp_registry import McpRegistryService
 from scene_pilot.repositories.domain import RecruitAgentProfileRepository, SettingsRepository
 from scene_pilot.services.sync import SyncService
@@ -83,7 +82,7 @@ class AppContainer:
 
         plugin_host = PluginHost()
         install_manifest(plugin_host, RecruitPluginManifest(session_factory))
-        mcp_registry = McpRegistryService(session_factory, bridge_manager=BrowserMcpBridgeManager())
+        mcp_registry = McpRegistryService(session_factory)
 
         providers, provider = _build_provider_bundle(resolved_settings)
         tool_registry = _build_runtime_tool_registry(plugin_host=plugin_host, mcp_registry=mcp_registry)

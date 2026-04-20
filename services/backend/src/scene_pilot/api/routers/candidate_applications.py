@@ -80,10 +80,16 @@ def _as_candidate_application_read(session: Session, application) -> CandidateAp
         if application.job_description_id
         else None
     )
+    contact_info = dict(getattr(person, "contact_info", None) or {})
+    resume_path = str(getattr(person, "resume_path", None) or "") or None
+    online_resume_text = str(getattr(person, "online_resume_text", None) or "") or None
+    contact_snapshot = dict(application.contact_snapshot or {})
+    resume_snapshot = dict(application.resume_snapshot or {})
     return CandidateApplicationRead.model_validate(
         {
             "application_id": application.candidate_application_id,
             "person_id": person.candidate_person_id if person is not None else application.person_id,
+            "person_name": getattr(person, "name", None),
             "job_description_id": (
                 job_description.job_description_id if job_description is not None else application.job_description_id
             ),
@@ -98,6 +104,18 @@ def _as_candidate_application_read(session: Session, application) -> CandidateAp
             "cooldown_until": _timestamp(application.cooldown_until),
             "last_contacted_at": _timestamp(application.last_contacted_at),
             "application_metadata": dict(application.application_metadata or {}),
+            "contact_info": contact_info,
+            "resume_path": resume_path,
+            "online_resume_text": online_resume_text,
+            "contact_snapshot": contact_snapshot,
+            "resume_snapshot": resume_snapshot,
+            "resume_available": bool(
+                resume_path
+                or online_resume_text
+                or resume_snapshot.get("available")
+                or resume_snapshot.get("file_path")
+                or resume_snapshot.get("filePath")
+            ),
             "application_window": application.application_window,
             "created_at": _timestamp(application.created_at),
             "updated_at": _timestamp(application.updated_at),

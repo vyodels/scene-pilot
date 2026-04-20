@@ -732,6 +732,218 @@ def _create_mcp_registry_tables(connection: Connection) -> None:
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_mcp_tools_risk_level ON mcp_tools (risk_level)"))
 
 
+def _align_mcp_registry_schema(connection: Connection) -> None:
+    tables = {
+        row[0]
+        for row in connection.execute(text("SELECT name FROM sqlite_master WHERE type='table'")).fetchall()
+    }
+    if "mcp_servers" not in tables:
+        return
+
+    server_columns = {
+        row[1]
+        for row in connection.execute(text("PRAGMA table_info(mcp_servers)")).fetchall()
+    }
+    server_statements = []
+    if "capabilities" not in server_columns:
+        server_statements.append("ALTER TABLE mcp_servers ADD COLUMN capabilities JSON NOT NULL DEFAULT '{}'")
+    if "circuit_state" not in server_columns:
+        server_statements.append("ALTER TABLE mcp_servers ADD COLUMN circuit_state TEXT NOT NULL DEFAULT 'closed'")
+    if "circuit_until" not in server_columns:
+        server_statements.append("ALTER TABLE mcp_servers ADD COLUMN circuit_until BIGINT")
+    if "last_error" not in server_columns:
+        server_statements.append("ALTER TABLE mcp_servers ADD COLUMN last_error TEXT")
+    for statement in server_statements:
+        connection.execute(text(statement))
+
+    connection.execute(text("CREATE INDEX IF NOT EXISTS ix_mcp_servers_circuit_state ON mcp_servers (circuit_state)"))
+    connection.execute(text("CREATE INDEX IF NOT EXISTS ix_mcp_servers_circuit_until ON mcp_servers (circuit_until)"))
+
+
+def _align_agent_runtime_control_schema(connection: Connection) -> None:
+    tables = {
+        row[0]
+        for row in connection.execute(text("SELECT name FROM sqlite_master WHERE type='table'")).fetchall()
+    }
+    if "agent_runs" not in tables:
+        return
+
+    run_columns = {
+        row[1]
+        for row in connection.execute(text("PRAGMA table_info(agent_runs)")).fetchall()
+    }
+    run_statements = []
+    if "run_id" not in run_columns:
+        run_statements.append("ALTER TABLE agent_runs ADD COLUMN run_id TEXT")
+    if "agent_kind" not in run_columns:
+        run_statements.append("ALTER TABLE agent_runs ADD COLUMN agent_kind TEXT NOT NULL DEFAULT 'autonomous'")
+    if "turns_count" not in run_columns:
+        run_statements.append("ALTER TABLE agent_runs ADD COLUMN turns_count INTEGER NOT NULL DEFAULT 0")
+    if "prompt_tokens" not in run_columns:
+        run_statements.append("ALTER TABLE agent_runs ADD COLUMN prompt_tokens INTEGER NOT NULL DEFAULT 0")
+    if "completion_tokens" not in run_columns:
+        run_statements.append("ALTER TABLE agent_runs ADD COLUMN completion_tokens INTEGER NOT NULL DEFAULT 0")
+    if "cache_hit_tokens" not in run_columns:
+        run_statements.append("ALTER TABLE agent_runs ADD COLUMN cache_hit_tokens INTEGER NOT NULL DEFAULT 0")
+    if "escalate_reason" not in run_columns:
+        run_statements.append("ALTER TABLE agent_runs ADD COLUMN escalate_reason TEXT")
+    if "lock_scope" not in run_columns:
+        run_statements.append("ALTER TABLE agent_runs ADD COLUMN lock_scope JSON NOT NULL DEFAULT '{}'")
+    if "idempotency_key" not in run_columns:
+        run_statements.append("ALTER TABLE agent_runs ADD COLUMN idempotency_key TEXT")
+    if "wakeup_state" not in run_columns:
+        run_statements.append("ALTER TABLE agent_runs ADD COLUMN wakeup_state JSON NOT NULL DEFAULT '{}'")
+    for statement in run_statements:
+        connection.execute(text(statement))
+
+    connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_agent_runs_run_id ON agent_runs (run_id)"))
+    connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_agent_runs_idempotency_key ON agent_runs (idempotency_key)"))
+    connection.execute(text("CREATE INDEX IF NOT EXISTS ix_agent_runs_agent_kind ON agent_runs (agent_kind)"))
+
+
+def _align_skill_schema_for_runtime_learning(connection: Connection) -> None:
+    tables = {
+        row[0]
+        for row in connection.execute(text("SELECT name FROM sqlite_master WHERE type='table'")).fetchall()
+    }
+    if "skills" not in tables:
+        return
+
+    skill_columns = {
+        row[1]
+        for row in connection.execute(text("PRAGMA table_info(skills)")).fetchall()
+    }
+    skill_statements = []
+    if "trigger_hint" not in skill_columns:
+        skill_statements.append("ALTER TABLE skills ADD COLUMN trigger_hint TEXT")
+    if "body" not in skill_columns:
+        skill_statements.append("ALTER TABLE skills ADD COLUMN body JSON NOT NULL DEFAULT '{}'")
+    if "trial_metrics" not in skill_columns:
+        skill_statements.append("ALTER TABLE skills ADD COLUMN trial_metrics JSON NOT NULL DEFAULT '{}'")
+    if "requires_human_gate" not in skill_columns:
+        skill_statements.append("ALTER TABLE skills ADD COLUMN requires_human_gate INTEGER NOT NULL DEFAULT 0")
+    if "human_gate_policy" not in skill_columns:
+        skill_statements.append("ALTER TABLE skills ADD COLUMN human_gate_policy JSON NOT NULL DEFAULT '{}'")
+    for statement in skill_statements:
+        connection.execute(text(statement))
+
+    connection.execute(text("CREATE INDEX IF NOT EXISTS ix_skills_requires_human_gate ON skills (requires_human_gate)"))
+
+
+def _align_approval_and_event_runtime_schema(connection: Connection) -> None:
+    tables = {
+        row[0]
+        for row in connection.execute(text("SELECT name FROM sqlite_master WHERE type='table'")).fetchall()
+    }
+
+    if "approval_items" in tables:
+        approval_columns = {
+            row[1]
+            for row in connection.execute(text("PRAGMA table_info(approval_items)")).fetchall()
+        }
+        approval_statements = []
+        if "run_pk" not in approval_columns:
+            approval_statements.append("ALTER TABLE approval_items ADD COLUMN run_pk TEXT")
+        if "turn_pk" not in approval_columns:
+            approval_statements.append("ALTER TABLE approval_items ADD COLUMN turn_pk TEXT")
+        if "conversation_pk" not in approval_columns:
+            approval_statements.append("ALTER TABLE approval_items ADD COLUMN conversation_pk TEXT")
+        if "source_kind" not in approval_columns:
+            approval_statements.append("ALTER TABLE approval_items ADD COLUMN source_kind TEXT NOT NULL DEFAULT 'autonomous'")
+        if "tool_name" not in approval_columns:
+            approval_statements.append("ALTER TABLE approval_items ADD COLUMN tool_name TEXT")
+        if "args_digest" not in approval_columns:
+            approval_statements.append("ALTER TABLE approval_items ADD COLUMN args_digest TEXT")
+        if "expires_at" not in approval_columns:
+            approval_statements.append("ALTER TABLE approval_items ADD COLUMN expires_at BIGINT")
+        if "executed_at" not in approval_columns:
+            approval_statements.append("ALTER TABLE approval_items ADD COLUMN executed_at BIGINT")
+        if "idempotency_key" not in approval_columns:
+            approval_statements.append("ALTER TABLE approval_items ADD COLUMN idempotency_key TEXT")
+        for statement in approval_statements:
+            connection.execute(text(statement))
+
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_approval_items_run_pk ON approval_items (run_pk)"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_approval_items_turn_pk ON approval_items (turn_pk)"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_approval_items_conversation_pk ON approval_items (conversation_pk)"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_approval_items_source_kind ON approval_items (source_kind)"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_approval_items_tool_name ON approval_items (tool_name)"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_approval_items_args_digest ON approval_items (args_digest)"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_approval_items_expires_at ON approval_items (expires_at)"))
+        connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_approval_items_idempotency_key ON approval_items (idempotency_key)"))
+
+    if "agent_runtime_events" in tables:
+        event_columns = {
+            row[1]
+            for row in connection.execute(text("PRAGMA table_info(agent_runtime_events)")).fetchall()
+        }
+        event_statements = []
+        if "turn_id" not in event_columns:
+            event_statements.append("ALTER TABLE agent_runtime_events ADD COLUMN turn_id TEXT")
+        if "conversation_id" not in event_columns:
+            event_statements.append("ALTER TABLE agent_runtime_events ADD COLUMN conversation_id TEXT")
+        if "seq" not in event_columns:
+            event_statements.append("ALTER TABLE agent_runtime_events ADD COLUMN seq INTEGER NOT NULL DEFAULT 0")
+        for statement in event_statements:
+            connection.execute(text(statement))
+
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_agent_runtime_events_turn_id ON agent_runtime_events (turn_id)"))
+        connection.execute(
+            text("CREATE INDEX IF NOT EXISTS ix_agent_runtime_events_conversation_id ON agent_runtime_events (conversation_id)")
+        )
+
+
+def _align_memory_item_schema(connection: Connection) -> None:
+    tables = {
+        row[0]
+        for row in connection.execute(text("SELECT name FROM sqlite_master WHERE type='table'")).fetchall()
+    }
+    memory_tables = (
+        "candidate_person_memories",
+        "job_description_memories",
+        "agent_global_memories",
+    )
+    for table_name in memory_tables:
+        if table_name not in tables:
+            continue
+        columns = {
+            row[1]
+            for row in connection.execute(text(f"PRAGMA table_info({table_name})")).fetchall()
+        }
+        statements = []
+        if "memory_item_id" not in columns:
+            statements.append(f"ALTER TABLE {table_name} ADD COLUMN memory_item_id TEXT")
+        if "kind" not in columns:
+            statements.append(f"ALTER TABLE {table_name} ADD COLUMN kind TEXT NOT NULL DEFAULT 'fact'")
+        if "index_name" not in columns:
+            statements.append(f"ALTER TABLE {table_name} ADD COLUMN index_name TEXT")
+        if "index_description" not in columns:
+            statements.append(f"ALTER TABLE {table_name} ADD COLUMN index_description TEXT")
+        if "confidence" not in columns:
+            statements.append(f"ALTER TABLE {table_name} ADD COLUMN confidence FLOAT NOT NULL DEFAULT 0.5")
+        if "evidence_refs" not in columns:
+            statements.append(f"ALTER TABLE {table_name} ADD COLUMN evidence_refs JSON NOT NULL DEFAULT '[]'")
+        if "trust_level" not in columns:
+            statements.append(f"ALTER TABLE {table_name} ADD COLUMN trust_level TEXT NOT NULL DEFAULT 'unverified'")
+        if "version" not in columns:
+            statements.append(f"ALTER TABLE {table_name} ADD COLUMN version INTEGER NOT NULL DEFAULT 1")
+        if "supersedes_id" not in columns:
+            statements.append(f"ALTER TABLE {table_name} ADD COLUMN supersedes_id TEXT")
+        if "expires_at" not in columns:
+            statements.append(f"ALTER TABLE {table_name} ADD COLUMN expires_at BIGINT")
+        if "item_metadata" not in columns:
+            statements.append(f"ALTER TABLE {table_name} ADD COLUMN item_metadata JSON NOT NULL DEFAULT '{{}}'")
+        for statement in statements:
+            connection.execute(text(statement))
+
+        connection.execute(text(f"CREATE UNIQUE INDEX IF NOT EXISTS uq_{table_name}_memory_item_id ON {table_name} (memory_item_id)"))
+        connection.execute(text(f"CREATE INDEX IF NOT EXISTS ix_{table_name}_kind ON {table_name} (kind)"))
+        connection.execute(text(f"CREATE INDEX IF NOT EXISTS ix_{table_name}_index_name ON {table_name} (index_name)"))
+        connection.execute(text(f"CREATE INDEX IF NOT EXISTS ix_{table_name}_trust_level ON {table_name} (trust_level)"))
+        connection.execute(text(f"CREATE INDEX IF NOT EXISTS ix_{table_name}_supersedes_id ON {table_name} (supersedes_id)"))
+        connection.execute(text(f"CREATE INDEX IF NOT EXISTS ix_{table_name}_expires_at ON {table_name} (expires_at)"))
+
+
 def _rename_skill_binding_to_stage(connection: Connection) -> None:
     tables = {
         row[0]
@@ -2062,6 +2274,31 @@ MIGRATIONS: tuple[SchemaMigration, ...] = (
         version=19,
         name="extend_job_description_detail_schema",
         apply=_extend_job_description_detail_schema,
+    ),
+    SchemaMigration(
+        version=20,
+        name="align_mcp_registry_schema",
+        apply=_align_mcp_registry_schema,
+    ),
+    SchemaMigration(
+        version=21,
+        name="align_agent_runtime_control_schema",
+        apply=_align_agent_runtime_control_schema,
+    ),
+    SchemaMigration(
+        version=22,
+        name="align_skill_schema_for_runtime_learning",
+        apply=_align_skill_schema_for_runtime_learning,
+    ),
+    SchemaMigration(
+        version=23,
+        name="align_approval_and_event_runtime_schema",
+        apply=_align_approval_and_event_runtime_schema,
+    ),
+    SchemaMigration(
+        version=24,
+        name="align_memory_item_schema",
+        apply=_align_memory_item_schema,
     ),
 )
 

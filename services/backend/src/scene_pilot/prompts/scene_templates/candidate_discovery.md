@@ -10,17 +10,18 @@
 
 ## Summary
 
-围绕指定 JD，在 human 当前使用的普通浏览器（非 AI 模式浏览器）里的 zhipin.com 上筛选候选人，并把有效候选人写入工作区。
+围绕指定 JD，优先复用 human 当前使用的普通浏览器（非 AI 模式浏览器）中已打开的 zhipin.com 页面筛选候选人；若不存在可用页面，则由 Agent 自行在该普通浏览器中打开 zhipin.com，并把有效候选人写入工作区。
 
 ## Goal Text
 
-围绕指定 JD，在 human 当前使用的普通浏览器（非 AI 模式浏览器）里的 zhipin.com 上筛选候选人，将有效候选人写入工作区，并补齐基础联系信息；若该普通浏览器里尚未打开 zhipin.com，则引导 human 打开相关候选人页面后继续。
+围绕指定 JD，优先复用 human 当前使用的普通浏览器（非 AI 模式浏览器）中已打开的 zhipin.com 页面筛选候选人；若不存在可用页面，则由 Agent 自行在该普通浏览器中打开 zhipin.com 并进入合适的候选人搜索或详情页面。随后将有效候选人写入工作区，并补齐基础联系信息；只有在登录、验证码、权限或浏览器能力受限等必须由 human 介入时，才请求 human 协助。
 
 ## Constraints
 
 - scope_kind: job
 - memory_scope_kind: job
 - target_entity: candidate
+- source_surface: browser_accessible_candidate_pages
 
 ## Success Criteria
 

@@ -3,8 +3,6 @@ import type { ApplicationStatusTransition } from "@scene-pilot/shared";
 export type WorkspaceTab =
   | "home"
   | "candidates"
-  | "ai-review"
-  | "ai-strategy"
   | "settings";
 
 export type ProviderKind = "openai-compatible" | "anthropic";
@@ -12,6 +10,15 @@ export type ApiTransport = "http" | "offline";
 export type HealthStatus = "healthy" | "warning" | "critical";
 export type ApprovalStatus = "pending" | "approved" | "rejected";
 export type ApplicationStatus = string;
+export type AgentKind = "assistant" | "autonomous";
+export type ChatOverlayPanelKey =
+  | "conversation"
+  | "config"
+  | "runs"
+  | "approvals"
+  | "memory"
+  | "skills"
+  | "tools";
 
 export interface PersonSummaryRecord {
   personId?: string | null;
@@ -22,6 +29,8 @@ export interface PersonSummaryRecord {
   experienceYears: number;
   tags: string[];
   contactInfo: Record<string, unknown>;
+  resumePath?: string | null;
+  onlineResumeText?: string | null;
 }
 
 export interface JobDescriptionSummaryRecord {
@@ -538,6 +547,177 @@ export interface AgentSnapshot {
   queueDepth: number;
   tokenBudgetUsed: number;
   health: HealthStatus;
+}
+
+export type AgentConversationStatus =
+  | "idle"
+  | "active"
+  | "running"
+  | "queued"
+  | "draft"
+  | "waiting_human"
+  | "blocked"
+  | "completed"
+  | "failed";
+export type ChatMessageRole = "user" | "assistant" | "system" | "tool";
+export type ChatMessageKind = "message" | "tool_use" | "tool_result" | "status";
+
+export interface AgentProfileSummary {
+  kind: AgentKind;
+  name: string;
+  description?: string | null;
+  status: AgentSnapshot["status"] | string;
+  health: HealthStatus;
+  activeTask?: string | null;
+  activeGoal?: string | null;
+  defaultModel?: string | null;
+  pendingApprovals: number;
+  unreadCount: number;
+  updatedAt: string;
+}
+
+export interface AgentConversationSummary {
+  id: string;
+  agentKind: AgentKind;
+  title: string;
+  preview?: string | null;
+  status: AgentConversationStatus;
+  unreadCount: number;
+  updatedAt: string;
+  refId?: string | null;
+}
+
+export interface AgentConversationMessage {
+  id: string;
+  conversationId: string;
+  role: ChatMessageRole;
+  kind: ChatMessageKind;
+  content: string;
+  createdAt: string;
+  status?: "pending" | "sent" | "streaming" | "failed";
+  title?: string | null;
+  metadata?: Record<string, unknown>;
+}
+
+export interface AgentConversationRecord {
+  conversation: AgentConversationSummary;
+  messages: AgentConversationMessage[];
+}
+
+export interface AgentRunRecord {
+  id: string;
+  agentKind: AgentKind;
+  title: string;
+  status: string;
+  summary?: string | null;
+  startedAt?: string | null;
+  updatedAt: string;
+  refId?: string | null;
+}
+
+export interface AgentMemorySummary {
+  id: string;
+  scope: "candidate" | "job" | "global";
+  title: string;
+  summary: string;
+  status: string;
+  updatedAt: string;
+}
+
+export interface AgentToolSummary {
+  id: string;
+  serverId?: string | null;
+  serverName: string;
+  name: string;
+  riskLevel: string;
+  enabled: boolean;
+  endpoint?: string | null;
+}
+
+export interface SharedSceneTemplateRecord {
+  key: string;
+  title: string;
+  summary: string;
+  goalKind: string;
+  defaultGoalText: string;
+  requiresJd: boolean;
+  supportsCandidateCountTarget: boolean;
+  defaultCandidateCountTarget?: number | null;
+  directRunnable: boolean;
+  constraints: Record<string, unknown>;
+  successCriteria: Record<string, unknown>;
+  contextHints: Record<string, unknown>;
+}
+
+export interface AgentWorkspaceRecord {
+  agent: AgentProfileSummary;
+  conversations: AgentConversationSummary[];
+  runs: AgentRunRecord[];
+  approvals: ApprovalItem[];
+  memories: AgentMemorySummary[];
+  skills: SkillRecord[];
+  tools: AgentToolSummary[];
+  config: {
+    systemPrompt: string;
+    goalTemplate: string;
+    scoringRubric: string;
+    boundaries: string[];
+    providerLabel?: string | null;
+    modelLabel?: string | null;
+  };
+}
+
+export interface AssistantConversationRecord {
+  conversationId: string;
+  userId?: string | null;
+  title: string;
+  status: string;
+}
+
+export interface AssistantTurnStreamEvent {
+  event: string;
+  data: Record<string, unknown>;
+  receivedAt: string;
+}
+
+export interface AssistantMessageRequest {
+  conversationId: string;
+  message: string;
+}
+
+export interface AssistantMessageRequestResult {
+  conversationId: string;
+  requestId?: string | null;
+  status: string;
+}
+
+export interface AutonomousGoalStartRequest {
+  title: string;
+  goalText: string;
+  goalKind?: string | null;
+  jdId?: string | null;
+  candidateCountTarget?: number | null;
+  conversationId?: string | null;
+  constraints?: Record<string, unknown>;
+  successCriteria?: Record<string, unknown>;
+  contextHints?: Record<string, unknown>;
+  trialBudget?: Record<string, unknown>;
+}
+
+export interface AutonomousGoalStartResult {
+  conversationId: string;
+  runId?: string | null;
+  status: string;
+}
+
+export interface AgentStreamEvent {
+  id: string;
+  message: string;
+  level: AgentEvent["level"];
+  source: string;
+  at: string;
+  role?: ChatMessageRole;
+  kind?: ChatMessageKind;
 }
 
 export interface AgentQueueAuditEvent {

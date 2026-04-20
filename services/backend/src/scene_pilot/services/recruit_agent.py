@@ -7,7 +7,13 @@ from typing import Any
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from scene_pilot.models import AgentGlobalMemory, CandidatePersonMemory, JobDescriptionMemory, RecruitAgentProfile
+from scene_pilot.memory.global_memory_projection import (
+    GLOBAL_MEMORY_SCHEMA_VERSION,
+    empty_agent_global_memory_payload,
+    needs_agent_global_memory_projection,
+    project_agent_global_memory,
+)
+from scene_pilot.models import AgentGlobalMemory, AgentRun, CandidatePersonMemory, GoalSpec, JobDescriptionMemory, RecruitAgentProfile
 from scene_pilot.repositories import (
     AgentGlobalMemoryRepository,
     CandidatePersonMemoryRepository,
@@ -200,6 +206,48 @@ def default_context_policy() -> dict[str, Any]:
     }
 
 
+def default_memory_policy() -> dict[str, Any]:
+    return {
+        "candidate_memory": {
+            "isolation": "strict_by_candidate",
+            "auto_compact": True,
+            "compact_threshold": AUTO_COMPACT_THRESHOLD,
+            "schema": [
+                "identity_summary",
+                "facts",
+                "interaction_summary",
+                "risk_flags",
+                "open_questions",
+                "recommended_next_actions",
+                "evidence_refs",
+                "confidence",
+            ],
+            "disclosure": ["preview", "operator_summary", "model_context"],
+        },
+        "job_memory": {
+            "isolation": "strict_by_jd",
+            "auto_compact": True,
+            "compact_threshold": AUTO_COMPACT_THRESHOLD,
+            "schema": [
+                "screening_preferences",
+                "strong_positive_signals",
+                "common_reject_reasons",
+                "communication_notes",
+                "quality_thresholds",
+                "historical_patterns",
+            ],
+            "disclosure": ["preview", "operator_summary", "model_context"],
+        },
+        "agent_global_memory": {
+            "scope": "agent_global",
+            "auto_compact": True,
+            "compact_threshold": AUTO_COMPACT_THRESHOLD,
+            "schema": ["facts", "decisions", "open_questions", "next_actions", "risk_flags", "evidence_refs", "confidence"],
+            "disclosure": ["preview", "operator_summary", "model_context"],
+        },
+    }
+
+
 def _sanitize_weight_map(value: Any, defaults: dict[str, float]) -> dict[str, float]:
     source = value if isinstance(value, dict) else {}
     resolved = dict(defaults)
@@ -225,6 +273,10 @@ def _sanitize_string_list(value: Any, *, allowed: set[str] | None = None) -> lis
         if text not in items:
             items.append(text)
     return items
+
+
+def _sanitize_free_string_list(value: Any) -> list[str]:
+    return _sanitize_string_list(value)
 
 
 def resolve_context_policy(prompt_config: dict[str, Any] | None) -> dict[str, Any]:
@@ -282,6 +334,39 @@ def resolve_context_policy(prompt_config: dict[str, Any] | None) -> dict[str, An
         "lanes": resolved_lanes,
         "run_type_overrides": resolved_overrides or defaults["run_type_overrides"],
     }
+
+
+def resolve_memory_policy(memory_policy: dict[str, Any] | None) -> dict[str, Any]:
+    defaults = default_memory_policy()
+    configured = dict(memory_policy or {})
+    resolved: dict[str, Any] = {}
+
+    for scope_key, default_scope in defaults.items():
+        scope_config = dict(configured.get(scope_key) or {})
+        resolved_scope = dict(default_scope)
+        for key in ("isolation", "scope"):
+            if scope_config.get(key) is not None:
+                resolved_scope[key] = str(scope_config.get(key)).strip() or default_scope[key]
+        if scope_config.get("auto_compact") is not None:
+            resolved_scope["auto_compact"] = bool(scope_config.get("auto_compact"))
+        if scope_config.get("compact_threshold") is not None:
+            try:
+                resolved_scope["compact_threshold"] = max(int(scope_config.get("compact_threshold") or 1), 1)
+            except (TypeError, ValueError):
+                resolved_scope["compact_threshold"] = default_scope["compact_threshold"]
+
+        if scope_key == "agent_global_memory":
+            resolved_scope["schema"] = list(default_scope["schema"])
+        elif isinstance(scope_config.get("schema"), list):
+            resolved_scope["schema"] = _sanitize_free_string_list(scope_config.get("schema")) or list(default_scope["schema"])
+
+        if isinstance(scope_config.get("disclosure"), list):
+            resolved_scope["disclosure"] = _sanitize_free_string_list(scope_config.get("disclosure")) or list(default_scope["disclosure"])
+        else:
+            resolved_scope["disclosure"] = list(default_scope["disclosure"])
+        resolved[scope_key] = resolved_scope
+
+    return resolved
 
 
 def default_candidate_state_snapshot(
@@ -519,29 +604,7 @@ def default_recruit_agent_profile() -> dict[str, Any]:
             },
         },
         "playbook_blueprint": _adaptive_execution_to_payload(),
-        "memory_policy": {
-            "candidate_memory": {
-                "isolation": "strict_by_candidate",
-                "auto_compact": True,
-                "compact_threshold": AUTO_COMPACT_THRESHOLD,
-                "schema": ["identity_summary", "facts", "interaction_summary", "risk_flags", "open_questions", "recommended_next_actions", "evidence_refs", "confidence"],
-                "disclosure": ["preview", "operator_summary", "model_context"],
-            },
-            "job_memory": {
-                "isolation": "strict_by_jd",
-                "auto_compact": True,
-                "compact_threshold": AUTO_COMPACT_THRESHOLD,
-                "schema": ["screening_preferences", "strong_positive_signals", "common_reject_reasons", "communication_notes", "quality_thresholds", "historical_patterns"],
-                "disclosure": ["preview", "operator_summary", "model_context"],
-            },
-            "agent_global_memory": {
-                "scope": "agent_global",
-                "auto_compact": True,
-                "compact_threshold": AUTO_COMPACT_THRESHOLD,
-                "schema": ["global_strategies", "common_failures", "effective_patterns", "prompt_lessons", "runtime_lessons"],
-                "disclosure": ["preview", "operator_summary", "model_context"],
-            },
-        },
+        "memory_policy": default_memory_policy(),
         "dashboard_config": {
             "layout": [
                 "candidate_progress",
@@ -569,10 +632,16 @@ def ensure_primary_recruit_agent_profile(session: Session) -> RecruitAgentProfil
     existing = repo.primary()
     if existing is not None:
         prompt_config = dict(existing.prompt_config or {})
-        resolved_policy = resolve_context_policy(prompt_config)
-        if prompt_config.get("context_policy") != resolved_policy:
-            prompt_config["context_policy"] = resolved_policy
-            existing = repo.update(existing, {"prompt_config": prompt_config})
+        resolved_context_policy = resolve_context_policy(prompt_config)
+        resolved_memory_policy = resolve_memory_policy(existing.memory_policy)
+        patch: dict[str, Any] = {}
+        if prompt_config.get("context_policy") != resolved_context_policy:
+            prompt_config["context_policy"] = resolved_context_policy
+            patch["prompt_config"] = prompt_config
+        if existing.memory_policy != resolved_memory_policy:
+            patch["memory_policy"] = resolved_memory_policy
+        if patch:
+            existing = repo.update(existing, patch)
         return existing
     try:
         return repo.create(default_recruit_agent_profile())
@@ -582,10 +651,16 @@ def ensure_primary_recruit_agent_profile(session: Session) -> RecruitAgentProfil
         if existing is None:
             raise
         prompt_config = dict(existing.prompt_config or {})
-        resolved_policy = resolve_context_policy(prompt_config)
-        if prompt_config.get("context_policy") != resolved_policy:
-            prompt_config["context_policy"] = resolved_policy
-            existing = repo.update(existing, {"prompt_config": prompt_config})
+        resolved_context_policy = resolve_context_policy(prompt_config)
+        resolved_memory_policy = resolve_memory_policy(existing.memory_policy)
+        patch: dict[str, Any] = {}
+        if prompt_config.get("context_policy") != resolved_context_policy:
+            prompt_config["context_policy"] = resolved_context_policy
+            patch["prompt_config"] = prompt_config
+        if existing.memory_policy != resolved_memory_policy:
+            patch["memory_policy"] = resolved_memory_policy
+        if patch:
+            existing = repo.update(existing, patch)
         return existing
 
 
@@ -693,38 +768,82 @@ def ensure_global_memory(
     repo = AgentGlobalMemoryRepository(session)
     memory = repo.by_agent(agent_profile_id)
     if memory is not None:
+        if needs_agent_global_memory_projection(
+            memory_schema_version=memory.memory_schema_version,
+            summary=memory.summary,
+            content=dict(memory.content or {}),
+            raw_content=dict(memory.raw_content or {}),
+            memory_metadata=dict(memory.memory_metadata or {}),
+        ):
+            runtime_link = dict(memory.raw_content or {})
+            runtime_link_meta = dict(memory.memory_metadata or {})
+            run_pk = str(runtime_link.get("run_pk") or runtime_link_meta.get("run_pk") or "").strip() or None
+            conversation_pk = str(
+                runtime_link.get("conversation_pk") or runtime_link_meta.get("conversation_pk") or ""
+            ).strip() or None
+            goal_kind: str | None = None
+            goal_title: str | None = None
+            round_status: str | None = None
+            if run_pk:
+                run = session.get(AgentRun, run_pk)
+                if run is not None:
+                    round_status = str(run.status or "").strip() or None
+                    if conversation_pk is None:
+                        conversation_pk = str((run.runtime_metadata or {}).get("conversation_id") or "").strip() or None
+                    goal_spec = session.get(GoalSpec, run.goal_spec_id) if run.goal_spec_id else None
+                    if goal_spec is not None:
+                        goal_kind = str(goal_spec.goal_kind or "").strip() or None
+                        goal_title = str(goal_spec.title or "").strip() or None
+            projected = project_agent_global_memory(
+                summary=memory.summary,
+                content=dict(memory.content or {}),
+                raw_content=dict(memory.raw_content or {}),
+                goal_kind=goal_kind,
+                goal_title=goal_title,
+                round_status=round_status,
+                source_kind=str((memory.memory_metadata or {}).get("source_kind") or memory.kind or "autonomous"),
+                run_pk=run_pk,
+                conversation_pk=conversation_pk,
+            )
+            metadata = dict(memory.memory_metadata or {})
+            metadata.update(dict(projected.get("memory_metadata") or {}))
+            metadata["normalized_from"] = str(memory.memory_schema_version or "legacy")
+            memory = repo.update(
+                memory,
+                {
+                    "memory_schema_version": GLOBAL_MEMORY_SCHEMA_VERSION,
+                    "summary": projected["summary"],
+                    "raw_content": dict(projected["raw_content"] or {}),
+                    "content": dict(projected["content"] or {}),
+                    "disclosure": build_memory_disclosure(
+                        scope="agent_global",
+                        summary=str(projected["summary"]),
+                        content=dict(projected["content"] or {}),
+                        token_estimate=content_length(dict(projected["content"] or {})),
+                    ),
+                    "token_estimate": content_length(dict(projected["content"] or {})),
+                    "memory_metadata": metadata,
+                },
+            )
         return memory
+    default_payload = empty_agent_global_memory_payload()
     return repo.create(
         {
             "agent_profile_id": agent_profile_id,
             "status": "active",
-            "memory_schema_version": "agent-global-memory-v1",
-            "summary": "全局招聘经验尚未整理。",
-            "raw_content": {
-                "global_strategies": [],
-                "common_failures": [],
-                "effective_patterns": [],
-                "prompt_lessons": [],
-                "runtime_lessons": [],
-            },
-            "content": {
-                "facts": [],
-                "decisions": [],
-                "open_questions": [],
-                "next_actions": [],
-                "risk_flags": [],
-                "evidence_refs": [],
-                "confidence": "unknown",
-            },
+            "memory_schema_version": GLOBAL_MEMORY_SCHEMA_VERSION,
+            "summary": default_payload["summary"],
+            "raw_content": dict(default_payload["raw_content"] or {}),
+            "content": dict(default_payload["content"] or {}),
             "disclosure": build_memory_disclosure(
                 scope="agent_global",
-                summary="全局招聘经验尚未整理。",
-                content={"facts": [], "decisions": [], "open_questions": [], "next_actions": [], "risk_flags": [], "evidence_refs": [], "confidence": "unknown"},
-                token_estimate=0,
+                summary=str(default_payload["summary"]),
+                content=dict(default_payload["content"] or {}),
+                token_estimate=content_length(dict(default_payload["content"] or {})),
             ),
-            "token_estimate": 0,
+            "token_estimate": content_length(dict(default_payload["content"] or {})),
             "source_count": 0,
-            "memory_metadata": {"scope": "agent_global"},
+            "memory_metadata": dict(default_payload["memory_metadata"] or {}),
         }
     )
 

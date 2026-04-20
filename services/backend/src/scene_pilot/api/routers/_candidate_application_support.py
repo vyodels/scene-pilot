@@ -46,7 +46,7 @@ from scene_pilot.schemas import (
     TalentPoolSyncRecordRead,
 )
 from scene_pilot.services.application_subjects import application_payload_from_application
-from scene_pilot.services.candidate_identity import relink_application_person_by_contact_info
+from scene_pilot.services.candidate_identity import merge_contact_info, relink_application_person_by_contact_info
 from scene_pilot.services.recruit_agent import default_candidate_state_snapshot
 from scene_pilot.services.state_machine import available_state_statuses, transition_candidate
 
@@ -425,14 +425,42 @@ def create_application_resume_artifact(
         }
     )
     snapshot = dict(application.state_snapshot or {}) or default_candidate_state_snapshot(status=application.current_status)
+    application_metadata = dict(application.application_metadata or {})
     if payload.artifact_type == "resume":
         snapshot["resume_status"] = "received"
         snapshot["latest_note"] = payload.file_name or snapshot.get("latest_note")
+        resume_snapshot = {
+            **dict(application.resume_snapshot or {}),
+            "available": True,
+            "status": "received",
+            "file_name": payload.file_name,
+            "file_path": payload.file_path,
+            "artifact_type": payload.artifact_type,
+            "captured_at": _timestamp(payload.captured_at or item.captured_at),
+            "source": payload.source,
+        }
+        application_metadata["resume_available"] = True
+        application_metadata["resume_snapshot"] = resume_snapshot
+        application_metadata["resume_status"] = "received"
         CandidateApplicationRepository(session).update(
             application,
             {
                 "state_snapshot": snapshot,
                 "current_stage_key": application.current_stage_key or application.current_status,
+                "resume_snapshot": resume_snapshot,
+                "contact_snapshot": dict(payload.contact_snapshot or application.contact_snapshot or {}),
+                "application_metadata": application_metadata,
+            },
+        )
+        CandidateRepository(session).update(
+            linked_person,
+            {
+                "resume_path": payload.file_path or linked_person.resume_path,
+                "online_resume_text": payload.extracted_text or linked_person.online_resume_text,
+                "contact_info": merge_contact_info(
+                    dict(linked_person.contact_info or {}),
+                    dict(payload.contact_snapshot or {}),
+                ),
             },
         )
     return _with_application_id(

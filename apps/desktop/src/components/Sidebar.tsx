@@ -1,23 +1,25 @@
 import React from "react";
 import { useI18n } from "../lib/i18n";
-import type { WorkspaceTab } from "../lib/types";
+import type { AgentSnapshot, WorkspaceTab } from "../lib/types";
 import { StatusBadge } from "./StatusBadge";
 
 interface SidebarProps {
   active: WorkspaceTab;
   onChange(tab: WorkspaceTab): void;
   counts: Partial<Record<WorkspaceTab, number>>;
+  agentsOpen?: boolean;
+  agentStatus?: AgentSnapshot["status"];
+  agentCount?: number;
+  onOpenAgents(): void;
 }
 
 const tabs: Array<{ key: WorkspaceTab; labelEn: string; labelZh: string; shortZh: string }> = [
   { key: "home", labelEn: "Home", labelZh: "首页", shortZh: "首页" },
   { key: "candidates", labelEn: "Candidates", labelZh: "候选人", shortZh: "工作台" },
-  { key: "ai-review", labelEn: "AI Review", labelZh: "AI 审查", shortZh: "审查" },
-  { key: "ai-strategy", labelEn: "AI Strategy", labelZh: "AI 策略", shortZh: "策略" },
   { key: "settings", labelEn: "Settings", labelZh: "设置", shortZh: "设置" },
 ];
 
-function SidebarGlyph({ tab }: { tab: WorkspaceTab }): JSX.Element {
+function SidebarGlyph({ tab }: { tab: WorkspaceTab | "agents" }): JSX.Element {
   const shared = {
     width: 22,
     height: 22,
@@ -47,21 +49,6 @@ function SidebarGlyph({ tab }: { tab: WorkspaceTab }): JSX.Element {
           <path d="M16.5 6.5a2.5 2.5 0 0 1 0 5" />
         </svg>
       );
-    case "ai-review":
-      return (
-        <svg {...shared}>
-          <path d="M12 4.5 18 7v5c0 3.5-2 6.4-6 7.5-4-1.1-6-4-6-7.5V7z" />
-          <path d="m9.5 12 1.5 1.5 3.5-3.5" />
-        </svg>
-      );
-    case "ai-strategy":
-      return (
-        <svg {...shared}>
-          <path d="M6.5 16.5 17.5 7.5" />
-          <path d="M8 7h8v8" />
-          <path d="M6 19h12" />
-        </svg>
-      );
     case "settings":
       return (
         <svg {...shared}>
@@ -76,10 +63,29 @@ function SidebarGlyph({ tab }: { tab: WorkspaceTab }): JSX.Element {
           <path d="M7 6l-1.4-1.4" />
         </svg>
       );
+    default:
+      return (
+        <svg {...shared}>
+          <rect x="5" y="5" width="14" height="14" rx="4" />
+          <path d="M9 9h6v6H9z" />
+          <path d="M9 3.5v2" />
+          <path d="M15 3.5v2" />
+          <path d="M9 18.5v2" />
+          <path d="M15 18.5v2" />
+        </svg>
+      );
   }
 }
 
-export function Sidebar({ active, onChange, counts }: SidebarProps): JSX.Element {
+export function Sidebar({
+  active,
+  onChange,
+  counts,
+  agentsOpen = false,
+  agentStatus = "idle",
+  agentCount = 0,
+  onOpenAgents,
+}: SidebarProps): JSX.Element {
   const { copy } = useI18n();
 
   return (
@@ -111,6 +117,22 @@ export function Sidebar({ active, onChange, counts }: SidebarProps): JSX.Element
             </button>
           );
         })}
+
+        <button
+          type="button"
+          className="workspace-sidebar__item workspace-sidebar__item--agents"
+          data-active={agentsOpen}
+          data-status={agentStatus}
+          aria-label={copy("Open Agents overlay", "打开 Agents 浮窗")}
+          onClick={onOpenAgents}
+        >
+          <span className="workspace-sidebar__item-icon">
+            <SidebarGlyph tab="agents" />
+          </span>
+          <span className="workspace-sidebar__item-label">{copy("Agents", "Agents")}</span>
+          <span className="workspace-sidebar__status-dot" aria-hidden="true" />
+          {agentCount > 0 ? <span className="workspace-sidebar__count">{agentCount > 9 ? "9+" : agentCount}</span> : null}
+        </button>
       </nav>
 
       <div className="workspace-sidebar__footer">

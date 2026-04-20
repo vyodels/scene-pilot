@@ -1,8 +1,15 @@
 import React, { useMemo, useState } from "react";
 import type { ApplicationTransitionPayload, HumanActionDefinition, RecruitmentStateMachine } from "@scene-pilot/shared";
 import { SectionTabs, StatusBadge } from "../../components";
+import { formatCompactDate } from "../../lib/format";
 import { useI18n } from "../../lib/i18n";
-import { deriveHumanActionsForNode, nodeTone } from "./kanbanUtils";
+import {
+  deriveHumanActionsForNode,
+  getContactChannels,
+  getContactDetails,
+  getResumeArtifactSummaries,
+  nodeTone,
+} from "./kanbanUtils";
 import { StatusTimeline } from "./StatusTimeline";
 import type { ApplicationViewModel } from "./kanbanUtils";
 
@@ -26,6 +33,61 @@ function asObject(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
 }
 
+function pickString(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed ? trimmed : undefined;
+}
+
+function contactChannelLabel(
+  channel: string,
+  copy: (en: string, zh: string) => string,
+): string {
+  switch (channel) {
+    case "phone":
+      return copy("Phone", "电话");
+    case "wechat":
+      return copy("WeChat", "微信");
+    case "email":
+      return copy("Email", "邮箱");
+    default:
+      return copy("Other", "其他");
+  }
+}
+
+function summarizeSource(
+  source: string,
+  copy: (en: string, zh: string) => string,
+): string {
+  const trimmed = source.trim();
+  const normalized = trimmed.toLowerCase();
+  if (normalized === "profile") {
+    return copy("Candidate profile", "候选人资料");
+  }
+  if (normalized.startsWith("resume artifact")) {
+    const detail = trimmed.replace(/^resume artifact/i, "").replace(/^[\s·-]+/, "").trim();
+    return detail ? `${copy("Resume artifact", "简历制品")} · ${detail}` : copy("Resume artifact", "简历制品");
+  }
+  if (normalized === "operator") {
+    return copy("Operator", "人工");
+  }
+  if (normalized === "agent") {
+    return "Agent";
+  }
+  if (normalized === "system") {
+    return copy("System", "系统");
+  }
+  if (normalized === "site") {
+    return copy("Site import", "站点导入");
+  }
+  if (normalized === "unknown") {
+    return "—";
+  }
+  return trimmed;
+}
+
 export function CandidateDetailDrawer({
   open,
   record,
@@ -44,12 +106,30 @@ export function CandidateDetailDrawer({
     () => (currentNode ? deriveHumanActionsForNode(currentNode, stateMachine) : []),
     [currentNode, stateMachine],
   );
+  const aiScores = asObject(record?.application.aiScores);
+  const personContactInfo = asObject(record?.application.person.contactInfo);
+  const contactDetails = useMemo(
+    () => (record ? getContactDetails(record.application, record.thread) : []),
+    [record],
+  );
+  const contactChannels = useMemo(
+    () => (record ? getContactChannels(record.application, record.thread) : []),
+    [record],
+  );
+  const resumeArtifacts = useMemo(
+    () => (record ? getResumeArtifactSummaries(record.thread) : []),
+    [record],
+  );
+  const latestTransitionSource = record?.thread?.stateSnapshot.latestTransitionSource?.trim() || "";
+  const latestInteraction = record?.thread?.runtimeInteractions?.[0];
+  const onlineResumeText =
+    pickString(personContactInfo.onlineResumeText) ?? pickString(personContactInfo.online_resume_text);
+  const primaryResumePath =
+    pickString(personContactInfo.resumePath) ?? pickString(personContactInfo.resume_path);
 
   if (!open || !record) {
     return null;
   }
-
-  const aiScores = asObject(record.application.aiScores);
 
   const submitAction = async (action: HumanActionDefinition, note?: string) => {
     const key = `${record.application.id}:${action.toStatus}:${action.label}`;
@@ -118,18 +198,74 @@ export function CandidateDetailDrawer({
           {activeTab === "resume" ? (
             <div className="drawer__stack">
               <div className="drawer__card">
-                <strong>{copy("Online profile", "在线资料")}</strong>
-                <p>{record.application.summary || copy("No online profile summary.", "暂无在线资料摘要。")}</p>
+                <strong>{copy("Resume overview", "简历概览")}</strong>
+                <div className="drawer__grid">
+                  <div>
+                    <strong>{copy("Resume status", "简历状态")}</strong>
+                    <span>
+                      {record.application.resumeAvailable
+                        ? copy("Resume evidence is available.", "已有简历证据。")
+                        : copy("Resume evidence is still missing.", "简历证据仍待补充。")}
+                    </span>
+                  </div>
+                  <div>
+                    <strong>{copy("Stored artifacts", "已入库制品")}</strong>
+                    <span>
+                      {resumeArtifacts.length
+                        ? copy(`${resumeArtifacts.length} artifacts`, `共 ${resumeArtifacts.length} 个制品`)
+                        : copy("No stored artifact yet", "暂无已入库制品")}
+                    </span>
+                  </div>
+                  <div className="drawer__full-row">
+                    <strong>{copy("Online profile summary", "在线资料摘要")}</strong>
+                    <span>
+                      {onlineResumeText || record.application.summary || copy("No online profile summary.", "暂无在线资料摘要。")}
+                    </span>
+                  </div>
+                  <div className="drawer__full-row">
+                    <strong>{copy("Primary stored path", "主落地路径")}</strong>
+                    <span>{primaryResumePath || copy("No stored path exposed yet.", "暂未暴露主路径。")}</span>
+                  </div>
+                </div>
               </div>
-              {record.thread?.resumeArtifacts.length ? (
-                record.thread.resumeArtifacts.map((artifact) => (
+              {resumeArtifacts.length ? (
+                resumeArtifacts.map((artifact) => (
                   <div key={artifact.id} className="drawer__card">
-                    <strong>{artifact.fileName || artifact.filePath || copy("Stored artifact", "已入库简历")}</strong>
-                    <p>{artifact.extractedText || copy("No extracted text available.", "暂无提取文本。")}</p>
+                    <strong>{artifact.title || copy("Stored artifact", "已入库简历")}</strong>
+                    <div className="drawer__grid">
+                      <div>
+                        <strong>{copy("Source", "来源")}</strong>
+                        <span>{summarizeSource(artifact.source, copy)}</span>
+                      </div>
+                      <div>
+                        <strong>{copy("Recorded at", "获取时间")}</strong>
+                        <span>{artifact.recordedAt ? formatCompactDate(artifact.recordedAt) : "—"}</span>
+                      </div>
+                      <div className="drawer__full-row">
+                        <strong>{copy("Artifact path", "制品路径")}</strong>
+                        <span>{artifact.path || copy("Path has not been stored yet.", "尚未记录路径。")}</span>
+                      </div>
+                      {artifact.contactSummary ? (
+                        <div className="drawer__full-row">
+                          <strong>{copy("Contact found in artifact", "制品内联系方式")}</strong>
+                          <span>{artifact.contactSummary}</span>
+                        </div>
+                      ) : null}
+                      {artifact.excerpt ? (
+                        <div className="drawer__full-row">
+                          <strong>{copy("Extracted excerpt", "提取摘要")}</strong>
+                          <span>{artifact.excerpt}</span>
+                        </div>
+                      ) : null}
+                    </div>
                   </div>
                 ))
               ) : (
-                <div className="drawer__empty">{copy("No offline resume artifacts yet.", "暂无线下简历制品。")}</div>
+                <div className="drawer__empty">
+                  {record.application.resumeAvailable
+                    ? copy("Resume is marked as available, but no stored artifact/path is exposed yet.", "当前已标记有简历，但还没有暴露出可展示的制品或路径。")
+                    : copy("No offline resume artifacts yet.", "暂无线下简历制品。")}
+                </div>
               )}
             </div>
           ) : null}
@@ -164,12 +300,81 @@ export function CandidateDetailDrawer({
           ) : null}
 
           {activeTab === "contact" ? (
-            <div className="drawer__grid">
-              <div><strong>{copy("Summary", "联系方式摘要")}</strong><span>{record.contactSummary}</span></div>
-              <div><strong>{copy("Channels", "渠道")}</strong><span>{record.thread?.stateSnapshot.contactChannels.join(", ") || "—"}</span></div>
-              <div className="drawer__full-row">
-                <strong>{copy("Contact snapshot", "联系快照")}</strong>
-                <span>{JSON.stringify(record.application.person.contactInfo ?? {}, null, 2)}</span>
+            <div className="drawer__stack">
+              <div className="drawer__card">
+                <strong>{copy("Contact overview", "联系方式概览")}</strong>
+                <div className="drawer__grid">
+                  <div>
+                    <strong>{copy("Masked summary", "脱敏摘要")}</strong>
+                    <span>{record.contactSummary}</span>
+                  </div>
+                  <div>
+                    <strong>{copy("Channels", "渠道")}</strong>
+                    <span>
+                      {contactChannels.length
+                        ? contactChannels.map((channel) => contactChannelLabel(channel, copy)).join(" / ")
+                        : "—"}
+                    </span>
+                  </div>
+                  <div>
+                    <strong>{copy("Contact status", "联系状态")}</strong>
+                    <span>
+                      {record.thread?.stateSnapshot.contactAcquired
+                        ? copy("Contact has been acquired.", "联系方式已获取。")
+                        : copy("Contact details are still missing.", "联系方式仍待补充。")}
+                    </span>
+                  </div>
+                  <div>
+                    <strong>{copy("Latest source", "最近来源")}</strong>
+                    <span>{latestTransitionSource ? summarizeSource(latestTransitionSource, copy) : "—"}</span>
+                  </div>
+                </div>
+              </div>
+              {contactDetails.length ? (
+                contactDetails.map((detail, index) => (
+                  <div key={`${detail.channel}:${detail.value}:${index}`} className="drawer__card">
+                    <strong>{contactChannelLabel(detail.channel, copy)}</strong>
+                    <div className="drawer__grid">
+                      <div>
+                        <strong>{copy("Masked value", "脱敏值")}</strong>
+                        <span>{detail.value}</span>
+                      </div>
+                      <div>
+                        <strong>{copy("Source", "来源")}</strong>
+                        <span>{summarizeSource(detail.source, copy)}</span>
+                      </div>
+                      <div className="drawer__full-row">
+                        <strong>{copy("Recorded at", "记录时间")}</strong>
+                        <span>{detail.recordedAt ? formatCompactDate(detail.recordedAt) : "—"}</span>
+                      </div>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="drawer__empty">
+                  {copy("No contact value is exposed yet. Only channel-level state is available.", "目前还没有可展示的联系方式值，只拿到了渠道级状态。")}
+                </div>
+              )}
+              <div className="drawer__card">
+                <strong>{copy("Profile source snapshot", "资料来源快照")}</strong>
+                <div className="drawer__grid">
+                  <div>
+                    <strong>{copy("Platform", "平台")}</strong>
+                    <span>{record.application.platform}</span>
+                  </div>
+                  <div>
+                    <strong>{copy("Last activity", "最近活动")}</strong>
+                    <span>{record.latestActivityAt ? formatCompactDate(record.latestActivityAt) : "—"}</span>
+                  </div>
+                  <div className="drawer__full-row">
+                    <strong>{copy("Latest acquisition record", "最近获取记录")}</strong>
+                    <span>
+                      {latestInteraction
+                        ? `${latestInteraction.title} · ${latestInteraction.effectSummary || latestInteraction.status}`
+                        : copy("No runtime acquisition record yet.", "暂未记录运行时获取事件。")}
+                    </span>
+                  </div>
+                </div>
               </div>
             </div>
           ) : null}

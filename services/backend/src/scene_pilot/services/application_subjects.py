@@ -50,7 +50,11 @@ def application_payload_from_application(
         "experience_years": int(contact_info.get("experience_years", 0) or 0),
         "tags": list(contact_info.get("tags", []) or []),
         "contact_info": contact_info,
+        "resume_path": str(getattr(person, "resume_path", None) or "") or None,
+        "online_resume_text": str(getattr(person, "online_resume_text", None) or "") or None,
     }
+    contact_snapshot = dict(getattr(application, "contact_snapshot", None) or {})
+    resume_snapshot = dict(getattr(application, "resume_snapshot", None) or {})
     application_payload = {
         "application_id": application_id,
         "person_id": person_id,
@@ -73,6 +77,8 @@ def application_payload_from_application(
         "cooldown_until": getattr(application, "cooldown_until", None),
         "last_contacted_at": getattr(application, "last_contacted_at", None),
         "application_metadata": dict(getattr(application, "application_metadata", None) or {}),
+        "contact_snapshot": contact_snapshot,
+        "resume_snapshot": resume_snapshot,
         "resume_available": resume_available,
     }
     job_description_payload = {
@@ -97,6 +103,9 @@ def application_payload_from_application(
         "state_snapshot": state_snapshot,
         "ai_scores": ai_scores,
         "ai_reasoning": application_payload["ai_reasoning"],
+        "application_metadata": application_payload["application_metadata"],
+        "contact_snapshot": application_payload["contact_snapshot"],
+        "resume_snapshot": application_payload["resume_snapshot"],
         "cooldown_until": application_payload["cooldown_until"],
         "last_contacted_at": application_payload["last_contacted_at"],
         "created_at": getattr(application, "created_at", None),

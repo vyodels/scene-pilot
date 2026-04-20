@@ -118,7 +118,7 @@ def test_run_migrations_adds_job_description_detail_columns_for_existing_schema(
                 """
             )
         )
-        for version in range(1, CURRENT_SCHEMA_VERSION):
+        for version in range(1, 19):
             connection.execute(
                 text(
                     f"""
@@ -151,3 +151,386 @@ def test_run_migrations_adds_job_description_detail_columns_for_existing_schema(
             "benefit_tags",
             "detail_metadata",
         } <= job_columns
+
+
+def test_run_migrations_aligns_mcp_server_columns_for_existing_schema(tmp_path):
+    engine = _build_engine(tmp_path)
+
+    with engine.begin() as connection:
+        ensure_schema_migrations_table(connection)
+        connection.execute(
+            text(
+                """
+                CREATE TABLE mcp_servers (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    server_key TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    transport_kind TEXT NOT NULL DEFAULT 'unix_socket',
+                    protocol TEXT NOT NULL DEFAULT 'mcp_jsonrpc',
+                    endpoint TEXT NOT NULL,
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    preset_key TEXT,
+                    auth_config TEXT NOT NULL DEFAULT '{}',
+                    server_metadata TEXT NOT NULL DEFAULT '{}',
+                    health_status TEXT NOT NULL DEFAULT 'unknown',
+                    health_error TEXT,
+                    last_health_at BIGINT,
+                    created_at BIGINT NOT NULL,
+                    updated_at BIGINT NOT NULL
+                )
+                """
+            )
+        )
+        for version in range(1, 20):
+            connection.execute(
+                text(
+                    f"""
+                    INSERT INTO {SCHEMA_MIGRATIONS_TABLE} (version, name, applied_at)
+                    VALUES (:version, :name, :applied_at)
+                    """
+                ),
+                {
+                    "version": version,
+                    "name": f"migration-{version}",
+                    "applied_at": "2026-04-20T00:00:00+00:00",
+                },
+            )
+
+    run_migrations(engine)
+
+    with engine.connect() as connection:
+        server_columns = {
+            row[1]
+            for row in connection.execute(text("PRAGMA table_info(mcp_servers)")).fetchall()
+        }
+        indexes = {
+            row[0]
+            for row in connection.execute(text("SELECT name FROM sqlite_master WHERE type='index'")).fetchall()
+        }
+        assert current_schema_version(connection) == CURRENT_SCHEMA_VERSION
+        assert {"capabilities", "circuit_state", "circuit_until", "last_error"} <= server_columns
+        assert "ix_mcp_servers_circuit_state" in indexes
+        assert "ix_mcp_servers_circuit_until" in indexes
+
+
+def test_run_migrations_aligns_agent_run_columns_for_existing_schema(tmp_path):
+    engine = _build_engine(tmp_path)
+
+    with engine.begin() as connection:
+        ensure_schema_migrations_table(connection)
+        connection.execute(
+            text(
+                """
+                CREATE TABLE agent_runs (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    session_id TEXT NOT NULL,
+                    execution_episode_id TEXT,
+                    goal_spec_id TEXT,
+                    candidate_id TEXT,
+                    jd_id TEXT,
+                    platform TEXT NOT NULL DEFAULT 'site',
+                    lane TEXT NOT NULL DEFAULT 'agent',
+                    run_type TEXT NOT NULL DEFAULT 'generic',
+                    status TEXT NOT NULL DEFAULT 'queued',
+                    priority INTEGER NOT NULL DEFAULT 100,
+                    queue_task_id TEXT,
+                    checkpoint_status TEXT NOT NULL DEFAULT 'none',
+                    context_manifest JSON NOT NULL DEFAULT '{}',
+                    runtime_metadata JSON NOT NULL DEFAULT '{}',
+                    started_at BIGINT,
+                    finished_at BIGINT,
+                    blocked_reason TEXT,
+                    last_error TEXT,
+                    created_at BIGINT NOT NULL,
+                    updated_at BIGINT NOT NULL
+                )
+                """
+            )
+        )
+        for version in range(1, 21):
+            connection.execute(
+                text(
+                    f"""
+                    INSERT INTO {SCHEMA_MIGRATIONS_TABLE} (version, name, applied_at)
+                    VALUES (:version, :name, :applied_at)
+                    """
+                ),
+                {
+                    "version": version,
+                    "name": f"migration-{version}",
+                    "applied_at": "2026-04-20T00:00:00+00:00",
+                },
+            )
+
+    run_migrations(engine)
+
+    with engine.connect() as connection:
+        run_columns = {
+            row[1]
+            for row in connection.execute(text("PRAGMA table_info(agent_runs)")).fetchall()
+        }
+        indexes = {
+            row[0]
+            for row in connection.execute(text("SELECT name FROM sqlite_master WHERE type='index'")).fetchall()
+        }
+        assert current_schema_version(connection) == CURRENT_SCHEMA_VERSION
+        assert {
+            "run_id",
+            "agent_kind",
+            "turns_count",
+            "prompt_tokens",
+            "completion_tokens",
+            "cache_hit_tokens",
+            "escalate_reason",
+            "lock_scope",
+            "idempotency_key",
+            "wakeup_state",
+        } <= run_columns
+        assert "uq_agent_runs_run_id" in indexes
+        assert "uq_agent_runs_idempotency_key" in indexes
+        assert "ix_agent_runs_agent_kind" in indexes
+
+
+def test_run_migrations_aligns_skill_columns_for_runtime_learning(tmp_path):
+    engine = _build_engine(tmp_path)
+
+    with engine.begin() as connection:
+        ensure_schema_migrations_table(connection)
+        connection.execute(
+            text(
+                """
+                CREATE TABLE skills (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    skill_id TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    description TEXT,
+                    category TEXT NOT NULL DEFAULT 'general',
+                    version INTEGER NOT NULL DEFAULT 1,
+                    status TEXT NOT NULL DEFAULT 'draft',
+                    bound_to_stage TEXT,
+                    platform TEXT NOT NULL DEFAULT 'site',
+                    input_schema JSON NOT NULL DEFAULT '{}',
+                    output_schema JSON NOT NULL DEFAULT '{}',
+                    strategy JSON NOT NULL DEFAULT '{}',
+                    execution_hints JSON NOT NULL DEFAULT '{}',
+                    risk_level TEXT NOT NULL DEFAULT 'medium',
+                    health_check_config JSON NOT NULL DEFAULT '{}',
+                    skill_metadata JSON NOT NULL DEFAULT '{}',
+                    last_health_check BIGINT,
+                    last_health_status TEXT,
+                    confirmed_by TEXT,
+                    confirmed_at BIGINT,
+                    created_at BIGINT NOT NULL,
+                    updated_at BIGINT NOT NULL
+                )
+                """
+            )
+        )
+        for version in range(1, 22):
+            connection.execute(
+                text(
+                    f"""
+                    INSERT INTO {SCHEMA_MIGRATIONS_TABLE} (version, name, applied_at)
+                    VALUES (:version, :name, :applied_at)
+                    """
+                ),
+                {
+                    "version": version,
+                    "name": f"migration-{version}",
+                    "applied_at": "2026-04-20T00:00:00+00:00",
+                },
+            )
+
+    run_migrations(engine)
+
+    with engine.connect() as connection:
+        skill_columns = {
+            row[1]
+            for row in connection.execute(text("PRAGMA table_info(skills)")).fetchall()
+        }
+        indexes = {
+            row[0]
+            for row in connection.execute(text("SELECT name FROM sqlite_master WHERE type='index'")).fetchall()
+        }
+        assert current_schema_version(connection) == CURRENT_SCHEMA_VERSION
+        assert {
+            "trigger_hint",
+            "body",
+            "trial_metrics",
+            "requires_human_gate",
+            "human_gate_policy",
+        } <= skill_columns
+        assert "ix_skills_requires_human_gate" in indexes
+
+
+def test_run_migrations_aligns_approval_and_runtime_event_columns(tmp_path):
+    engine = _build_engine(tmp_path)
+
+    with engine.begin() as connection:
+        ensure_schema_migrations_table(connection)
+        connection.execute(
+            text(
+                """
+                CREATE TABLE approval_items (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    target_type TEXT NOT NULL,
+                    target_id TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    requested_by TEXT,
+                    reviewed_by TEXT,
+                    reviewed_at BIGINT,
+                    payload JSON NOT NULL DEFAULT '{}',
+                    notes TEXT,
+                    created_at BIGINT NOT NULL,
+                    updated_at BIGINT NOT NULL
+                )
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                CREATE TABLE agent_runtime_events (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    session_id TEXT NOT NULL,
+                    run_id TEXT,
+                    candidate_id TEXT,
+                    level TEXT NOT NULL DEFAULT 'info',
+                    source TEXT NOT NULL,
+                    event_type TEXT NOT NULL,
+                    message TEXT NOT NULL,
+                    payload JSON NOT NULL DEFAULT '{}',
+                    occurred_at BIGINT NOT NULL,
+                    created_at BIGINT NOT NULL,
+                    updated_at BIGINT NOT NULL
+                )
+                """
+            )
+        )
+        for version in range(1, 23):
+            connection.execute(
+                text(
+                    f"""
+                    INSERT INTO {SCHEMA_MIGRATIONS_TABLE} (version, name, applied_at)
+                    VALUES (:version, :name, :applied_at)
+                    """
+                ),
+                {
+                    "version": version,
+                    "name": f"migration-{version}",
+                    "applied_at": "2026-04-20T00:00:00+00:00",
+                },
+            )
+
+    run_migrations(engine)
+
+    with engine.connect() as connection:
+        approval_columns = {
+            row[1]
+            for row in connection.execute(text("PRAGMA table_info(approval_items)")).fetchall()
+        }
+        event_columns = {
+            row[1]
+            for row in connection.execute(text("PRAGMA table_info(agent_runtime_events)")).fetchall()
+        }
+        indexes = {
+            row[0]
+            for row in connection.execute(text("SELECT name FROM sqlite_master WHERE type='index'")).fetchall()
+        }
+        assert current_schema_version(connection) == CURRENT_SCHEMA_VERSION
+        assert {
+            "run_pk",
+            "turn_pk",
+            "conversation_pk",
+            "source_kind",
+            "tool_name",
+            "args_digest",
+            "expires_at",
+            "executed_at",
+            "idempotency_key",
+        } <= approval_columns
+        assert {"turn_id", "conversation_id", "seq"} <= event_columns
+        assert "uq_approval_items_idempotency_key" in indexes
+        assert "ix_agent_runtime_events_turn_id" in indexes
+        assert "ix_agent_runtime_events_conversation_id" in indexes
+
+
+def test_run_migrations_aligns_memory_item_columns(tmp_path):
+    engine = _build_engine(tmp_path)
+
+    with engine.begin() as connection:
+        ensure_schema_migrations_table(connection)
+        for table_name, owner_column in (
+            ("candidate_person_memories", "person_id"),
+            ("job_description_memories", "job_description_id"),
+            ("agent_global_memories", None),
+        ):
+            owner_sql = f", {owner_column} TEXT NOT NULL" if owner_column else ""
+            connection.execute(
+                text(
+                    f"""
+                    CREATE TABLE {table_name} (
+                        id TEXT PRIMARY KEY NOT NULL,
+                        agent_profile_id TEXT NOT NULL
+                        {owner_sql},
+                        status TEXT NOT NULL DEFAULT 'active',
+                        memory_schema_version TEXT NOT NULL,
+                        summary TEXT,
+                        raw_content JSON NOT NULL DEFAULT '{{}}',
+                        content JSON NOT NULL DEFAULT '{{}}',
+                        disclosure JSON NOT NULL DEFAULT '{{}}',
+                        token_estimate INTEGER NOT NULL DEFAULT 0,
+                        source_count INTEGER NOT NULL DEFAULT 0,
+                        compacted_at BIGINT,
+                        compacted_reason TEXT,
+                        memory_metadata JSON NOT NULL DEFAULT '{{}}',
+                        created_at BIGINT NOT NULL,
+                        updated_at BIGINT NOT NULL
+                    )
+                    """
+                )
+            )
+        for version in range(1, 24):
+            connection.execute(
+                text(
+                    f"""
+                    INSERT INTO {SCHEMA_MIGRATIONS_TABLE} (version, name, applied_at)
+                    VALUES (:version, :name, :applied_at)
+                    """
+                ),
+                {
+                    "version": version,
+                    "name": f"migration-{version}",
+                    "applied_at": "2026-04-20T00:00:00+00:00",
+                },
+            )
+
+    run_migrations(engine)
+
+    with engine.connect() as connection:
+        indexes = {
+            row[0]
+            for row in connection.execute(text("SELECT name FROM sqlite_master WHERE type='index'")).fetchall()
+        }
+        assert current_schema_version(connection) == CURRENT_SCHEMA_VERSION
+        for table_name in ("candidate_person_memories", "job_description_memories", "agent_global_memories"):
+            columns = {
+                row[1]
+                for row in connection.execute(text(f"PRAGMA table_info({table_name})")).fetchall()
+            }
+            assert {
+                "memory_item_id",
+                "kind",
+                "index_name",
+                "index_description",
+                "confidence",
+                "evidence_refs",
+                "trust_level",
+                "version",
+                "supersedes_id",
+                "expires_at",
+                "item_metadata",
+            } <= columns
+            assert f"uq_{table_name}_memory_item_id" in indexes
+            assert f"ix_{table_name}_kind" in indexes

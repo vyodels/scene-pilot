@@ -1,15 +1,23 @@
 import { app, BrowserWindow } from "electron";
+import { existsSync } from "node:fs";
 import { access } from "node:fs/promises";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import path from "node:path";
 import process from "node:process";
-import url from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const isDev = !app.isPackaged;
 const backendOrigin = (process.env.RECRUIT_AGENT_BACKEND_URL ?? "http://127.0.0.1:8741").replace(/\/$/, "");
 const backendHealthUrl = `${backendOrigin}/health`;
 const backendStartupTimeoutMs = Number(process.env.RECRUIT_AGENT_BACKEND_STARTUP_TIMEOUT_MS ?? 20_000);
+const electronRemoteDebugPort = process.env.RECRUIT_AGENT_ELECTRON_REMOTE_DEBUG_PORT ?? "9222";
+const rendererOrigin = (process.env.RECRUIT_AGENT_DESKTOP_RENDERER_URL ?? "http://localhost:5174").replace(/\/$/, "");
 let backendProcess: ChildProcessWithoutNullStreams | undefined;
+
+if (isDev) {
+  app.commandLine.appendSwitch("remote-debugging-port", electronRemoteDebugPort);
+}
 
 function createWindow(): BrowserWindow {
   const window = new BrowserWindow({
@@ -20,7 +28,7 @@ function createWindow(): BrowserWindow {
     title: "Recruit Agent",
     show: false,
     webPreferences: {
-      preload: path.join(__dirname, "preload.js"),
+      preload: path.join(__dirname, "preload.cjs"),
     },
   });
 
@@ -63,7 +71,11 @@ function resolveBackendCommand(): string[] {
     }
   }
 
-  return ["python3", "-m", "recruit_agent.server"];
+  const preferredPython = process.env.RECRUIT_AGENT_PYTHON
+    ?? process.env.PYTHON3
+    ?? process.env.PYTHON
+    ?? resolvePythonExecutable();
+  return [preferredPython, "-m", "recruit_agent.server"];
 }
 
 function resolvePackagedBackendBinary(): string | null {
@@ -89,6 +101,16 @@ function resolveBackendCwd(): string {
   return path.join(process.resourcesPath, "backend-src", "src");
 }
 
+function resolvePythonExecutable(): string {
+  const candidates = [
+    "/opt/homebrew/bin/python3",
+    "/usr/local/bin/python3",
+    "/usr/bin/python3",
+  ];
+  const available = candidates.find((candidate) => existsSync(candidate));
+  return available ?? "python3";
+}
+
 async function hasFilesystemPath(targetPath: string): Promise<boolean> {
   try {
     await access(targetPath);
@@ -98,24 +120,48 @@ async function hasFilesystemPath(targetPath: string): Promise<boolean> {
   }
 }
 
-function startBackend(): void {
+function startBackend(): Promise<void> {
   const [command, ...args] = resolveBackendCommand();
   const cwd = resolveBackendCwd();
-  backendProcess = spawn(command, args, {
-    cwd,
-    env: {
-      ...process.env,
-      RECRUIT_AGENT_DESKTOP_MODE: "1",
-    },
-  });
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      cwd,
+      env: {
+        ...process.env,
+        RECRUIT_AGENT_DESKTOP_MODE: "1",
+      },
+    });
+    backendProcess = child;
 
-  backendProcess.stdout.on("data", (chunk) => {
-    process.stdout.write(`[backend] ${chunk}`);
+    let settled = false;
+    child.once("spawn", () => {
+      settled = true;
+      resolve();
+    });
+    child.once("error", (error) => {
+      if (!settled) {
+        settled = true;
+        reject(error);
+        return;
+      }
+      process.stderr.write(`[backend] startup error: ${error instanceof Error ? error.message : String(error)}\n`);
+    });
+    child.stdout.on("data", (chunk) => {
+      process.stdout.write(`[backend] ${chunk}`);
+    });
+    child.stderr.on("data", (chunk) => {
+      process.stderr.write(`[backend] ${chunk}`);
+    });
   });
+}
 
-  backendProcess.stderr.on("data", (chunk) => {
-    process.stderr.write(`[backend] ${chunk}`);
-  });
+async function isBackendHealthy(): Promise<boolean> {
+  try {
+    const response = await fetch(backendHealthUrl);
+    return response.ok;
+  } catch {
+    return false;
+  }
 }
 
 async function waitForBackendHealthy(): Promise<void> {
@@ -140,11 +186,11 @@ async function waitForBackendHealthy(): Promise<void> {
 
 async function loadApplication(window: BrowserWindow): Promise<void> {
   if (isDev) {
-    await window.loadURL("http://localhost:5174");
+    await window.loadURL(rendererOrigin);
     window.webContents.openDevTools({ mode: "detach" });
   } else {
     const rendererPath = path.join(__dirname, "../dist-renderer/index.html");
-    await window.loadURL(url.pathToFileURL(rendererPath).toString());
+    await window.loadURL(pathToFileURL(rendererPath).toString());
   }
   window.show();
 }
@@ -164,7 +210,9 @@ app.whenReady().then(async () => {
   }
 
   try {
-    startBackend();
+    if (!(await isBackendHealthy())) {
+      await startBackend();
+    }
     await waitForBackendHealthy();
     await loadApplication(window);
   } catch (error) {

@@ -793,7 +793,11 @@ class AgentGlobalMemoryRepository(BaseRepository[AgentGlobalMemory]):
     model = AgentGlobalMemory
 
     def by_agent(self, agent_profile_id: str) -> AgentGlobalMemory | None:
-        stmt = select(AgentGlobalMemory).where(AgentGlobalMemory.agent_profile_id == agent_profile_id)
+        stmt = (
+            select(AgentGlobalMemory)
+            .where(AgentGlobalMemory.agent_profile_id == agent_profile_id)
+            .order_by(AgentGlobalMemory.updated_at.desc(), AgentGlobalMemory.id.desc())
+        )
         return self.session.scalars(stmt).first()
 
 

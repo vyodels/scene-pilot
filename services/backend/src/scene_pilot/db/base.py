@@ -4,6 +4,11 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
+try:
+    from uuid import uuid7
+except ImportError:  # pragma: no cover - Python < 3.14 fallback
+    uuid7 = None  # type: ignore[assignment]
+
 from sqlalchemy import BIGINT, JSON, Text
 from sqlalchemy.types import TypeDecorator
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -18,6 +23,8 @@ def unix_seconds_now() -> int:
 
 
 def generate_business_id() -> str:
+    if uuid7 is not None:
+        return uuid7().hex
     return uuid4().hex
 
 
@@ -61,7 +68,25 @@ class UnixTimestamp(TypeDecorator[int]):
     def process_result_value(self, value: Any, dialect) -> int | None:  # type: ignore[no-untyped-def]
         if value is None:
             return None
-        return int(value)
+        if isinstance(value, int):
+            return value
+        if isinstance(value, float):
+            return int(value)
+        if isinstance(value, datetime):
+            dt = value
+        elif isinstance(value, str):
+            text = value.strip()
+            if not text:
+                return None
+            if text.isdigit():
+                return int(text)
+            else:
+                dt = datetime.fromisoformat(text)
+        else:  # pragma: no cover - defensive path
+            raise TypeError(f"Unsupported timestamp result value: {value!r}")
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return int(dt.timestamp())
 
 
 class TimestampMixin:

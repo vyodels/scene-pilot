@@ -43,12 +43,34 @@ def extract_contact_identities(contact_info: dict[str, Any] | None) -> dict[str,
     return identities
 
 
+def contact_channels_from_info(contact_info: dict[str, Any] | None) -> list[str]:
+    identities = extract_contact_identities(contact_info)
+    ordered = [channel for channel in ("phone", "wechat", "email") if channel in identities]
+    return ordered
+
+
+def canonicalize_contact_info(contact_info: dict[str, Any] | None) -> dict[str, Any]:
+    payload = dict(contact_info or {})
+    identities = extract_contact_identities(payload)
+    if identities.get("phone"):
+        payload["phone"] = identities["phone"]
+        payload["has_phone"] = True
+    if identities.get("wechat"):
+        payload["wechat"] = identities["wechat"]
+        payload["has_wechat"] = True
+    if identities.get("email"):
+        payload["email"] = identities["email"]
+        payload["has_email"] = True
+    payload["channels"] = contact_channels_from_info(payload)
+    return payload
+
+
 def merge_contact_info(target: dict[str, Any] | None, patch: dict[str, Any] | None) -> dict[str, Any]:
     merged = dict(target or {})
     for key, value in dict(patch or {}).items():
         if value not in (None, "", [], {}):
             merged[key] = value
-    return merged
+    return canonicalize_contact_info(merged)
 
 
 def _candidate_matches_identities(candidate: Candidate, identities: dict[str, str]) -> bool:

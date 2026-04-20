@@ -1,12 +1,10 @@
 import React from "react";
 import type { ReactNode } from "react";
 import { useI18n } from "../lib/i18n";
-import { translateUiToken } from "../lib/uiText";
-import type { AgentSnapshot, SettingsSnapshot } from "../lib/types";
+import type { SettingsSnapshot } from "../lib/types";
 import { StatusBadge } from "./StatusBadge";
 
 interface TopBarProps {
-  agent: AgentSnapshot;
   settings: SettingsSnapshot;
   transport: "http" | "offline";
   sectionEyebrow: string;
@@ -18,7 +16,6 @@ interface TopBarProps {
 }
 
 export function TopBar({
-  agent,
   settings,
   transport,
   sectionEyebrow,
@@ -34,9 +31,6 @@ export function TopBar({
       <div className="workspace-topbar__eyebrow">{sectionEyebrow}</div>
       <div className="workspace-topbar__title-row">
         <h2 className="workspace-topbar__title">{sectionTitle}</h2>
-        <StatusBadge tone={agent.health === "healthy" ? "positive" : agent.health === "warning" ? "warning" : "critical"}>
-          {translateUiToken(agent.status, copy)}
-        </StatusBadge>
       </div>
     </>
   ) : null;

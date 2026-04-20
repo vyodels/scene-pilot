@@ -156,10 +156,13 @@ export function SettingsView({
     protocol: "mcp_jsonrpc",
     toolsJson: "[]",
   });
+  const isSettingsDirty = JSON.stringify(draft) !== JSON.stringify(settings);
 
   useEffect(() => {
-    setDraft(settings);
-  }, [settings]);
+    if (!isSettingsDirty) {
+      setDraft(settings);
+    }
+  }, [isSettingsDirty, settings]);
 
   useEffect(() => {
     setServerDrafts(

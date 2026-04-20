@@ -70,6 +70,7 @@ from scene_pilot.services.recruit_agent import (
     ensure_primary_recruit_agent_profile,
     needs_compaction,
     resolve_context_policy,
+    resolve_memory_policy,
     validate_evolution_artifact,
 )
 
@@ -176,11 +177,19 @@ def update_recruit_agent_profile(
     repo = RecruitAgentProfileRepository(session)
     profile = ensure_primary_recruit_agent_profile(session)
     patch = payload.model_dump(exclude_unset=True)
+    if isinstance(patch.get("role_definition"), dict):
+        role_definition = dict(profile.role_definition or {})
+        role_definition.update(dict(patch["role_definition"] or {}))
+        patch["role_definition"] = role_definition
     if isinstance(patch.get("prompt_config"), dict):
         prompt_config = dict(profile.prompt_config or {})
         prompt_config.update(dict(patch["prompt_config"] or {}))
         prompt_config["context_policy"] = resolve_context_policy(prompt_config)
         patch["prompt_config"] = prompt_config
+    if isinstance(patch.get("memory_policy"), dict):
+        memory_policy = dict(profile.memory_policy or {})
+        memory_policy.update(dict(patch["memory_policy"] or {}))
+        patch["memory_policy"] = resolve_memory_policy(memory_policy)
     if payload.is_primary:
         for item in repo.list(limit=500, offset=0):
             if item.id != profile.id and item.is_primary:
@@ -361,6 +370,20 @@ def update_goal_spec(
         raise HTTPException(status_code=404, detail="Goal not found")
     updated = repo.update(item, payload.model_dump(exclude_unset=True))
     return GoalSpecRead.model_validate(updated)
+
+
+@router.delete("/goals/{goal_id}", status_code=204)
+def delete_goal_spec(
+    goal_id: str,
+    session: Session = Depends(get_session),
+) -> None:
+    repo = GoalSpecRepository(session)
+    item = repo.get(goal_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Goal not found")
+    session.delete(item)
+    session.commit()
+    return None
 
 
 @router.get("/runtime/session", response_model=RuntimeSessionRead)

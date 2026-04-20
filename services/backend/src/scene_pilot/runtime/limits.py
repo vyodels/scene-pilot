@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 @dataclass(slots=True)
 class RoundLimits:
-    token_budget: int = 12_000
+    token_budget: int = 1_200_000
     max_tool_roundtrips: int = 8
     tool_timeout_seconds: int = 30
     min_wakeup_delay_seconds: int = 60
@@ -14,7 +14,7 @@ class RoundLimits:
 
 @dataclass(slots=True)
 class TurnLimits:
-    max_rounds_per_turn: int = 8
+    max_rounds_per_turn: int = 800
     turn_timeout_seconds: int = 120
-    token_budget: int = 24_000
+    token_budget: int = 2_400_000
     cooldown_seconds: int = 0

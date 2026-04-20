@@ -5,21 +5,21 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+from scene_pilot.core.settings import load_settings
 from scene_pilot.models.domain import AgentRun, AgentSession, AgentTurnRecord, RecruitAgentProfile
 from scene_pilot.server import create_app
 
 
 def test_turn_routes_expose_turns(tmp_path: Path) -> None:
     os.environ["RECRUIT_AGENT_DATA_DIR"] = str(tmp_path)
+    load_settings.cache_clear()
     app = create_app()
     client = TestClient(app)
     client.__enter__()
     try:
         session_factory = app.state.session_factory
         with session_factory() as session:
-            profile = RecruitAgentProfile(agent_key="primary", name="Primary", is_primary=True)
-            session.add(profile)
-            session.flush()
+            profile = session.query(RecruitAgentProfile).filter_by(agent_key="autonomous").one()
             agent_session = AgentSession(agent_profile_id=profile.id)
             session.add(agent_session)
             session.flush()
@@ -37,12 +37,13 @@ def test_turn_routes_expose_turns(tmp_path: Path) -> None:
             )
             session.commit()
 
-        turns = client.get("/api/agent/runs/run-turn-route/turns")
+        turns = client.get("/api/agents/autonomous/runs/run-turn-route/turns")
         assert turns.status_code == 200
         assert turns.json()[0]["seq"] == 1
 
-        ticks = client.get("/api/agent/runs/run-turn-route/ticks")
+        ticks = client.get("/api/agents/autonomous/runs/run-turn-route/ticks")
         assert ticks.status_code == 404
     finally:
         client.__exit__(None, None, None)
         os.environ.pop("RECRUIT_AGENT_DATA_DIR", None)
+        load_settings.cache_clear()

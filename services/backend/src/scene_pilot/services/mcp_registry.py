@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import socket
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy.orm import Session, sessionmaker
@@ -14,9 +14,9 @@ from scene_pilot.repositories import McpServerRepository, McpToolRepository
 from scene_pilot.runtime.tools import ToolDefinition, ToolRegistry
 from scene_pilot.services.browser_mcp_bridge import (
     BROWSER_SOCKET_PRESET_KEY,
-    BrowserMcpBridgeManager,
+    default_browser_mcp_server_command,
     default_browser_upstream_endpoint,
-    managed_bridge_endpoint,
+    run_mcp_stdio_request,
 )
 
 
@@ -39,8 +39,8 @@ def preset_templates() -> list[dict[str, Any]]:
         {
             "key": BROWSER_SOCKET_PRESET_KEY,
             "name": "Browser MCP",
-            "description": "通过标准 MCP bridge 接入浏览器能力。预置只提供连接信息，工具通过 MCP `tools/list` 动态发现。",
-            "transport_kind": "unix_socket",
+            "description": "通过上游标准 MCP server 接入浏览器能力。预置只提供 browser native-host socket，工具通过 MCP `tools/list` 动态发现。",
+            "transport_kind": "stdio",
             "protocol": STANDARD_MCP_PROTOCOL,
             "endpoint_example": _default_browser_endpoint(),
             "tools": [],
@@ -84,62 +84,66 @@ def _json_socket_request(endpoint: str, payload: dict[str, Any], *, timeout_seco
         raise McpBridgeError(f"MCP unavailable at {endpoint}: {exc}") from exc
     raise McpBridgeError(f"MCP returned no response: {endpoint}")
 
+def _raise_for_jsonrpc_error(response: dict[str, Any], *, label: str) -> None:
+    error = response.get("error")
+    if not isinstance(error, dict):
+        return
+    message = str(error.get("message") or "MCP request failed")
+    raise McpBridgeError(f"{message} ({label})")
+
 
 @dataclass(slots=True)
 class _JsonLineSession:
     endpoint: str
     timeout_seconds: float = 8.0
-    _connection: socket.socket | None = field(default=None, init=False, repr=False)
-    _buffer: bytes = field(default=b"", init=False, repr=False)
 
-    def __enter__(self) -> "_JsonLineSession":
+    def request(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         try:
-            connection = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            connection.settimeout(self.timeout_seconds)
-            connection.connect(self.endpoint)
-            self._connection = connection
-            self._buffer = b""
-            return self
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+                connection.settimeout(self.timeout_seconds)
+                connection.connect(self.endpoint)
+                initialize_response = self._send_request(
+                    connection,
+                    {
+                        "jsonrpc": "2.0",
+                        "method": "initialize",
+                        "params": {
+                            "protocolVersion": MCP_PROTOCOL_VERSION,
+                            "capabilities": {},
+                            "clientInfo": {"name": "scene-pilot", "version": "0.1.0"},
+                        },
+                    },
+                )
+                _raise_for_jsonrpc_error(initialize_response, label=self.endpoint)
+                connection.sendall(
+                    (json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}}, ensure_ascii=False) + "\n").encode(
+                        "utf-8"
+                    )
+                )
+                response = self._send_request(
+                    connection,
+                    {"jsonrpc": "2.0", "method": method, "params": dict(params or {})},
+                )
         except FileNotFoundError as exc:
             raise McpBridgeError(f"MCP socket not found: {self.endpoint}") from exc
         except socket.timeout as exc:
             raise McpBridgeError(f"MCP call timed out: {self.endpoint}") from exc
         except OSError as exc:
             raise McpBridgeError(f"MCP unavailable at {self.endpoint}: {exc}") from exc
+        _raise_for_jsonrpc_error(response, label=self.endpoint)
+        result = response.get("result")
+        if isinstance(result, dict):
+            return result
+        return {}
 
-    def __exit__(self, exc_type, exc, tb) -> None:
-        if self._connection is not None:
-            try:
-                self._connection.close()
-            finally:
-                self._connection = None
-                self._buffer = b""
-
-    def notify(self, payload: dict[str, Any]) -> None:
-        self._send(payload)
-
-    def request(self, payload: dict[str, Any]) -> dict[str, Any]:
+    def _send_request(self, connection: socket.socket, payload: dict[str, Any]) -> dict[str, Any]:
         request_id = str(payload.get("id") or uuid.uuid4().hex)
         request = {**payload, "id": request_id}
-        self._send(request)
-        return self._read_response(request_id)
-
-    def _send(self, payload: dict[str, Any]) -> None:
-        if self._connection is None:
-            raise McpBridgeError("MCP session is not connected")
-        try:
-            self._connection.sendall((json.dumps(payload, ensure_ascii=False) + "\n").encode("utf-8"))
-        except socket.timeout as exc:
-            raise McpBridgeError(f"MCP call timed out: {self.endpoint}") from exc
-        except OSError as exc:
-            raise McpBridgeError(f"MCP unavailable at {self.endpoint}: {exc}") from exc
-
-    def _read_response(self, request_id: str) -> dict[str, Any]:
-        if self._connection is None:
-            raise McpBridgeError("MCP session is not connected")
+        connection.sendall((json.dumps(request, ensure_ascii=False) + "\n").encode("utf-8"))
+        buffer = b""
         while True:
-            while b"\n" in self._buffer:
-                line, self._buffer = self._buffer.split(b"\n", 1)
+            while b"\n" in buffer:
+                line, buffer = buffer.split(b"\n", 1)
                 line = line.strip()
                 if not line:
                     continue
@@ -147,55 +151,61 @@ class _JsonLineSession:
                 if str(response.get("id") or "") != request_id:
                     continue
                 return response
-            try:
-                chunk = self._connection.recv(65536)
-            except socket.timeout as exc:
-                raise McpBridgeError(f"MCP call timed out: {self.endpoint}") from exc
-            except OSError as exc:
-                raise McpBridgeError(f"MCP unavailable at {self.endpoint}: {exc}") from exc
+            chunk = connection.recv(65536)
             if not chunk:
                 break
-            self._buffer += chunk
+            buffer += chunk
         raise McpBridgeError(f"MCP returned no response: {self.endpoint}")
 
 
-def _raise_for_jsonrpc_error(response: dict[str, Any], *, endpoint: str) -> None:
-    error = response.get("error")
-    if not isinstance(error, dict):
-        return
-    message = str(error.get("message") or "MCP request failed")
-    raise McpBridgeError(f"{message} ({endpoint})")
+def _normalize_string_list(value: Any) -> list[str]:
+    items: list[str] = []
+    for raw in list(value or []) if isinstance(value, list) else []:
+        text = str(raw).strip()
+        if text and text not in items:
+            items.append(text)
+    return items
 
 
-def _mcp_session_request(endpoint: str, method: str, params: dict[str, Any] | None = None, *, timeout_seconds: float = 8.0) -> dict[str, Any]:
-    with _JsonLineSession(endpoint=endpoint, timeout_seconds=timeout_seconds) as session:
-        initialize_response = session.request(
-            {
-                "jsonrpc": "2.0",
-                "method": "initialize",
-                "params": {
-                    "protocolVersion": MCP_PROTOCOL_VERSION,
-                    "capabilities": {},
-                    "clientInfo": {"name": "scene-pilot", "version": "0.1.0"},
-                },
-            }
-        )
-        _raise_for_jsonrpc_error(initialize_response, endpoint=endpoint)
-        session.notify({"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}})
-        response = session.request({"jsonrpc": "2.0", "method": method, "params": dict(params or {})})
-    _raise_for_jsonrpc_error(response, endpoint=endpoint)
-    result = response.get("result")
-    if isinstance(result, dict):
-        return result
-    return {}
+def _normalize_string_dict(value: Any) -> dict[str, str]:
+    if not isinstance(value, dict):
+        return {}
+    items: dict[str, str] = {}
+    for raw_key, raw_value in value.items():
+        key = str(raw_key).strip()
+        if not key:
+            continue
+        items[key] = str(raw_value)
+    return items
 
 
-def _mcp_list_tools(endpoint: str) -> list[dict[str, Any]]:
+def _mcp_session_request(server: McpServer, method: str, params: dict[str, Any] | None = None, *, timeout_seconds: float = 8.0) -> dict[str, Any]:
+    if server.transport_kind == "unix_socket":
+        return _JsonLineSession(endpoint=server.endpoint, timeout_seconds=timeout_seconds).request(method, params)
+    if server.transport_kind == "stdio":
+        metadata = dict(server.server_metadata or {})
+        command = _normalize_string_list(metadata.get("stdio_command"))
+        env = _normalize_string_dict(metadata.get("stdio_env"))
+        try:
+            return run_mcp_stdio_request(
+                command,
+                method=method,
+                params=params,
+                env=env,
+                timeout_seconds=timeout_seconds,
+                command_label=str(server.server_key or server.name or "mcp-stdio"),
+            )
+        except RuntimeError as exc:
+            raise McpBridgeError(str(exc)) from exc
+    raise McpBridgeError(f"Unsupported MCP transport: {server.transport_kind}")
+
+
+def _mcp_list_tools(server: McpServer) -> list[dict[str, Any]]:
     tools: list[dict[str, Any]] = []
     cursor: str | None = None
     while True:
         params = {"cursor": cursor} if cursor else {}
-        result = _mcp_session_request(endpoint, "tools/list", params)
+        result = _mcp_session_request(server, "tools/list", params)
         raw_tools = result.get("tools")
         if isinstance(raw_tools, list):
             tools.extend(item for item in raw_tools if isinstance(item, dict))
@@ -206,8 +216,8 @@ def _mcp_list_tools(endpoint: str) -> list[dict[str, Any]]:
     return tools
 
 
-def _mcp_call_tool(endpoint: str, tool_name: str, arguments: dict[str, Any]) -> Any:
-    result = _mcp_session_request(endpoint, "tools/call", {"name": tool_name, "arguments": dict(arguments or {})})
+def _mcp_call_tool(server: McpServer, tool_name: str, arguments: dict[str, Any]) -> Any:
+    result = _mcp_session_request(server, "tools/call", {"name": tool_name, "arguments": dict(arguments or {})})
     if bool(result.get("isError")):
         content = result.get("content")
         if isinstance(content, list):
@@ -245,16 +255,10 @@ def _tool_has_zero_argument_schema(parameters: dict[str, Any]) -> bool:
     required = parameters.get("required")
     if isinstance(required, list) and required:
         return False
+    properties = parameters.get("properties")
+    if isinstance(properties, dict) and properties:
+        return False
     return parameters.get("type") == "object"
-
-
-def _normalize_string_list(value: Any) -> list[str]:
-    items: list[str] = []
-    for raw in list(value or []) if isinstance(value, list) else []:
-        text = str(raw).strip()
-        if text and text not in items:
-            items.append(text)
-    return items
 
 
 def _resolve_runtime_capabilities(server: McpServer, *, read_only: bool) -> list[str]:
@@ -296,7 +300,6 @@ def _normalize_discovered_tool(server: McpServer, payload: dict[str, Any]) -> di
 @dataclass(slots=True)
 class McpRegistryService:
     session_factory: sessionmaker[Session]
-    bridge_manager: BrowserMcpBridgeManager | None = None
 
     def install_preset(
         self,
@@ -335,6 +338,7 @@ class McpRegistryService:
                 "server_metadata": {"preset_installed": True},
             }
             if preset_key == BROWSER_SOCKET_PRESET_KEY:
+                server_payload["transport_kind"] = "stdio"
                 server_payload["server_metadata"] = self._browser_preset_metadata(
                     server_key=resolved_server_key,
                     upstream_endpoint=resolved_endpoint,
@@ -365,6 +369,7 @@ class McpRegistryService:
             endpoint = str(payload.get("endpoint") or "").strip()
             preset_key = str(payload.get("preset_key") or "").strip()
             if preset_key == BROWSER_SOCKET_PRESET_KEY:
+                payload["transport_kind"] = "stdio"
                 payload["protocol"] = STANDARD_MCP_PROTOCOL
                 payload["server_metadata"] = self._browser_preset_metadata(
                     server_key=server_key,
@@ -398,6 +403,7 @@ class McpRegistryService:
             next_preset_key = str(payload.get("preset_key") or server.preset_key or "").strip()
             next_endpoint = str(payload.get("endpoint") or server.endpoint).strip()
             if next_preset_key == BROWSER_SOCKET_PRESET_KEY:
+                payload["transport_kind"] = "stdio"
                 payload["protocol"] = STANDARD_MCP_PROTOCOL
                 payload["server_metadata"] = self._browser_preset_metadata(
                     server_key=next_server_key,
@@ -452,7 +458,7 @@ class McpRegistryService:
                     if probe is not None:
                         self.invoke_tool(server, probe, {})
                     else:
-                        _ = _mcp_list_tools(self._runtime_endpoint(server))
+                        _ = _mcp_list_tools(server)
                 elif server.protocol == LEGACY_BROWSER_COMMAND_PROTOCOL:
                     _json_socket_request(
                         server.endpoint,
@@ -501,15 +507,13 @@ class McpRegistryService:
 
     def invoke_tool(self, server: McpServer, tool: McpTool, arguments: dict[str, Any]) -> Any:
         remote_name = str(tool.remote_name or tool.name).strip()
+        if server.protocol == STANDARD_MCP_PROTOCOL:
+            return _mcp_call_tool(server, remote_name, arguments)
         if server.transport_kind != "unix_socket":
             raise McpBridgeError(f"Unsupported MCP transport: {server.transport_kind}")
-
-        endpoint = self._runtime_endpoint(server)
-        if server.protocol == STANDARD_MCP_PROTOCOL:
-            return _mcp_call_tool(endpoint, remote_name, arguments)
         if server.protocol == LEGACY_BROWSER_COMMAND_PROTOCOL:
             return _json_socket_request(
-                endpoint,
+                server.endpoint,
                 {
                     "type": "browser_command",
                     "command": {"name": remote_name, "arguments": dict(arguments or {})},
@@ -517,7 +521,7 @@ class McpRegistryService:
             )
         if server.protocol == LEGACY_MCP_TOOL_CALL_PROTOCOL:
             return _json_socket_request(
-                endpoint,
+                server.endpoint,
                 {
                     "type": "mcp_tool_call",
                     "tool": {"name": remote_name, "arguments": dict(arguments or {})},
@@ -604,12 +608,16 @@ class McpRegistryService:
         existing_metadata: dict[str, Any] | None,
     ) -> dict[str, Any]:
         metadata = dict(existing_metadata or {})
+        stdio_command = _normalize_string_list(metadata.get("stdio_command"))
+        if not stdio_command:
+            stdio_command = list(default_browser_mcp_server_command() or [])
+        stdio_env = _normalize_string_dict(metadata.get("stdio_env"))
+        stdio_env["MCP_BROWSER_CHROME_SOCKET"] = upstream_endpoint
         metadata.update(
             {
                 "preset_installed": True,
-                "managed_browser_bridge": True,
-                "runtime_endpoint": managed_bridge_endpoint(server_key),
-                "upstream_endpoint": upstream_endpoint,
+                "stdio_command": stdio_command,
+                "stdio_env": stdio_env,
                 "runtime_tool_capabilities": {
                     "default": ["browser"],
                     "read_only": ["search", "document"],
@@ -617,53 +625,39 @@ class McpRegistryService:
                 },
             }
         )
+        metadata.pop("managed_browser_bridge", None)
+        metadata.pop("runtime_endpoint", None)
+        metadata.pop("upstream_endpoint", None)
         return metadata
-
-    def _runtime_endpoint(self, server: McpServer) -> str:
-        metadata = dict(server.server_metadata or {})
-        runtime_endpoint = str(metadata.get("runtime_endpoint") or "").strip()
-        if metadata.get("managed_browser_bridge"):
-            self._ensure_managed_bridge(server)
-            if runtime_endpoint:
-                return runtime_endpoint
-        return server.endpoint
-
-    def _ensure_managed_bridge(self, server: McpServer) -> None:
-        metadata = dict(server.server_metadata or {})
-        if not metadata.get("managed_browser_bridge"):
-            return
-        if self.bridge_manager is None:
-            raise McpBridgeError("Managed Browser MCP bridge is unavailable")
-        upstream_endpoint = str(server.endpoint or metadata.get("upstream_endpoint") or default_browser_upstream_endpoint()).strip()
-        runtime_endpoint = str(metadata.get("runtime_endpoint") or managed_bridge_endpoint(server.server_key)).strip()
-        self.bridge_manager.ensure_bridge(
-            server_key=server.server_key,
-            upstream_endpoint=upstream_endpoint,
-            runtime_endpoint=runtime_endpoint,
-        )
 
     def _upgrade_legacy_browser_preset(self, session: Session, server: McpServer) -> McpServer:
         if server.preset_key != BROWSER_SOCKET_PRESET_KEY:
             return server
         target_protocol = STANDARD_MCP_PROTOCOL if server.protocol == LEGACY_BROWSER_COMMAND_PROTOCOL else server.protocol
+        target_transport = "stdio"
         target_metadata = self._browser_preset_metadata(
             server_key=server.server_key,
             upstream_endpoint=server.endpoint,
             existing_metadata=server.server_metadata,
         )
-        if target_protocol == server.protocol and target_metadata == dict(server.server_metadata or {}):
+        if (
+            target_protocol == server.protocol
+            and target_transport == server.transport_kind
+            and target_metadata == dict(server.server_metadata or {})
+        ):
             return server
         updated = McpServerRepository(session).update(
             server,
             {
                 "protocol": target_protocol,
+                "transport_kind": target_transport,
                 "server_metadata": target_metadata,
             },
         )
         return updated
 
     def _discover_tools_for_server(self, server: McpServer) -> list[dict[str, Any]]:
-        raw_tools = _mcp_list_tools(self._runtime_endpoint(server))
+        raw_tools = _mcp_list_tools(server)
         discovered: list[dict[str, Any]] = []
         for item in raw_tools:
             normalized = _normalize_discovered_tool(server, item)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -94,6 +95,18 @@ def serialize_state_machine_version(record: Any) -> dict[str, Any]:
             return None
         if isinstance(value, int):
             return value
+        if isinstance(value, float):
+            return int(value)
+        if isinstance(value, str):
+            text = value.strip()
+            if not text:
+                return None
+            if text.isdigit():
+                return int(text)
+            parsed = datetime.fromisoformat(text)
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return int(parsed.timestamp())
         if hasattr(value, "timestamp"):
             return int(value.timestamp())
         return int(value)

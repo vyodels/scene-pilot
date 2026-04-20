@@ -17,6 +17,7 @@ from scene_pilot.repositories import (
     SettingsRepository,
     SkillRepository,
 )
+from scene_pilot.runtime.business_state_projection import project_runtime_business_state
 from scene_pilot.schemas.domain import AgentStatusRead, DashboardRead
 from scene_pilot.services.application_subjects import application_payload_from_application
 from scene_pilot.services.events import EventStreamService
@@ -60,6 +61,24 @@ def _sync_setting(settings: AppSettings, key: str, default: Any = None) -> Any:
 def _runtime_scene_account(settings: AppSettings) -> str:
     provider_config = settings.provider_config or {}
     return str(provider_config.get("site_account") or "本机场景 01")
+
+
+def _looks_like_jsonish(value: str) -> bool:
+    text = value.strip()
+    if not text:
+        return False
+    return (text.startswith("{") and text.endswith("}")) or (text.startswith("[") and text.endswith("]"))
+
+
+def _learning_detail(content: str) -> str:
+    text = str(content or "").strip()
+    if not text:
+        return "学习草案待补充内容。"
+    if _looks_like_jsonish(text):
+        summary = str(project_runtime_business_state(final_content=text).get("summary") or "").strip()
+        if summary:
+            return summary[:120]
+    return text[:120]
 
 
 def _blueprint_nodes_for_dashboard(blueprint: dict[str, Any]) -> list[dict[str, Any]]:
@@ -355,7 +374,7 @@ class DashboardService:
                 {
                     "id": learning.id,
                     "label": "可用学习草案",
-                    "detail": learning.content[:120],
+                    "detail": _learning_detail(learning.content),
                     "at": _timestamp(learning.created_at) or _utcnow(),
                     "tone": "positive" if learning.is_active else "neutral",
                 }

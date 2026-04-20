@@ -83,6 +83,8 @@ class AgentKernel:
             run_pk=str(goal.constraints.get("run_pk") or "") or None,
             conversation_pk=str(goal.constraints.get("conversation_pk") or "") or None,
             source_kind=str(goal.constraints.get("source_kind") or "autonomous"),
+            goal_kind=str(goal.constraints.get("goal_kind") or "") or None,
+            goal_title=goal.title,
         )
         outcome.memory_updates = memory_updates
         outcome.metadata.update(

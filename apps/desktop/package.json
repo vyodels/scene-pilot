@@ -8,6 +8,8 @@
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "vite",
+    "dev:renderer": "vite",
+    "dev:desktop": "node ../../scripts/dev-desktop.mjs",
     "build": "tsc -p tsconfig.node.json && vite build",
     "typecheck": "tsc --noEmit",
     "electron:build": "tsc -p tsconfig.node.json",

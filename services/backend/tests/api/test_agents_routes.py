@@ -273,11 +273,14 @@ def test_agents_routes_expose_builtin_profiles_and_runtime_collections(tmp_path:
             "candidate_scoring",
         ]
         sync_incremental_template = next(item for item in scene_templates.json() if item["key"] == "sync_jd_incremental")
-        assert "zhipin.com" in sync_incremental_template["summary"]
+        assert "zhipin.com" not in sync_incremental_template["summary"]
+        assert "招聘平台 JD 页面" in sync_incremental_template["summary"]
         assert "普通浏览器" in sync_incremental_template["summary"]
         assert "非 AI 模式浏览器" in sync_incremental_template["summary"]
         assert "共享工作区" in sync_incremental_template["summary"]
         assert "差异对比" in sync_incremental_template["defaultGoalText"]
+        assert "活跃岗位" in sync_incremental_template["defaultGoalText"]
+        assert "可确认详情" in sync_incremental_template["defaultGoalText"]
 
         autonomous_conversation = client.get(
             f"/api/agents/autonomous/conversations/{AUTONOMOUS_PRIMARY_CONVERSATION_ID}"
@@ -686,7 +689,10 @@ def test_sync_jds_action_enqueues_generic_autonomous_goal(tmp_path: Path) -> Non
             goal = session.query(GoalSpec).filter_by(id=payload["goalId"]).one()
             run = session.query(AgentRun).filter_by(run_id=payload["runId"]).one()
             assert goal.goal_kind == "sync_jd_incremental"
-            assert "zhipin.com" in goal.goal_text
+            assert "zhipin.com" not in goal.goal_text
+            assert "招聘平台 JD 页面" in goal.goal_text
+            assert "活跃岗位" in goal.goal_text
+            assert "可确认详情" in goal.goal_text
             assert goal.summary == goal.goal_text
             assert goal.constraints["scope_kind"] == "global"
             assert goal.constraints["scope_ref"] == "workspace:shared"
@@ -702,7 +708,7 @@ def test_sync_jds_action_enqueues_generic_autonomous_goal(tmp_path: Path) -> Non
             assert goal.success_criteria["entity"] == "job_description"
             assert goal.success_criteria["source"] == "browser_accessible_recruiting_pages"
             assert goal.success_criteria["target"] == "shared_workspace_job_descriptions"
-            assert goal.success_criteria["write_policy"] == "upsert_changed_roles_skip_unchanged"
+            assert goal.success_criteria["write_policy"] == "upsert_changed_active_roles_skip_unchanged"
             assert goal.context_hints["trigger"] == "scene_template_panel"
             assert goal.context_hints["scene_template_key"] == "sync_jd_incremental"
             assert run.context_manifest["conversation_id"] == AUTONOMOUS_PRIMARY_CONVERSATION_ID

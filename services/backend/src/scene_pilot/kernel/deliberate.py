@@ -40,17 +40,39 @@ def deliberate(
             metadata={"tool_result_count": 0, "cancelled": True, "pending_tool_calls": []},
         )
 
-    response = _response_for_round(
-        provider,
-        history,
-        tool_registry,
-        cancel_token=cancel_token,
-        seed_tool_calls=seed_tool_calls,
-    )
+    if event_sink is not None:
+        event_sink(
+            "provider_started",
+            {
+                "message_count": len(history),
+                "tool_count": len(tool_registry.tools),
+            },
+        )
+    try:
+        response = _response_for_round(
+            provider,
+            history,
+            tool_registry,
+            cancel_token=cancel_token,
+            seed_tool_calls=seed_tool_calls,
+        )
+    except Exception as exc:
+        if event_sink is not None:
+            event_sink("provider_failed", {"error": str(exc)})
+        raise
     usage = response.usage
     stop_reason = response.finish_reason
     tool_calls.extend(response.tool_calls)
     final_content = response.content
+    if event_sink is not None:
+        event_sink(
+            "provider_completed",
+            {
+                "finish_reason": response.finish_reason,
+                "tool_call_count": len(response.tool_calls),
+                "has_content": bool(response.content),
+            },
+        )
 
     history.append(
         Message(

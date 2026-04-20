@@ -644,7 +644,25 @@ def build_router(container: AppContainer) -> APIRouter:
 
 
 def _serialize_profile(profile: RecruitAgentProfile) -> dict[str, Any]:
-    payload = RecruitAgentProfileRead.model_validate(profile).model_dump(by_alias=True)
+    payload = RecruitAgentProfileRead.model_validate(
+        {
+            "id": profile.id,
+            "agent_key": profile.agent_key,
+            "name": profile.name,
+            "status": profile.status,
+            "description": profile.description,
+            "is_primary": profile.is_primary,
+            "role_definition": dict(profile.role_definition or {}),
+            "prompt_config": dict(profile.prompt_config or {}),
+            "playbook_blueprint": dict(profile.playbook_blueprint or {}),
+            "memory_policy": dict(profile.memory_policy or {}),
+            "dashboard_config": dict(profile.dashboard_config or {}),
+            "channel_config": dict(profile.channel_config or {}),
+            "agent_metadata": dict(profile.agent_metadata or {}),
+            "created_at": int(_timestamp_sort_value(profile.created_at)),
+            "updated_at": int(_timestamp_sort_value(profile.updated_at)),
+        }
+    ).model_dump(by_alias=True)
     payload["kind"] = profile.agent_key
     return payload
 
