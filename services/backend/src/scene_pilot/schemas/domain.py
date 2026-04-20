@@ -2254,17 +2254,12 @@ class RuntimeControlledRunRead(BaseModel):
     goal_spec_id: str | None = None
     person_id: str | None = Field(
         default=None,
-        validation_alias=AliasChoices("person_id", "personId", "candidate_id", "candidateId"),
+        validation_alias=AliasChoices("person_id", "personId"),
         serialization_alias="personId",
     )
     application_id: str | None = Field(
         default=None,
-        validation_alias=AliasChoices(
-            "application_id",
-            "applicationId",
-            AliasPath("runtime_metadata", "application_id"),
-            AliasPath("runtime_metadata", "applicationId"),
-        ),
+        validation_alias=AliasChoices("application_id", "applicationId"),
         serialization_alias="applicationId",
     )
     job_description_id: str | None = Field(
@@ -2299,17 +2294,12 @@ class RuntimeWorkItemRead(BaseModel):
     goal_spec_id: str | None = None
     person_id: str | None = Field(
         default=None,
-        validation_alias=AliasChoices("person_id", "personId", "candidate_id", "candidateId"),
+        validation_alias=AliasChoices("person_id", "personId"),
         serialization_alias="personId",
     )
     application_id: str | None = Field(
         default=None,
-        validation_alias=AliasChoices(
-            "application_id",
-            "applicationId",
-            AliasPath("payload", "application_id"),
-            AliasPath("payload", "applicationId"),
-        ),
+        validation_alias=AliasChoices("application_id", "applicationId"),
         serialization_alias="applicationId",
     )
     platform: str
@@ -2336,17 +2326,12 @@ class RuntimeCheckpointRead(BaseModel):
     run_id: str
     person_id: str | None = Field(
         default=None,
-        validation_alias=AliasChoices("person_id", "personId", "candidate_id", "candidateId"),
+        validation_alias=AliasChoices("person_id", "personId"),
         serialization_alias="personId",
     )
     application_id: str | None = Field(
         default=None,
-        validation_alias=AliasChoices(
-            "application_id",
-            "applicationId",
-            AliasPath("payload", "application_id"),
-            AliasPath("payload", "applicationId"),
-        ),
+        validation_alias=AliasChoices("application_id", "applicationId"),
         serialization_alias="applicationId",
     )
     approval_id: str | None = None
@@ -2369,17 +2354,12 @@ class RuntimeEventRead(BaseModel):
     run_id: str | None = None
     person_id: str | None = Field(
         default=None,
-        validation_alias=AliasChoices("person_id", "personId", "candidate_id", "candidateId"),
+        validation_alias=AliasChoices("person_id", "personId"),
         serialization_alias="personId",
     )
     application_id: str | None = Field(
         default=None,
-        validation_alias=AliasChoices(
-            "application_id",
-            "applicationId",
-            AliasPath("payload", "application_id"),
-            AliasPath("payload", "applicationId"),
-        ),
+        validation_alias=AliasChoices("application_id", "applicationId"),
         serialization_alias="applicationId",
     )
     level: str
@@ -2575,17 +2555,12 @@ class OperatorInteractionRead(BaseModel):
     goal_spec_id: str | None = None
     person_id: str | None = Field(
         default=None,
-        validation_alias=AliasChoices("person_id", "personId", "candidate_id", "candidateId"),
+        validation_alias=AliasChoices("person_id", "personId"),
         serialization_alias="personId",
     )
     application_id: str | None = Field(
         default=None,
-        validation_alias=AliasChoices(
-            "application_id",
-            "applicationId",
-            AliasPath("interaction_metadata", "application_id"),
-            AliasPath("interaction_metadata", "applicationId"),
-        ),
+        validation_alias=AliasChoices("application_id", "applicationId"),
         serialization_alias="applicationId",
     )
     lane: str

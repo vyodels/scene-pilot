@@ -117,37 +117,48 @@ def _application_subject_read_for_application(person, application, job_descripti
     )
 
 
-def _runtime_approvals_for_application(session: Session, application_id: str, person_id: str | None = None) -> list[ApprovalRead]:
+def _normalized_refs(*values: Any) -> set[str]:
+    refs: set[str] = set()
+    for value in values:
+        text = str(value or "").strip()
+        if text:
+            refs.add(text)
+    return refs
+
+
+def _matches_application_scope(payload: dict[str, Any], application_refs: set[str]) -> bool:
+    if _normalized_refs(payload.get("application_id"), payload.get("applicationId")) & application_refs:
+        return True
+    blocked_value = payload.get("blocked_task")
+    blocked: dict[str, Any] = blocked_value if isinstance(blocked_value, dict) else {}
+    if _normalized_refs(blocked.get("application_id"), blocked.get("applicationId")) & application_refs:
+        return True
+    return False
+
+
+def _runtime_approvals_for_application(session: Session, application_refs: set[str]) -> list[ApprovalRead]:
     items = []
     for approval in ApprovalRepository(session).list(limit=500, offset=0):
         payload = dict(approval.payload or {})
-        if approval.target_id in {application_id, person_id}:
+        if _normalized_refs(approval.target_id) & application_refs:
             items.append(approval)
             continue
-        if str(payload.get("application_id") or "") == application_id:
-            items.append(approval)
-            continue
-        if str(payload.get("candidate_id") or "") in {application_id, person_id}:
-            items.append(approval)
-            continue
-        blocked_value = payload.get("blocked_task")
-        blocked: dict[str, Any] = blocked_value if isinstance(blocked_value, dict) else {}
-        if str(blocked.get("application_id") or "") == application_id:
-            items.append(approval)
-            continue
-        if str(blocked.get("candidate_id") or "") in {application_id, person_id}:
+        if _matches_application_scope(payload, application_refs):
             items.append(approval)
     return [ApprovalRead.model_validate(item) for item in items]
 
 
 def _runtime_interactions_for_application(
     session: Session,
-    application_id: str,
-    person_id: str | None = None,
+    application_refs: set[str],
+    approval_ids: set[str] | None = None,
 ) -> list[OperatorInteractionRead]:
-    items = OperatorInteractionRepository(session).list_recent(candidate_id=application_id, limit=100, offset=0)
-    if not items and person_id and person_id != application_id:
-        items = OperatorInteractionRepository(session).list_recent(candidate_id=person_id, limit=100, offset=0)
+    items = OperatorInteractionRepository(session).list_recent_for_application(
+        application_ids=application_refs,
+        approval_ids=approval_ids,
+        limit=100,
+        offset=0,
+    )
     return [OperatorInteractionRead.model_validate(item) for item in items]
 
 
@@ -171,6 +182,7 @@ def _application_state_snapshot(application) -> CandidateStateSnapshotRead:
 def _build_application_thread(session: Session, application, person) -> CandidateThreadRead:
     application_id = application.candidate_application_id
     person_id = person.candidate_person_id
+    application_refs = _normalized_refs(application_id, application.id)
     job_description = (
         JobDescriptionRepository(session).get_by_storage_id(application.job_description_id)
         if getattr(application, "job_description_id", None)
@@ -227,6 +239,7 @@ def _build_application_thread(session: Session, application, person) -> Candidat
         _with_application_id(TalentPoolSyncRecordRead, item, application_id, person_id)
         for item in ApplicationSyncRecordRepository(session).by_application(application_id, limit=20, offset=0)
     ]
+    runtime_approvals = _runtime_approvals_for_application(session, application_refs)
     return CandidateThreadRead(
         application_id=application_id,
         person_id=person_id,
@@ -258,8 +271,12 @@ def _build_application_thread(session: Session, application, person) -> Candidat
         review_decisions=review_decisions,
         sync_records=sync_records,
         available_statuses=available_state_statuses(session),
-        runtime_approvals=_runtime_approvals_for_application(session, application.id, person.id),
-        runtime_interactions=_runtime_interactions_for_application(session, application.id, person.id),
+        runtime_approvals=runtime_approvals,
+        runtime_interactions=_runtime_interactions_for_application(
+            session,
+            application_refs,
+            approval_ids={item.id for item in runtime_approvals},
+        ),
     )
 
 

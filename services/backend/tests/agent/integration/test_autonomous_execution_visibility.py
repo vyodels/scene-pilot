@@ -11,11 +11,25 @@ from scene_pilot.agents.heartbeat import Heartbeat
 from scene_pilot.core.settings import AppSettings
 from scene_pilot.db.session import create_engine_from_settings, create_session_factory, initialize_database
 from scene_pilot.kernel.kernel import AgentKernel
-from scene_pilot.models.domain import AgentRun, AgentRuntimeEvent, AgentSession, AgentTurnRecord, GoalSpec, RecruitAgentProfile
+from scene_pilot.models.domain import (
+    AgentRun,
+    AgentRunCheckpoint,
+    AgentRuntimeEvent,
+    AgentSession,
+    AgentTurnRecord,
+    ApprovalItem,
+    Candidate,
+    CandidateApplication,
+    GoalSpec,
+    OperatorInteraction,
+    RecruitAgentProfile,
+)
 from scene_pilot.plugins.host import PluginHost
 from scene_pilot.repositories.domain import TaskQueueRepository
-from scene_pilot.runtime.models import LLMResponse, Message
+from scene_pilot.runtime.models import GuardVerdict, LLMResponse, Message, ToolCall
 from scene_pilot.runtime.tools import ToolRegistry, register_core_tools
+from scene_pilot.runtime.providers import ScriptedProvider
+from scene_pilot.runtime.tools import ToolDefinition
 
 
 class BlockingProvider:
@@ -161,5 +175,135 @@ def test_heartbeat_persists_running_state_and_progress_events_before_completion(
         assert result_holder["result"] == {"status": "processed", "task_id": "task-visible-1"}
         assert session.get(AgentRun, run.id).status == "completed"
         assert TaskQueueRepository(session).get("task-visible-1").status == "completed"
+    finally:
+        session.close()
+
+
+def test_wait_human_records_keep_application_subject_when_run_has_application_scope(tmp_path: Path) -> None:
+    session = _make_session(tmp_path)
+    try:
+        profile = RecruitAgentProfile(agent_key="autonomous", name="Autonomous", is_primary=True)
+        session.add(profile)
+        session.flush()
+
+        candidate = Candidate(
+            name="Visibility Test Candidate",
+            platform="site",
+            platform_candidate_id="visibility-test-candidate",
+        )
+        session.add(candidate)
+        session.flush()
+
+        application = CandidateApplication(
+            candidate_application_id="app-123",
+            person_id=candidate.id,
+            platform="site",
+            source_platform="site",
+            application_window="visibility-test-window",
+            current_status="discovered",
+        )
+        session.add(application)
+        session.flush()
+
+        agent_session = AgentSession(agent_profile_id=profile.id, session_key="primary")
+        session.add(agent_session)
+        session.flush()
+
+        goal = GoalSpec(
+            agent_profile_id=profile.id,
+            title="Follow one application",
+            goal_text="Continue one application follow-up and wait for approval before outreach.",
+            goal_kind="candidate_outreach",
+            status="queued",
+            source="operator",
+            source_text="Continue one application follow-up.",
+            requested_by="test-user",
+            constraints={"application_id": "app-123"},
+        )
+        session.add(goal)
+        session.flush()
+
+        run = AgentRun(
+            session_id=agent_session.id,
+            goal_spec_id=goal.id,
+            run_id="run-wait-human-app",
+            agent_kind="autonomous",
+            status="queued",
+            checkpoint_status="none",
+            person_id=None,
+            context_manifest={"goal": goal.goal_text, "title": goal.title, "application_id": "app-123"},
+            runtime_metadata={"goal_title": goal.title, "application_id": "app-123"},
+        )
+        session.add(run)
+        session.commit()
+
+        tools = ToolRegistry()
+        register_core_tools(tools)
+        tools.register(
+            ToolDefinition(
+                name="needs.approval",
+                description="Tool that requires operator confirmation.",
+                parameters={"type": "object", "additionalProperties": True},
+                handler=lambda arguments: {"ok": arguments["value"]},
+                category="plugin",
+                external_target=False,
+                resource_target_kind="application",
+            )
+        )
+        plugin_host = PluginHost()
+        plugin_host.register_guard_check(
+            "test-wait-human-app-scope",
+            lambda tool_name, _arguments, _observation: GuardVerdict(
+                allowed=tool_name != "needs.approval",
+                reason="requires_operator_confirmation",
+                severity="waiting_human",
+            ),
+        )
+        provider = ScriptedProvider(
+            provider_name="scripted",
+            responses=[
+                LLMResponse(
+                    tool_calls=[ToolCall(id="tool-1", name="needs.approval", arguments={"value": "hello"})],
+                    finish_reason="tool_calls",
+                )
+            ],
+        )
+        kernel = AgentKernel(provider=provider, tool_registry=tools, plugin_host=plugin_host)
+        agent = AutonomousAgent(session_factory=create_session_factory(session.get_bind()), kernel=kernel)
+
+        outcome = agent.run_turn_from_envelope(
+            {
+                "run_pk": run.id,
+                "scope_kind": "application",
+                "scope_ref": "app-123",
+                "application_id": "app-123",
+                "world_snapshot": {"application_id": "app-123"},
+            }
+        )
+
+        assert outcome.status == "wait_human"
+        session.expire_all()
+        refreshed_run = session.get(AgentRun, run.id)
+        assert refreshed_run is not None
+        assert refreshed_run.application_id == "app-123"
+        assert refreshed_run.runtime_metadata["application_id"] == "app-123"
+
+        approval = session.query(ApprovalItem).filter_by(run_pk=run.id, status="pending").one()
+        checkpoint = session.query(AgentRunCheckpoint).filter_by(run_id=run.id, status="open").one()
+        interaction = session.query(OperatorInteraction).filter_by(run_id=run.id, status="pending").one()
+        events = session.scalars(
+            select(AgentRuntimeEvent)
+            .where(AgentRuntimeEvent.run_id == run.id)
+            .order_by(AgentRuntimeEvent.occurred_at.asc(), AgentRuntimeEvent.id.asc())
+        ).all()
+
+        assert approval.payload["application_id"] == "app-123"
+        assert approval.payload["resume_task"]["application_id"] == "app-123"
+        assert approval.payload["resume_task"]["payload"]["application_id"] == "app-123"
+        assert checkpoint.application_id == "app-123"
+        assert checkpoint.payload["application_id"] == "app-123"
+        assert interaction.application_id == "app-123"
+        assert interaction.interaction_metadata["application_id"] == "app-123"
+        assert all(item.payload.get("application_id") == "app-123" for item in events)
     finally:
         session.close()

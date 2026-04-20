@@ -38,7 +38,7 @@
 
 ```text
 CandidatePerson（候选人这个人）
-  └── CandidateApplication（候选人对某个 JD 的一次投递实例）
+  └── CandidateApplication（候选人围绕某个 JD 的一次投递记录）
         ├── 状态机流转
         ├── 聊天记录
         ├── 评估 / 评分卡 / 评审决定
@@ -62,7 +62,7 @@ JobDescription（职位描述）
 
 ### 2.2 CandidateApplication 回答的问题
 
-`candidate_applications` 表示“一次投递实例”。
+`candidate_applications` 表示“一次投递记录”。
 
 它回答的问题是：
 
@@ -70,6 +70,22 @@ JobDescription（职位描述）
 - 这次投递来自哪个平台
 - 这次投递当前处于哪个 workflow 状态
 - 这次投递的聊天、评估、简历、状态历史是什么
+
+### 2.2.1 CandidateApplication 的对外语义与跟进粒度
+
+尽管技术命名保留 `CandidateApplication`，但在产品、prompt、tool、UI/API 与运行时讨论中，凡是涉及：
+
+- 跟进
+- 沟通
+- 消息同步
+- 状态推进
+- AI 评分
+- 上下文隔离
+- subagent / 子上下文绑定对象
+
+默认都必须理解为“某候选人围绕某个 JD 的一次投递记录”，而不是 `CandidatePerson` 这个人本身。
+
+同一个人可以在不同 JD、不同时间窗口下同时存在多条 `candidate_applications`。因此，系统不得把真正的执行主语偷换成“候选人跟进”这种会模糊 JD 边界的说法；若讨论的是实际流程推进对象，应优先表述为“一次投递记录的跟进”。
 
 ### 2.3 JobDescription 回答的问题
 
@@ -196,7 +212,7 @@ BIGINT
 
 ### 6.2 聊天主体挂在 `candidate_applications`
 
-聊天窗口、消息流、等待重试、沟通状态都围绕一次投递存在。
+聊天窗口、消息流、等待重试、沟通状态都围绕一次投递记录存在。
 
 同一个人可以同时存在多条 application，因此聊天不能挂在 person 层。
 

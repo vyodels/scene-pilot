@@ -163,7 +163,8 @@ def approve_approval(
                     "resume_reason": payload.reason,
                 },
                 priority=int(resumed_task.get("priority", 100) or 100),
-                candidate_id=resumed_task.get("candidate_id"),
+                application_id=resumed_task.get("application_id"),
+                person_id=resumed_task.get("person_id"),
             )
             payload_snapshot["resume_task"] = resumed_task
         item.payload = payload_snapshot

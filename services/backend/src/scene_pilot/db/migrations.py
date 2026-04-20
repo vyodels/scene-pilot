@@ -364,7 +364,8 @@ def _create_agent_runtime_control_tables(connection: Connection) -> None:
                     id TEXT PRIMARY KEY,
                     session_id TEXT NOT NULL REFERENCES agent_sessions(id) ON DELETE CASCADE,
                     execution_episode_id TEXT REFERENCES execution_episodes(id) ON DELETE SET NULL,
-                    candidate_id TEXT REFERENCES candidate_persons(id) ON DELETE SET NULL,
+                    person_id TEXT REFERENCES candidate_persons(candidate_person_id) ON DELETE SET NULL,
+                    application_id TEXT REFERENCES candidate_applications(candidate_application_id) ON DELETE SET NULL,
                     jd_id TEXT,
                     platform TEXT NOT NULL DEFAULT 'site',
                     lane TEXT NOT NULL DEFAULT 'agent',
@@ -394,7 +395,8 @@ def _create_agent_runtime_control_tables(connection: Connection) -> None:
                     session_id TEXT NOT NULL REFERENCES agent_sessions(id) ON DELETE CASCADE,
                     run_id TEXT REFERENCES agent_runs(id) ON DELETE SET NULL,
                     queue_task_id TEXT,
-                    candidate_id TEXT REFERENCES candidate_persons(id) ON DELETE SET NULL,
+                    person_id TEXT REFERENCES candidate_persons(candidate_person_id) ON DELETE SET NULL,
+                    application_id TEXT REFERENCES candidate_applications(candidate_application_id) ON DELETE SET NULL,
                     platform TEXT NOT NULL DEFAULT 'site',
                     lane TEXT NOT NULL DEFAULT 'agent',
                     item_type TEXT NOT NULL,
@@ -422,7 +424,8 @@ def _create_agent_runtime_control_tables(connection: Connection) -> None:
                     id TEXT PRIMARY KEY,
                     session_id TEXT NOT NULL REFERENCES agent_sessions(id) ON DELETE CASCADE,
                     run_id TEXT NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
-                    candidate_id TEXT REFERENCES candidate_persons(id) ON DELETE SET NULL,
+                    person_id TEXT REFERENCES candidate_persons(candidate_person_id) ON DELETE SET NULL,
+                    application_id TEXT REFERENCES candidate_applications(candidate_application_id) ON DELETE SET NULL,
                     approval_id TEXT REFERENCES approval_items(id) ON DELETE SET NULL,
                     checkpoint_kind TEXT NOT NULL,
                     status TEXT NOT NULL DEFAULT 'open',
@@ -445,7 +448,8 @@ def _create_agent_runtime_control_tables(connection: Connection) -> None:
                     id TEXT PRIMARY KEY,
                     session_id TEXT NOT NULL REFERENCES agent_sessions(id) ON DELETE CASCADE,
                     run_id TEXT REFERENCES agent_runs(id) ON DELETE SET NULL,
-                    candidate_id TEXT REFERENCES candidate_persons(id) ON DELETE SET NULL,
+                    person_id TEXT REFERENCES candidate_persons(candidate_person_id) ON DELETE SET NULL,
+                    application_id TEXT REFERENCES candidate_applications(candidate_application_id) ON DELETE SET NULL,
                     level TEXT NOT NULL DEFAULT 'info',
                     source TEXT NOT NULL,
                     event_type TEXT NOT NULL,
@@ -468,13 +472,15 @@ def _create_agent_runtime_control_tables(connection: Connection) -> None:
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_agent_sessions_last_active_at ON agent_sessions (last_active_at)"))
     if "agent_runs" in indexed_tables:
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_agent_runs_session_status_priority ON agent_runs (session_id, status, priority)"))
-        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_agent_runs_candidate_status ON agent_runs (candidate_id, status)"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_agent_runs_person_status ON agent_runs (person_id, status)"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_agent_runs_application_status ON agent_runs (application_id, status)"))
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_agent_runs_execution_episode_id ON agent_runs (execution_episode_id)"))
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_agent_runs_queue_task_id ON agent_runs (queue_task_id)"))
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_agent_runs_platform_status ON agent_runs (platform, status)"))
     if "agent_work_items" in indexed_tables:
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_agent_work_items_run_status ON agent_work_items (run_id, status)"))
-        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_agent_work_items_candidate_status ON agent_work_items (candidate_id, status)"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_agent_work_items_person_status ON agent_work_items (person_id, status)"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_agent_work_items_application_status ON agent_work_items (application_id, status)"))
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_agent_work_items_dedupe_key ON agent_work_items (dedupe_key)"))
     if "agent_run_checkpoints" in indexed_tables:
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_agent_run_checkpoints_run_status ON agent_run_checkpoints (run_id, status)"))
@@ -624,7 +630,8 @@ def _create_goal_runtime_tables(connection: Connection) -> None:
                     checkpoint_id TEXT,
                     approval_id TEXT REFERENCES approval_items(id) ON DELETE SET NULL,
                     goal_spec_id TEXT,
-                    candidate_id TEXT REFERENCES candidate_persons(id) ON DELETE SET NULL,
+                    person_id TEXT REFERENCES candidate_persons(candidate_person_id) ON DELETE SET NULL,
+                    application_id TEXT REFERENCES candidate_applications(candidate_application_id) ON DELETE SET NULL,
                     lane TEXT NOT NULL DEFAULT 'agent',
                     interaction_type TEXT NOT NULL DEFAULT 'confirm',
                     status TEXT NOT NULL DEFAULT 'pending',
@@ -663,7 +670,8 @@ def _create_goal_runtime_tables(connection: Connection) -> None:
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_execution_graph_projections_run_created_at ON execution_graph_projections (run_id, created_at)"))
     if "operator_interactions" in indexed_tables:
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_operator_interactions_status_surfaced_at ON operator_interactions (status, surfaced_at)"))
-        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_operator_interactions_candidate_status ON operator_interactions (candidate_id, status)"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_operator_interactions_person_status ON operator_interactions (person_id, status)"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_operator_interactions_application_status ON operator_interactions (application_id, status)"))
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_operator_interactions_approval_status ON operator_interactions (approval_id, status)"))
 
 
@@ -2211,6 +2219,50 @@ def _align_environment_snapshot_schema(connection: Connection) -> None:
     )
 
 
+def _align_candidate_application_lock_scope(connection: Connection) -> None:
+    tables = {
+        row[0]
+        for row in connection.execute(text("SELECT name FROM sqlite_master WHERE type='table'")).fetchall()
+    }
+    if "candidate_autonomous_locks" not in tables:
+        return
+
+    columns = {
+        row[1]
+        for row in connection.execute(text("PRAGMA table_info(candidate_autonomous_locks)")).fetchall()
+    }
+    if "application_id" not in columns:
+        connection.execute(text("ALTER TABLE candidate_autonomous_locks ADD COLUMN application_id TEXT"))
+    connection.execute(
+        text("CREATE INDEX IF NOT EXISTS ix_candidate_autonomous_locks_application_id ON candidate_autonomous_locks (application_id)")
+    )
+
+    if "candidate_person_id" not in columns:
+        return
+
+    connection.execute(
+        text(
+            """
+            UPDATE candidate_autonomous_locks
+            SET application_id = (
+                SELECT ca.candidate_application_id
+                FROM candidate_applications AS ca
+                JOIN candidate_persons AS cp ON cp.id = ca.person_id
+                WHERE cp.candidate_person_id = candidate_autonomous_locks.candidate_person_id
+                  AND (
+                    SELECT COUNT(*)
+                    FROM candidate_applications AS scoped_ca
+                    JOIN candidate_persons AS scoped_cp ON scoped_cp.id = scoped_ca.person_id
+                    WHERE scoped_cp.candidate_person_id = candidate_autonomous_locks.candidate_person_id
+                  ) = 1
+                LIMIT 1
+            )
+            WHERE application_id IS NULL
+            """
+        )
+    )
+
+
 MIGRATIONS: tuple[SchemaMigration, ...] = (
     SchemaMigration(
         version=1,
@@ -2336,6 +2388,11 @@ MIGRATIONS: tuple[SchemaMigration, ...] = (
         version=25,
         name="align_environment_snapshot_schema",
         apply=_align_environment_snapshot_schema,
+    ),
+    SchemaMigration(
+        version=26,
+        name="align_candidate_application_lock_scope",
+        apply=_align_candidate_application_lock_scope,
     ),
 )
 

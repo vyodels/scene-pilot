@@ -240,7 +240,7 @@ function summarizeCandidateSource(
 function presentRecruitingText(text: string, copy: (en: string, zh: string) => string): string {
   const cleaned = text
     .trim()
-    .replace(/^Review template candidate for\s*/i, copy("Candidate review: ", "候选人待复核："))
+    .replace(/^Review template candidate for\s*/i, copy("Application review: ", "投递记录待复核："))
     .replace(/^Goal intake failed to compile an executable plan:\s*/i, copy("Plan generation failed: ", "计划生成失败："))
     .replace(/^Runtime execution completed for recruiting\.?\s*/i, "")
     .replace(/\s+/g, " ")
@@ -328,13 +328,13 @@ export function DashboardView({
     {
       label: copy("Needs review", "待审查"),
       value: String(laneCounts.review),
-      caption: copy("New or triage candidates waiting for screening.", "新入队或待分流的候选人。"),
+      caption: copy("New or triage application records waiting for screening.", "新入队或待分流的投递记录。"),
       tone: metricTone(laneCounts.review),
     },
     {
       label: copy("Waiting for reply", "等待回复"),
       value: String(laneCounts.followUp),
-      caption: copy("Candidates that need a recruiter follow-up.", "需要招聘方继续跟进的候选人。"),
+      caption: copy("Application records that need recruiter follow-up.", "需要招聘方继续跟进的投递记录。"),
       tone: metricTone(laneCounts.followUp),
     },
     {
@@ -346,7 +346,7 @@ export function DashboardView({
     {
       label: copy("Interview / decision", "面试 / 决策"),
       value: String(laneCounts.interview + laneCounts.decision),
-      caption: copy("Candidates moving toward interviews or final decisions.", "进入面试或最终决策阶段的候选人。"),
+      caption: copy("Application records moving toward interviews or final decisions.", "进入面试或最终决策阶段的投递记录。"),
       tone: metricTone(laneCounts.interview + laneCounts.decision),
     },
     {
@@ -370,21 +370,21 @@ export function DashboardView({
             </h1>
             <p style={descriptionStyle}>
               {copy(
-                "Focus here when you want to see which candidates need review, who is waiting for a reply, and where to jump next.",
-                "你可以先在这里看清哪些候选人需要审查、谁在等待回复，以及下一步该去哪个页面。",
+                "Focus here when you want to see which application records need review, which ones are waiting for a reply, and where to jump next.",
+                "你可以先在这里看清哪些投递记录需要审查、哪些投递记录在等待回复，以及下一步该去哪个页面。",
               )}
             </p>
           </div>
 
           <div style={{ display: "flex", gap: "var(--space-2)", flexWrap: "wrap", justifyContent: "end" }}>
             <button type="button" style={primaryButtonStyle} onClick={onOpenCandidates}>
-              {copy("Open pipeline", "打开候选人管道")}
+              {copy("Open application funnel", "打开投递记录漏斗")}
             </button>
             <button type="button" style={actionButtonStyle} onClick={onOpenJdWorkspace}>
               {copy("JD workspace", "JD 工作区")}
             </button>
             <button type="button" style={actionButtonStyle} onClick={() => onOpenCommunications?.("active")}>
-              {copy("Candidate follow-up", "候选人跟进")}
+              {copy("Application follow-up", "投递记录跟进")}
             </button>
           </div>
         </div>
@@ -420,14 +420,14 @@ export function DashboardView({
           <div style={panelHeaderStyle}>
             <div>
               <div style={{ color: "var(--text-secondary)", fontSize: "var(--font-size-xs)", letterSpacing: "0.14em", textTransform: "uppercase" }}>
-                {copy("Candidate queue", "候选人队列")}
+                {copy("Application queue", "投递记录队列")}
               </div>
-              <h2 style={titleStyle}>{copy("Highest-priority candidates", "最高优先级候选人")}</h2>
+              <h2 style={titleStyle}>{copy("Highest-priority application records", "最高优先级投递记录")}</h2>
             </div>
             <StatusBadge tone="neutral">{copy(`${applicationModels.length} total`, `共 ${applicationModels.length} 条申请`)}</StatusBadge>
           </div>
           <p style={descriptionStyle}>
-            {copy("Open a candidate from here to continue follow-up and communication in the candidate workspace.", "从这里打开候选人，继续在候选人工作台里完成审阅、跟进和沟通。")}
+            {copy("Open an application record from here to continue review, follow-up, and communication in the workspace.", "从这里打开一条投递记录，继续在工作区里完成审阅、跟进和沟通。")}
           </p>
 
           <div style={candidateListStyle}>
@@ -581,13 +581,13 @@ export function DashboardView({
           </div>
           <div style={{ display: "grid", gap: "var(--space-2)" }}>
             <button type="button" style={actionButtonStyle} onClick={onOpenCandidates}>
-              {copy("Open candidate pipeline", "打开候选人管道")}
+              {copy("Open application funnel", "打开投递记录漏斗")}
             </button>
             <button type="button" style={actionButtonStyle} onClick={onOpenJdWorkspace}>
               {copy("Open JD workspace", "打开 JD 工作区")}
             </button>
             <button type="button" style={actionButtonStyle} onClick={() => onOpenCommunications?.("active")}>
-              {copy("Open candidate workspace", "打开候选人工作台")}
+              {copy("Open application workspace", "打开投递记录工作区")}
             </button>
             <button type="button" style={actionButtonStyle} onClick={onOpenAgentApprovals}>
               {copy("Open autonomous approvals", "打开 Autonomous 审批")}

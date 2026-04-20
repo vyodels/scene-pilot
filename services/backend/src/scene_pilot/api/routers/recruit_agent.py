@@ -407,16 +407,11 @@ def list_runtime_runs(
         session_id=session_record.id,
         status=status,
         lane=lane,
-        candidate_id=resolved_subject_id,
+        person_id=resolved_subject_id,
+        application_id=resolved_application_id,
         limit=limit,
         offset=offset,
     )
-    if resolved_application_id:
-        items = [
-            item
-            for item in items
-            if str((item.runtime_metadata or {}).get("application_id") or "").strip() == resolved_application_id
-        ]
     return [RuntimeControlledRunRead.model_validate(item) for item in items]
 
 
@@ -452,7 +447,7 @@ def list_runtime_events(
     if run_id:
         run_item = AgentRunRepository(session).get(run_id)
         if run_item is not None:
-            fallback_application_id = str((run_item.runtime_metadata or {}).get("application_id") or "").strip() or None
+            fallback_application_id = str(run_item.application_id or (run_item.runtime_metadata or {}).get("application_id") or "").strip() or None
     items = AgentRuntimeEventRepository(session).recent(
         session_id=session_record.id,
         run_id=run_id,
@@ -534,17 +529,12 @@ def list_operator_interactions(
     resolved_subject_id, resolved_application_id = _runtime_subject_filter_ids(session, application_id)
     items = OperatorInteractionRepository(session).list_recent(
         session_id=session_record.id,
-        candidate_id=resolved_subject_id,
+        person_id=resolved_subject_id,
+        application_id=resolved_application_id,
         status=status,
         limit=limit,
         offset=offset,
     )
-    if resolved_application_id:
-        items = [
-            item
-            for item in items
-            if str((item.interaction_metadata or {}).get("application_id") or "").strip() == resolved_application_id
-        ]
     return [OperatorInteractionRead.model_validate(item) for item in items]
 
 

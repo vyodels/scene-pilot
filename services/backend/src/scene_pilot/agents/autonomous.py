@@ -18,6 +18,8 @@ from scene_pilot.models.domain import (
     AgentSession,
     AgentTurnRecord,
     ApprovalItem,
+    Candidate,
+    CandidateApplication,
     GoalSpec,
     McpServer,
     OperatorInteraction,
@@ -55,6 +57,22 @@ class AutonomousAgent:
             agent_session = session.get(AgentSession, run.session_id)
             agent_profile_id = None if agent_session is None else agent_session.agent_profile_id
             goal_spec = session.get(GoalSpec, run.goal_spec_id) if run.goal_spec_id else None
+            resolved_application_id = _resolve_application_subject(run=run, envelope=envelope, goal=goal_spec)
+            resolved_person_id = _resolve_person_subject(
+                session,
+                run=run,
+                envelope=envelope,
+                goal=goal_spec,
+                application_id=resolved_application_id,
+            )
+            if resolved_application_id and str((run.runtime_metadata or {}).get("application_id") or "").strip() != resolved_application_id:
+                runtime_metadata = dict(run.runtime_metadata or {})
+                runtime_metadata["application_id"] = resolved_application_id
+                run.runtime_metadata = runtime_metadata
+            if resolved_application_id and str(run.application_id or "").strip() != resolved_application_id:
+                run.application_id = resolved_application_id
+            if resolved_person_id and str(run.person_id or "").strip() != resolved_person_id:
+                run.person_id = resolved_person_id
             if goal_spec is not None:
                 goal_spec.status = "running"
                 goal_spec.latest_run_id = run.run_id
@@ -91,11 +109,19 @@ class AutonomousAgent:
                 str(goal_constraints.get("global_scope_ref") or "") or agent_profile_id
             )
             goal_constraints["source_kind"] = "autonomous"
+            if resolved_application_id:
+                goal_constraints["application_id"] = resolved_application_id
+
+            scope_kind = str(envelope.get("scope_kind") or ("application" if resolved_application_id else run.lane or "global"))
+            if scope_kind == "application":
+                scope_ref = str(envelope.get("scope_ref") or resolved_application_id or run.id)
+            else:
+                scope_ref = str(envelope.get("scope_ref") or resolved_person_id or run.person_id or run.job_description_id or run.id)
 
             goal = GoalRef(
                 goal_id=run.run_id or run.id,
-                scope_kind=str(envelope.get("scope_kind") or run.lane or "global"),
-                scope_ref=str(envelope.get("scope_ref") or run.candidate_id or run.job_description_id or run.id),
+                scope_kind=scope_kind,
+                scope_ref=scope_ref,
                 title=str(getattr(goal_spec, "title", None) or run.run_type or "Autonomous execution").strip() or None,
                 goal_text=str(
                     (run.context_manifest or {}).get("goal")
@@ -696,21 +722,137 @@ def _append_runtime_event(
     message: str,
     payload: dict[str, Any],
 ) -> None:
+    event_payload = dict(payload or {})
+    application_id = _resolve_run_application_id(run)
+    if application_id and not str(event_payload.get("application_id") or "").strip():
+        event_payload["application_id"] = application_id
     session.add(
         AgentRuntimeEvent(
             session_id=run.session_id,
             run_id=run.id,
-            candidate_id=run.candidate_id,
+            person_id=run.person_id,
+            application_id=application_id,
             source="autonomous",
             event_type=event_type,
             message=message,
             turn_id=turn_id,
             seq=seq,
-            payload=payload,
+            payload=event_payload,
         )
     )
     if goal is not None:
         goal.last_activity_at = utcnow()
+
+
+def _resolve_run_application_id(run: AgentRun) -> str | None:
+    for raw in (
+        run.application_id,
+        (run.runtime_metadata or {}).get("application_id"),
+        (run.context_manifest or {}).get("application_id"),
+        (run.wakeup_state or {}).get("application_id"),
+    ):
+        normalized = str(raw or "").strip()
+        if normalized:
+            return normalized
+    return None
+
+
+def _resolve_run_person_id(run: AgentRun) -> str | None:
+    for raw in (
+        run.person_id,
+        (run.runtime_metadata or {}).get("person_id"),
+        (run.context_manifest or {}).get("person_id"),
+        (run.wakeup_state or {}).get("person_id"),
+    ):
+        normalized = str(raw or "").strip()
+        if normalized:
+            return normalized
+    return None
+
+
+def _resolve_application_subject(
+    *,
+    run: AgentRun,
+    envelope: dict[str, Any],
+    goal: GoalSpec | None = None,
+) -> str | None:
+    metadata = dict(envelope.get("metadata") or {}) if isinstance(envelope.get("metadata"), dict) else {}
+    world_snapshot = dict(envelope.get("world_snapshot") or {}) if isinstance(envelope.get("world_snapshot"), dict) else {}
+    candidates: list[Any] = [
+        envelope.get("application_id"),
+        metadata.get("application_id"),
+        world_snapshot.get("application_id"),
+        _resolve_run_application_id(run),
+    ]
+    if goal is not None:
+        candidates.extend(
+            [
+                (goal.constraints or {}).get("application_id"),
+                (goal.context_hints or {}).get("application_id"),
+                (goal.goal_metadata or {}).get("application_id"),
+            ]
+        )
+    for raw in candidates:
+        normalized = str(raw or "").strip()
+        if normalized:
+            return normalized
+    return None
+
+
+def _resolve_person_subject(
+    session: Session,
+    *,
+    run: AgentRun,
+    envelope: dict[str, Any],
+    goal: GoalSpec | None = None,
+    application_id: str | None = None,
+) -> str | None:
+    metadata = dict(envelope.get("metadata") or {}) if isinstance(envelope.get("metadata"), dict) else {}
+    world_snapshot = dict(envelope.get("world_snapshot") or {}) if isinstance(envelope.get("world_snapshot"), dict) else {}
+    candidates: list[Any] = [
+        envelope.get("person_id"),
+        envelope.get("personId"),
+        envelope.get("candidate_id"),
+        envelope.get("candidateId"),
+        metadata.get("person_id"),
+        metadata.get("personId"),
+        metadata.get("candidate_id"),
+        metadata.get("candidateId"),
+        world_snapshot.get("person_id"),
+        world_snapshot.get("personId"),
+        world_snapshot.get("candidate_id"),
+        world_snapshot.get("candidateId"),
+        _resolve_run_person_id(run),
+    ]
+    if goal is not None:
+        candidates.extend(
+            [
+                (goal.constraints or {}).get("person_id"),
+                (goal.constraints or {}).get("personId"),
+                (goal.constraints or {}).get("candidate_id"),
+                (goal.constraints or {}).get("candidateId"),
+                (goal.context_hints or {}).get("person_id"),
+                (goal.context_hints or {}).get("personId"),
+                (goal.context_hints or {}).get("candidate_id"),
+                (goal.context_hints or {}).get("candidateId"),
+                (goal.goal_metadata or {}).get("person_id"),
+                (goal.goal_metadata or {}).get("personId"),
+            ]
+        )
+    for raw in candidates:
+        normalized = str(raw or "").strip()
+        if normalized:
+            return normalized
+    resolved_application_id = str(application_id or "").strip()
+    if not resolved_application_id:
+        return None
+    application = session.scalars(
+        select(CandidateApplication).where(CandidateApplication.candidate_application_id == resolved_application_id)
+    ).first()
+    if application is None:
+        return None
+    person = session.get(Candidate, application.person_id)
+    return str(person.candidate_person_id or "").strip() or None if person is not None else None
 
 
 def _interrupt_open_run(session: Session, *, run: AgentRun, reason: str) -> None:
@@ -794,19 +936,28 @@ def _materialize_wait_human_records(
         f"Run {run.run_id or run.id} is waiting for operator confirmation"
         + (f" before executing {first_tool_name}." if first_tool_name else ".")
     )
-    resume_envelope = _build_resume_envelope(run=run, envelope=envelope, pending_tool_calls=pending_tool_calls)
+    application_id = _resolve_application_subject(run=run, envelope=envelope)
+    resume_envelope = _build_resume_envelope(
+        run=run,
+        envelope=envelope,
+        pending_tool_calls=pending_tool_calls,
+        application_id=application_id,
+    )
     resume_task = {
         "task_id": run.queue_task_id or f"run-{run.id}",
         "task_type": "autonomous_turn",
         "priority": int(run.priority or 100),
         "payload": resume_envelope,
-        "candidate_id": run.candidate_id,
+        "person_id": _resolve_run_person_id(run),
         "metadata": {
             "agent_kind": run.agent_kind,
             "goal_spec_id": run.goal_spec_id,
             "checkpoint_kind": "wait_human",
         },
     }
+    if application_id:
+        resume_task["application_id"] = application_id
+        resume_task["metadata"]["application_id"] = application_id
     approval_payload = {
         "run_pk": run.id,
         "run_id": run.run_id,
@@ -815,6 +966,8 @@ def _materialize_wait_human_records(
         "resume_task": resume_task,
         "checkpoint_kind": "wait_human",
     }
+    if application_id:
+        approval_payload["application_id"] = application_id
     approval = _upsert_wait_human_approval(
         session,
         run=run,
@@ -837,6 +990,7 @@ def _materialize_wait_human_records(
             "turn_id": turn.turn_id,
             "pending_tool_calls": pending_tool_calls,
             "resume_task": resume_task,
+            **({"application_id": application_id} if application_id else {}),
         },
     )
     _upsert_wait_human_interaction(
@@ -847,12 +1001,14 @@ def _materialize_wait_human_records(
         title=title,
         summary=summary,
         pending_tool_calls=pending_tool_calls,
+        application_id=application_id,
     )
     run.checkpoint_status = "open"
     run.wakeup_state = {
         "checkpoint_id": checkpoint.id,
         "approval_id": approval.id,
         "pending_tool_calls": pending_tool_calls,
+        **({"application_id": application_id} if application_id else {}),
     }
 
 
@@ -910,9 +1066,13 @@ def _build_resume_envelope(
     run: AgentRun,
     envelope: dict[str, Any],
     pending_tool_calls: list[dict[str, Any]],
+    application_id: str | None = None,
 ) -> dict[str, Any]:
-    scope_kind = str(envelope.get("scope_kind") or run.lane or "global")
-    scope_ref = str(envelope.get("scope_ref") or run.candidate_id or run.job_description_id or run.id)
+    scope_kind = str(envelope.get("scope_kind") or ("application" if application_id else run.lane or "global"))
+    if scope_kind == "application":
+        scope_ref = str(envelope.get("scope_ref") or application_id or run.id)
+    else:
+        scope_ref = str(envelope.get("scope_ref") or _resolve_run_person_id(run) or run.job_description_id or run.id)
     payload: dict[str, Any] = {
         "run_pk": run.id,
         "run_id": run.run_id,
@@ -920,10 +1080,22 @@ def _build_resume_envelope(
         "scope_ref": scope_ref,
         "trigger_type": "resume",
     }
+    if application_id:
+        payload["application_id"] = application_id
+    person_id = _resolve_run_person_id(run)
+    if person_id:
+        payload["person_id"] = person_id
     if isinstance(envelope.get("world_snapshot"), dict):
         payload["world_snapshot"] = dict(envelope.get("world_snapshot") or {})
     if pending_tool_calls:
         payload["seed_tool_calls"] = pending_tool_calls
+    metadata = dict(envelope.get("metadata") or {}) if isinstance(envelope.get("metadata"), dict) else {}
+    if application_id:
+        metadata["application_id"] = application_id
+    if person_id:
+        metadata["person_id"] = person_id
+    if metadata:
+        payload["metadata"] = metadata
     return payload
 
 
@@ -998,7 +1170,8 @@ def _upsert_wait_human_checkpoint(
         checkpoint = AgentRunCheckpoint(
             session_id=run.session_id,
             run_id=run.id,
-            candidate_id=run.candidate_id,
+            person_id=run.person_id,
+            application_id=_resolve_run_application_id(run),
             approval_id=approval.id,
             checkpoint_kind="wait_human",
             status="open",
@@ -1011,7 +1184,8 @@ def _upsert_wait_human_checkpoint(
         return checkpoint
 
     checkpoint.approval_id = approval.id
-    checkpoint.candidate_id = run.candidate_id
+    checkpoint.person_id = run.person_id
+    checkpoint.application_id = _resolve_run_application_id(run)
     checkpoint.checkpoint_kind = "wait_human"
     checkpoint.status = "open"
     checkpoint.title = title
@@ -1031,6 +1205,7 @@ def _upsert_wait_human_interaction(
     title: str,
     summary: str,
     pending_tool_calls: list[dict[str, Any]],
+    application_id: str | None = None,
 ) -> OperatorInteraction:
     interaction = session.scalars(
         select(OperatorInteraction)
@@ -1044,6 +1219,8 @@ def _upsert_wait_human_interaction(
             for payload in pending_tool_calls
         ],
     }
+    if application_id:
+        interaction_metadata["application_id"] = application_id
     if interaction is None:
         interaction = OperatorInteraction(
             session_id=run.session_id,
@@ -1051,7 +1228,8 @@ def _upsert_wait_human_interaction(
             checkpoint_id=checkpoint.id,
             approval_id=approval.id,
             goal_spec_id=run.goal_spec_id,
-            candidate_id=run.candidate_id,
+            person_id=run.person_id,
+            application_id=application_id,
             lane=run.lane,
             interaction_type="confirm",
             status="pending",
@@ -1071,7 +1249,8 @@ def _upsert_wait_human_interaction(
     interaction.approval_id = approval.id
     interaction.run_id = run.id
     interaction.goal_spec_id = run.goal_spec_id
-    interaction.candidate_id = run.candidate_id
+    interaction.person_id = run.person_id
+    interaction.application_id = application_id
     interaction.status = "pending"
     interaction.title = title
     interaction.agent_prompt = summary

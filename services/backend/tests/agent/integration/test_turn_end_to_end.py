@@ -43,7 +43,7 @@ def test_autonomous_turn_persists_run_turn_records(tmp_path: Path) -> None:
             run_id="run-1",
             agent_kind="autonomous",
             status="queued",
-            candidate_id=candidate.candidate_person_id,
+            person_id=candidate.candidate_person_id,
         )
         session.add(run)
         session.commit()

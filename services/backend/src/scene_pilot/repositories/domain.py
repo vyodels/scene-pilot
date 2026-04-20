@@ -831,7 +831,8 @@ class AgentRunRepository(BaseRepository[AgentRun]):
         session_id: str | None = None,
         status: str | None = None,
         lane: str | None = None,
-        candidate_id: str | None = None,
+        person_id: str | None = None,
+        application_id: str | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[AgentRun]:
@@ -842,8 +843,10 @@ class AgentRunRepository(BaseRepository[AgentRun]):
             stmt = stmt.where(AgentRun.status == status)
         if lane is not None:
             stmt = stmt.where(AgentRun.lane == lane)
-        if candidate_id is not None:
-            stmt = stmt.where(AgentRun.candidate_id == candidate_id)
+        if person_id is not None:
+            stmt = stmt.where(AgentRun.person_id == person_id)
+        if application_id is not None:
+            stmt = stmt.where(AgentRun.application_id == application_id)
         stmt = stmt.order_by(AgentRun.created_at.desc(), AgentRun.id.desc()).offset(offset).limit(limit)
         return list(self.session.scalars(stmt).all())
 
@@ -858,18 +861,18 @@ class AgentRunRepository(BaseRepository[AgentRun]):
         stmt = select(AgentRun).where(AgentRun.queue_task_id == queue_task_id).order_by(AgentRun.created_at.desc(), AgentRun.id.desc())
         return self.session.scalars(stmt).first()
 
-    def latest_open_for_candidate(
+    def latest_open_for_application(
         self,
         *,
         session_id: str,
-        candidate_id: str,
+        application_id: str,
         lane: str = "candidate",
     ) -> AgentRun | None:
         stmt = (
             select(AgentRun)
             .where(
                 AgentRun.session_id == session_id,
-                AgentRun.candidate_id == candidate_id,
+                AgentRun.application_id == application_id,
                 AgentRun.lane == lane,
                 AgentRun.status.in_(("queued", "running", "waiting_human", "waiting_candidate", "blocked", "resumable")),
             )
@@ -886,18 +889,18 @@ class AgentRunRepository(BaseRepository[AgentRun]):
             stmt = stmt.where(AgentRun.platform == platform)
         return int(self.session.scalar(stmt) or 0)
 
-    def conflicting_candidate_run(
+    def conflicting_application_run(
         self,
         *,
         session_id: str,
-        candidate_id: str,
+        application_id: str,
         exclude_run_id: str | None = None,
     ) -> AgentRun | None:
         stmt = (
             select(AgentRun)
             .where(
                 AgentRun.session_id == session_id,
-                AgentRun.candidate_id == candidate_id,
+                AgentRun.application_id == application_id,
                 AgentRun.status.in_(("running", "waiting_human", "waiting_candidate", "blocked")),
             )
             .order_by(AgentRun.updated_at.desc(), AgentRun.id.desc())
@@ -919,7 +922,8 @@ class AgentWorkItemRepository(BaseRepository[AgentWorkItem]):
         *,
         run_id: str | None = None,
         status: str | None = None,
-        candidate_id: str | None = None,
+        person_id: str | None = None,
+        application_id: str | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[AgentWorkItem]:
@@ -928,8 +932,10 @@ class AgentWorkItemRepository(BaseRepository[AgentWorkItem]):
             stmt = stmt.where(AgentWorkItem.run_id == run_id)
         if status is not None:
             stmt = stmt.where(AgentWorkItem.status == status)
-        if candidate_id is not None:
-            stmt = stmt.where(AgentWorkItem.candidate_id == candidate_id)
+        if person_id is not None:
+            stmt = stmt.where(AgentWorkItem.person_id == person_id)
+        if application_id is not None:
+            stmt = stmt.where(AgentWorkItem.application_id == application_id)
         stmt = stmt.order_by(AgentWorkItem.created_at.asc(), AgentWorkItem.id.asc()).offset(offset).limit(limit)
         return list(self.session.scalars(stmt).all())
 
@@ -1108,7 +1114,8 @@ class OperatorInteractionRepository(BaseRepository[OperatorInteraction]):
         self,
         *,
         session_id: str | None = None,
-        candidate_id: str | None = None,
+        person_id: str | None = None,
+        application_id: str | None = None,
         status: str | None = None,
         limit: int = 100,
         offset: int = 0,
@@ -1116,8 +1123,34 @@ class OperatorInteractionRepository(BaseRepository[OperatorInteraction]):
         stmt = select(OperatorInteraction)
         if session_id is not None:
             stmt = stmt.where(OperatorInteraction.session_id == session_id)
-        if candidate_id is not None:
-            stmt = stmt.where(OperatorInteraction.candidate_id == candidate_id)
+        if person_id is not None:
+            stmt = stmt.where(OperatorInteraction.person_id == person_id)
+        if application_id is not None:
+            stmt = stmt.where(OperatorInteraction.application_id == application_id)
+        if status is not None:
+            stmt = stmt.where(OperatorInteraction.status == status)
+        stmt = stmt.order_by(OperatorInteraction.surfaced_at.desc(), OperatorInteraction.id.desc()).offset(offset).limit(limit)
+        return list(self.session.scalars(stmt).all())
+
+    def list_recent_for_application(
+        self,
+        *,
+        application_ids: list[str] | set[str] | tuple[str, ...],
+        approval_ids: list[str] | set[str] | tuple[str, ...] | None = None,
+        status: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[OperatorInteraction]:
+        normalized_application_ids = [str(item).strip() for item in application_ids if str(item).strip()]
+        normalized_approval_ids = [str(item).strip() for item in (approval_ids or []) if str(item).strip()]
+        conditions = []
+        if normalized_application_ids:
+            conditions.append(OperatorInteraction.application_id.in_(normalized_application_ids))
+        if normalized_approval_ids:
+            conditions.append(OperatorInteraction.approval_id.in_(normalized_approval_ids))
+        if not conditions:
+            return []
+        stmt = select(OperatorInteraction).where(or_(*conditions))
         if status is not None:
             stmt = stmt.where(OperatorInteraction.status == status)
         stmt = stmt.order_by(OperatorInteraction.surfaced_at.desc(), OperatorInteraction.id.desc()).offset(offset).limit(limit)

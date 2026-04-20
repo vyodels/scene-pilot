@@ -839,8 +839,13 @@ class AgentRun(Base, TimestampMixin):
         index=True,
     )
     goal_spec_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
-    candidate_id: Mapped[str | None] = mapped_column(
+    person_id: Mapped[str | None] = mapped_column(
         ForeignKey("candidate_persons.candidate_person_id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    application_id: Mapped[str | None] = mapped_column(
+        ForeignKey("candidate_applications.candidate_application_id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )
@@ -871,7 +876,8 @@ class AgentRun(Base, TimestampMixin):
 
     __table_args__ = (
         Index("ix_agent_runs_session_status_priority", "session_id", "status", "priority"),
-        Index("ix_agent_runs_candidate_status", "candidate_id", "status"),
+        Index("ix_agent_runs_person_status", "person_id", "status"),
+        Index("ix_agent_runs_application_status", "application_id", "status"),
     )
 
 
@@ -886,8 +892,13 @@ class AgentWorkItem(Base, TimestampMixin):
     run_id: Mapped[str | None] = mapped_column(ForeignKey("agent_runs.id", ondelete="SET NULL"), nullable=True, index=True)
     queue_task_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
     goal_spec_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
-    candidate_id: Mapped[str | None] = mapped_column(
+    person_id: Mapped[str | None] = mapped_column(
         ForeignKey("candidate_persons.candidate_person_id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    application_id: Mapped[str | None] = mapped_column(
+        ForeignKey("candidate_applications.candidate_application_id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )
@@ -911,8 +922,13 @@ class AgentRunCheckpoint(Base, TimestampMixin):
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=generate_id)
     session_id: Mapped[str] = mapped_column(ForeignKey("agent_sessions.id", ondelete="CASCADE"), nullable=False, index=True)
     run_id: Mapped[str] = mapped_column(ForeignKey("agent_runs.id", ondelete="CASCADE"), nullable=False, index=True)
-    candidate_id: Mapped[str | None] = mapped_column(
+    person_id: Mapped[str | None] = mapped_column(
         ForeignKey("candidate_persons.candidate_person_id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    application_id: Mapped[str | None] = mapped_column(
+        ForeignKey("candidate_applications.candidate_application_id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )
@@ -936,8 +952,13 @@ class AgentRuntimeEvent(Base, TimestampMixin):
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=generate_id)
     session_id: Mapped[str] = mapped_column(ForeignKey("agent_sessions.id", ondelete="CASCADE"), nullable=False, index=True)
     run_id: Mapped[str | None] = mapped_column(ForeignKey("agent_runs.id", ondelete="SET NULL"), nullable=True, index=True)
-    candidate_id: Mapped[str | None] = mapped_column(
+    person_id: Mapped[str | None] = mapped_column(
         ForeignKey("candidate_persons.candidate_person_id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    application_id: Mapped[str | None] = mapped_column(
+        ForeignKey("candidate_applications.candidate_application_id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )
@@ -1086,8 +1107,13 @@ class OperatorInteraction(Base, TimestampMixin):
     checkpoint_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
     approval_id: Mapped[str | None] = mapped_column(ForeignKey("approval_items.id", ondelete="SET NULL"), nullable=True, index=True)
     goal_spec_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
-    candidate_id: Mapped[str | None] = mapped_column(
+    person_id: Mapped[str | None] = mapped_column(
         ForeignKey("candidate_persons.candidate_person_id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    application_id: Mapped[str | None] = mapped_column(
+        ForeignKey("candidate_applications.candidate_application_id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )
@@ -1107,7 +1133,8 @@ class OperatorInteraction(Base, TimestampMixin):
 
     __table_args__ = (
         Index("ix_operator_interactions_status_surfaced_at", "status", "surfaced_at"),
-        Index("ix_operator_interactions_candidate_status", "candidate_id", "status"),
+        Index("ix_operator_interactions_person_status", "person_id", "status"),
+        Index("ix_operator_interactions_application_status", "application_id", "status"),
         Index("ix_operator_interactions_approval_status", "approval_id", "status"),
     )
 
@@ -1491,6 +1518,11 @@ class CandidateAutonomousLock(Base, TimestampMixin):
     __tablename__ = "candidate_autonomous_locks"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=generate_id)
+    application_id: Mapped[str | None] = mapped_column(
+        ForeignKey("candidate_applications.candidate_application_id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
     candidate_person_id: Mapped[str] = mapped_column(
         ForeignKey("candidate_persons.candidate_person_id", ondelete="CASCADE"),
         nullable=False,

@@ -316,7 +316,7 @@ export function CandidateCommunicationPanel({
             className="candidate-communication-panel__full-link"
             onClick={() => onOpenFullCockpit(selectedRecord.application.id)}
           >
-            {copy("Locate in candidate workspace ↗", "在候选人工作台中定位 ↗")}
+            {copy("Locate in application workspace ↗", "在投递记录工作区中定位 ↗")}
           </button>
         </aside>
       </section>

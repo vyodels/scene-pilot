@@ -101,4 +101,4 @@ Python inline 资产要求：
 
 说明：
 - 如果不适合提供 Python inline 资产，可以保留 `body.artifacts` 为空对象，并把 `execution_hints.executor_mode` 设为 `tool_or_llm`。
-- `observed_actions` 必须表达业务动作，例如“比对活跃 JD 差异”“整理候选人沟通记录”，不要表达“点击按钮”“读取第三列文本”。
+- `observed_actions` 必须表达业务动作，例如“比对活跃 JD 差异”“整理投递记录沟通记录”，不要表达“点击按钮”“读取第三列文本”。

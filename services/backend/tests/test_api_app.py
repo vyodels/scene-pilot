@@ -67,7 +67,7 @@ class ApiAppTests(unittest.TestCase):
         self.assertEqual(listed.status_code, 200)
         self.assertEqual(listed.json()[0]["conversation_id"], conversation_id)
 
-        recruit = self.client.get("/api/recruit/candidates/locks")
+        recruit = self.client.get("/api/recruit/applications/locks")
         self.assertEqual(recruit.status_code, 200)
         self.assertEqual(recruit.json(), [])
 

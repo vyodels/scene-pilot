@@ -4,6 +4,7 @@ import sys
 import tempfile
 from datetime import timedelta
 from pathlib import Path
+from types import SimpleNamespace
 import unittest
 
 
@@ -17,6 +18,7 @@ from scene_pilot.models import SyncBacklogEntry, TaskQueueItem
 from scene_pilot.scheduler.queue import InMemoryQueue, SqlAlchemyQueue, TaskEnvelope
 from scene_pilot.scheduler.scheduler import SerialScheduler
 from scene_pilot.runtime.models import AgentResult
+from scene_pilot.services.agent_control import AgentControlService
 from scene_pilot.services.sync import SyncService
 
 
@@ -58,6 +60,123 @@ class QueueTests(unittest.TestCase):
 
             queue.mark_complete(claimed.task_id)
             self.assertEqual(queue.get().task_id, "low")
+
+    def test_sqlalchemy_queue_preserves_application_subject(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            settings = AppSettings(
+                data_dir=tempdir,
+                database_url="sqlite:///./queue-application.db",
+            )
+            engine = create_engine_from_settings(settings)
+            initialize_database(engine)
+            session_factory = create_session_factory(engine)
+            queue = SqlAlchemyQueue(session_factory)
+
+            queue.put(
+                TaskEnvelope(
+                    task_id="app-subject",
+                    task_type="screen",
+                    priority=10,
+                    application_id="app-001",
+                    candidate_id="person-001",
+                )
+            )
+
+            claimed = queue.get()
+
+            self.assertIsNotNone(claimed)
+            self.assertEqual(claimed.application_id, "app-001")
+            self.assertEqual(claimed.candidate_id, "person-001")
+
+    def test_sqlalchemy_queue_does_not_backfill_application_from_candidate(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            settings = AppSettings(
+                data_dir=tempdir,
+                database_url="sqlite:///./queue-no-backfill.db",
+            )
+            engine = create_engine_from_settings(settings)
+            initialize_database(engine)
+            session_factory = create_session_factory(engine)
+            queue = SqlAlchemyQueue(session_factory)
+
+            queue.put(TaskEnvelope(task_id="person-only", task_type="screen", priority=10, candidate_id="person-001"))
+
+            claimed = queue.get()
+
+            self.assertIsNotNone(claimed)
+            self.assertIsNone(claimed.application_id)
+            self.assertEqual(claimed.candidate_id, "person-001")
+
+    def test_agent_control_enqueue_task_surfaces_application_id_in_run_envelope(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            settings = AppSettings(
+                data_dir=tempdir,
+                database_url="sqlite:///./agent-control-enqueue.db",
+            )
+            engine = create_engine_from_settings(settings)
+            initialize_database(engine)
+            session_factory = create_session_factory(engine)
+            service = AgentControlService(session_factory)
+
+            task_id = service.enqueue_task(
+                "autonomous_turn",
+                task_id="run-task-1",
+                payload={"run_pk": "run-pk-1", "run_id": "run-id-1"},
+                metadata={"source": "test"},
+                application_id="app-001",
+                person_id="person-001",
+            )
+
+            self.assertEqual(task_id, "run-task-1")
+            with session_factory() as session:
+                record = session.get(TaskQueueItem, task_id)
+                self.assertIsNotNone(record)
+                self.assertEqual(record.payload["application_id"], "app-001")
+                self.assertEqual(record.payload["person_id"], "person-001")
+                self.assertEqual(record.payload["metadata"]["source"], "test")
+
+    def test_agent_control_apply_approval_resolution_preserves_application_id(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            settings = AppSettings(
+                data_dir=tempdir,
+                database_url="sqlite:///./agent-control-approval.db",
+            )
+            engine = create_engine_from_settings(settings)
+            initialize_database(engine)
+            session_factory = create_session_factory(engine)
+            service = AgentControlService(session_factory)
+
+            approval = SimpleNamespace(
+                id="approval-1",
+                target_type="blocked_task",
+                target_id="run-1",
+                payload={
+                    "resume_task": {
+                        "task_id": "resume-task-1",
+                        "task_type": "autonomous_turn",
+                        "priority": 80,
+                        "payload": {"run_pk": "run-pk-1", "run_id": "run-id-1"},
+                        "application_id": "app-001",
+                        "person_id": "person-001",
+                        "metadata": {"checkpoint_kind": "wait_human"},
+                    }
+                },
+            )
+
+            with session_factory() as session:
+                service.apply_approval_resolution(
+                    session,
+                    approval,
+                    status="approved",
+                    reviewer="tester",
+                    notes="resume",
+                )
+                session.commit()
+                record = session.get(TaskQueueItem, "resume-task-1")
+                self.assertIsNotNone(record)
+                self.assertEqual(record.payload["application_id"], "app-001")
+                self.assertEqual(record.payload["person_id"], "person-001")
+                self.assertEqual(record.payload["metadata"]["checkpoint_kind"], "wait_human")
 
     def test_sync_service_uses_persistent_backlog_when_session_factory_present(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:

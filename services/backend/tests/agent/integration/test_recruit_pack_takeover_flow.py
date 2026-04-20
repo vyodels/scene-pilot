@@ -8,11 +8,12 @@ from sqlalchemy.orm import Session
 
 from scene_pilot.core.settings import AppSettings
 from scene_pilot.db.session import create_engine_from_settings, create_session_factory, initialize_database
-from scene_pilot.models.domain import Candidate
+from scene_pilot.models.domain import Candidate, CandidateApplication, JobDescription
 from scene_pilot.plugins.host import PluginHost
 from scene_pilot.plugins.loader import install_manifest
 from scene_pilot.plugins.recruit.manifest import RecruitPluginManifest
 from scene_pilot.runtime.models import Observation
+from scene_pilot.services.application_window import make_application_window
 
 
 def _make_session(tmp_path: Path) -> Session:
@@ -31,6 +32,26 @@ def test_recruit_pack_takeover_flow_exposes_tools_observation_and_router(tmp_pat
         candidate = Candidate(name="Alice")
         session.add(candidate)
         session.commit()
+        job_primary = JobDescription(title="AE")
+        job_secondary = JobDescription(title="CSM")
+        session.add_all([job_primary, job_secondary])
+        session.commit()
+        primary_application = CandidateApplication(
+            person_id=candidate.id,
+            job_description_id=job_primary.id,
+            application_window=make_application_window(candidate.candidate_person_id, job_primary.job_description_id),
+            platform="boss_mock",
+            source_platform="boss_mock",
+        )
+        secondary_application = CandidateApplication(
+            person_id=candidate.id,
+            job_description_id=job_secondary.id,
+            application_window=make_application_window(candidate.candidate_person_id, job_secondary.job_description_id),
+            platform="boss_mock",
+            source_platform="boss_mock",
+        )
+        session.add_all([primary_application, secondary_application])
+        session.commit()
 
         session_factory = create_session_factory(session.get_bind())
         host = PluginHost()
@@ -39,7 +60,7 @@ def test_recruit_pack_takeover_flow_exposes_tools_observation_and_router(tmp_pat
         tool_result = host.tool_registry.execute(
             "take_over_candidate",
             {
-                "candidate_person_id": candidate.candidate_person_id,
+                "application_id": primary_application.candidate_application_id,
                 "locked_by": "human-a",
                 "reason": "manual follow-up",
             },
@@ -48,8 +69,8 @@ def test_recruit_pack_takeover_flow_exposes_tools_observation_and_router(tmp_pat
 
         observation = Observation(
             world_snapshot={},
-            scope_kind="candidate",
-            scope_ref=candidate.candidate_person_id,
+            scope_kind="application",
+            scope_ref=primary_application.candidate_application_id,
             recent_events=[],
             available_tools=[],
             available_skills=[],
@@ -58,13 +79,35 @@ def test_recruit_pack_takeover_flow_exposes_tools_observation_and_router(tmp_pat
         )
         enriched = host.run_observation_enrichers_sync(observation)
         verdicts = host.run_guard_checks_sync(
-            "send_message",
-            {"candidate_person_id": candidate.candidate_person_id, "actor_kind": "autonomous"},
+            "transition_application",
+            {"application_id": primary_application.candidate_application_id, "actor_kind": "autonomous", "to_status": "outreach_pending"},
             observation,
+        )
+        second_application_verdicts = host.run_guard_checks_sync(
+            "transition_application",
+            {
+                "candidate_person_id": candidate.candidate_person_id,
+                "job_description_id": job_secondary.job_description_id,
+                "actor_kind": "autonomous",
+                "to_status": "outreach_pending",
+            },
+            Observation(
+                world_snapshot={},
+                scope_kind="application",
+                scope_ref=secondary_application.candidate_application_id,
+                recent_events=[],
+                available_tools=[],
+                available_skills=[],
+                available_mcps=[],
+                hash="obs-2",
+            ),
         )
 
         assert enriched["world_snapshot"]["plugin_recruit"]["human_locked"] is True
+        assert enriched["world_snapshot"]["plugin_recruit"]["lock_meta"]["application_id"] == primary_application.candidate_application_id
         assert verdicts[0].allowed is False
+        assert verdicts[0].metadata["application_id"] == primary_application.candidate_application_id
+        assert second_application_verdicts[0].allowed is True
         assert "人工接管" in host.collect_persona_fragments()[0]
 
         app = FastAPI()
@@ -72,15 +115,16 @@ def test_recruit_pack_takeover_flow_exposes_tools_observation_and_router(tmp_pat
             app.include_router(router)
         client = TestClient(app)
 
-        locks_response = client.get("/api/recruit/candidates/locks")
+        locks_response = client.get("/api/recruit/applications/locks")
         assert locks_response.status_code == 200
-        assert locks_response.json()[0]["candidate_person_id"] == candidate.candidate_person_id
+        assert locks_response.json()[0]["application_id"] == primary_application.candidate_application_id
 
         release_response = client.post(
-            f"/api/recruit/candidates/{candidate.candidate_person_id}/release",
+            f"/api/recruit/applications/{primary_application.candidate_application_id}/release",
             json={"released_by": "human-a", "handover_note": "done"},
         )
         assert release_response.status_code == 200
         assert release_response.json()["released_by"] == "human-a"
+        assert release_response.json()["application_id"] == primary_application.candidate_application_id
     finally:
         session.close()

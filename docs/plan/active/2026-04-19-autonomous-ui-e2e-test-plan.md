@@ -9,7 +9,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 让 Codex 通过 chrome-devtools MCP 模拟 human 的方式，驱动 Recruit Agent 桌面主程序的 UI，反复运行下列端到端场景，直到 **Autonomous Agent 在 zhipin.com 上为每个 JD 拿到 3 个"含离线简历 + 含联系方式"的候选人**，并且这些数据全部上传到主程序、在工作台看板里可见、沟通记录在候选人沟通界面可查。
+**Goal:** 让 Codex 通过 chrome-devtools MCP 模拟 human 的方式，驱动 Recruit Agent 桌面主程序的 UI，反复运行下列端到端场景，直到 **Autonomous Agent 在 zhipin.com 上为每个 JD 拿到 3 个"含离线简历 + 含联系方式"的候选人**，并且这些数据全部上传到主程序、在工作台看板里可见、沟通记录在投递记录沟通界面可查。
 
 **Codex 角色：** Codex 是测试驱动 + 修复驱动 + 假装 human 的"上帝视角运营者"——
 - 用 chrome-devtools MCP 操作 desktop UI（点击悬浮球、创建 goal、批准/拒绝、查看候选人卡片）。
@@ -28,7 +28,7 @@
 | 等级 | 内容 | 完成判据 |
 |------|------|---------|
 | P0 | T1 + T2 + T3 + T4 + T5 全部通过 **且** §0.6 核心链路 CRUD 完整性达标 | 主程序工作台至少 1 个 JD 下能看到 3 个完整候选人（含离线简历附件 + 联系方式 + 至少 1 条沟通记录），且 §0.6.1 表中每个链路在 UI 上都能完成创建 / 修改 / 删除 |
-| P1 | T6 工作台侧边栏功能回归通过 | 候选人跟进 / 状态流转 / 详情抽屉全部可点可改 |
+| P1 | T6 工作台侧边栏功能回归通过 | 投递记录跟进 / 状态流转 / 详情抽屉全部可点可改 |
 
 ### 0.2 强约束（Codex 不得自行发挥）
 
@@ -434,32 +434,32 @@ Codex 操作 desktop UI 时必须遵循：
 
 ### T5: 沟通记录留痕
 
-**场景：** Agent 在尝试索要离线简历 / 联系方式时，给候选人的"消息草稿"必须落到候选人沟通界面（即使本测试阶段不真发）。
+**场景：** Agent 在尝试索要离线简历 / 联系方式时，给某条投递记录生成的"消息草稿"必须落到投递记录沟通界面（即使本测试阶段不真发）。
 
 **操作：**
-- [ ] T3 通过后，Codex 打开 3 个完整候选人的沟通界面。
+- [ ] T3 通过后，Codex 打开 3 条完整投递记录的沟通界面。
 
 **通过判据：**
-- [ ] 每个候选人沟通界面至少有 2 条 outbound 消息草稿（一条索要离线简历、一条索要联系方式）。
+- [ ] 每个投递记录沟通界面至少有 2 条 outbound 消息草稿（一条索要离线简历、一条索要联系方式）。
 - [ ] 草稿状态明确标 `draft` 或 `not_sent`，不与"已发送"混淆。
 
 **失败排查顺序：**
 1. Agent 工具签名里是不是把"发送消息"和"留草稿"做成了同一个 tool——必须分开，且草稿走 `application_threads` / `candidate_thread` 写入。
-2. 候选人沟通界面是不是只读了 inbound——补 outbound 渲染。
+2. 投递记录沟通界面是不是只读了 inbound——补 outbound 渲染。
 
-### T6: 工作台侧边栏候选人跟进 / 流转回归（P1）
+### T6: 工作台侧边栏投递记录跟进 / 流转回归（P1）
 
 **场景：** T3 通过后，验证工作台左侧导航与候选人看板核心功能未被悬浮球改造破坏。
 
 **操作 + 通过判据：**
 - [ ] 点击 Sidebar `home` → DashboardView 正常加载，今日待办区域显示 T3 产生的候选人数量徽章。
-- [ ] 点击 Sidebar `candidates` → 三个子 tab（候选人漏斗 / 候选人跟进 / JD 管理）都能切换，且每个 tab 有真实数据。
-- [ ] 在候选人漏斗里把 1 个候选人手动状态流转到下一阶段（如 `screening → interview`）：
+- [ ] 点击 Sidebar `candidates` → 三个子 tab（投递记录漏斗 / 投递记录跟进 / JD 管理）都能切换，且每个 tab 有真实数据。
+- [ ] 在投递记录漏斗里把 1 条投递记录手动状态流转到下一阶段（如 `screening → interview`）：
   - 状态变更立即在 UI 反映。
   - backend 中对应 `application` 状态字段更新。
   - 状态机历史 / 时间线追加一条 manual transition 事件。
 - [ ] 在候选人详情抽屉里编辑备注 / 添加 tag，刷新页面后仍存在。
-- [ ] 候选人跟进 tab 显示需要 human 跟进的候选人列表（基于 §2 的工作流，节点 D / F 等待审批的候选人应该出现在这里）。
+- [ ] 投递记录跟进 tab 显示需要 human 跟进的投递记录列表（基于 §2 的工作流，节点 D / F 等待审批的投递记录应该出现在这里）。
 - [ ] 点击 Sidebar `settings` → SettingsView 完整加载；LLM provider / MCP server 配置未丢失。
 - [ ] 悬浮球在以上每个页面都可见、可拖拽、状态指示正确（idle / running / waiting_human）。
 
@@ -506,7 +506,7 @@ for round_no in 1..N:
 - [ ] T2 增量同步无重复 row。
 - [ ] T3 至少 1 个 JD 下有 3 个完整候选人（学历本科+、年龄 30-35、score ≥ 60、含离线简历 + 联系方式）。
 - [ ] T4 候选人时间线 5 节点完整。
-- [ ] T5 每个候选人沟通界面 ≥ 2 条 outbound 草稿。
+- [ ] T5 每个投递记录沟通界面 ≥ 2 条 outbound 草稿。
 - [ ] T6 工作台 home / candidates / settings 三 tab + 状态流转 + 详情编辑全部可用，悬浮球状态指示正确。
 - [ ] `.codex/e2e-runs/round-{最终轮}/result.json` 全绿。
 - [ ] `.codex/e2e-runs/round-{最终轮}/boundary-check.txt` 经 §0.5.3 命令产出后**为空**（除文档与 fixture 外没有 zhipin/boss 字样）。

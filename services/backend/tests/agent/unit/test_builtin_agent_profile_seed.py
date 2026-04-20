@@ -96,4 +96,4 @@ def test_seed_builtin_profiles_backfills_autonomous_goal_template(tmp_path: Path
         goal_template = str((profile.prompt_config or {}).get("goal_template") or "")
         assert "定期同步当前仍处于活跃招聘中的 JD" in goal_template
         assert "围绕活跃 JD 主动探索多种可达的候选人发现路径" in goal_template
-        assert "把 JD、候选人事实、评分结果、沟通状态、阻塞原因和下一步动作写入系统" in goal_template
+        assert "把 JD、投递记录事实、评分结果、沟通状态、阻塞原因和下一步动作写入系统" in goal_template

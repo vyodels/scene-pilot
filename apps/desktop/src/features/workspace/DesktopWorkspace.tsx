@@ -75,7 +75,7 @@ const emptySummary: DashboardSummary = {
 function funnelStageDefinitions(copy: (en: string, zh: string) => string): Array<{ label: string; phases: string[] }> {
   return [
     { label: copy("Discovery & AI screening", "发现与 AI 在线评估"), phases: ["A"] },
-    { label: copy("Outreach", "发起沟通与建立对话"), phases: ["B"] },
+    { label: copy("Application follow-up", "投递记录跟进与建立对话"), phases: ["B"] },
     { label: copy("Resume & evaluation", "获取简历与评估"), phases: ["C", "D", "E"] },
     { label: copy("Contact acquired", "获取联系方式"), phases: ["F"] },
     { label: copy("Interview & outcome", "面试与结果"), phases: ["G", "H"] },
@@ -365,7 +365,7 @@ function JdWorkspaceSurface({
                         {label} · {count}
                       </StatusBadge>
                     )) : (
-                      <StatusBadge tone="neutral">{copy("No candidate yet", "暂无候选人")}</StatusBadge>
+                      <StatusBadge tone="neutral">{copy("No application yet", "暂无投递记录")}</StatusBadge>
                     )}
                   </div>
                 </div>
@@ -495,11 +495,11 @@ export function DesktopWorkspace(): JSX.Element {
         ),
       },
       candidates: {
-        eyebrow: copy("Candidate pipeline", "候选人漏斗"),
-        title: copy("Candidates", "候选人"),
+        eyebrow: copy("Application funnel", "投递记录漏斗"),
+        title: copy("Applications", "投递记录"),
         description: copy(
-          "Review, triage, and progress active candidates through the hiring workflow.",
-          "在招聘工作流中审阅、分流并推进活跃候选人。",
+          "Review candidate materials, triage incoming signals, and progress active application records through the hiring workflow.",
+          "审阅候选资料、分流新信号，并在招聘工作流中推进活跃投递记录。",
         ),
       },
       settings: {
@@ -532,12 +532,12 @@ export function DesktopWorkspace(): JSX.Element {
     () => [
       {
         key: "funnel",
-        label: copy("Candidate funnel", "候选人漏斗"),
+        label: copy("Application funnel", "投递记录漏斗"),
         count: candidateKanbanModels.length,
       },
       {
         key: "status",
-        label: copy("Candidate follow-up", "候选人跟进"),
+        label: copy("Application follow-up", "投递记录跟进"),
         count: candidateKanbanModels.filter((item) => {
           const node = item.currentNode;
           if (!node || node.uiConfig?.showInKanban === false || node.isTransient) {

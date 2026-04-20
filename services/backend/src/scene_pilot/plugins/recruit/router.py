@@ -25,31 +25,31 @@ class ReleaseCandidateRequest(BaseModel):
 def build_router(session_factory: sessionmaker[Session]) -> APIRouter:
     router = APIRouter(prefix="/api/recruit", tags=["recruit"])
 
-    @router.post("/candidates/{candidate_person_id}/lock")
-    def lock_candidate(candidate_person_id: str, payload: LockCandidateRequest) -> dict[str, Any]:
+    @router.post("/applications/{application_id}/lock")
+    def lock_candidate_application(application_id: str, payload: LockCandidateRequest) -> dict[str, Any]:
         expires_at = None
         if payload.expires_in_seconds is not None:
             expires_at = datetime.now(UTC) + timedelta(seconds=payload.expires_in_seconds)
         return take_over_candidate(
             session_factory,
-            candidate_person_id=candidate_person_id,
+            application_id=application_id,
             locked_by=payload.locked_by,
             reason=payload.reason,
             expires_at=expires_at,
         )
 
-    @router.post("/candidates/{candidate_person_id}/release")
-    def release_locked_candidate(candidate_person_id: str, payload: ReleaseCandidateRequest) -> dict[str, Any]:
+    @router.post("/applications/{application_id}/release")
+    def release_locked_candidate_application(application_id: str, payload: ReleaseCandidateRequest) -> dict[str, Any]:
         return release_candidate(
             session_factory,
-            candidate_person_id=candidate_person_id,
+            application_id=application_id,
             released_by=payload.released_by,
             handover_note=payload.handover_note,
             handover_next_hint=payload.handover_next_hint,
         )
 
-    @router.get("/candidates/locks")
-    def list_candidate_locks() -> list[dict[str, Any]]:
+    @router.get("/applications/locks")
+    def list_application_locks() -> list[dict[str, Any]]:
         return list_locked_candidates(session_factory)
 
     return router

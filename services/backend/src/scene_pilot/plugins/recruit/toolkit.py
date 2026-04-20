@@ -35,22 +35,29 @@ _UNSET = object()
 def take_over_candidate(
     session_factory: sessionmaker[Session],
     *,
-    candidate_person_id: str,
+    application_id: str,
     locked_by: str,
     reason: str | None = None,
     expires_at: datetime | None = None,
 ) -> dict[str, Any]:
     with session_factory() as session:
-        lock = _active_lock(session, candidate_person_id)
+        application = _resolve_application(session, application_id=application_id)
+        candidate = CandidateRepository(session).get_by_storage_id(application.person_id)
+        if candidate is None:
+            raise KeyError(f"candidate person for application {application.candidate_application_id} not found")
+        lock = _active_lock(session, application.candidate_application_id)
         if lock is None:
             lock = CandidateAutonomousLock(
-                candidate_person_id=candidate_person_id,
+                application_id=application.candidate_application_id,
+                candidate_person_id=candidate.candidate_person_id,
                 locked_by=locked_by,
                 reason=reason,
                 expires_at=expires_at,
             )
             session.add(lock)
         else:
+            lock.application_id = application.candidate_application_id
+            lock.candidate_person_id = candidate.candidate_person_id
             lock.locked_by = locked_by
             lock.reason = reason
             lock.expires_at = expires_at
@@ -64,15 +71,15 @@ def take_over_candidate(
 def release_candidate(
     session_factory: sessionmaker[Session],
     *,
-    candidate_person_id: str,
+    application_id: str,
     released_by: str,
     handover_note: str | None = None,
     handover_next_hint: str | None = None,
 ) -> dict[str, Any]:
     with session_factory() as session:
-        lock = _active_lock(session, candidate_person_id)
+        lock = _active_lock(session, application_id)
         if lock is None:
-            raise KeyError(f"candidate {candidate_person_id} is not locked")
+            raise KeyError(f"candidate application {application_id} is not locked")
         lock.released_at = utcnow()
         lock.released_by = released_by
         if handover_note is not None:
@@ -929,11 +936,11 @@ def request_human_approval(
     }
 
 
-def _active_lock(session: Session, candidate_person_id: str) -> CandidateAutonomousLock | None:
+def _active_lock(session: Session, application_id: str) -> CandidateAutonomousLock | None:
     stmt = (
         select(CandidateAutonomousLock)
         .where(
-            CandidateAutonomousLock.candidate_person_id == candidate_person_id,
+            CandidateAutonomousLock.application_id == application_id,
             CandidateAutonomousLock.released_at.is_(None),
         )
         .order_by(CandidateAutonomousLock.locked_at.desc(), CandidateAutonomousLock.id.desc())
@@ -951,6 +958,7 @@ def _not_expired(lock: CandidateAutonomousLock) -> bool:
 def _serialize_lock(lock: CandidateAutonomousLock) -> dict[str, Any]:
     return {
         "id": lock.id,
+        "application_id": lock.application_id,
         "candidate_person_id": lock.candidate_person_id,
         "locked_at": lock.locked_at,
         "locked_by": lock.locked_by,

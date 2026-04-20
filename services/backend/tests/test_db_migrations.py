@@ -153,6 +153,152 @@ def test_run_migrations_adds_job_description_detail_columns_for_existing_schema(
         } <= job_columns
 
 
+def test_run_migrations_aligns_candidate_lock_scope_for_existing_schema(tmp_path):
+    engine = _build_engine(tmp_path)
+
+    with engine.begin() as connection:
+        ensure_schema_migrations_table(connection)
+        connection.execute(
+            text(
+                """
+                CREATE TABLE candidate_persons (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    candidate_person_id TEXT NOT NULL UNIQUE,
+                    name TEXT NOT NULL,
+                    platform TEXT NOT NULL DEFAULT 'site',
+                    platform_candidate_id TEXT,
+                    contact_info TEXT NOT NULL DEFAULT '{}',
+                    resume_path TEXT,
+                    online_resume_text TEXT,
+                    created_at BIGINT NOT NULL,
+                    updated_at BIGINT NOT NULL
+                )
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                CREATE TABLE candidate_applications (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    candidate_application_id TEXT NOT NULL UNIQUE,
+                    person_id TEXT NOT NULL,
+                    job_description_id TEXT,
+                    platform TEXT NOT NULL DEFAULT 'site',
+                    source_platform TEXT NOT NULL DEFAULT 'site',
+                    platform_application_id TEXT,
+                    source_platform_candidate_person_id TEXT,
+                    application_window TEXT NOT NULL,
+                    current_status TEXT NOT NULL DEFAULT 'discovered',
+                    current_stage_key TEXT,
+                    deepest_milestone TEXT,
+                    state_snapshot TEXT NOT NULL DEFAULT '{}',
+                    contact_snapshot TEXT NOT NULL DEFAULT '{}',
+                    resume_snapshot TEXT NOT NULL DEFAULT '{}',
+                    ai_scores TEXT NOT NULL DEFAULT '{}',
+                    ai_reasoning TEXT,
+                    cooldown_until BIGINT,
+                    last_contacted_at BIGINT,
+                    active_assessment_summary TEXT NOT NULL DEFAULT '{}',
+                    application_metadata TEXT NOT NULL DEFAULT '{}',
+                    created_at BIGINT NOT NULL,
+                    updated_at BIGINT NOT NULL
+                )
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                CREATE TABLE candidate_autonomous_locks (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    candidate_person_id TEXT NOT NULL,
+                    locked_at BIGINT NOT NULL,
+                    locked_by TEXT NOT NULL,
+                    reason TEXT,
+                    expires_at BIGINT,
+                    released_at BIGINT,
+                    released_by TEXT,
+                    handover_note TEXT,
+                    handover_next_hint TEXT,
+                    created_at BIGINT NOT NULL,
+                    updated_at BIGINT NOT NULL
+                )
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                INSERT INTO candidate_persons (
+                    id, candidate_person_id, name, platform, platform_candidate_id, contact_info, created_at, updated_at
+                ) VALUES (
+                    'cand-storage-1', 'cand-biz-1', 'Alice', 'site', NULL, '{}', 1, 1
+                )
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                INSERT INTO candidate_applications (
+                    id, candidate_application_id, person_id, job_description_id, platform, source_platform,
+                    application_window, current_status, state_snapshot, contact_snapshot, resume_snapshot, ai_scores,
+                    active_assessment_summary, application_metadata, created_at, updated_at
+                ) VALUES (
+                    'app-storage-1', 'app-biz-1', 'cand-storage-1', NULL, 'site', 'site',
+                    'cand-biz-1::job-1::202604', 'discovered', '{}', '{}', '{}', '{}', '{}', '{}', 1, 1
+                )
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                INSERT INTO candidate_autonomous_locks (
+                    id, candidate_person_id, locked_at, locked_by, reason, expires_at, released_at, released_by,
+                    handover_note, handover_next_hint, created_at, updated_at
+                ) VALUES (
+                    'lock-1', 'cand-biz-1', 1, 'human-a', 'manual', NULL, NULL, NULL, NULL, NULL, 1, 1
+                )
+                """
+            )
+        )
+        for version in range(1, 26):
+            connection.execute(
+                text(
+                    f"""
+                    INSERT INTO {SCHEMA_MIGRATIONS_TABLE} (version, name, applied_at)
+                    VALUES (:version, :name, :applied_at)
+                    """
+                ),
+                {
+                    "version": version,
+                    "name": f"migration-{version}",
+                    "applied_at": "2026-04-20T00:00:00+00:00",
+                },
+            )
+
+    run_migrations(engine)
+
+    with engine.connect() as connection:
+        lock_columns = {
+            row[1]
+            for row in connection.execute(text("PRAGMA table_info(candidate_autonomous_locks)")).fetchall()
+        }
+        indexes = {
+            row[0]
+            for row in connection.execute(text("SELECT name FROM sqlite_master WHERE type='index'")).fetchall()
+        }
+        migrated_lock = connection.execute(
+            text("SELECT application_id, candidate_person_id FROM candidate_autonomous_locks WHERE id = 'lock-1'")
+        ).fetchone()
+        assert current_schema_version(connection) == CURRENT_SCHEMA_VERSION
+        assert "application_id" in lock_columns
+        assert "ix_candidate_autonomous_locks_application_id" in indexes
+        assert migrated_lock == ("app-biz-1", "cand-biz-1")
+
+
 def test_run_migrations_aligns_mcp_server_columns_for_existing_schema(tmp_path):
     engine = _build_engine(tmp_path)
 

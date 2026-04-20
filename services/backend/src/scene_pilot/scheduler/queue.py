@@ -59,7 +59,7 @@ def _deserialize_task(task_id: str, task_type: str, priority: int, attempts: int
         priority=priority,
         payload=dict(envelope.get("payload", {})),
         platform=str(envelope.get("platform", "site")),
-        application_id=envelope.get("application_id") or envelope.get("candidate_id"),
+        application_id=envelope.get("application_id"),
         candidate_id=envelope.get("candidate_id"),
         due_at=datetime.fromisoformat(due_at) if isinstance(due_at, str) and due_at else None,
         created_at=datetime.fromisoformat(created_at) if isinstance(created_at, str) and created_at else datetime.now(timezone.utc),

@@ -69,7 +69,7 @@ def test_autonomous_memory_backed_continuity_across_turns(tmp_path: Path) -> Non
             run_id="run-memory",
             agent_kind="autonomous",
             status="queued",
-            candidate_id=candidate.candidate_person_id,
+            person_id=candidate.candidate_person_id,
         )
         session.add(run)
         session.commit()

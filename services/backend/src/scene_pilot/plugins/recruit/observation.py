@@ -14,7 +14,7 @@ def build_observation_enricher(
     session_factory: sessionmaker[Session],
 ) -> Callable[[Observation], Awaitable[dict[str, object]]]:
     async def _enricher(observation: Observation) -> dict[str, object]:
-        if observation.scope_kind != "candidate" or not observation.scope_ref:
+        if observation.scope_kind != "application" or not observation.scope_ref:
             return {"human_locked": False, "lock_meta": None, "recent_handover": None}
         with session_factory() as session:
             lock = _active_lock(session, observation.scope_ref)
@@ -28,11 +28,11 @@ def build_observation_enricher(
     return _enricher
 
 
-def _recent_handover(session: Session, candidate_person_id: str) -> dict[str, object] | None:
+def _recent_handover(session: Session, application_id: str) -> dict[str, object] | None:
     stmt = (
         select(CandidateAutonomousLock)
         .where(
-            CandidateAutonomousLock.candidate_person_id == candidate_person_id,
+            CandidateAutonomousLock.application_id == application_id,
             CandidateAutonomousLock.released_at.is_not(None),
         )
         .order_by(CandidateAutonomousLock.released_at.desc(), CandidateAutonomousLock.id.desc())

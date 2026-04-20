@@ -21,12 +21,16 @@ class AgentControlService:
         payload: dict[str, Any] | None = None,
         metadata: dict[str, Any] | None = None,
         priority: int = 100,
+        application_id: str | None = None,
+        person_id: str | None = None,
         candidate_id: str | None = None,
     ) -> str:
         resolved_task_id = task_id or uuid4().hex
         envelope = _build_task_envelope(
             payload=payload,
             metadata=metadata,
+            application_id=application_id,
+            person_id=person_id,
             candidate_id=candidate_id,
         )
         with self.session_factory() as session:
@@ -75,6 +79,8 @@ class AgentControlService:
                     payload=_build_task_envelope(
                         payload=resume_task.get("payload"),
                         metadata=metadata,
+                        application_id=resume_task.get("application_id"),
+                        person_id=resume_task.get("person_id"),
                         candidate_id=resume_task.get("candidate_id"),
                     ),
                 )
@@ -97,6 +103,8 @@ def _build_task_envelope(
     *,
     payload: dict[str, Any] | object | None,
     metadata: dict[str, Any] | None,
+    application_id: str | None,
+    person_id: str | None,
     candidate_id: str | None,
 ) -> dict[str, Any]:
     raw_payload = dict(payload or {}) if isinstance(payload, dict) else {}
@@ -104,16 +112,33 @@ def _build_task_envelope(
         **(dict(raw_payload.get("metadata") or {}) if isinstance(raw_payload.get("metadata"), dict) else {}),
         **dict(metadata or {}),
     }
+    resolved_application_id = _resolve_subject_id(application_id or raw_payload.get("application_id") or raw_payload.get("applicationId"))
+    resolved_person_id = _resolve_subject_id(
+        person_id
+        or raw_payload.get("person_id")
+        or raw_payload.get("personId")
+        or candidate_id
+        or raw_payload.get("candidate_id")
+        or raw_payload.get("candidateId")
+    )
     if any(key in raw_payload for key in ("run_pk", "run_id")):
         envelope = dict(raw_payload)
         if merged_metadata:
             envelope["metadata"] = merged_metadata
-        if candidate_id is not None and not envelope.get("candidate_id"):
-            envelope["candidate_id"] = candidate_id
+        if resolved_application_id is not None and not envelope.get("application_id"):
+            envelope["application_id"] = resolved_application_id
+        if resolved_person_id is not None and not envelope.get("person_id"):
+            envelope["person_id"] = resolved_person_id
         return envelope
 
     return {
         "payload": raw_payload,
-        "candidate_id": candidate_id,
+        "application_id": resolved_application_id,
+        "person_id": resolved_person_id,
         "metadata": merged_metadata,
     }
+
+
+def _resolve_subject_id(value: object | None) -> str | None:
+    text = str(value or "").strip()
+    return text or None

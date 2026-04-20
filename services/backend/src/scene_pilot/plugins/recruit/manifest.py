@@ -64,44 +64,44 @@ class RecruitPluginManifest:
         tools = [
             _tool(
                 name="take_over_candidate",
-                description="Take over a candidate from autonomous handling.",
+                description="Take over one candidate application follow-up from Autonomous handling.",
                 parameters={
                     "type": "object",
                     "properties": {
-                        "candidate_person_id": {"type": "string"},
+                        "application_id": {"type": "string"},
                         "locked_by": {"type": "string"},
                         "reason": {"type": "string"},
                         "expires_at": {"type": ["string", "null"], "description": "Optional ISO-8601 timestamp."},
                     },
-                    "required": ["candidate_person_id", "locked_by"],
+                    "required": ["application_id", "locked_by"],
                     "additionalProperties": False,
                 },
                 handler=lambda arguments: take_over_candidate(self.session_factory, **arguments),
-                resource_target_kind="candidate",
+                resource_target_kind="application",
             ),
             _tool(
                 name="release_candidate",
-                description="Release a candidate back to autonomous handling.",
+                description="Release one candidate application follow-up back to Autonomous handling.",
                 parameters={
                     "type": "object",
                     "properties": {
-                        "candidate_person_id": {"type": "string"},
+                        "application_id": {"type": "string"},
                         "released_by": {"type": "string"},
                         "handover_note": {"type": "string"},
                         "handover_next_hint": {"type": "string"},
                     },
-                    "required": ["candidate_person_id", "released_by"],
+                    "required": ["application_id", "released_by"],
                     "additionalProperties": False,
                 },
                 handler=lambda arguments: release_candidate(self.session_factory, **arguments),
-                resource_target_kind="candidate",
+                resource_target_kind="application",
             ),
             _tool(
                 name="list_locked_candidates",
-                description="List candidates currently locked for human takeover.",
+                description="List candidate applications currently locked for human takeover.",
                 parameters={"type": "object", "properties": {}, "additionalProperties": False},
                 handler=lambda _arguments: list_locked_candidates(self.session_factory),
-                resource_target_kind="candidate",
+                resource_target_kind="application",
             ),
             _tool(
                 name="list_job_descriptions",
@@ -163,8 +163,8 @@ class RecruitPluginManifest:
             _tool(
                 name="list_candidates",
                 description=(
-                    "List candidates already written into the local recruiting workspace, optionally filtered by platform, "
-                    "job description, or application status."
+                    "List candidate records already written into the local recruiting workspace, optionally filtered by platform, "
+                    "job description, or application status so application follow-up can be continued from the right scope."
                 ),
                 parameters={
                     "type": "object",
@@ -184,8 +184,8 @@ class RecruitPluginManifest:
             _tool(
                 name="upsert_candidate",
                 description=(
-                    "Create or update a candidate, optionally link the candidate to a job description, and persist source-side "
-                    "signals such as viewed/communicated/interested counters for downstream recruiting decisions."
+                    "Create or update a candidate record, optionally link it to a job description, and persist application-scoped "
+                    "follow-up signals such as viewed/communicated/interested counters for downstream recruiting decisions."
                 ),
                 parameters={
                     "type": "object",
@@ -233,7 +233,7 @@ class RecruitPluginManifest:
             ),
             _tool(
                 name="archive_candidate",
-                description="Archive a candidate application by transitioning it to archived status.",
+                description="Archive an application record by transitioning it to archived status.",
                 parameters={
                     "type": "object",
                     "properties": {
@@ -250,7 +250,7 @@ class RecruitPluginManifest:
             ),
             _tool(
                 name="list_candidate_threads",
-                description="List isolated candidate application threads so each candidate keeps separate communication context.",
+                description="List isolated application follow-up threads so each application record keeps separate communication context.",
                 parameters={
                     "type": "object",
                     "properties": {
@@ -268,7 +268,7 @@ class RecruitPluginManifest:
             ),
             _tool(
                 name="get_candidate_thread",
-                description="Fetch one isolated candidate application thread by application or candidate+job identity.",
+                description="Fetch one isolated application follow-up thread by application or candidate+job identity.",
                 parameters={
                     "type": "object",
                     "properties": {
@@ -284,7 +284,7 @@ class RecruitPluginManifest:
             ),
             _tool(
                 name="score_candidate",
-                description="Persist AI scoring for a candidate application, including evidence and rubric dimensions.",
+                description="Persist AI scoring for an application record, including evidence and rubric dimensions.",
                 parameters={
                     "type": "object",
                     "properties": {
@@ -312,7 +312,7 @@ class RecruitPluginManifest:
             ),
             _tool(
                 name="create_candidate_scorecard",
-                description="Create a scorecard for a candidate application using structured recruiting rubric fields.",
+                description="Create a scorecard for an application record using structured recruiting rubric fields.",
                 parameters={
                     "type": "object",
                     "properties": {
@@ -340,7 +340,7 @@ class RecruitPluginManifest:
             ),
             _tool(
                 name="create_candidate_review_decision",
-                description="Create a structured review decision for a candidate application after scoring or human review.",
+                description="Create a structured review decision for an application record after scoring or human review.",
                 parameters={
                     "type": "object",
                     "properties": {
@@ -364,7 +364,7 @@ class RecruitPluginManifest:
             ),
             _tool(
                 name="record_outbound_message",
-                description="Write one outbound message draft or sent record into the candidate's isolated communication thread.",
+                description="Write one outbound message draft or sent record into an application's isolated follow-up thread.",
                 parameters={
                     "type": "object",
                     "properties": {
@@ -386,7 +386,7 @@ class RecruitPluginManifest:
             ),
             _tool(
                 name="attach_resume_artifact",
-                description="Attach an offline resume or related artifact to a candidate application and refresh contact snapshots.",
+                description="Attach an offline resume or related artifact to an application record and refresh contact snapshots.",
                 parameters={
                     "type": "object",
                     "properties": {
@@ -422,7 +422,7 @@ class RecruitPluginManifest:
             ),
             _tool(
                 name="transition_application",
-                description="Move a candidate application through the recruiting state machine with stage, note, and channel context.",
+                description="Move an application record through the recruiting state machine with stage, note, and channel context.",
                 parameters={
                     "type": "object",
                     "properties": {
@@ -452,7 +452,7 @@ class RecruitPluginManifest:
             ),
             _tool(
                 name="create_candidate_sync_record",
-                description="Persist downstream sync tracking for a candidate application, such as talent pool or CRM sync state.",
+                description="Persist downstream sync tracking for an application record, such as talent pool or CRM sync state.",
                 parameters={
                     "type": "object",
                     "properties": {
@@ -474,7 +474,7 @@ class RecruitPluginManifest:
             ),
             _tool(
                 name="get_goal_progress",
-                description="Summarize candidate progress for one JD, including by-status counts and how many already have contact, resume, or AI score.",
+                description="Summarize application progress for one JD, including by-status counts and how many records already have contact, resume, or AI score.",
                 parameters={
                     "type": "object",
                     "properties": {"job_description_id": {"type": "string"}},
@@ -489,7 +489,7 @@ class RecruitPluginManifest:
                 name="request_human_approval",
                 description=(
                     "Pause the Autonomous run and request human approval before continuing a high-risk recruiting action. "
-                    "Use this before contacting candidates for sensitive follow-up such as asking for resume or contact details."
+                    "Use this before continuing a sensitive application follow-up action such as asking for resume or contact details."
                 ),
                 parameters={
                     "type": "object",

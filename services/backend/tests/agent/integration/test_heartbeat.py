@@ -44,7 +44,7 @@ def test_heartbeat_claims_task_and_runs_autonomous_turn(tmp_path: Path) -> None:
             run_id="run-1",
             agent_kind="autonomous",
             status="queued",
-            candidate_id=candidate.candidate_person_id,
+            person_id=candidate.candidate_person_id,
         )
         session.add(run)
         session.commit()

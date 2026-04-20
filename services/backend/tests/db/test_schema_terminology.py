@@ -24,6 +24,12 @@ def test_schema_uses_turn_terminology(tmp_path: Path) -> None:
     run_columns = {column["name"] for column in inspector.get_columns("agent_runs")}
     assert "turns_count" in run_columns
     assert {name for name in run_columns if name.endswith("_count")} == {"turns_count"}
+    assert {"person_id", "application_id"} <= run_columns
+    assert "candidate_id" not in run_columns
+
+    work_item_columns = {column["name"] for column in inspector.get_columns("agent_work_items")}
+    assert {"person_id", "application_id"} <= work_item_columns
+    assert "candidate_id" not in work_item_columns
 
     turn_record_columns = {column["name"] for column in inspector.get_columns("agent_turn_records")}
     assert {"turn_id", "run_pk", "seq", "turn_metadata"}.issubset(turn_record_columns)
@@ -31,13 +37,19 @@ def test_schema_uses_turn_terminology(tmp_path: Path) -> None:
 
     runtime_event_columns = {column["name"] for column in inspector.get_columns("agent_runtime_events")}
     assert "turn_id" in runtime_event_columns
+    assert "candidate_id" not in runtime_event_columns
     assert {name for name in runtime_event_columns if name.endswith("_id")} == {
-        "candidate_id",
+        "application_id",
         "conversation_id",
+        "person_id",
         "run_id",
         "session_id",
         "turn_id",
     }
+
+    operator_interaction_columns = {column["name"] for column in inspector.get_columns("operator_interactions")}
+    assert {"person_id", "application_id"} <= operator_interaction_columns
+    assert "candidate_id" not in operator_interaction_columns
 
     approval_columns = {column["name"] for column in inspector.get_columns("approval_items")}
     assert {name for name in approval_columns if name.endswith("_pk")} == {

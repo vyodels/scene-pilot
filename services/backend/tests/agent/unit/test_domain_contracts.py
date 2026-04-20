@@ -26,6 +26,8 @@ def _column_names(model: type) -> set[str]:
 def test_agent_run_contains_runtime_columns() -> None:
     columns = _column_names(AgentRun)
     assert {
+        "person_id",
+        "application_id",
         "run_id",
         "agent_kind",
         "turns_count",
@@ -57,7 +59,7 @@ def test_approval_item_contains_recovery_columns() -> None:
 
 def test_agent_runtime_event_contains_turn_and_conversation_ids() -> None:
     columns = _column_names(AgentRuntimeEvent)
-    assert {"turn_id", "conversation_id", "seq"} <= columns
+    assert {"person_id", "application_id", "turn_id", "conversation_id", "seq"} <= columns
 
 
 def test_memory_tables_have_item_row_columns() -> None:
@@ -97,3 +99,7 @@ def test_new_runtime_tables_are_declared() -> None:
     assert ConversationTurn.__tablename__ == "conversation_turns"
     assert CompactionEvent.__tablename__ == "compaction_events"
     assert CandidateAutonomousLock.__tablename__ == "candidate_autonomous_locks"
+
+
+def test_candidate_autonomous_lock_contains_application_scope_column() -> None:
+    assert {"application_id", "candidate_person_id"} <= _column_names(CandidateAutonomousLock)

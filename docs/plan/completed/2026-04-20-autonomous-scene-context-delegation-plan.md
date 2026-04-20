@@ -1,10 +1,10 @@
 # Autonomous Scene Context Delegation（网页子上下文隔离）实施计划
 
-> Status: active
+> Status: completed
 > Supersedes: docs/plan/draft/2026-04-20-subcontext-closure-and-business-elevation.md
 > Superseded by: -
 > Distilled into: -
-> Last reviewed against code: 2026-04-20
+> Last reviewed against code: 2026-04-21
 > Historical source path: -
 
 > **For agentic workers:** 推荐按本计划逐项实施，保留 checkbox 状态；不要跳过“工具面隔离”和“skill 蒸馏边界”两节。
@@ -109,8 +109,8 @@ scene context 只负责：
 
 ### 6.1 Phase A：新增 SceneContextService
 
-- [ ] 新增 [services/backend/src/scene_pilot/services/scene_context.py](/Users/didi/AgentProjects/scene-pilot/services/backend/src/scene_pilot/services/scene_context.py)
-- [ ] 在该 service 中定义一个通用 scene 请求合同，最小字段包括：
+- [x] 新增 [services/backend/src/scene_pilot/services/scene_context.py](/Users/didi/AgentProjects/scene-pilot/services/backend/src/scene_pilot/services/scene_context.py)
+- [x] 在该 service 中定义一个通用 scene 请求合同，最小字段包括：
   - `instruction`
   - `success_criteria`
   - `output_contract`
@@ -226,7 +226,7 @@ scene context 只负责：
 - [x] 新增 [services/backend/src/scene_pilot/services/scene_context.py](/Users/didi/AgentProjects/scene-pilot/services/backend/src/scene_pilot/services/scene_context.py)
 - [x] 修改 [services/backend/src/scene_pilot/services/container.py](/Users/didi/AgentProjects/scene-pilot/services/backend/src/scene_pilot/services/container.py:88)
 - [x] 修改 [services/backend/src/scene_pilot/runtime/tools.py](/Users/didi/AgentProjects/scene-pilot/services/backend/src/scene_pilot/runtime/tools.py:184)
-- [ ] 轻量修改 [services/backend/src/scene_pilot/agents/autonomous.py](/Users/didi/AgentProjects/scene-pilot/services/backend/src/scene_pilot/agents/autonomous.py:47)
+- [x] 轻量修改 [services/backend/src/scene_pilot/agents/autonomous.py](/Users/didi/AgentProjects/scene-pilot/services/backend/src/scene_pilot/agents/autonomous.py:47)
 - [ ] 可选修改 [services/backend/src/scene_pilot/services/evolution.py](/Users/didi/AgentProjects/scene-pilot/services/backend/src/scene_pilot/services/evolution.py:52)
 
 以下对象本次只复用，不建议大改模型：

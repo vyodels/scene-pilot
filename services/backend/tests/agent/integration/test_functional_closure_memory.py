@@ -35,7 +35,7 @@ def test_functional_closure_memory_service_is_in_autonomous_loop(tmp_path: Path)
         agent_session = AgentSession(agent_profile_id=profile.id)
         session.add(agent_session)
         session.flush()
-        run = AgentRun(session_id=agent_session.id, run_id="run-func-memory", candidate_id=candidate.candidate_person_id)
+        run = AgentRun(session_id=agent_session.id, run_id="run-func-memory", person_id=candidate.candidate_person_id)
         session.add(run)
         session.commit()
 
