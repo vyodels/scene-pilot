@@ -12,6 +12,7 @@ _GOAL_TEXT_SECTION = "goal text"
 _CONSTRAINTS_SECTION = "constraints"
 _SUCCESS_CRITERIA_SECTION = "success criteria"
 _CONTEXT_HINTS_SECTION = "context hints"
+_TRIAL_BUDGET_SECTION = "trial budget"
 
 _SOURCE_SURFACE_MARKERS: dict[str, tuple[str, ...]] = {
     "browser_accessible_recruiting_pages": ("职位列表", "职位详情", "jd", "招聘平台", "招聘页面", "zhipin", "boss直聘", "boss 直聘"),
@@ -58,6 +59,8 @@ def serialize_scene_template(template: dict[str, Any]) -> dict[str, Any]:
         "successCriteria": dict(template.get("success_criteria") or {}),
         "context_hints": dict(template.get("context_hints") or {}),
         "contextHints": dict(template.get("context_hints") or {}),
+        "trial_budget": dict(template.get("trial_budget") or {}),
+        "trialBudget": dict(template.get("trial_budget") or {}),
     }
 
 
@@ -150,6 +153,7 @@ def _parse_scene_template_doc(path: Path) -> dict[str, Any]:
         lines=sections.get(_SUCCESS_CRITERIA_SECTION, []),
     )
     context_hints = _parse_mapping_block(path=path, block_name="Context Hints", lines=sections.get(_CONTEXT_HINTS_SECTION, []))
+    trial_budget = _parse_mapping_block(path=path, block_name="Trial Budget", lines=sections.get(_TRIAL_BUDGET_SECTION, []))
 
     key = str(metadata.get("key") or path.stem).strip()
     goal_kind = str(metadata.get("goal_kind") or key).strip()
@@ -165,6 +169,7 @@ def _parse_scene_template_doc(path: Path) -> dict[str, Any]:
         "constraints": constraints,
         "success_criteria": success_criteria,
         "context_hints": context_hints,
+        "trial_budget": trial_budget,
     }
     if "default_candidate_count_target" in metadata:
         template["default_candidate_count_target"] = metadata["default_candidate_count_target"]

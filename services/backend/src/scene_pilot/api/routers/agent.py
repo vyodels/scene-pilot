@@ -113,6 +113,7 @@ class SceneTemplateRunRequest(BaseModel):
     constraints: dict[str, Any] = Field(default_factory=dict)
     success_criteria: dict[str, Any] = Field(default_factory=dict)
     context_hints: dict[str, Any] = Field(default_factory=dict)
+    trial_budget: dict[str, Any] = Field(default_factory=dict)
 
 class AssistantConversationCreateRequest(BaseModel):
     user_id: str = "desktop-user"
@@ -346,6 +347,10 @@ def build_router(container: AppContainer) -> APIRouter:
             **dict(payload.context_hints or {}),
             "scene_template_key": template_key,
         }
+        merged_trial_budget = {
+            **dict(template.get("trial_budget") or {}),
+            **dict(payload.trial_budget or {}),
+        }
         action_payload = AutonomousGoalCreateRequest(
             title=goal_title,
             goal_text=goal_text,
@@ -362,6 +367,7 @@ def build_router(container: AppContainer) -> APIRouter:
             constraints=merged_constraints,
             success_criteria=merged_success_criteria,
             context_hints=merged_context_hints,
+            trial_budget=merged_trial_budget,
         )
         return create_autonomous_goal(action_payload)
 
