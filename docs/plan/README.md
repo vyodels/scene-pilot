@@ -26,6 +26,13 @@ When documents conflict, use this order:
 Legacy plan content has been migrated into `docs/plan/`.
 New entrypoints should prefer `docs/plan/`; old `docs/superpowers/plans/` paths are historical only and should no longer be used as entrypoints.
 
+## Project asset note
+
+Plans should use the same project wording:
+
+- `.recruit-agent/` is the unified root for repo-level Agent assets, including `prompts/`, `skills/`, and plugin assets/config/metadata
+- `services/backend/src/scene_pilot/plugins/**` refers to backend thin runtime shell / mount code that loads and mounts those plugin assets; it is not the canonical home for project-level plugin assets
+
 ## Current index
 
 ### active

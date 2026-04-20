@@ -19,4 +19,6 @@
 
 涉及 Agent 产品层设计原则、主能力暴露方式与业务口径时，应同时参考 [`docs/specs/2026-04-20-agent-product-design-principles.md`](./docs/specs/2026-04-20-agent-product-design-principles.md)。
 
+涉及招聘业务 skill 蒸馏、业务语义 skill 设计、Python 代码级 skill 资产，或项目内 skill-creator 标准接入时，必须阅读 [`docs/specs/2026-04-20-recruiting-skill-distillation-standard.md`](./docs/specs/2026-04-20-recruiting-skill-distillation-standard.md)。
+
 本文件只提供阅读顺序与入口索引；长期规则以 `docs/specs/` 中对应规范为准，不在 `AGENTS.md` 重复展开正文。

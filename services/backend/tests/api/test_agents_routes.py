@@ -245,6 +245,12 @@ def test_agents_routes_expose_builtin_profiles_and_runtime_collections(tmp_path:
         autonomous_workspace = client.get("/api/agents/autonomous/workspace")
         assert autonomous_workspace.status_code == 200
         assert autonomous_workspace.json()["agent"]["kind"] == "autonomous"
+        tool_names = {item["name"] for item in autonomous_workspace.json()["tools"]}
+        assert "list_candidates" in tool_names
+        assert "upsert_candidate" in tool_names
+        assert "request_human_approval" in tool_names
+        recruit_tool = next(item for item in autonomous_workspace.json()["tools"] if item["name"] == "list_candidates")
+        assert recruit_tool["serverName"] == "Recruit Plugin"
         assert autonomous_workspace.json()["agent"]["memory_policy"]["agent_global_memory"]["schema"] == [
             "facts",
             "decisions",
@@ -445,12 +451,11 @@ def test_autonomy_loop_processes_goal_without_manual_run_once(tmp_path: Path) ->
     client.__enter__()
     try:
         container = app.state.container
-        assert app.state.autonomy_loop.is_running() is False
-
-        enabled = client.patch("/api/settings", json={"autonomyEnabled": True})
-        assert enabled.status_code == 200
-        assert enabled.json()["autonomyEnabled"] is True
         assert app.state.autonomy_loop.is_running() is True
+
+        settings = client.get("/api/settings")
+        assert settings.status_code == 200
+        assert settings.json()["autonomyEnabled"] is False
 
         provider = ScriptedProvider(
             provider_name="scripted",
@@ -483,6 +488,65 @@ def test_autonomy_loop_processes_goal_without_manual_run_once(tmp_path: Path) ->
         goals = client.get("/api/agents/autonomous/goals")
         assert goals.status_code == 200
         assert goals.json()[0]["status"] == "completed"
+    finally:
+        client.__exit__(None, None, None)
+        os.environ.pop("RECRUIT_AGENT_DATA_DIR", None)
+        load_settings.cache_clear()
+
+
+def test_autonomous_goal_with_structured_blocked_result_stays_blocked(tmp_path: Path) -> None:
+    client, app = _build_client(tmp_path)
+    client.__enter__()
+    try:
+        container = app.state.container
+        provider = ScriptedProvider(
+            provider_name="scripted",
+            responses=[
+                LLMResponse(
+                    content=(
+                        '{"status":"blocked","created":0,"updated":0,"skipped":0,"blocked":1,'
+                        '"unfinished_reason":"当前浏览器读取链路异常，无法安全写入 JD 库。"}'
+                    )
+                )
+            ],
+        )
+        container.provider = provider
+        container.kernel.provider = provider
+
+        created = client.post(
+            "/api/agents/autonomous/goals",
+            json={
+                "title": "同步 JD（初始）",
+                "goal_text": "尝试同步全部活跃 JD，并在无法确认页面内容时返回 blocked 结果。",
+                "requested_by": "api-test",
+            },
+        )
+        assert created.status_code == 201
+        run_id = created.json()["runId"]
+
+        tick = client.post("/api/agents/run-once")
+        assert tick.status_code == 200
+        assert tick.json()["status"] == "processed"
+
+        detail = client.get(f"/api/agents/autonomous/runs/{run_id}")
+        assert detail.status_code == 200
+        assert detail.json()["run"]["status"] == "blocked"
+
+        session_factory = app.state.session_factory
+        with session_factory() as session:
+            run = session.query(AgentRun).filter_by(run_id=run_id).one()
+            goal = session.get(GoalSpec, run.goal_spec_id)
+            turn = session.query(AgentTurnRecord).filter_by(run_pk=run.id).one()
+            runtime_events = session.query(AgentRuntimeEvent).filter_by(run_id=run.id).all()
+
+            assert run.status == "blocked"
+            assert run.finished_at is not None
+            assert goal is not None
+            assert goal.status == "blocked"
+            assert turn.status == "failed"
+            assert turn.outcome_kind == "escalate"
+            assert any(event.event_type == "turn.failed" for event in runtime_events)
+            assert all(event.event_type != "turn.completed" for event in runtime_events if event.turn_id == turn.turn_id)
     finally:
         client.__exit__(None, None, None)
         os.environ.pop("RECRUIT_AGENT_DATA_DIR", None)
@@ -803,7 +867,9 @@ def test_scene_template_route_materializes_autonomous_goal(tmp_path: Path) -> No
             goal = session.query(GoalSpec).filter_by(id=payload["goalId"]).one()
             run = session.query(AgentRun).filter_by(run_id=payload["runId"]).one()
             assert goal.goal_kind == "candidate_discovery"
-            assert "zhipin.com" in goal.goal_text
+            assert "普通浏览器" in goal.goal_text
+            assert "招聘平台" in goal.goal_text
+            assert "zhipin.com" not in goal.goal_text
             assert goal.summary == goal.goal_text
             assert goal.constraints["target_entity"] == "candidate"
             assert goal.context_hints["scene_template_key"] == "candidate_discovery"

@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from functools import lru_cache
 import json
-from pathlib import Path
 from typing import Any
 
+from scene_pilot.asset_paths import prompt_path
 from scene_pilot.plugins.host import PluginHost
 from scene_pilot.runtime.models import GoalRef, Message, Observation
 from scene_pilot.runtime.tools import ToolRegistry
@@ -108,11 +108,7 @@ def _task_prompt_key(*, goal_kind: str, target_entity: str) -> str | None:
 
 @lru_cache(maxsize=32)
 def _load_prompt(prompt_key: str) -> str:
-    prompt_path = _prompts_root() / f"{prompt_key}.md"
-    if not prompt_path.exists():
+    asset_path = prompt_path(prompt_key)
+    if not asset_path.exists():
         return ""
-    return prompt_path.read_text(encoding="utf-8").strip()
-
-
-def _prompts_root() -> Path:
-    return Path(__file__).resolve().parent.parent / "prompts"
+    return asset_path.read_text(encoding="utf-8").strip()

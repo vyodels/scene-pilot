@@ -36,6 +36,25 @@ export interface PersonSummaryRecord {
 export interface JobDescriptionSummaryRecord {
   jobDescriptionId?: string | null;
   title: string;
+  companyName?: string | null;
+  department?: string | null;
+  location?: string | null;
+  employmentType?: string | null;
+  headcount?: number | null;
+  salaryMin?: number | null;
+  salaryMax?: number | null;
+  compensationText?: string | null;
+  experienceRequirement?: string | null;
+  educationRequirement?: string | null;
+  summary?: string | null;
+  description?: string | null;
+  requirements?: string | null;
+  benefitTags: string[];
+  detailMetadata: Record<string, unknown>;
+  status?: string | null;
+  source?: string | null;
+  createdAt?: string | number | null;
+  updatedAt?: string | number | null;
 }
 
 export interface MetricSummary {

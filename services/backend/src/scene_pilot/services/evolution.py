@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import json
 from functools import lru_cache
-from pathlib import Path
 import re
 from typing import Any
 
+from scene_pilot.asset_paths import prompt_path
 from sqlalchemy.orm import Session
 
 from scene_pilot.db.base import utcnow
@@ -74,7 +74,7 @@ def distill_skill_contract_from_run(
     *,
     provider: LLMProvider,
     review_payload: dict[str, Any],
-    max_tokens: int = 1800,
+    max_tokens: int = 2600,
 ) -> tuple[dict[str, Any], LLMResponse]:
     prompt = _load_prompt("tasks/skill_distill_from_run")
     if not prompt:
@@ -122,14 +122,10 @@ def _parse_json_object(content: str | None) -> dict[str, Any] | None:
 
 @lru_cache(maxsize=8)
 def _load_prompt(prompt_key: str) -> str:
-    prompt_path = _prompts_root() / f"{prompt_key}.md"
-    if not prompt_path.exists():
+    asset_path = prompt_path(prompt_key)
+    if not asset_path.exists():
         return ""
-    return prompt_path.read_text(encoding="utf-8").strip()
-
-
-def _prompts_root() -> Path:
-    return Path(__file__).resolve().parent.parent / "prompts"
+    return asset_path.read_text(encoding="utf-8").strip()
 
 
 def resolve_promoted_skill_snapshot(payload: dict[str, Any] | None) -> dict[str, object] | None:

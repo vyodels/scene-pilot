@@ -17,7 +17,9 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
     container = AppContainer.build(settings)
     autonomy_loop = AutonomyLoop(
         heartbeat=container.heartbeat,
-        enabled=container.settings.feature_flags.enable_autonomy,
+        # Manual Autonomous runs must always be consumed, even when the
+        # background sourcing loop is disabled in settings.
+        enabled=True,
         health_sweep_enabled=container.settings.feature_flags.enable_skill_health_autonomy,
         health_sweep_interval=float(container.settings.skill_health_autonomy_interval_seconds),
     )
@@ -25,8 +27,7 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
     @asynccontextmanager
     async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         container.autonomous_agent.recover_stale()
-        if autonomy_loop.enabled:
-            await autonomy_loop.start()
+        await autonomy_loop.start()
         try:
             yield
         finally:

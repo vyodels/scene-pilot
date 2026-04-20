@@ -102,7 +102,9 @@
 - 桌面端与后端如果确实共享同一份契约，应优先沉到 `packages/shared`
 
 ### 2. Prompt / Runtime / Tool 边界
-- 面向 LLM 的自然语言行为约束默认放在 `services/backend/src/scene_pilot/prompts/`
+- `.recruit-agent/` 是项目级 Agent 资源统一根目录；`prompts/`、`skills/` 与 `plugins/` 资产/配置/元数据默认都收口到这里
+- 面向 LLM 的自然语言行为约束默认放在仓库级资源目录 `.recruit-agent/prompts/`
+- `services/backend/src/scene_pilot/plugins/**` 只保留 backend 可 import 的薄运行时 shell / mount code，用于读取 `.recruit-agent/plugins/` 资产并挂到共享能力底座
 - 优先通过 prompt、结构化上下文、tool contract、skill 修复能力缺口，而不是往 core runtime 里补业务硬编码
 - 不在 core runtime / agent 主路径里硬编码站点规则、页面词表、选择器或一次性 workflow
 

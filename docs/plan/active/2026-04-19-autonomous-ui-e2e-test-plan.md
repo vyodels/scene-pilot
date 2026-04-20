@@ -95,7 +95,7 @@
 
 #### 0.5.1 Codex **应该**做的事（这是本计划要求的工作量）
 
-- **完整的招聘业务工具包 / plugins**（平台中性，围绕"招聘领域 schema"建模；组织形式建议 `plugins/recruit/*`，给 Agent 提供"可直接调用的完整招聘业务能力集"）。**不是只凑够下面这几个**——凡是招聘全流程所需的业务动作，都应当有一个平台中性的业务工具覆盖它，才能让 Agent 不用为了"这个业务语义在主程序里没入口"而自己造轮子或调用底层原语硬拼。最低基线包含但不限于：
+- **完整的招聘业务工具包 / plugins**（平台中性，围绕"招聘领域 schema"建模；项目级 plugin 资产/配置/元数据统一落在 `.recruit-agent/plugins/recruit/*`，backend 仅在 `services/backend/src/scene_pilot/plugins/recruit/*.py` 保留可 import 的薄运行时 shell / mount code，给 Agent 提供"可直接调用的完整招聘业务能力集"）。**不是只凑够下面这几个**——凡是招聘全流程所需的业务动作，都应当有一个平台中性的业务工具覆盖它，才能让 Agent 不用为了"这个业务语义在主程序里没入口"而自己造轮子或调用底层原语硬拼。最低基线包含但不限于：
   - JD 管理：`recruit.upsert_job_description(payload)`、`recruit.list_job_descriptions()`、`recruit.archive_job_description(jd_id)`、`recruit.edit_job_description(jd_id, patch)`。
   - 候选人全生命周期：`recruit.upsert_candidate(payload)`（含发现 / 在线摘要更新 / 离线简历关联 / 联系方式补齐）、`recruit.list_candidates(filter)`、`recruit.edit_candidate(candidate_id, patch)`、`recruit.archive_candidate(candidate_id, reason)`、`recruit.delete_candidate(candidate_id)`。
   - 简历：`recruit.attach_resume(candidate_id, file_path, source_hint)`、`recruit.replace_resume(candidate_id, file_path)`、`recruit.delete_resume(candidate_id)`、`recruit.get_resume(candidate_id)`。
@@ -120,7 +120,7 @@
 #### 0.5.2 Codex **不应该**做的事（**唯一被限制的形态：Boss/直聘专用解析或操作的 tool 能力被 hardcode**）
 
 - 不要在仓库里预先写 zhipin / boss 站点专属的 parser / scraper / DOM 解析器 / selector 常量库 / 字段抽取规则。
-- 不要在 `plugins/recruit/toolkit.py` 或 `services/` 下提前生成 `def parse_zhipin_jd(...)` / `class BossResumeFetcher` / `def fetch_zhipin_contact(...)` 这类"专门替 Boss/直聘干活的工具函数"——这些是 Agent 的事。
+- 不要在 `services/backend/src/scene_pilot/plugins/recruit/toolkit.py` 这类 backend 薄运行时 shell，或 `services/` 其它路径下提前生成 `def parse_zhipin_jd(...)` / `class BossResumeFetcher` / `def fetch_zhipin_contact(...)` 这类"专门替 Boss/直聘干活的工具函数"——这些是 Agent 的事。
 - 不要写 `if source == "zhipin": <调用某个专属解析逻辑>` 这种**按平台分发到平台专属解析/操作的 if 分支**。（区别于"`if source == 'zhipin': badge = '直聘'`"这种纯展示/标签映射——后者属于业务展示，不在限制范围内。）
 - 不要把 zhipin 的 DOM 结构、字段顺序、CSS selector、xpath 烧进 system prompt 当作"操作手册"。
 - 不要为了让 T1/T2/T3 通过，临时在 toolkit 里加一个"zhipin 一键同步" / "zhipin 一键拉简历"工具——这正好是 Agent 应该靠 `browser.*` + 自己识别 DOM + 自己沉淀 skill 完成的事。
@@ -276,7 +276,7 @@ Codex 操作 desktop UI 时必须遵循：
 
 ## 2. 评分 Rubric（写到 Autonomous Agent 的 system prompt 里）
 
-### 2.1 提示词模板（Codex 必须把这段写进 `services/backend/src/scene_pilot/prompts/` 下对应的 Autonomous Agent prompt 文件）
+### 2.1 提示词模板（Codex 必须把这段写进 `.recruit-agent/prompts/` 下对应的 Autonomous Agent prompt 文件）
 
 ```text
 你是 Recruit Agent 的 Autonomous 招聘子智能体。你的目标是为每个 JD 找到 3 个"高匹配且可继续沟通"的候选人。
@@ -332,7 +332,7 @@ Codex 操作 desktop UI 时必须遵循：
 
 ### 2.2 任务
 
-- [ ] Codex 把 §2.1 写到 `services/backend/src/scene_pilot/prompts/autonomous_recruit_system.md`（或现有等价路径）。
+- [ ] Codex 把 §2.1 写到 `.recruit-agent/prompts/` 下现有等价 prompt 资源文件。
 - [ ] Autonomous Agent 启动时确实加载这段 prompt（`AssembleNode` 的 system message 里能搜到）。
 - [ ] §2.1 的 JSON 输出格式被 Agent 的 evaluate 节点解析并存入 `Candidate.score_breakdown` 字段（如缺则补字段）。
 - [ ] **边界确认**：prompt 文本中可以出现"zhipin"作为目标网站名称（这是数据 / 业务事实），但不允许写 zhipin DOM 描述、CSS selector、字段顺序、xpath 等"操作手册"。如果 Agent 智能不足以自行识别 zhipin 页面，**只允许加抽象描述**（如"招聘网站通常会有'职位列表 - 候选人列表 - 候选人详情 - 联系方式弹窗'四级页面"），不允许写"候选人列表是 div.candidate-card 这种 selector"。

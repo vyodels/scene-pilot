@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 from datetime import datetime, timezone
 from typing import Any
 
@@ -63,6 +64,20 @@ def _runtime_scene_account(settings: AppSettings) -> str:
     return str(provider_config.get("site_account") or "本机场景 01")
 
 
+PIPELINE_STAGE_GROUPS: tuple[tuple[str, frozenset[str]], ...] = (
+    ("发现与 AI 在线评估", frozenset({"A"})),
+    ("发起沟通与建立对话", frozenset({"B"})),
+    ("获取简历与评估", frozenset({"C", "D", "E"})),
+    ("获取联系方式", frozenset({"F"})),
+    ("面试与结果", frozenset({"G", "H"})),
+)
+PIPELINE_PHASE_TO_DEPTH = {
+    phase: depth
+    for depth, (_, phases) in enumerate(PIPELINE_STAGE_GROUPS)
+    for phase in phases
+}
+
+
 def _looks_like_jsonish(value: str) -> bool:
     text = value.strip()
     if not text:
@@ -118,6 +133,52 @@ def _blueprint_nodes_for_dashboard(blueprint: dict[str, Any]) -> list[dict[str, 
             }
         )
     return normalized
+
+
+def _pipeline_milestone_depths(node_by_id: dict[str, dict[str, Any]]) -> dict[str, int]:
+    milestone_depths: dict[str, int] = {}
+    for node in node_by_id.values():
+        milestone_id = str(node.get("milestoneId") or node.get("milestone_id") or "").strip()
+        phase = str(node.get("phase") or "").strip().upper()
+        if not milestone_id or not phase or phase == "Z":
+            continue
+        depth = PIPELINE_PHASE_TO_DEPTH.get(phase)
+        if depth is None:
+            continue
+        milestone_depths[milestone_id] = max(milestone_depths.get(milestone_id, -1), depth)
+    return milestone_depths
+
+
+def _application_pipeline_depth(
+    application: Any,
+    *,
+    node_by_id: dict[str, dict[str, Any]],
+    milestone_depth_by_id: dict[str, int],
+) -> int:
+    current_status = str(getattr(application, "current_status", None) or "").strip()
+    current_node = node_by_id.get(current_status) or {}
+    current_phase = str(current_node.get("phase") or "").strip().upper()
+    current_depth = PIPELINE_PHASE_TO_DEPTH.get(current_phase, -1) if current_phase != "Z" else -1
+    deepest_milestone = str(getattr(application, "deepest_milestone", None) or "").strip()
+    deepest_depth = milestone_depth_by_id.get(deepest_milestone, -1)
+    return max(current_depth, deepest_depth)
+
+
+def _build_pipeline_map(applications: list[Any], node_by_id: dict[str, dict[str, Any]]) -> dict[str, int]:
+    pipeline_map = {label: 0 for label, _ in PIPELINE_STAGE_GROUPS}
+    milestone_depth_by_id = _pipeline_milestone_depths(node_by_id)
+    for application in applications:
+        depth = _application_pipeline_depth(
+            application,
+            node_by_id=node_by_id,
+            milestone_depth_by_id=milestone_depth_by_id,
+        )
+        if depth < 0:
+            continue
+        for index, (label, _) in enumerate(PIPELINE_STAGE_GROUPS):
+            if index <= depth:
+                pipeline_map[label] += 1
+    return pipeline_map
 
 
 def _candidate_followup_summary_definitions(session: Session) -> list[dict[str, Any]]:
@@ -275,40 +336,28 @@ class DashboardService:
 
         metrics = metrics_repo.summary()
         settings = AppSettings.model_validate(settings_repo.load(self.settings).model_dump())
-        applications = application_repo.list(limit=50)
+        applications = application_repo.list(limit=500)
         playbooks = playbook_repo.list(limit=50)
         skills = skill_repo.list(limit=50)
         approvals = approval_repo.list(limit=50)
         learnings = learning_repo.list(limit=50)
         application_count = application_repo.count()
-        application_by_status = application_repo.count_by_status()
-
-        pipeline_map = {
-            "发现": 0,
-            "初筛": 0,
-            "联系方式/沟通": 0,
-            "简历/评估": 0,
-            "面试/结果": 0,
+        application_by_status = Counter(str(application.current_status or "") for application in applications)
+        state_machine = ensure_latest_state_machine(session)
+        node_by_id = {
+            str(node.get("id")): dict(node)
+            for node in state_machine.get("nodes", [])
+            if node.get("id")
         }
-        for application in applications:
-            status = application.current_status
-            if status in {"discovered", "ai_online_pending", "ai_online_passed", "ai_online_rejected", "outreach_pending"}:
-                pipeline_map["发现"] += 1
-            elif status in {"offline_scoring", "offline_score_passed", "offline_score_rejected", "human_review_pending", "human_review_passed", "human_review_rejected"}:
-                pipeline_map["初筛"] += 1
-            elif status in {"outreach_sent", "in_conversation", "resume_requested", "contact_requested", "contact_acquired", "cooldown", "candidate_withdrew", "no_response"}:
-                pipeline_map["联系方式/沟通"] += 1
-            elif status in {"resume_received"}:
-                pipeline_map["简历/评估"] += 1
-            elif status in {"interview_pending", "interview_scheduled", "interview_completed", "interview_passed", "interview_rejected", "offer_pending", "offer_sent", "offer_accepted", "offer_declined"}:
-                pipeline_map["面试/结果"] += 1
+
+        pipeline_map = _build_pipeline_map(applications, node_by_id)
 
         dashboard_payload: dict[str, Any] = {
             "metrics": [
                 {
                     "label": "候选人",
                     "value": str(application_count),
-                    "delta": f"{application_by_status.get('offline_scoring', 0) + application_by_status.get('human_review_pending', 0)} 个正在初筛",
+                    "delta": f"{application_by_status.get('ai_online_screening', 0) + application_by_status.get('offline_scoring', 0) + application_by_status.get('pending_human_review', 0)} 个正在评估",
                     "tone": "positive" if application_count else "neutral",
                     "caption": "已记录到本地 SQLite",
                 },
@@ -405,7 +454,7 @@ class DashboardService:
                         application,
                         person=candidate_repo.get_by_storage_id(application.person_id),
                         job_description=(
-                            job_description_repo.get(application.job_description_id)
+                            job_description_repo.get_by_storage_id(application.job_description_id)
                             if getattr(application, "job_description_id", None)
                             else None
                         ),

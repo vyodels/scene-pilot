@@ -1728,6 +1728,27 @@ def _list_workspace_skills(session: Session) -> list[dict[str, Any]]:
 
 def _list_workspace_tools(container: AppContainer) -> list[dict[str, Any]]:
     tools: list[dict[str, Any]] = []
+    seen_names: set[str] = set()
+
+    for tool in container.plugin_host.tool_registry.tools.values():
+        if str(tool.category or "").strip().lower() != "plugin":
+            continue
+        tools.append(
+            {
+                "id": f"plugin:{tool.name}",
+                "server_id": f"plugin:{tool.category}",
+                "serverId": f"plugin:{tool.category}",
+                "server_name": "Recruit Plugin",
+                "serverName": "Recruit Plugin",
+                "name": tool.name,
+                "risk_level": "medium",
+                "riskLevel": "medium",
+                "enabled": True,
+                "endpoint": None,
+            }
+        )
+        seen_names.add(tool.name)
+
     for server in container.mcp_registry.list_servers():
         payload = McpServerRead.model_validate(server).model_dump(by_alias=True)
         if not bool(payload.get("enabled")):
@@ -1750,6 +1771,9 @@ def _list_workspace_tools(container: AppContainer) -> list[dict[str, Any]]:
             )
             continue
         for tool in server_tools:
+            tool_name = str(tool.get("name") or "").strip()
+            if tool_name in seen_names:
+                continue
             risk_level = str(tool.get("risk_level") or "medium")
             tools.append(
                 {
@@ -1758,13 +1782,14 @@ def _list_workspace_tools(container: AppContainer) -> list[dict[str, Any]]:
                     "serverId": payload.get("id"),
                     "server_name": payload.get("name"),
                     "serverName": payload.get("name"),
-                    "name": tool.get("name"),
+                    "name": tool_name,
                     "risk_level": risk_level,
                     "riskLevel": risk_level,
                     "enabled": bool(tool.get("enabled", True)),
                     "endpoint": payload.get("endpoint"),
                 }
             )
+            seen_names.add(tool_name)
     return tools
 
 

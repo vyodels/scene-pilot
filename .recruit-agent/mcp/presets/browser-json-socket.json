@@ -1,0 +1,8 @@
+{
+  "key": "browser-json-socket",
+  "name": "Browser MCP",
+  "description": "通过上游标准 MCP server 接入浏览器能力。预置只提供 browser native-host socket，工具通过 MCP `tools/list` 动态发现。",
+  "transport_kind": "stdio",
+  "protocol": "mcp_jsonrpc",
+  "tools": []
+}

@@ -49,7 +49,6 @@ export function ManualStatusOverrideDrawer({
     return null;
   }
 
-  const currentNode = stateMachine.nodes.find((node) => node.id === record.currentStatus);
   const targetNode = stateMachine.nodes.find((node) => node.id === targetStatus);
 
   return (
@@ -67,7 +66,7 @@ export function ManualStatusOverrideDrawer({
 
         <div className="drawer__body">
           <div className="drawer__preview">
-            <StatusBadge tone="neutral">{currentNode?.label ?? record.currentStatus}</StatusBadge>
+            <StatusBadge tone="neutral">{record.currentStatusLabel}</StatusBadge>
             <span>→</span>
             <StatusBadge tone="warning">{targetNode?.label ?? targetStatus ?? copy("Select target", "选择目标状态")}</StatusBadge>
           </div>

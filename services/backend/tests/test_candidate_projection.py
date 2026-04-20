@@ -33,7 +33,7 @@ def test_resume_artifact_updates_candidate_projection(tmp_path: Path) -> None:
                     "job_description_id": job.job_description_id,
                     "platform": "boss",
                     "source_platform": "boss",
-                    "current_status": "sourced",
+                    "current_status": "discovered",
                 }
             )
 

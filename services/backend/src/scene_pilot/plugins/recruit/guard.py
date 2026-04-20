@@ -13,6 +13,18 @@ def build_guard_check(
     session_factory: sessionmaker[Session],
 ) -> Callable[[str, dict[str, object], Observation], Awaitable[GuardVerdict]]:
     async def _guard(tool_name: str, arguments: dict[str, object], observation: Observation) -> GuardVerdict:
+        if tool_name == "request_human_approval":
+            seed_tool_calls = list(observation.input.seed_tool_calls) if observation.input is not None else []
+            seeded_confirmation = any(
+                call.name == tool_name and dict(call.arguments or {}) == dict(arguments or {})
+                for call in seed_tool_calls
+            )
+            if not seeded_confirmation:
+                return GuardVerdict(
+                    allowed=False,
+                    reason="pending_human_approval",
+                    severity="waiting_human",
+                )
         candidate_person_id = str(
             arguments.get("candidate_person_id")
             or (observation.scope_ref if observation.scope_kind == "candidate" else "")

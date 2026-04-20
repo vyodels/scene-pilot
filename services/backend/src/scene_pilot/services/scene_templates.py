@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from functools import lru_cache
-from pathlib import Path
 from typing import Any
+
+from scene_pilot.asset_paths import scene_templates_root
 
 SHARED_WORKSPACE_SCOPE_REF = "workspace:shared"
 
@@ -143,7 +144,7 @@ def _load_shared_scene_template_catalog() -> dict[str, dict[str, Any]]:
     return catalog
 
 
-def _parse_scene_template_doc(path: Path) -> dict[str, Any]:
+def _parse_scene_template_doc(path) -> dict[str, Any]:
     title, sections = _parse_markdown_sections(path)
     metadata = _parse_mapping_block(path=path, block_name="Meta", lines=sections.get(_META_SECTION, []))
     constraints = _parse_mapping_block(path=path, block_name="Constraints", lines=sections.get(_CONSTRAINTS_SECTION, []))
@@ -208,7 +209,7 @@ def _blocker_message(scene_action: dict[str, Any], blocker_kind: str | None) -> 
     return _GENERIC_BUSINESS_BLOCKER
 
 
-def _parse_markdown_sections(path: Path) -> tuple[str, dict[str, list[str]]]:
+def _parse_markdown_sections(path) -> tuple[str, dict[str, list[str]]]:
     lines = path.read_text(encoding="utf-8").splitlines()
     title = ""
     sections: dict[str, list[str]] = {_META_SECTION: []}
@@ -265,5 +266,5 @@ def _coerce_scalar(value: str) -> Any:
     return normalized
 
 
-def _scene_templates_root() -> Path:
-    return Path(__file__).resolve().parent.parent / "prompts" / "scene_templates"
+def _scene_templates_root():
+    return scene_templates_root()

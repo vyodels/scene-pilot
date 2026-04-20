@@ -4,10 +4,12 @@ import json
 import socket
 import uuid
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy.orm import Session, sessionmaker
 
+from scene_pilot.asset_paths import mcp_preset_templates_root
 from scene_pilot.db.base import utcnow
 from scene_pilot.models import McpServer, McpTool
 from scene_pilot.repositories import McpServerRepository, McpToolRepository
@@ -34,18 +36,42 @@ def _default_browser_endpoint() -> str:
     return default_browser_upstream_endpoint()
 
 
+def _default_endpoint_for_preset(preset_key: str) -> str:
+    if preset_key == BROWSER_SOCKET_PRESET_KEY:
+        return _default_browser_endpoint()
+    return ""
+
+
+def _load_preset_template_asset(path: Path) -> dict[str, Any]:
+    with path.open("r", encoding="utf-8") as handle:
+        payload = json.load(handle)
+    if not isinstance(payload, dict):
+        raise ValueError(f"Invalid MCP preset asset at {path}")
+
+    template = {
+        "key": str(payload.get("key") or "").strip(),
+        "name": str(payload.get("name") or "").strip(),
+        "description": str(payload.get("description") or "").strip(),
+        "transport_kind": str(payload.get("transport_kind") or "").strip(),
+        "protocol": str(payload.get("protocol") or "").strip(),
+        "endpoint_example": str(payload.get("endpoint_example") or "").strip(),
+        "tools": [dict(item) for item in list(payload.get("tools") or []) if isinstance(item, dict)],
+    }
+    if not template["endpoint_example"]:
+        template["endpoint_example"] = _default_endpoint_for_preset(template["key"])
+    required_fields = ("key", "name", "description", "transport_kind", "protocol", "endpoint_example")
+    missing_fields = [field for field in required_fields if not str(template.get(field) or "").strip()]
+    if missing_fields:
+        missing = ", ".join(missing_fields)
+        raise ValueError(f"Invalid MCP preset asset at {path}: missing {missing}")
+    return template
+
+
 def preset_templates() -> list[dict[str, Any]]:
-    return [
-        {
-            "key": BROWSER_SOCKET_PRESET_KEY,
-            "name": "Browser MCP",
-            "description": "通过上游标准 MCP server 接入浏览器能力。预置只提供 browser native-host socket，工具通过 MCP `tools/list` 动态发现。",
-            "transport_kind": "stdio",
-            "protocol": STANDARD_MCP_PROTOCOL,
-            "endpoint_example": _default_browser_endpoint(),
-            "tools": [],
-        }
-    ]
+    preset_root = mcp_preset_templates_root()
+    if not preset_root.exists():
+        return []
+    return [_load_preset_template_asset(path) for path in sorted(preset_root.glob("*.json")) if path.is_file()]
 
 
 def _json_socket_request(endpoint: str, payload: dict[str, Any], *, timeout_seconds: float = 8.0) -> Any:
@@ -83,6 +109,7 @@ def _json_socket_request(endpoint: str, payload: dict[str, Any], *, timeout_seco
     except OSError as exc:
         raise McpBridgeError(f"MCP unavailable at {endpoint}: {exc}") from exc
     raise McpBridgeError(f"MCP returned no response: {endpoint}")
+
 
 def _raise_for_jsonrpc_error(response: dict[str, Any], *, label: str) -> None:
     error = response.get("error")
@@ -530,10 +557,22 @@ class McpRegistryService:
         raise McpBridgeError(f"Unsupported MCP protocol: {server.protocol}")
 
     def _to_tool_definition(self, server: McpServer, tool: McpTool) -> ToolDefinition:
-        def _handler(arguments: dict[str, Any], *, server_id: str = server.id, tool_id: str = tool.id) -> Any:
+        def _handler(
+            arguments: dict[str, Any],
+            *,
+            server_id: str = server.id,
+            tool_id: str = tool.id,
+            tool_name: str = tool.name,
+        ) -> Any:
             with self.session_factory() as session:
                 current_server = McpServerRepository(session).get(server_id)
-                current_tool = McpToolRepository(session).get(tool_id)
+                tool_repo = McpToolRepository(session)
+                current_tool = tool_repo.get(tool_id)
+                if current_tool is None:
+                    current_tool = next(
+                        (item for item in tool_repo.by_server(server_id, enabled_only=True) if item.name == tool_name),
+                        None,
+                    )
                 if current_server is None or current_tool is None or not current_server.enabled or not current_tool.enabled:
                     raise McpBridgeError("MCP tool is unavailable or disabled")
                 current_server = self._upgrade_legacy_browser_preset(session, current_server)

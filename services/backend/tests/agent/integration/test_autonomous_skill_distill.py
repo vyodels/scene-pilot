@@ -162,3 +162,23 @@ def test_autonomous_skill_distill_failure_does_not_fail_run(tmp_path: Path) -> N
         assert run.status == "completed"
         assert artifact is None
         assert any(event.event_type == "skill_distill.failed" for event in events)
+
+
+def test_autonomous_blocked_final_payload_marks_run_blocked(tmp_path: Path) -> None:
+    session_factory, _, run_pk = _setup_run(tmp_path)
+    provider = ScriptedProvider(
+        provider_name="scripted",
+        responses=[LLMResponse(content='{"status":"blocked","next_step":"等待可继续执行条件满足。"}')],
+    )
+    kernel = _build_kernel(provider, session_factory)
+    agent = AutonomousAgent(session_factory=session_factory, kernel=kernel)
+
+    outcome = agent.run_turn_from_envelope({"run_pk": run_pk, "scope_kind": "global", "scope_ref": "workspace:shared"})
+
+    assert outcome.status == "escalate"
+    assert outcome.gate_signal == "escalate"
+    with session_factory() as session:
+        run = session.get(AgentRun, run_pk)
+        assert run is not None
+        assert run.status == "blocked"
+        assert run.finished_at is not None

@@ -78,3 +78,28 @@ def test_run_round_uses_seed_tool_calls_without_calling_provider() -> None:
     assert outcome.status == "continue"
     assert outcome.gate_signal == "continue"
     assert outcome.tool_results[0].output == {"echo": "hello"}
+
+
+def test_run_round_marks_structured_blocked_final_result_as_escalate() -> None:
+    provider = ScriptedProvider(
+        provider_name="scripted",
+        responses=[
+            LLMResponse(
+                content=(
+                    '{"status":"blocked","created":0,"updated":0,"skipped":0,"blocked":1,'
+                    '"unfinished_reason":"browser_connection_unavailable"}'
+                )
+            )
+        ],
+    )
+    kernel = AgentKernel(provider=provider, tool_registry=ToolRegistry(), plugin_host=PluginHost())
+
+    outcome = kernel.run_round(
+        goal=GoalRef(goal_id="goal-1", scope_kind="conversation", scope_ref="conv-1"),
+        observation=Observation(scope_kind="conversation", scope_ref="conv-1"),
+        limits=RoundLimits(),
+    )
+
+    assert outcome.status == "escalate"
+    assert outcome.gate_signal == "escalate"
+    assert outcome.final_output is not None

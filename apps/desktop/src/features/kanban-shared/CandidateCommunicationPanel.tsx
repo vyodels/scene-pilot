@@ -61,7 +61,7 @@ export function CandidateCommunicationPanel({
       return applications;
     }
     return applications.filter((item) =>
-      `${item.application.person.name} ${item.application.jobDescription.title} ${item.currentNode?.label ?? item.currentStatus}`
+      `${item.application.person.name} ${item.application.jobDescription.title} ${item.currentStatusLabel}`
         .toLowerCase()
         .includes(keyword),
     );
@@ -130,7 +130,7 @@ export function CandidateCommunicationPanel({
                   {item.humanRequired ? <span className="candidate-communication-panel__attention">⚡</span> : null}
                 </div>
                 <div className="candidate-communication-panel__candidate-meta">
-                  <span>{item.currentNode?.label ?? item.currentStatus}</span>
+                  <span>{item.currentStatusLabel}</span>
                   <StatusBadge tone={nodeTone(item.currentNode)}>{item.application.jobDescription.title}</StatusBadge>
                 </div>
               </button>
@@ -304,6 +304,7 @@ export function CandidateCommunicationPanel({
             <div className="candidate-communication-panel__section-title">{copy("Status timeline", "状态时间线")}</div>
             <StatusTimeline
               transitions={selectedRecord.thread?.statusTransitions ?? []}
+              stateMachine={stateMachine}
               compact
               maxItems={5}
               onShowMore={() => setDetailOpen(true)}

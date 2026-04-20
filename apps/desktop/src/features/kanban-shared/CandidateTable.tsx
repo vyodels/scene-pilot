@@ -144,7 +144,7 @@ export function CandidateTable({
                 </div>
                 <div className="candidate-table__cell candidate-table__cell--status">
                   <StatusBadge tone={nodeTone(currentNode)}>
-                    {currentNode?.label ?? record.currentStatus}
+                    {record.currentStatusLabel}
                   </StatusBadge>
                   {record.humanRequired ? <StatusBadge tone="warning">{copy("Waiting on you", "等待你操作")}</StatusBadge> : null}
                 </div>

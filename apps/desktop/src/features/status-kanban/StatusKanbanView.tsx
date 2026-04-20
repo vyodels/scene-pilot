@@ -42,6 +42,10 @@ function isBranchNode(node: StateNode): boolean {
   return (node.isTerminal || node.isSoftTerminal) && !node.isSuccess;
 }
 
+function isProcessNode(node: StateNode): boolean {
+  return !isGlobalTerminal(node) && !node.isTerminal && !node.isSoftTerminal;
+}
+
 function estimateStatusNodeWidth(label: string): number {
   const contentWidth = Array.from(label).reduce((total, char) => {
     if (/[A-Za-z0-9]/.test(char)) {
@@ -372,22 +376,26 @@ export function StatusKanbanView({
     () =>
       splitMainNodesIntoRows(mainNodes, chainWidth - 8).map((nodesInRow, rowIndex) => ({
         key: `main-${rowIndex + 1}`,
-        items: nodesInRow.map((node) => ({
-          statusId: node.id,
-          label: node.label,
-          count: countByStatus.get(node.id) ?? 0,
-          tone: nodeTone(node),
-          emphasized: node.executionConfig?.mode === "human_required",
-          branches: branchNodes
-            .filter((branch) => (transitionsByFromState.get(node.id) ?? []).includes(branch.id))
-            .map((branch) => ({
-              statusId: branch.id,
-              label: branch.label,
-              count: countByStatus.get(branch.id) ?? 0,
-              tone: nodeTone(branch),
-              emphasized: branch.executionConfig?.mode === "human_required",
-            })),
-        })),
+        items: nodesInRow.map((node) => {
+          const count = countByStatus.get(node.id) ?? 0;
+          return {
+            statusId: node.id,
+            label: node.label,
+            count,
+            tone: nodeTone(node),
+            emphasized: node.executionConfig?.mode === "human_required",
+            showAlertMarker: isProcessNode(node) && count > 0,
+            branches: branchNodes
+              .filter((branch) => (transitionsByFromState.get(node.id) ?? []).includes(branch.id))
+              .map((branch) => ({
+                statusId: branch.id,
+                label: branch.label,
+                count: countByStatus.get(branch.id) ?? 0,
+                tone: nodeTone(branch),
+                emphasized: branch.executionConfig?.mode === "human_required",
+              })),
+          };
+        }),
       })),
     [branchNodes, chainWidth, countByStatus, mainNodes, transitionsByFromState],
   );
@@ -457,7 +465,7 @@ export function StatusKanbanView({
         ? copy("Cooldown candidates", "冷却中候选人")
         : selectedStatus === "no_response"
           ? copy("Retry pending candidates", "无回复·可重试候选人")
-      : stateMachine.nodes.find((node) => node.id === selectedStatus)?.label ?? selectedStatus;
+      : stateMachine.nodes.find((node) => node.id === selectedStatus)?.label ?? copy("Status not mapped", "状态未映射");
 
   return (
     <div className="kanban-page">

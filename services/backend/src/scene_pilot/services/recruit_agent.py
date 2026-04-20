@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
+from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
+from scene_pilot.asset_paths import prompt_path
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -89,6 +92,21 @@ DEFAULT_CANDIDATE_STATUSES = [
     "rejected",
     "cooldown",
 ]
+
+
+@lru_cache(maxsize=8)
+def _load_prompt_text(prompt_key: str) -> str:
+    asset_path = prompt_path(prompt_key)
+    if not asset_path.exists():
+        return ""
+    return asset_path.read_text(encoding="utf-8").strip()
+
+
+def resolve_goal_template(prompt_config: dict[str, Any] | None) -> str:
+    configured = str((prompt_config or {}).get("goal_template") or (prompt_config or {}).get("goalTemplate") or "").strip()
+    if configured:
+        return configured
+    return _load_prompt_text("base/autonomous_goal_template")
 
 
 def _playbook_stage_groups() -> list[dict[str, Any]]:
@@ -560,6 +578,7 @@ def _adaptive_execution_to_payload() -> dict[str, Any]:
 
 
 def default_recruit_agent_profile() -> dict[str, Any]:
+    goal_template = resolve_goal_template(None)
     return {
         "agent_key": "recruit-agent",
         "name": "Recruit Agent",
@@ -595,6 +614,7 @@ def default_recruit_agent_profile() -> dict[str, Any]:
         },
         "prompt_config": {
             "system_prompt": "你是 Recruit Agent。你的核心职责是严格在招聘场景中维护候选人事实、推进流程、记录证据，并把高风险动作交给人工确认。",
+            "goal_template": goal_template,
             "context_slots": ["candidate_memory", "job_memory", "agent_global_memory", "candidate_thread", "candidate_progress"],
             "context_policy": default_context_policy(),
             "response_policy": {
@@ -633,10 +653,14 @@ def ensure_primary_recruit_agent_profile(session: Session) -> RecruitAgentProfil
     if existing is not None:
         prompt_config = dict(existing.prompt_config or {})
         resolved_context_policy = resolve_context_policy(prompt_config)
+        resolved_goal_template = resolve_goal_template(prompt_config)
         resolved_memory_policy = resolve_memory_policy(existing.memory_policy)
         patch: dict[str, Any] = {}
         if prompt_config.get("context_policy") != resolved_context_policy:
             prompt_config["context_policy"] = resolved_context_policy
+            patch["prompt_config"] = prompt_config
+        if prompt_config.get("goal_template") != resolved_goal_template:
+            prompt_config["goal_template"] = resolved_goal_template
             patch["prompt_config"] = prompt_config
         if existing.memory_policy != resolved_memory_policy:
             patch["memory_policy"] = resolved_memory_policy
@@ -652,10 +676,14 @@ def ensure_primary_recruit_agent_profile(session: Session) -> RecruitAgentProfil
             raise
         prompt_config = dict(existing.prompt_config or {})
         resolved_context_policy = resolve_context_policy(prompt_config)
+        resolved_goal_template = resolve_goal_template(prompt_config)
         resolved_memory_policy = resolve_memory_policy(existing.memory_policy)
         patch: dict[str, Any] = {}
         if prompt_config.get("context_policy") != resolved_context_policy:
             prompt_config["context_policy"] = resolved_context_policy
+            patch["prompt_config"] = prompt_config
+        if prompt_config.get("goal_template") != resolved_goal_template:
+            prompt_config["goal_template"] = resolved_goal_template
             patch["prompt_config"] = prompt_config
         if existing.memory_policy != resolved_memory_policy:
             patch["memory_policy"] = resolved_memory_policy

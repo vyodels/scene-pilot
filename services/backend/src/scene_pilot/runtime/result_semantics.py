@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import re
 from typing import Any, Mapping
 
 
@@ -8,6 +10,24 @@ _STATUS_ALIASES = {
     "passed": "pass",
     "failed": "fail",
 }
+_WAIT_HUMAN_RESULT_STATUSES = {
+    "approval_required",
+    "blocked_human",
+    "human_required",
+    "needs_human",
+    "wait_human",
+    "waiting_human",
+}
+_BLOCKED_RESULT_STATUSES = {
+    "blocked",
+    "blocked_environment",
+    "escalate",
+}
+_FAILED_RESULT_STATUSES = {
+    "error",
+    "fail",
+}
+_STATUS_TEXT_PATTERN = re.compile(r'(?i)(?:^|[\s{,])["\']?status["\']?\s*[:=]\s*["\']?([a-z_][a-z0-9_-]*)')
 
 
 def extract_business_status(payload: Mapping[str, Any] | None, *, fallback: str | None = None) -> str | None:
@@ -71,6 +91,51 @@ def normalize_result_payload(payload: Mapping[str, Any] | None) -> tuple[dict[st
     if not isinstance(skill_draft, Mapping):
         return result_data, None
     return result_data, dict(skill_draft)
+
+
+def infer_non_success_round_outcome(final_output: str | None) -> tuple[str, str] | None:
+    payload = extract_structured_result_payload(final_output)
+    execution_status = extract_execution_status(payload)
+    normalized_status = execution_status.lower() if execution_status else None
+    if normalized_status in _WAIT_HUMAN_RESULT_STATUSES:
+        return "wait_human", "wait_human"
+    if normalized_status in _FAILED_RESULT_STATUSES:
+        return "error", "escalate"
+    if normalized_status in _BLOCKED_RESULT_STATUSES:
+        return "escalate", "escalate"
+    return None
+
+
+def extract_structured_result_payload(final_output: str | None) -> dict[str, Any] | None:
+    text = str(final_output or "").strip()
+    if not text:
+        return None
+    fenced = re.match(r"^```(?:json)?\s*(.*?)\s*```$", text, re.DOTALL | re.IGNORECASE)
+    if fenced:
+        text = fenced.group(1).strip()
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        match = _STATUS_TEXT_PATTERN.search(text)
+        if match is None:
+            return None
+        return {"status": match.group(1)}
+    return dict(payload) if isinstance(payload, Mapping) else None
+
+
+def extract_execution_status(payload: Mapping[str, Any] | None) -> str | None:
+    raw_payload = dict(payload or {})
+    status = _normalize_status(raw_payload.get("status"))
+    if status:
+        return status
+    for key in ("data", "result"):
+        nested_payload = raw_payload.get(key)
+        if not isinstance(nested_payload, Mapping):
+            continue
+        nested_status = extract_execution_status(nested_payload)
+        if nested_status:
+            return nested_status
+    return None
 
 
 def _normalize_status(value: Any) -> str | None:

@@ -1,4 +1,4 @@
-import { getTriggeredMilestones } from "@scene-pilot/shared";
+import { funnelMilestones, getFunnelMilestone, getTriggeredMilestones } from "@scene-pilot/shared";
 import type { HumanActionDefinition, RecruitmentStateMachine, StateNode, StateTransition } from "@scene-pilot/shared";
 import type { ApplicationRecord, ApplicationThreadRecord } from "../../lib/types";
 
@@ -7,7 +7,9 @@ export interface ApplicationViewModel {
   thread?: ApplicationThreadRecord;
   currentStatus: string;
   currentNode?: StateNode;
+  currentStatusLabel: string;
   deepestMilestone?: string | null;
+  deepestMilestoneLabel?: string;
   latestActivityAt?: string;
   humanRequired: boolean;
   onlineResumeAvailable: boolean;
@@ -312,10 +314,22 @@ function buildMilestoneReachedAt(application: ApplicationRecord, thread?: Applic
   }
   const fallbackTimestamp =
     thread?.stateSnapshot.latestTransitionAt ?? transitions.at(-1)?.createdAt ?? application.lastContactedAt ?? undefined;
-  if (application.deepestMilestone && fallbackTimestamp && !reachedAt[application.deepestMilestone]) {
-    reachedAt[application.deepestMilestone] = fallbackTimestamp;
+  const currentStatus = resolveApplicationCurrentStatus(application);
+  const canonicalMilestone =
+    getTriggeredMilestones(currentStatus).at(-1)?.id ??
+    getFunnelMilestone(application.deepestMilestone)?.id;
+  if (canonicalMilestone && fallbackTimestamp) {
+    const canonicalOrder = getFunnelMilestone(canonicalMilestone)?.sortOrder ?? 0;
+    for (const milestone of funnelMilestones) {
+      if (milestone.sortOrder > canonicalOrder) {
+        continue;
+      }
+      if (!reachedAt[milestone.id]) {
+        reachedAt[milestone.id] = fallbackTimestamp;
+      }
+    }
   }
-  const inferredMilestones = getTriggeredMilestones(resolveApplicationCurrentStatus(application));
+  const inferredMilestones = getTriggeredMilestones(currentStatus);
   for (const milestone of inferredMilestones) {
     if (fallbackTimestamp && !reachedAt[milestone.id]) {
       reachedAt[milestone.id] = fallbackTimestamp;
@@ -347,6 +361,49 @@ export function resolveContactSummary(application: ApplicationRecord, thread?: A
   return "—";
 }
 
+function resolveFallbackMilestone(currentNode: StateNode | undefined, stateMachine: RecruitmentStateMachine): string | undefined {
+  if (!currentNode) {
+    return undefined;
+  }
+  if (currentNode.milestoneId) {
+    return currentNode.milestoneId;
+  }
+  const candidates = stateMachine.nodes
+    .filter((node) => Boolean(node.milestoneId) && node.sortOrder < currentNode.sortOrder && !node.isTerminal && !node.isSoftTerminal)
+    .sort((left, right) => left.sortOrder - right.sortOrder);
+  return candidates.at(-1)?.milestoneId;
+}
+
+export function resolveApplicationDeepestMilestone(
+  application: ApplicationRecord,
+  stateMachine: RecruitmentStateMachine,
+  currentNode?: StateNode,
+): string | undefined {
+  const direct = getFunnelMilestone(application.deepestMilestone)?.id;
+  const fallback = resolveFallbackMilestone(currentNode, stateMachine);
+  return direct ?? fallback;
+}
+
+export function resolveApplicationStatusLabel(currentNode: StateNode | undefined): string {
+  return currentNode?.label ?? "状态未映射";
+}
+
+export function resolveApplicationMilestoneLabel(deepestMilestone: string | null | undefined): string | undefined {
+  return deepestMilestone ? getFunnelMilestone(deepestMilestone)?.label : undefined;
+}
+
+export function hasReachedFunnelMilestone(
+  deepestMilestone: string | null | undefined,
+  milestoneId: string,
+): boolean {
+  const current = getFunnelMilestone(deepestMilestone);
+  const target = getFunnelMilestone(milestoneId);
+  if (!current || !target) {
+    return false;
+  }
+  return current.sortOrder >= target.sortOrder;
+}
+
 export function buildApplicationViewModels(
   applications: ApplicationRecord[],
   threads: ApplicationThreadRecord[],
@@ -359,18 +416,28 @@ export function buildApplicationViewModels(
     const thread = threadByApplicationId.get(application.id);
     const currentStatus = resolveApplicationCurrentStatus(application);
     const currentNode = nodeById.get(currentStatus);
+    const deepestMilestone = resolveApplicationDeepestMilestone(application, stateMachine, currentNode);
     return {
       application,
       thread,
       currentStatus,
       currentNode,
-      deepestMilestone: application.deepestMilestone,
+      currentStatusLabel: resolveApplicationStatusLabel(currentNode),
+      deepestMilestone,
+      deepestMilestoneLabel: resolveApplicationMilestoneLabel(deepestMilestone),
       latestActivityAt: resolveLatestActivity(application, thread),
       humanRequired: currentNode?.executionConfig?.mode === "human_required",
       onlineResumeAvailable: application.resumeAvailable || Boolean(application.summary?.trim()),
       offlineResumeAvailable: Boolean(thread?.resumeArtifacts.length),
       contactSummary: resolveContactSummary(application, thread),
-      milestoneReachedAt: buildMilestoneReachedAt(application, thread),
+      milestoneReachedAt: buildMilestoneReachedAt(
+        {
+          ...application,
+          currentStatus,
+          deepestMilestone,
+        },
+        thread,
+      ),
     };
   });
 }

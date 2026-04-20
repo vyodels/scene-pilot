@@ -110,9 +110,16 @@ def test_autonomous_completed_run_creates_trial_skill_from_llm_distill(tmp_path:
     "body": {
       "summary": "复用当前招聘页做活跃 JD 增量同步。",
       "checklist": ["确认岗位仍在活跃招聘", "写入前先比对本地记录"],
-      "anti_patterns": ["不要把状态不明确的岗位当作活跃 JD 写入"]
+      "anti_patterns": ["不要把状态不明确的岗位当作活跃 JD 写入"],
+      "artifacts": {
+        "python_inline": {
+          "entrypoint": "run",
+          "code": "def run(payload, context):\\n    remote = list(payload.get('remote_jobs') or [])\\n    local_ids = set(payload.get('local_job_ids') or [])\\n    created = [item for item in remote if str(item.get('job_id') or '') not in local_ids]\\n    return {'created_count': len(created), 'skill': context['skill_id']}"
+        }
+      }
     },
     "execution_hints": {
+      "executor_mode": "python_inline",
       "preconditions": ["存在可访问的招聘页面"],
       "tool_preferences": ["list_job_descriptions", "upsert_job_description"],
       "observed_outcomes": ["created=1", "updated=0", "skipped=0"]
@@ -167,6 +174,8 @@ def test_autonomous_completed_run_creates_trial_skill_from_llm_distill(tmp_path:
         assert skill.status == "trial"
         assert skill.strategy["instruction"] == "优先复用已打开的招聘页面，只同步仍在活跃中的岗位。"
         assert skill.strategy["instruction"] != "把当前招聘页中的活跃 JD 增量同步到共享工作区。"
+        assert skill.execution_hints["executor_mode"] == "python_inline"
+        assert skill.body["artifacts"]["python_inline"]["entrypoint"] == "run"
 
         artifact = session.scalars(
             select(EvolutionArtifact).where(EvolutionArtifact.artifact_kind == "skill_draft")

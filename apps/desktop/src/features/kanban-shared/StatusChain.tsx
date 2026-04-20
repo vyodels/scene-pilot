@@ -14,6 +14,7 @@ export interface StatusChainNodeItem {
   count: number;
   tone: "positive" | "neutral" | "warning" | "critical";
   emphasized?: boolean;
+  showAlertMarker?: boolean;
   branches?: StatusChainBranchItem[];
 }
 
@@ -78,6 +79,11 @@ export function StatusChain({
                       title={item.emphasized ? humanRequiredTooltip : undefined}
                       onClick={() => onSelect(item.statusId)}
                     >
+                      {item.showAlertMarker ? (
+                        <span className="status-chain__alert-marker" aria-hidden="true">
+                          !
+                        </span>
+                      ) : null}
                       {item.emphasized ? (
                         <span className="status-chain__human-marker" aria-hidden="true">
                           <svg viewBox="0 0 16 16" className="status-chain__human-marker-icon">

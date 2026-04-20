@@ -54,3 +54,21 @@ def test_toolbus_executes_async_and_sync_tools_and_merges_sources() -> None:
     assert registry.tools["core.echo"].category == "core"
     assert registry.tools["plugin.note"].resource_target_kind == "candidate"
     assert "read_memory" in registry.tools
+
+
+def test_register_core_tools_supports_custom_invoke_skill_handler() -> None:
+    registry = ToolRegistry()
+    register_core_tools(
+        registry,
+        invoke_skill_handler=lambda arguments: {
+            "skill_id": arguments.get("skill_id"),
+            "executor_mode": "python_inline",
+            "result": {"status": "completed"},
+        },
+    )
+
+    result = asyncio.run(_run_async(registry, "invoke_skill", {"skill_id": "demo", "input": {}}))
+
+    assert result.is_error is False
+    assert result.output["skill_id"] == "demo"
+    assert result.output["executor_mode"] == "python_inline"

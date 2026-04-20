@@ -80,14 +80,13 @@ async def _sync_autonomy_runtime(request: Request, settings: AppSettings) -> Non
     autonomy = getattr(request.app.state, "autonomy_loop", None)
     if autonomy is None:
         return
-    autonomy.enabled = settings.feature_flags.enable_autonomy
+    # The settings toggle controls background sourcing semantics, but the
+    # queue consumer must stay alive so manual Autonomous runs can execute.
+    autonomy.enabled = True
     autonomy.health_sweep_enabled = settings.feature_flags.enable_skill_health_autonomy
     autonomy.health_sweep_interval = float(settings.skill_health_autonomy_interval_seconds)
-    if autonomy.enabled and not autonomy.is_running():
+    if not autonomy.is_running():
         await autonomy.start()
-        return
-    if not autonomy.enabled and autonomy.is_running():
-        await autonomy.stop()
 
 
 @router.get("", response_model=SettingsSnapshotRead)

@@ -335,6 +335,11 @@ shared scene template selected（选择共享场景模板）
 - 招聘不是写进 kernel 的主流程分支
 - 而是通过 plugin manifest 把 domain-specific 能力挂到共享底座上
 
+在项目结构上，这个方向应进一步收敛为：
+
+- `.recruit-agent/plugins/` 是项目级 plugin 资产、配置与元数据的统一根目录
+- `services/backend/src/scene_pilot/plugins/recruit/*.py` 这类 backend 文件只承担可 import 的薄运行时 shell / mount code，负责读取这些资产并完成注册与挂载
+
 长期应稳定的是 plugin 这种**领域适配层**的角色：
 
 - register tools
@@ -343,7 +348,7 @@ shared scene template selected（选择共享场景模板）
 - register persona fragments
 - register router
 
-而不是当前恰好注册了哪几个具体工具。
+而不是当前恰好注册了哪几个具体工具，也不是把 plugin 边界误写成“全部留在 backend”或“全部搬进 `.recruit-agent`”。
 
 ### 5.6 skill 在主骨架中的位置
 

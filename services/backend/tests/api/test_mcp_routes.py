@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from fastapi.testclient import TestClient
 
 from scene_pilot.core.settings import AppSettings
@@ -81,6 +83,70 @@ def _browser_tool_payloads() -> list[dict[str, object]]:
     ]
 
 
+def test_mcp_presets_load_from_recruit_agent_assets(tmp_path, monkeypatch) -> None:
+    preset_dir = tmp_path / ".recruit-agent" / "mcp" / "presets"
+    preset_dir.mkdir(parents=True)
+    (preset_dir / "custom-unix.json").write_text(
+        json.dumps(
+            {
+                "key": "custom-unix",
+                "name": "Custom Unix MCP",
+                "description": "asset-backed MCP preset",
+                "transport_kind": "unix_socket",
+                "protocol": "json_socket_tool_call",
+                "endpoint_example": "/virtual/custom.sock",
+                "tools": [],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "scene_pilot.services.mcp_registry.mcp_preset_templates_root",
+        lambda: preset_dir,
+    )
+
+    settings = AppSettings(
+        data_dir=str(tmp_path / "data"),
+        database_url=f"sqlite:///{tmp_path / 'mcp-preset-assets.db'}",
+        provider_config={},
+    )
+
+    app = create_app(settings)
+    with TestClient(app) as client:
+        listed = client.get("/api/mcp/presets")
+        assert listed.status_code == 200
+        assert listed.json() == [
+            {
+                "key": "custom-unix",
+                "name": "Custom Unix MCP",
+                "description": "asset-backed MCP preset",
+                "transport_kind": "unix_socket",
+                "protocol": "json_socket_tool_call",
+                "endpoint_example": "/virtual/custom.sock",
+                "tools": [],
+            }
+        ]
+
+        installed = client.post(
+            "/api/mcp/presets/custom-unix/install",
+            json={
+                "server_key": "custom-installed",
+                "name": "Custom Installed MCP",
+                "endpoint": "/virtual/runtime.sock",
+            },
+        )
+        assert installed.status_code == 201
+        payload = installed.json()
+        assert payload["preset_key"] == "custom-unix"
+        assert payload["server_key"] == "custom-installed"
+        assert payload["name"] == "Custom Installed MCP"
+        assert payload["transport_kind"] == "unix_socket"
+        assert payload["protocol"] == "json_socket_tool_call"
+        assert payload["endpoint"] == "/virtual/runtime.sock"
+        assert payload["server_metadata"] == {"preset_installed": True}
+
+
 def test_browser_preset_healthcheck_uses_upstream_stdio_mcp_server(tmp_path, monkeypatch) -> None:
     runtime_requests: list[tuple[str, str, str, dict[str, object]]] = []
 
@@ -108,6 +174,10 @@ def test_browser_preset_healthcheck_uses_upstream_stdio_mcp_server(tmp_path, mon
         lambda: ("node", "/virtual/browser-mcp/server.mjs"),
     )
     monkeypatch.setattr(
+        "scene_pilot.services.mcp_registry.default_browser_upstream_endpoint",
+        lambda: "/virtual/default-browser.sock",
+    )
+    monkeypatch.setattr(
         "scene_pilot.services.mcp_registry._mcp_session_request",
         fake_mcp_session_request,
     )
@@ -122,6 +192,13 @@ def test_browser_preset_healthcheck_uses_upstream_stdio_mcp_server(tmp_path, mon
     client = TestClient(app)
     client.__enter__()
     try:
+        presets = client.get("/api/mcp/presets")
+        assert presets.status_code == 200
+        browser_preset = next(item for item in presets.json() if item["key"] == "browser-json-socket")
+        assert browser_preset["transport_kind"] == "stdio"
+        assert browser_preset["protocol"] == "mcp_jsonrpc"
+        assert browser_preset["endpoint_example"] == "/virtual/default-browser.sock"
+
         installed = client.post(
             "/api/mcp/presets/browser-json-socket/install",
             json={

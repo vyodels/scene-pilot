@@ -52,7 +52,7 @@ export function ChatMessageFeed({ record }: ChatMessageFeedProps): JSX.Element {
             {copy("Online score", "在线评分")} {overallScore != null ? `${Math.round(overallScore)}/100` : copy("Pending", "待生成")}
           </StatusBadge>
           <StatusBadge tone={record.currentNode?.executionConfig?.mode === "human_required" ? "warning" : "neutral"}>
-            {record.currentNode?.label ?? record.currentStatus}
+            {record.currentStatusLabel}
           </StatusBadge>
         </div>
         <div className="chat-feed__empty-facts">

@@ -166,7 +166,7 @@ export function CandidateDetailDrawer({
 
         <div className="drawer__body">
           <div className="drawer__status-row">
-            <StatusBadge tone={nodeTone(currentNode)}>{currentNode?.label ?? record.currentStatus}</StatusBadge>
+            <StatusBadge tone={nodeTone(currentNode)}>{record.currentStatusLabel}</StatusBadge>
             {record.humanRequired ? <StatusBadge tone="warning">{copy("Waiting on you", "等待你操作")}</StatusBadge> : null}
           </div>
 
@@ -187,7 +187,7 @@ export function CandidateDetailDrawer({
               <div><strong>{copy("Role", "应聘岗位")}</strong><span>{record.application.jobDescription.title}</span></div>
               <div><strong>{copy("Platform", "平台")}</strong><span>{record.application.platform}</span></div>
               <div><strong>{copy("Experience", "工作年限")}</strong><span>{record.application.person.experienceYears || "—"}</span></div>
-              <div><strong>{copy("Deepest milestone", "最深里程碑")}</strong><span>{record.deepestMilestone ?? "—"}</span></div>
+              <div><strong>{copy("Deepest milestone", "最深里程碑")}</strong><span>{record.deepestMilestoneLabel ?? "—"}</span></div>
               <div className="drawer__full-row">
                 <strong>{copy("Summary", "摘要")}</strong>
                 <span>{record.application.summary || copy("No summary available.", "暂无摘要。")}</span>
@@ -296,7 +296,7 @@ export function CandidateDetailDrawer({
           ) : null}
 
           {activeTab === "history" ? (
-            <StatusTimeline transitions={record.thread?.statusTransitions ?? []} />
+            <StatusTimeline transitions={record.thread?.statusTransitions ?? []} stateMachine={stateMachine} />
           ) : null}
 
           {activeTab === "contact" ? (

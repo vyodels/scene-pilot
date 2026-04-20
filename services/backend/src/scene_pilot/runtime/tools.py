@@ -181,7 +181,7 @@ class ToolRegistry:
         return [*prioritized, *remaining]
 
 
-def register_core_tools(registry: ToolRegistry) -> None:
+def register_core_tools(registry: ToolRegistry, *, invoke_skill_handler: ToolHandler | None = None) -> None:
     registry.register(
         ToolDefinition(
             name="read_memory",
@@ -251,7 +251,7 @@ def register_core_tools(registry: ToolRegistry) -> None:
                 "properties": {"skill_id": {"type": "string"}, "input": {"type": "object"}},
                 "additionalProperties": True,
             },
-            handler=lambda arguments: {"accepted": True, "action": "invoke_skill", "arguments": arguments},
+            handler=invoke_skill_handler or (lambda arguments: {"accepted": True, "action": "invoke_skill", "arguments": arguments}),
             category="skill",
             external_target=False,
             resource_target_kind="skill",

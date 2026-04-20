@@ -1,13 +1,15 @@
 import React, { useMemo } from "react";
+import type { RecruitmentStateMachine } from "@scene-pilot/shared";
 import { ProgressBars, StatusBadge, Timeline } from "../../components";
 import { formatCompactDate } from "../../lib/format";
 import { useI18n } from "../../lib/i18n";
 import { translateUiToken } from "../../lib/uiText";
-import type { ApplicationRecord, DashboardSummary } from "../../lib/types";
-import { getContactChannels, resolveContactSummary } from "../kanban-shared/kanbanUtils";
+import type { DashboardSummary } from "../../lib/types";
+import { buildApplicationViewModels, getContactChannels, resolveContactSummary, type ApplicationViewModel } from "../kanban-shared/kanbanUtils";
 
 interface DashboardViewProps {
   summary: DashboardSummary;
+  stateMachine?: RecruitmentStateMachine | null;
   onOpenCandidates?(): void;
   onOpenJdWorkspace?(): void;
   onOpenCommunications?(filter?: string, applicationId?: string): void;
@@ -149,28 +151,24 @@ const candidateButtonStyle: React.CSSProperties = {
   gap: "var(--space-2)",
 };
 
-function normalize(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9\u4e00-\u9fff]+/gi, "");
-}
-
-function classifyApplication(application: ApplicationRecord): ApplicationLane {
-  const status = normalize(`${application.currentStatus} ${application.stageKey} ${application.nextAction} ${application.summary}`);
-  if (/(rejected|cooldown|blocked|archived)/.test(status)) {
+function classifyApplication(application: ApplicationViewModel): ApplicationLane {
+  const phase = application.currentNode?.phase;
+  if (application.currentNode?.isTerminal || application.currentNode?.isSoftTerminal) {
     return "blocked";
   }
-  if (/(offer|hired|accepted|decision|pass|passed|selected)/.test(status)) {
+  if (phase === "H") {
     return "decision";
   }
-  if (/(interview|schedule|scheduled|onsite|screeningcall|phoneinterview)/.test(status)) {
+  if (phase === "G") {
     return "interview";
   }
-  if (!application.resumeAvailable || /(resume_requested|resume_pending|waiting_resume|needresume)/.test(status)) {
+  if (phase === "C") {
     return "resume";
   }
-  if (/(contact_required|contact_needed|waiting_reply|pending_communication|communicating|outreach|followup)/.test(status)) {
+  if (phase === "B" || phase === "F") {
     return "followUp";
   }
-  if (/(review|screen|assessment|triage|new|pending)/.test(status)) {
+  if (phase === "A" || phase === "D" || phase === "E") {
     return "review";
   }
   return "active";
@@ -217,10 +215,10 @@ function contactChannelLabel(channel: string, copy: (en: string, zh: string) => 
 }
 
 function summarizeCandidateSource(
-  application: ApplicationRecord,
+  application: ApplicationViewModel,
   copy: (en: string, zh: string) => string,
 ): string {
-  const source = application.stateSnapshot?.latestTransitionSource?.trim().toLowerCase();
+  const source = application.application.stateSnapshot?.latestTransitionSource?.trim().toLowerCase();
   if (!source) {
     return "—";
   }
@@ -236,7 +234,7 @@ function summarizeCandidateSource(
   if (source === "site") {
     return copy("Site import", "站点导入");
   }
-  return application.stateSnapshot?.latestTransitionSource ?? "—";
+  return application.application.stateSnapshot?.latestTransitionSource ?? "—";
 }
 
 function presentRecruitingText(text: string, copy: (en: string, zh: string) => string): string {
@@ -256,6 +254,7 @@ function pickPlaybookLabel(playbook: DashboardSummary["playbooks"][number]): str
 
 export function DashboardView({
   summary,
+  stateMachine,
   onOpenCandidates,
   onOpenJdWorkspace,
   onOpenCommunications,
@@ -263,9 +262,13 @@ export function DashboardView({
   onOpenAgentConfig,
 }: DashboardViewProps): JSX.Element {
   const { copy } = useI18n();
+  const applicationModels = useMemo(
+    () => (stateMachine ? buildApplicationViewModels(summary.applications, [], stateMachine) : []),
+    [stateMachine, summary.applications],
+  );
 
   const prioritizedApplications = useMemo(() => {
-    return [...summary.applications].sort((left, right) => {
+    return [...applicationModels].sort((left, right) => {
       const laneDiff =
         ({
           review: 0,
@@ -288,15 +291,15 @@ export function DashboardView({
       if (laneDiff !== 0) {
         return laneDiff;
       }
-      if (right.matchScore !== left.matchScore) {
-        return right.matchScore - left.matchScore;
+      if (right.application.matchScore !== left.application.matchScore) {
+        return right.application.matchScore - left.application.matchScore;
       }
-      return left.person.name.localeCompare(right.person.name);
+      return left.application.person.name.localeCompare(right.application.person.name);
     });
-  }, [summary.applications]);
+  }, [applicationModels]);
 
   const laneCounts = useMemo(() => {
-    return summary.applications.reduce<Record<ApplicationLane, number>>(
+    return applicationModels.reduce<Record<ApplicationLane, number>>(
       (acc, application) => {
         acc[classifyApplication(application)] += 1;
         return acc;
@@ -311,7 +314,7 @@ export function DashboardView({
         active: 0,
       },
     );
-  }, [summary.applications]);
+  }, [applicationModels]);
 
   const attentionCount = laneCounts.review + laneCounts.followUp + laneCounts.resume + laneCounts.interview + laneCounts.decision;
   const pendingApprovals = summary.approvals.filter((item) => item.status === "pending");
@@ -421,7 +424,7 @@ export function DashboardView({
               </div>
               <h2 style={titleStyle}>{copy("Highest-priority candidates", "最高优先级候选人")}</h2>
             </div>
-            <StatusBadge tone="neutral">{copy(`${summary.applications.length} total`, `共 ${summary.applications.length} 条申请`)}</StatusBadge>
+            <StatusBadge tone="neutral">{copy(`${applicationModels.length} total`, `共 ${applicationModels.length} 条申请`)}</StatusBadge>
           </div>
           <p style={descriptionStyle}>
             {copy("Open a candidate from here to continue follow-up and communication in the candidate workspace.", "从这里打开候选人，继续在候选人工作台里完成审阅、跟进和沟通。")}
@@ -430,31 +433,34 @@ export function DashboardView({
           <div style={candidateListStyle}>
             {prioritizedApplications.slice(0, 6).map((application) => {
               const lane = classifyApplication(application);
-              const stateSnapshot = application.stateSnapshot;
-              const contactSummary = resolveContactSummary(application);
-              const contactChannels = getContactChannels(application).map((channel) => contactChannelLabel(channel, copy));
-              const signalTimestamp = stateSnapshot?.latestTransitionAt ?? application.lastContactedAt ?? null;
+              const stateSnapshot = application.application.stateSnapshot;
+              const contactSummary = application.contactSummary || resolveContactSummary(application.application);
+              const contactChannels = getContactChannels(application.application).map((channel) => contactChannelLabel(channel, copy));
+              const signalTimestamp = stateSnapshot?.latestTransitionAt ?? application.application.lastContactedAt ?? null;
               return (
                 <button
-                  key={application.id}
+                  key={application.application.id}
                   type="button"
-                  onClick={() => onOpenCommunications?.("candidate", application.id)}
+                  onClick={() => onOpenCommunications?.("candidate", application.application.id)}
                   style={candidateButtonStyle}
                 >
                   <div style={{ display: "flex", justifyContent: "space-between", gap: "var(--space-3)", alignItems: "start", flexWrap: "wrap" }}>
                     <div style={{ display: "grid", gap: "var(--space-1)" }}>
-                      <strong style={{ fontSize: "var(--font-size-base)" }}>{application.person.name}</strong>
+                      <strong style={{ fontSize: "var(--font-size-base)" }}>{application.application.person.name}</strong>
                       <div style={{ color: "var(--text-secondary)", fontSize: "var(--font-size-sm)", lineHeight: "var(--line-height-base)" }}>
-                        {application.person.title} · {application.jobDescription.title} · {application.person.location}
+                        {application.application.person.title} · {application.application.jobDescription.title} · {application.application.person.location}
                       </div>
                     </div>
                     <div style={{ display: "flex", gap: "var(--space-2)", flexWrap: "wrap" }}>
                       <StatusBadge tone={laneTone(lane)}>{laneLabel(lane, copy)}</StatusBadge>
-                      <StatusBadge tone="neutral">{copy(`score ${application.matchScore}`, `分数 ${application.matchScore}`)}</StatusBadge>
+                      <StatusBadge tone="neutral">{application.currentStatusLabel}</StatusBadge>
+                      <StatusBadge tone="neutral">
+                        {copy(`score ${application.application.matchScore}`, `分数 ${application.application.matchScore}`)}
+                      </StatusBadge>
                     </div>
                   </div>
                   <div style={{ color: "var(--text-regular)", fontSize: "var(--font-size-sm)", lineHeight: "var(--line-height-base)" }}>
-                    {application.nextAction}
+                    {application.application.nextAction}
                   </div>
                   <div style={{ display: "grid", gap: "var(--space-1)", color: "var(--text-secondary)", fontSize: "var(--font-size-sm)", lineHeight: "var(--line-height-base)" }}>
                     <div>
@@ -468,7 +474,9 @@ export function DashboardView({
                     <div>
                       {copy("Source", "来源")}：{summarizeCandidateSource(application, copy)}
                       {" · "}
-                      {application.resumeAvailable ? copy("Resume ready", "简历已到位") : copy("Resume pending", "简历待补")}
+                      {application.currentNode?.phaseLabel ?? copy("Status not mapped", "状态未映射")}
+                      {" · "}
+                      {application.application.resumeAvailable ? copy("Resume ready", "简历已到位") : copy("Resume pending", "简历待补")}
                       {signalTimestamp ? ` · ${copy("Updated", "更新")}：${formatCompactDate(signalTimestamp)}` : ""}
                     </div>
                   </div>
@@ -476,10 +484,10 @@ export function DashboardView({
                     <StatusBadge tone={stateSnapshot?.contactAcquired ? "positive" : "warning"}>
                       {stateSnapshot?.contactAcquired ? copy("Contact ready", "联系方式已到位") : copy("Needs contact", "需要联系方式")}
                     </StatusBadge>
-                    <StatusBadge tone={application.resumeAvailable ? "positive" : "warning"}>
-                      {application.resumeAvailable ? copy("Resume ready", "简历已到位") : copy("Resume pending", "简历待补")}
+                    <StatusBadge tone={application.application.resumeAvailable ? "positive" : "warning"}>
+                      {application.application.resumeAvailable ? copy("Resume ready", "简历已到位") : copy("Resume pending", "简历待补")}
                     </StatusBadge>
-                    {application.person.tags.slice(0, 3).map((tag) => (
+                    {application.application.person.tags.slice(0, 3).map((tag) => (
                       <StatusBadge key={tag} tone="neutral">
                         {tag}
                       </StatusBadge>

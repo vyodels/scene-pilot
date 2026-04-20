@@ -30,10 +30,16 @@ from scene_pilot.runtime.providers import (
     ProviderRegistryAdapter,
     UnavailableProvider,
 )
+from scene_pilot.skills.executor import build_invoke_skill_handler
 from scene_pilot.runtime.tools import ToolRegistry, register_core_tools
 from scene_pilot.scheduler.queue import SqlAlchemyQueue
 from scene_pilot.scheduler.scheduler import SerialScheduler
-from scene_pilot.services.recruit_agent import default_recruit_agent_profile, resolve_context_policy, resolve_memory_policy
+from scene_pilot.services.recruit_agent import (
+    default_recruit_agent_profile,
+    resolve_context_policy,
+    resolve_goal_template,
+    resolve_memory_policy,
+)
 from scene_pilot.services.dashboard import DashboardService
 from scene_pilot.services.events import EventStreamService
 from scene_pilot.services.feature_flags import FeatureFlagService
@@ -85,7 +91,11 @@ class AppContainer:
         mcp_registry = McpRegistryService(session_factory)
 
         providers, provider = _build_provider_bundle(resolved_settings)
-        tool_registry = _build_runtime_tool_registry(plugin_host=plugin_host, mcp_registry=mcp_registry)
+        tool_registry = _build_runtime_tool_registry(
+            session_factory=session_factory,
+            plugin_host=plugin_host,
+            mcp_registry=mcp_registry,
+        )
 
         learning_writer = LearningWriter(session_factory)
         kernel = AgentKernel(
@@ -150,7 +160,11 @@ class AppContainer:
         self.settings = settings
         self.providers, self.provider = _build_provider_bundle(settings)
         self.kernel.provider = self.provider
-        self.tool_registry = _build_runtime_tool_registry(plugin_host=self.plugin_host, mcp_registry=self.mcp_registry)
+        self.tool_registry = _build_runtime_tool_registry(
+            session_factory=self.session_factory,
+            plugin_host=self.plugin_host,
+            mcp_registry=self.mcp_registry,
+        )
         self.kernel.tool_registry = self.tool_registry
         self.dashboard.settings = settings
 
@@ -209,9 +223,14 @@ def _build_sync_service(settings: AppSettings, session_factory: sessionmaker[Ses
     )
 
 
-def _build_runtime_tool_registry(*, plugin_host: PluginHost, mcp_registry: McpRegistryService) -> ToolRegistry:
+def _build_runtime_tool_registry(
+    *,
+    session_factory: sessionmaker[Session],
+    plugin_host: PluginHost,
+    mcp_registry: McpRegistryService,
+) -> ToolRegistry:
     tool_registry = ToolRegistry()
-    register_core_tools(tool_registry)
+    register_core_tools(tool_registry, invoke_skill_handler=build_invoke_skill_handler(session_factory))
     tool_registry.merge(plugin_host.tool_registry)
     mcp_registry.register_enabled_runtime_tools(tool_registry)
     return tool_registry
@@ -247,8 +266,12 @@ def _seed_builtin_agent_profiles(session_factory: sessionmaker[Session]) -> None
                 autonomous_updates["agent_metadata"] = merged_metadata
             prompt_config = dict(autonomous.prompt_config or {})
             resolved_context_policy = resolve_context_policy(prompt_config)
+            resolved_goal_template = resolve_goal_template(prompt_config)
             if prompt_config.get("context_policy") != resolved_context_policy:
                 prompt_config["context_policy"] = resolved_context_policy
+                autonomous_updates["prompt_config"] = prompt_config
+            if prompt_config.get("goal_template") != resolved_goal_template:
+                prompt_config["goal_template"] = resolved_goal_template
                 autonomous_updates["prompt_config"] = prompt_config
             resolved_memory_policy = resolve_memory_policy(autonomous.memory_policy)
             if resolved_memory_policy != dict(autonomous.memory_policy or {}):

@@ -12,7 +12,12 @@ import {
 import { CandidateDetailDrawer } from "../kanban-shared/CandidateDetailDrawer";
 import { FunnelStageBar } from "../kanban-shared/FunnelStageBar";
 import { ManualStatusOverrideDrawer } from "../kanban-shared/ManualStatusOverrideDrawer";
-import { buildApplicationViewModels, createNodeMap, isWithinApplicationDateFilter } from "../kanban-shared/kanbanUtils";
+import {
+  buildApplicationViewModels,
+  createNodeMap,
+  hasReachedFunnelMilestone,
+  isWithinApplicationDateFilter,
+} from "../kanban-shared/kanbanUtils";
 import type { ApplicationRecord, ApplicationThreadRecord } from "../../lib/types";
 import { useI18n } from "../../lib/i18n";
 
@@ -92,7 +97,7 @@ export function FunnelKanbanView({
       visibleMilestones.map((milestone) => {
         const count = jobFilteredModels.filter(
           (item) =>
-            item.deepestMilestone === milestone.id &&
+            hasReachedFunnelMilestone(item.deepestMilestone, milestone.id) &&
             isWithinApplicationDateFilter(item.milestoneReachedAt[milestone.id], dateFilter),
         ).length;
         return {
@@ -111,7 +116,7 @@ export function FunnelKanbanView({
       jobFilteredModels
         .filter(
           (item) =>
-            item.deepestMilestone === selectedMilestone &&
+            hasReachedFunnelMilestone(item.deepestMilestone, selectedMilestone) &&
             isWithinApplicationDateFilter(item.milestoneReachedAt[selectedMilestone], dateFilter),
         )
         .map((item) => ({

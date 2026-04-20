@@ -241,7 +241,7 @@ class AutonomousAgent:
             }
             run.turns_count = int(run.turns_count or 0) + 1
             run.status = _run_status_from_outcome(last_outcome)
-            if run.status in {"completed", "waiting_human", "blocked", "cancelled"}:
+            if run.status in {"completed", "waiting_human", "blocked", "failed", "cancelled"}:
                 run.finished_at = utcnow()
             run.last_error = None
             if goal_spec is not None:
@@ -461,6 +461,8 @@ def _run_status_from_outcome(outcome: RoundOutcome) -> str:
         return "waiting_human"
     if outcome.status == "cancelled" or outcome.gate_signal == "paused":
         return "cancelled"
+    if outcome.status == "error":
+        return "failed"
     if outcome.status == "escalate" or outcome.gate_signal == "escalate":
         return "blocked"
     if outcome.gate_signal == "budget_exhausted":
@@ -475,6 +477,8 @@ def _turn_status_from_outcome(outcome: RoundOutcome) -> str:
         return "waiting_human"
     if outcome.status == "cancelled" or outcome.gate_signal == "paused":
         return "cancelled"
+    if outcome.status == "error":
+        return "failed"
     if outcome.status == "escalate" or outcome.gate_signal == "escalate":
         return "failed"
     if outcome.gate_signal == "budget_exhausted":
@@ -487,6 +491,8 @@ def _terminal_event_type(outcome: RoundOutcome) -> str:
         return "turn.waiting_human"
     if outcome.status == "cancelled" or outcome.gate_signal == "paused":
         return "turn.cancelled"
+    if outcome.status == "error":
+        return "turn.failed"
     if outcome.status == "escalate" or outcome.gate_signal == "escalate":
         return "turn.failed"
     return "turn.completed"

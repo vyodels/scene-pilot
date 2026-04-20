@@ -19,4 +19,8 @@ class SkillRegistry:
 
     def get_skill(self, skill_id: str) -> Skill | None:
         with self.session_factory() as session:
-            return session.get(Skill, skill_id)
+            item = session.get(Skill, skill_id)
+            if item is not None:
+                return item
+            stmt = select(Skill).where(Skill.skill_id == skill_id)
+            return session.scalars(stmt).first()

@@ -1096,6 +1096,61 @@ function normalizeJobDescriptionSummary(raw: unknown, fallbackId?: string | null
           ? String(record.job_description_id)
           : fallbackId,
     title: String(record.title ?? fallbackId ?? "未分配岗位"),
+    companyName:
+      record.companyName != null ? String(record.companyName) : record.company_name != null ? String(record.company_name) : null,
+    department:
+      record.department != null ? String(record.department) : null,
+    location:
+      record.location != null ? String(record.location) : null,
+    employmentType:
+      record.employmentType != null
+        ? String(record.employmentType)
+        : record.employment_type != null
+          ? String(record.employment_type)
+          : null,
+    headcount:
+      record.headcount != null ? Number(record.headcount) : null,
+    salaryMin:
+      record.salaryMin != null ? Number(record.salaryMin) : record.salary_min != null ? Number(record.salary_min) : null,
+    salaryMax:
+      record.salaryMax != null ? Number(record.salaryMax) : record.salary_max != null ? Number(record.salary_max) : null,
+    compensationText:
+      record.compensationText != null
+        ? String(record.compensationText)
+        : record.compensation_text != null
+          ? String(record.compensation_text)
+          : null,
+    experienceRequirement:
+      record.experienceRequirement != null
+        ? String(record.experienceRequirement)
+        : record.experience_requirement != null
+          ? String(record.experience_requirement)
+          : null,
+    educationRequirement:
+      record.educationRequirement != null
+        ? String(record.educationRequirement)
+        : record.education_requirement != null
+          ? String(record.education_requirement)
+          : null,
+    summary: record.summary != null ? String(record.summary) : null,
+    description: record.description != null ? String(record.description) : null,
+    requirements: record.requirements != null ? String(record.requirements) : null,
+    benefitTags: asArray<string>(record.benefitTags ?? record.benefit_tags),
+    detailMetadata: asRecord(record.detailMetadata ?? record.detail_metadata),
+    status: record.status != null ? String(record.status) : null,
+    source: record.source != null ? String(record.source) : null,
+    createdAt:
+      typeof record.createdAt === "string" || typeof record.createdAt === "number"
+        ? record.createdAt
+        : typeof record.created_at === "string" || typeof record.created_at === "number"
+          ? record.created_at
+          : null,
+    updatedAt:
+      typeof record.updatedAt === "string" || typeof record.updatedAt === "number"
+        ? record.updatedAt
+        : typeof record.updated_at === "string" || typeof record.updated_at === "number"
+          ? record.updated_at
+          : null,
   };
 }
 

@@ -3,9 +3,11 @@ import type {
   ApplicationTransitionPayload,
   RecruitmentStateMachine,
 } from "@scene-pilot/shared";
+import { getFunnelMilestone } from "@scene-pilot/shared";
 import { AppLayout, Panel, SectionTabs, Sidebar, StatusBadge, TopBar } from "../../components";
 import { ChatOverlay, FloatingBubble, useChatOverlay } from "../chat-overlay";
 import { apiClient } from "../../lib/api";
+import { formatDateTime } from "../../lib/format";
 import { useI18n } from "../../lib/i18n";
 import type {
   AgentSnapshot,
@@ -19,7 +21,7 @@ import type {
 } from "../../lib/types";
 import { CandidatesKanbanView, type CandidatesKanbanTab } from "../candidates/CandidatesKanbanView";
 import { DashboardView } from "../dashboard/DashboardView";
-import { buildApplicationViewModels } from "../kanban-shared/kanbanUtils";
+import { buildApplicationViewModels, type ApplicationViewModel } from "../kanban-shared/kanbanUtils";
 import { SettingsView } from "../settings/SettingsView";
 
 const emptySettings: SettingsSnapshot = {
@@ -70,227 +72,305 @@ const emptySummary: DashboardSummary = {
   settings: emptySettings,
 };
 
-function resolveMacroStage(status: string, stageKey: string, resumeAvailable: boolean): string {
-  const fingerprint = `${status} ${stageKey}`.toLowerCase();
-  if (/(rejected|cooldown|archive)/i.test(fingerprint)) {
-    return "Archived";
-  }
-  if (/(offer|decision|hired|accepted|final)/i.test(fingerprint)) {
-    return "Decision";
-  }
-  if (/(interview|schedule)/i.test(fingerprint)) {
-    return "Interview";
-  }
-  if (resumeAvailable || /(resume|profile|attachment)/i.test(fingerprint)) {
-    return "Resume";
-  }
-  if (/(contact|reply|message|communicat|outreach)/i.test(fingerprint)) {
-    return "Outreach";
-  }
-  if (/(review|screen|assessment|probe|score)/i.test(fingerprint)) {
-    return "Review";
-  }
-  return "New";
+function funnelStageDefinitions(copy: (en: string, zh: string) => string): Array<{ label: string; phases: string[] }> {
+  return [
+    { label: copy("Discovery & AI screening", "发现与 AI 在线评估"), phases: ["A"] },
+    { label: copy("Outreach", "发起沟通与建立对话"), phases: ["B"] },
+    { label: copy("Resume & evaluation", "获取简历与评估"), phases: ["C", "D", "E"] },
+    { label: copy("Contact acquired", "获取联系方式"), phases: ["F"] },
+    { label: copy("Interview & outcome", "面试与结果"), phases: ["G", "H"] },
+  ];
 }
 
-function macroStageTone(stage: string): "positive" | "neutral" | "warning" | "critical" {
-  if (stage === "Archived") {
-    return "critical";
-  }
-  if (stage === "Decision" || stage === "Interview") {
-    return "positive";
-  }
-  if (stage === "Review" || stage === "Outreach" || stage === "Resume") {
-    return "warning";
-  }
-  return "neutral";
+function resolveFunnelStageDepth(model: ApplicationViewModel, stages: Array<{ label: string; phases: string[] }>): number {
+  const depthByPhase = new Map<string, number>();
+  stages.forEach((stage, index) => {
+    stage.phases.forEach((phase) => depthByPhase.set(phase, index));
+  });
+  const currentDepth = model.currentNode?.phase && model.currentNode.phase !== "Z"
+    ? (depthByPhase.get(model.currentNode.phase) ?? -1)
+    : -1;
+  const deepestDepth = getFunnelMilestone(model.deepestMilestone)?.phase
+    ? (depthByPhase.get(getFunnelMilestone(model.deepestMilestone)?.phase ?? "") ?? -1)
+    : -1;
+  return Math.max(currentDepth, deepestDepth);
 }
 
-const surfaceRowButtonStyle: React.CSSProperties = {
-  textAlign: "left",
-  padding: "var(--space-4)",
-  borderRadius: "var(--radius-md)",
-  border: "1px solid var(--border-line)",
-  background: "var(--bg-card)",
-  cursor: "pointer",
-};
+interface JdWorkspaceGroup {
+  key: string;
+  jobDescriptionId?: string | null;
+  job: JobDescriptionSummaryRecord;
+  applications: ApplicationViewModel[];
+  macroCounts: Record<string, number>;
+}
+
+function isPresentText(value: string | null | undefined): value is string {
+  return Boolean(value && value.trim());
+}
+
+function jobGroupKey(job: Pick<JobDescriptionSummaryRecord, "jobDescriptionId" | "title">): string {
+  return job.jobDescriptionId || job.title || "unknown-jd";
+}
 
 function JdWorkspaceSurface({
   applications,
   jobDescriptions,
-  onOpenApplication,
 }: {
-  applications: DashboardSummary["applications"];
+  applications: ApplicationViewModel[];
   jobDescriptions: JobDescriptionSummaryRecord[];
-  onOpenApplication?(filter?: string, applicationId?: string): void;
 }): JSX.Element {
   const { copy } = useI18n();
-  const jdGroups = useMemo(() => {
-    const groupedApplications = applications.reduce<
-      Record<string, { title: string; jobDescriptionId?: string | null; applications: DashboardSummary["applications"] }>
-    >((accumulator, application) => {
-      const title = application.jobDescription.title || copy("Unassigned role", "未分配岗位");
-      const key = application.jobDescriptionId || title;
-      const existing = accumulator[key];
-      if (existing) {
-        existing.applications = [...existing.applications, application];
-        return accumulator;
-      }
-      accumulator[key] = {
-        title,
-        jobDescriptionId: application.jobDescriptionId,
-        applications: [application],
-      };
-      return accumulator;
-    }, {});
+  const funnelStages = useMemo(() => funnelStageDefinitions(copy), [copy]);
+  const jdGroups = useMemo((): JdWorkspaceGroup[] => {
+    const groupedApplications = new Map<string, ApplicationViewModel[]>();
+    for (const application of applications) {
+      const key = jobGroupKey({
+        jobDescriptionId: application.application.jobDescriptionId,
+        title: application.application.jobDescription.title || copy("Unassigned role", "未分配岗位"),
+      });
+      const existing = groupedApplications.get(key) ?? [];
+      existing.push(application);
+      groupedApplications.set(key, existing);
+    }
 
-    jobDescriptions.forEach((job) => {
-      const title = job.title || copy("Untitled role", "未命名岗位");
-      const key = job.jobDescriptionId || title;
-      if (groupedApplications[key]) {
-        groupedApplications[key].title = title;
-        groupedApplications[key].jobDescriptionId = job.jobDescriptionId;
-        return;
-      }
-      groupedApplications[key] = {
-        title,
+    const groups = jobDescriptions.map((job) => {
+      const key = jobGroupKey(job);
+      const grouped = groupedApplications.get(key) ?? [];
+      const macroCounts = grouped.reduce<Record<string, number>>((accumulator, application) => {
+        const depth = resolveFunnelStageDepth(application, funnelStages);
+        for (let index = 0; index <= depth; index += 1) {
+          const stage = funnelStages[index];
+          if (!stage) {
+            continue;
+          }
+          accumulator[stage.label] = (accumulator[stage.label] ?? 0) + 1;
+        }
+        return accumulator;
+      }, {});
+      return {
+        key,
         jobDescriptionId: job.jobDescriptionId,
-        applications: [],
+        job,
+        applications: grouped,
+        macroCounts,
       };
     });
 
-    return Object.entries(groupedApplications).sort((left, right) => {
-      const countDiff = right[1].applications.length - left[1].applications.length;
+    return groups.sort((left, right) => {
+      const countDiff = right.applications.length - left.applications.length;
       if (countDiff !== 0) {
         return countDiff;
       }
-      return left[1].title.localeCompare(right[1].title, "zh-CN");
+      return left.job.title.localeCompare(right.job.title, "zh-CN");
     });
   }, [applications, copy, jobDescriptions]);
+  const [selectedJdKey, setSelectedJdKey] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!jdGroups.length) {
+      setSelectedJdKey(null);
+      return;
+    }
+    if (!selectedJdKey || !jdGroups.some((group) => group.key === selectedJdKey)) {
+      setSelectedJdKey(jdGroups[0]?.key ?? null);
+    }
+  }, [jdGroups, selectedJdKey]);
+
+  const selectedGroup = useMemo(
+    () => jdGroups.find((group) => group.key === selectedJdKey) ?? jdGroups[0] ?? null,
+    [jdGroups, selectedJdKey],
+  );
+
+  const detailRows = selectedGroup ? [
+    { label: copy("Location", "地点"), value: selectedGroup.job.location },
+    { label: copy("Compensation", "薪资"), value: selectedGroup.job.compensationText },
+    { label: copy("Company", "公司"), value: selectedGroup.job.companyName },
+    { label: copy("Department", "部门"), value: selectedGroup.job.department },
+    { label: copy("Employment type", "用工类型"), value: selectedGroup.job.employmentType },
+    {
+      label: copy("Headcount", "招聘人数"),
+      value: selectedGroup.job.headcount != null ? String(selectedGroup.job.headcount) : null,
+    },
+    { label: copy("Experience", "经验要求"), value: selectedGroup.job.experienceRequirement },
+    { label: copy("Education", "学历要求"), value: selectedGroup.job.educationRequirement },
+    { label: copy("Source", "来源"), value: selectedGroup.job.source },
+    { label: copy("Status", "状态"), value: selectedGroup.job.status },
+    {
+      label: copy("Created", "创建时间"),
+      value: selectedGroup.job.createdAt != null ? formatDateTime(selectedGroup.job.createdAt) : null,
+    },
+    {
+      label: copy("Updated", "更新时间"),
+      value: selectedGroup.job.updatedAt != null ? formatDateTime(selectedGroup.job.updatedAt) : null,
+    },
+  ].filter((item) => isPresentText(item.value)) : [];
 
   return (
     <div style={{ display: "grid", gap: "var(--space-4)" }}>
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(calc(var(--space-12) * 3 + var(--space-10) + var(--space-10) + var(--space-5) + var(--space-4)), 1fr))",
-          gap: "var(--space-3)",
-        }}
-      >
-        {jdGroups.slice(0, 4).map(([, group]) => {
-          const macroCounts = group.applications.reduce<Record<string, number>>((accumulator, application) => {
-            const stage = resolveMacroStage(
-              application.currentStatus,
-              application.stageKey,
-              application.resumeAvailable,
-            );
-            accumulator[stage] = (accumulator[stage] ?? 0) + 1;
-            return accumulator;
-          }, {});
-          return (
-            <article
-              key={group.jobDescriptionId || group.title}
-              style={{
-                padding: "var(--space-4)",
-                borderRadius: "var(--radius-md)",
-                background: "var(--bg-card)",
-                border: "1px solid var(--border-line)",
-              }}
-            >
-              <div style={{ fontWeight: 600, color: "var(--text-primary)" }}>{group.title}</div>
-              <div
-                style={{
-                  marginTop: "var(--space-2)",
-                  fontSize: "var(--font-size-sm)",
-                  color: "var(--text-secondary)",
-                }}
-              >
-                {copy(
-                  `${group.applications.length} applications in this funnel.`,
-                  `该漏斗下共有 ${group.applications.length} 条申请。`,
-                )}
-              </div>
-              <div
-                style={{
-                  display: "flex",
-                  gap: "var(--space-2)",
-                  flexWrap: "wrap",
-                  marginTop: "var(--space-3)",
-                }}
-              >
-                {Object.entries(macroCounts).length ? Object.entries(macroCounts).map(([label, count]) => (
-                  <StatusBadge key={label} tone={macroStageTone(label)}>
-                    {label} · {count}
-                  </StatusBadge>
-                )) : (
-                  <StatusBadge tone="neutral">{copy("No candidate yet", "暂无候选人")}</StatusBadge>
-                )}
-              </div>
-            </article>
-          );
-        })}
-      </div>
-
-      <div style={{ display: "grid", gap: "var(--space-3)" }}>
-        {jdGroups.map(([, group]) => (
-          <Panel
-            key={group.jobDescriptionId || group.title}
-            title={group.title}
-            eyebrow={copy("Role funnel", "岗位漏斗")}
-            description={copy("Applications currently grouped under this role.", "当前归属到该岗位的申请。")}
+      {!jdGroups.length ? (
+        <Panel
+          title={copy("JD management", "JD 管理")}
+          eyebrow={copy("Roles", "岗位")}
+          description={copy("No job description has been synced into the workspace yet.", "当前还没有同步到工作区的 JD。")}
+        >
+          <div
+            style={{
+              padding: "var(--space-4)",
+              borderRadius: "var(--radius-md)",
+              border: "1px dashed var(--border-line)",
+              background: "var(--bg-subtle)",
+              color: "var(--text-secondary)",
+              fontSize: "var(--font-size-sm)",
+              lineHeight: 1.6,
+            }}
           >
-            <div style={{ display: "grid", gap: "var(--space-3)" }}>
-              {group.applications.length ? group.applications.map((application) => {
-                const macroStage = resolveMacroStage(
-                  application.currentStatus,
-                  application.stageKey,
-                  application.resumeAvailable,
-                );
-                return (
-                  <button
-                    key={application.id}
-                    type="button"
-                    onClick={() => onOpenApplication?.("application", application.id)}
-                    style={surfaceRowButtonStyle}
-                  >
+            {copy("Once a JD is synced, its business details and funnel summary will appear here.", "JD 同步后，这里会展示该岗位的业务详情和漏斗摘要。")}
+          </div>
+        </Panel>
+      ) : (
+        <div
+          style={{
+            display: "grid",
+            gap: "var(--space-4)",
+            gridTemplateColumns: "minmax(320px, 420px) minmax(0, 1fr)",
+            alignItems: "start",
+          }}
+        >
+          <div style={{ display: "grid", gap: "var(--space-3)" }}>
+            {jdGroups.map((group) => (
+              <button
+                key={group.key}
+                type="button"
+                onClick={() => setSelectedJdKey(group.key)}
+                style={{
+                  textAlign: "left",
+                  padding: "var(--space-4)",
+                  borderRadius: "var(--radius-md)",
+                  border: selectedJdKey === group.key ? "1px solid var(--brand-primary)" : "1px solid var(--border-line)",
+                  background: selectedJdKey === group.key ? "var(--brand-primary-soft)" : "var(--bg-card)",
+                  cursor: "pointer",
+                }}
+              >
+                <div style={{ fontWeight: 600, color: "var(--text-primary)" }}>{group.job.title}</div>
+                <div
+                  style={{
+                    marginTop: "var(--space-2)",
+                    fontSize: "var(--font-size-sm)",
+                    color: "var(--text-secondary)",
+                    lineHeight: 1.6,
+                  }}
+                >
+                  {group.job.summary || group.job.description || copy("No JD summary available yet.", "当前还没有 JD 摘要。")}
+                </div>
+                <div
+                  style={{
+                    display: "flex",
+                    gap: "var(--space-2)",
+                    flexWrap: "wrap",
+                    marginTop: "var(--space-3)",
+                  }}
+                >
+                  <StatusBadge tone="neutral">
+                    {copy(`${group.applications.length} applications`, `${group.applications.length} 条申请`)}
+                  </StatusBadge>
+                  {group.job.compensationText ? <StatusBadge tone="neutral">{group.job.compensationText}</StatusBadge> : null}
+                  {group.job.location ? <StatusBadge tone="neutral">{group.job.location}</StatusBadge> : null}
+                </div>
+              </button>
+            ))}
+          </div>
+
+          <Panel
+            key={selectedGroup?.key || "jd-detail"}
+            title={selectedGroup?.job.title || copy("JD detail", "JD 详情")}
+            eyebrow={copy("JD detail", "JD 详情")}
+            description={copy("Business details and funnel summary of the selected role.", "当前选中岗位的业务详情与漏斗摘要。")}
+          >
+            {selectedGroup ? (
+              <div style={{ display: "grid", gap: "var(--space-4)" }}>
+                <div
+                  style={{
+                    display: "flex",
+                    gap: "var(--space-2)",
+                    flexWrap: "wrap",
+                  }}
+                >
+                  <StatusBadge tone="neutral">
+                    {copy(`${selectedGroup.applications.length} applications`, `${selectedGroup.applications.length} 条申请`)}
+                  </StatusBadge>
+                  {selectedGroup.job.status ? <StatusBadge tone="neutral">{selectedGroup.job.status}</StatusBadge> : null}
+                  {selectedGroup.job.source ? <StatusBadge tone="neutral">{selectedGroup.job.source}</StatusBadge> : null}
+                </div>
+
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+                    gap: "var(--space-3)",
+                  }}
+                >
+                  {detailRows.map((item) => (
                     <div
+                      key={item.label}
                       style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        gap: "var(--space-3)",
-                        alignItems: "start",
+                        padding: "var(--space-3)",
+                        borderRadius: "var(--radius-md)",
+                        border: "1px solid var(--border-line)",
+                        background: "var(--bg-subtle)",
                       }}
                     >
-                      <div>
-                        <div style={{ fontWeight: 600, color: "var(--text-primary)" }}>{application.person.name}</div>
-                        <div
-                          style={{
-                            marginTop: "var(--space-1)",
-                            fontSize: "var(--font-size-sm)",
-                            color: "var(--text-secondary)",
-                          }}
-                        >
-                          {application.person.title} · {application.person.location}
-                        </div>
-                      </div>
-                      <div style={{ display: "flex", gap: "var(--space-2)", flexWrap: "wrap", justifyContent: "end" }}>
-                        <StatusBadge tone={macroStageTone(macroStage)}>{macroStage}</StatusBadge>
-                        <StatusBadge tone="neutral">{copy(`score ${application.matchScore}`, `分数 ${application.matchScore}`)}</StatusBadge>
-                      </div>
+                      <div style={{ fontSize: "var(--font-size-xs)", color: "var(--text-secondary)" }}>{item.label}</div>
+                      <div style={{ marginTop: "var(--space-1)", color: "var(--text-primary)", lineHeight: 1.5 }}>{item.value}</div>
                     </div>
-                    <div
-                      style={{
-                        marginTop: "var(--space-2)",
-                        fontSize: "var(--font-size-sm)",
-                        color: "var(--text-regular)",
-                        lineHeight: 1.6,
-                      }}
-                    >
-                      {application.nextAction}
+                  ))}
+                </div>
+
+                {selectedGroup.job.summary ? (
+                  <div>
+                    <div style={{ fontSize: "var(--font-size-xs)", color: "var(--text-secondary)" }}>{copy("Summary", "摘要")}</div>
+                    <div style={{ marginTop: "var(--space-1)", color: "var(--text-regular)", lineHeight: 1.7 }}>{selectedGroup.job.summary}</div>
+                  </div>
+                ) : null}
+
+                {selectedGroup.job.description ? (
+                  <div>
+                    <div style={{ fontSize: "var(--font-size-xs)", color: "var(--text-secondary)" }}>{copy("Description", "描述")}</div>
+                    <div style={{ marginTop: "var(--space-1)", color: "var(--text-regular)", lineHeight: 1.7 }}>{selectedGroup.job.description}</div>
+                  </div>
+                ) : null}
+
+                {selectedGroup.job.requirements ? (
+                  <div>
+                    <div style={{ fontSize: "var(--font-size-xs)", color: "var(--text-secondary)" }}>{copy("Requirements", "要求")}</div>
+                    <div style={{ marginTop: "var(--space-1)", color: "var(--text-regular)", lineHeight: 1.7 }}>{selectedGroup.job.requirements}</div>
+                  </div>
+                ) : null}
+
+                {selectedGroup.job.benefitTags.length ? (
+                  <div>
+                    <div style={{ fontSize: "var(--font-size-xs)", color: "var(--text-secondary)" }}>{copy("Benefits", "福利标签")}</div>
+                    <div style={{ display: "flex", gap: "var(--space-2)", flexWrap: "wrap", marginTop: "var(--space-2)" }}>
+                      {selectedGroup.job.benefitTags.map((tag) => (
+                        <StatusBadge key={tag} tone="neutral">{tag}</StatusBadge>
+                      ))}
                     </div>
-                  </button>
-                );
-              }) : (
+                  </div>
+                ) : null}
+
+                <div>
+                  <div style={{ fontSize: "var(--font-size-xs)", color: "var(--text-secondary)" }}>{copy("Funnel snapshot", "漏斗快照")}</div>
+                  <div style={{ display: "flex", gap: "var(--space-2)", flexWrap: "wrap", marginTop: "var(--space-2)" }}>
+                    {Object.entries(selectedGroup.macroCounts).length ? Object.entries(selectedGroup.macroCounts).map(([label, count]) => (
+                      <StatusBadge key={label} tone="neutral">
+                        {label} · {count}
+                      </StatusBadge>
+                    )) : (
+                      <StatusBadge tone="neutral">{copy("No candidate yet", "暂无候选人")}</StatusBadge>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ) : (
                 <div
                   style={{
                     padding: "var(--space-4)",
@@ -303,15 +383,14 @@ function JdWorkspaceSurface({
                   }}
                 >
                   {copy(
-                    "This JD has been synced into the workspace, but there are no candidate applications under it yet.",
-                    "这个 JD 已同步到工作区，但其下还没有候选人申请。",
+                    "Select a JD card on the left to inspect its details.",
+                    "请先在左侧选择一个 JD 查看详情。",
                   )}
                 </div>
-              )}
-            </div>
+            )}
           </Panel>
-        ))}
-      </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -405,15 +484,6 @@ export function DesktopWorkspace(): JSX.Element {
     }
   }, [loadSettingsWorkspace, settingsLoaded, tab]);
 
-  const counts = useMemo(
-    () =>
-      ({
-        candidates: summary.applications.filter((application) => !/(rejected|cooldown)/i.test(application.currentStatus)).length,
-        settings: mcpServers.filter((server) => !server.enabled || !/healthy/i.test(server.healthStatus)).length,
-      }) satisfies Partial<Record<WorkspaceTab, number>>,
-    [mcpServers, summary.applications],
-  );
-
   const sectionMeta = useMemo(
     (): Record<WorkspaceTab, { eyebrow: string; title: string; description: string }> => ({
       home: {
@@ -449,29 +519,47 @@ export function DesktopWorkspace(): JSX.Element {
     [applicationThreads, stateMachine, summary.applications],
   );
 
+  const counts = useMemo(
+    () =>
+      ({
+        candidates: candidateKanbanModels.length,
+        settings: mcpServers.filter((server) => !server.enabled || !/healthy/i.test(server.healthStatus)).length,
+      }) satisfies Partial<Record<WorkspaceTab, number>>,
+    [candidateKanbanModels.length, mcpServers],
+  );
+
   const candidateKanbanTabItems = useMemo(
     () => [
       {
         key: "funnel",
         label: copy("Candidate funnel", "候选人漏斗"),
-        count: summary.applications.length,
+        count: candidateKanbanModels.length,
       },
       {
         key: "status",
         label: copy("Candidate follow-up", "候选人跟进"),
-        count: candidateKanbanModels.filter((item) => item.humanRequired).length,
+        count: candidateKanbanModels.filter((item) => {
+          const node = item.currentNode;
+          if (!node || node.uiConfig?.showInKanban === false || node.isTransient) {
+            return false;
+          }
+          if (["no_response", "cooldown", "archived", "candidate_withdrew"].includes(item.currentStatus)) {
+            return false;
+          }
+          return node.phase !== "Z" && (((!node.isTerminal && !node.isSoftTerminal) || node.isSuccess));
+        }).length,
       },
       {
         key: "jd",
         label: copy("JD management", "JD 管理"),
         count: new Set(
-          summary.applications.map(
-            (application) => application.jobDescription.title || copy("Unassigned role", "未分配岗位"),
+          candidateKanbanModels.map(
+            (application) => application.application.jobDescription.title || copy("Unassigned role", "未分配岗位"),
           ),
         ).size,
       },
     ],
-    [candidateKanbanModels, copy, summary.applications],
+    [candidateKanbanModels, copy],
   );
 
   const handleSaveSettings = async (patch: Partial<SettingsSnapshot>) => {
@@ -634,9 +722,8 @@ export function DesktopWorkspace(): JSX.Element {
             onTransition={handleTransitionApplicationState}
             jdContent={
               <JdWorkspaceSurface
-                applications={summary.applications}
+                applications={candidateKanbanModels}
                 jobDescriptions={jobDescriptions}
-                onOpenApplication={openApplicationWorkspace}
               />
             }
           />
@@ -657,7 +744,7 @@ export function DesktopWorkspace(): JSX.Element {
           />
         );
       default:
-        return <DashboardView summary={summary} />;
+        return <DashboardView summary={summary} stateMachine={stateMachine} />;
     }
   })();
 

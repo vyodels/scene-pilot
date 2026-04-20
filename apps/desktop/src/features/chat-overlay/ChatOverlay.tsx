@@ -55,6 +55,7 @@ interface ConfigDraft {
 
 interface AgentConfigDraft {
   systemPrompt: string;
+  goalTemplate: string;
   scoringRubric: string;
 }
 
@@ -267,10 +268,12 @@ function agentConfigDraftTemplate(): Record<AgentKind, AgentConfigDraft> {
   return {
     assistant: {
       systemPrompt: "",
+      goalTemplate: "",
       scoringRubric: "",
     },
     autonomous: {
       systemPrompt: "",
+      goalTemplate: "",
       scoringRubric: "",
     },
   };
@@ -279,17 +282,18 @@ function agentConfigDraftTemplate(): Record<AgentKind, AgentConfigDraft> {
 function agentConfigDraftFromWorkspace(workspace: AgentWorkspaceRecord | null): AgentConfigDraft {
   return {
     systemPrompt: workspace?.config.systemPrompt ?? "",
+    goalTemplate: workspace?.config.goalTemplate ?? "",
     scoringRubric: workspace?.config.scoringRubric ?? "",
   };
 }
 
-function autonomousGoalDraftTemplate(): AutonomousGoalDraft {
+function autonomousGoalDraftTemplate(defaultGoalText = ""): AutonomousGoalDraft {
   return {
     sceneTemplateKey: "",
     title: "",
     jdId: "",
     candidateCountTarget: "3",
-    goalText: "",
+    goalText: defaultGoalText,
   };
 }
 
@@ -535,8 +539,10 @@ export function ChatOverlay({ transport, workspaceAgent }: ChatOverlayProps): JS
   const assistantStreamContentRef = useRef<Record<string, string>>({});
   const conversationLookupRef = useRef<Map<string, AgentConversationSummary>>(new Map());
 
-  const loadWorkspaces = useCallback(async () => {
-    setLoadingWorkspace(true);
+  const loadWorkspaces = useCallback(async (markLoading = true) => {
+    if (markLoading) {
+      setLoadingWorkspace(true);
+    }
     try {
       const [assistant, autonomous] = await Promise.all([
         apiClient.getAgentWorkspace("assistant"),
@@ -550,7 +556,9 @@ export function ChatOverlay({ transport, workspaceAgent }: ChatOverlayProps): JS
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : copy("Failed to load agent overlay.", "加载 Agent Overlay 失败。"));
     } finally {
-      setLoadingWorkspace(false);
+      if (markLoading) {
+        setLoadingWorkspace(false);
+      }
     }
   }, [copy]);
 
@@ -608,11 +616,41 @@ export function ChatOverlay({ transport, workspaceAgent }: ChatOverlayProps): JS
   }, [isOpen, loadJobDescriptions, loadSceneTemplates, loadSettings, loadWorkspaces]);
 
   useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      void loadWorkspaces(false);
+    }, 1500);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [isOpen, loadWorkspaces]);
+
+  useEffect(() => {
     setAgentConfigDrafts({
       assistant: agentConfigDraftFromWorkspace(workspaces.assistant),
       autonomous: agentConfigDraftFromWorkspace(workspaces.autonomous),
     });
   }, [workspaces.assistant, workspaces.autonomous]);
+
+  useEffect(() => {
+    setAutonomousGoalDraft((current) => {
+      const defaultGoalText = workspaces.autonomous?.config.goalTemplate?.trim() ?? "";
+      const hasUserInput =
+        current.sceneTemplateKey.trim().length > 0
+        || current.title.trim().length > 0
+        || current.jdId.trim().length > 0
+        || current.goalText.trim().length > 0
+        || current.candidateCountTarget.trim() !== "3";
+      if (hasUserInput) {
+        return current;
+      }
+      return autonomousGoalDraftTemplate(defaultGoalText);
+    });
+  }, [workspaces.autonomous?.config.goalTemplate]);
 
   useEffect(() => {
     if (isOpen) {
@@ -685,6 +723,10 @@ export function ChatOverlay({ transport, workspaceAgent }: ChatOverlayProps): JS
   const sceneTemplateLookup = useMemo(
     () => new Map(sceneTemplates.map((template) => [template.key, template])),
     [sceneTemplates],
+  );
+  const autonomousDefaultGoalTemplate = useMemo(
+    () => autonomousWorkspace?.config.goalTemplate?.trim() ?? "",
+    [autonomousWorkspace?.config.goalTemplate],
   );
   const autonomousActiveRun = useMemo(
     () => autonomousWorkspace?.runs.find((run) => isOpenRunStatus(run.status)) ?? null,
@@ -1436,6 +1478,7 @@ export function ChatOverlay({ transport, workspaceAgent }: ChatOverlayProps): JS
         apiClient.updateAgentProfile(activeAgent, {
           promptConfig: {
             systemPrompt: activeAgentConfig.systemPrompt,
+            goalTemplate: activeAgentConfig.goalTemplate,
             scoringRubric: activeAgentConfig.scoringRubric,
           },
         }),
@@ -1633,7 +1676,7 @@ export function ChatOverlay({ transport, workspaceAgent }: ChatOverlayProps): JS
         ...current,
         autonomous: result.conversationId,
       }));
-      setAutonomousGoalDraft(autonomousGoalDraftTemplate());
+      setAutonomousGoalDraft(autonomousGoalDraftTemplate(autonomousDefaultGoalTemplate));
       setPanelNotice({
         panel: "runs",
         tone: "success",
@@ -1884,7 +1927,7 @@ export function ChatOverlay({ transport, workspaceAgent }: ChatOverlayProps): JS
                   type="button"
                   className="chat-overlay__header-button"
                   disabled={runActionBusyId === "create-goal"}
-                  onClick={() => setAutonomousGoalDraft(autonomousGoalDraftTemplate())}
+                  onClick={() => setAutonomousGoalDraft(autonomousGoalDraftTemplate(autonomousDefaultGoalTemplate))}
                 >
                   {copy("Reset form", "重置表单")}
                 </button>
@@ -2345,6 +2388,33 @@ export function ChatOverlay({ transport, workspaceAgent }: ChatOverlayProps): JS
               />
             </div>
 
+            {activeAgent === "autonomous" ? (
+              <div style={{ display: "grid", gap: "var(--space-1)" }}>
+                <span className="chat-list-item__title">{copy("Goal template", "任务描述模板")}</span>
+                <textarea
+                  value={agentConfigDrafts[activeAgent].goalTemplate}
+                  onChange={(event) =>
+                    setAgentConfigDrafts((current) => ({
+                      ...current,
+                      [activeAgent]: {
+                        ...current[activeAgent],
+                        goalTemplate: event.target.value,
+                      },
+                    }))
+                  }
+                  placeholder={copy(
+                    "Describe the long-running recruiting mission for autonomous execution…",
+                    "填写 Autonomous 持续执行的真实招聘任务描述…",
+                  )}
+                  style={{
+                    ...baseInputStyle(),
+                    minHeight: 196,
+                    resize: "vertical",
+                  }}
+                />
+              </div>
+            ) : null}
+
             <div style={{ display: "grid", gap: "var(--space-1)" }}>
               <span className="chat-list-item__title">{copy("Scoring rubric", "评分 Rubric")}</span>
               <textarea
@@ -2397,6 +2467,11 @@ export function ChatOverlay({ transport, workspaceAgent }: ChatOverlayProps): JS
           <pre>
             <code>{activeWorkspace?.config.systemPrompt || copy("No prompt exposed yet.", "后端暂未暴露 prompt。")}</code>
           </pre>
+          {activeWorkspace?.config.goalTemplate ? (
+            <pre>
+              <code>{activeWorkspace.config.goalTemplate}</code>
+            </pre>
+          ) : null}
           {activeWorkspace?.config.scoringRubric ? (
             <pre>
               <code>{activeWorkspace.config.scoringRubric}</code>
@@ -2598,7 +2673,7 @@ export function ChatOverlay({ transport, workspaceAgent }: ChatOverlayProps): JS
                   return;
                 }
                 focusAgent("autonomous", "runs");
-                setAutonomousGoalDraft(autonomousGoalDraftTemplate());
+                setAutonomousGoalDraft(autonomousGoalDraftTemplate(autonomousDefaultGoalTemplate));
               }}
             >
               + {activeAgent === "assistant" ? copy("New session", "新会话") : copy("New goal", "新目标")}
