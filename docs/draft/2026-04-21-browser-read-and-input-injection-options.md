@@ -6,6 +6,92 @@
 
 ---
 
+## 零、结论先行：两档推荐方案
+
+### 目标约束
+
+本次选型的硬约束有三条，缺一不可：
+
+1. 所有输入事件 `isTrusted=true`（`mousemove` / `mousedown` / `mouseup` / `click` / 键盘）
+2. **零**自动化/调试类属性暴露，包括但不限于：
+   - `navigator.webdriver`
+   - CDP domain 开启后的运行时侧信道差异
+   - Chrome 调试器通知条
+   - 扩展可枚举指纹（`web_accessible_resources`、content script 痕迹等）
+3. 输入完全拟人：完整 `mousemove` 轨迹、`mouseenter` / `mouseover` 前摇、符合人类分布的时序节奏
+
+这三条合起来直接排除：
+
+- 所有 Chrome 扩展方案（content script 可被 DOM hook 检测；`chrome.debugger` 有通知条）
+- 裸 CDP 输入（`navigator.webdriver` + CDP domain 侧信道）
+- `AXPress`（跳过轨迹前摇，拟人度不足）
+- 全局 `CGEventPost`（会移动系统光标）
+
+剩下的合格候选只有：输入侧 `CGEventPostToPid` / 虚拟 HID 设备，读取侧 stealth CDP / AX 视觉混合 / 自定义 Chromium。
+
+### 档位一：工程可落地的强拟人组合（近期）
+
+适用场景：需要尽快上线、目标站点不是强定制反爬。
+
+| 链路 | 方案 |
+|---|---|
+| 输入 | `CGEventPostToPid` + 拟人轨迹/节奏层 |
+| 读取 | `--remote-debugging-pipe` + 严格 stealth 栈 |
+
+**输入侧要点**：
+
+- `CGEventPostToPid` 投递到浏览器进程事件队列，`isTrusted=true`、不动系统光标、零 driver/debug 暴露面
+- `click` 前必须有 5–20 次 `mousemove`，走贝塞尔/手抖曲线，避免直线到达
+- 事件间隔按人类节奏分布（hover 150–400ms、按键 50–150ms、`mousedown`–`mouseup` 间隔 50–120ms）
+- 键盘用 `kCGEventKeyDown` / `kCGEventKeyUp` 带 `UnicodeString` 注入；IME 场景单独评估
+- 先在 Chrome 活跃态下打通 `mousedown` / `mouseup` / `click` 完整链路，再谈真后台
+
+**读取侧要点**：
+
+- 只用 `DOMSnapshot.captureSnapshot` 一个读 API，不开 `Runtime.enable` / `Debugger.enable` / `Console.enable` 等会改变运行时行为的 domain
+- 启动参数配合 `--disable-blink-features=AutomationControlled`
+- 用 `Page.addScriptToEvaluateOnNewDocument` 在主文档加载前抹掉 `navigator.webdriver` 等已知指纹
+- 所有自有 JS 跑在 isolated world，不污染主世界
+
+**接受的边界**：
+
+- 真后台（其他应用在前台）点击先不承诺
+- 对通用反爬库（puppeteer-extra-stealth 覆盖集合）隐蔽性足够，但**无法数学证明**对定制反爬零泄漏
+- stealth 栈需要持续跟进反爬迭代
+
+### 档位二：架构上真正零暴露的组合（长期）
+
+适用场景：长期承接强反爬站点（大厂招聘、风控敏感站点），需要架构上可证明不被检测。
+
+| 链路 | 方案 |
+|---|---|
+| 输入 | DriverKit 虚拟 HID 设备（`IOHIDUserDevice`） |
+| 读取 | 自定义 Chromium 私有读通道；过渡期用 AX 树 + 截图 + 视觉模型兜底 |
+
+**输入侧要点**：
+
+- 虚拟 HID 设备在内核 HID 层注入事件，浏览器眼中与真实硬件完全无法区分
+- `isTrusted=true` 天然成立，无任何自动化协议痕迹
+- 需要 Apple DriverKit entitlement，用户需在系统设置审批系统扩展
+- 实现量级比定制 Chromium 轻，但比 `CGEventPostToPid` 重一档
+
+**读取侧要点**：
+
+- 定制 Chromium 源码新增私有读通道（走 mojo 暴露给 native），**不经过 CDP**
+- `navigator.webdriver` 保持 `false`，不启用任何 CDP domain
+- 页面侧从 JS 层无任何可观测差异
+- 过渡期可用 macOS AX API + `CGWindowListCreateImage` + 视觉模型组合，读取完全发生在浏览器外，浏览器进程无自动化痕迹；代价是对 Canvas / 自绘控件 / 虚拟滚动语义不全
+
+**投入量级**：两块都是 2–6 个月级投入，但之后不再陷入 stealth 猫鼠游戏。
+
+### 推荐路径
+
+- **输入侧直接规划走 DriverKit 虚拟 HID**：比定制 Chromium 轻得多，收益立刻兑现，且输入一旦走虚拟 HID，未来任何新的反自动化检测都天然免疫
+- **读取侧先用 stealth CDP 过渡**，同时并行评估定制 Chromium 的可行性；AX + 视觉作为第二兜底
+- `CGEventPostToPid` 与 stealth CDP 都属于"现在能用、会被反爬迭代持续蚕食"的资产，**投入无法沉淀**，因此只作为过渡方案，不作为长期主线
+
+---
+
 ## 一、本文定位
 
 本文只收敛当前讨论中已经明确的技术边界与选型判断。
