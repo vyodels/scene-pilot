@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from scene_pilot.evolution.learning_writer import LearningWriter
-from scene_pilot.evolution.queue import EvolutionQueue
-from scene_pilot.models.domain import Skill
+from recruit_agent.evolution.learning_writer import LearningWriter
+from recruit_agent.evolution.queue import EvolutionQueue
+from recruit_agent.models.domain import Skill
 
 from ._helpers import make_session_factory
 

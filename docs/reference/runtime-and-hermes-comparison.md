@@ -238,12 +238,12 @@ Hermes 更像通用 agent 平台，公开能力更偏向：
 
 本地实现参考：
 
-- [services/backend/src/scene_pilot/services/runtime_control.py](/Users/didi/AgentProjects/scene-pilot/services/backend/src/scene_pilot/services/runtime_control.py)
-- [services/backend/src/scene_pilot/services/agent.py](/Users/didi/AgentProjects/scene-pilot/services/backend/src/scene_pilot/services/agent.py)
-- [services/backend/src/scene_pilot/services/context_assembler.py](/Users/didi/AgentProjects/scene-pilot/services/backend/src/scene_pilot/services/context_assembler.py)
-- [services/backend/src/scene_pilot/services/recruit_agent.py](/Users/didi/AgentProjects/scene-pilot/services/backend/src/scene_pilot/services/recruit_agent.py)
-- [services/backend/src/scene_pilot/models/domain.py](/Users/didi/AgentProjects/scene-pilot/services/backend/src/scene_pilot/models/domain.py)
-- [Plan.md](/Users/didi/AgentProjects/scene-pilot/Plan.md)
+- [services/backend/src/recruit_agent/services/runtime_control.py](/Users/didi/AgentProjects/recruit-agent/services/backend/src/recruit_agent/services/runtime_control.py)
+- [services/backend/src/recruit_agent/services/agent.py](/Users/didi/AgentProjects/recruit-agent/services/backend/src/recruit_agent/services/agent.py)
+- [services/backend/src/recruit_agent/services/context_assembler.py](/Users/didi/AgentProjects/recruit-agent/services/backend/src/recruit_agent/services/context_assembler.py)
+- [services/backend/src/recruit_agent/services/recruit_agent.py](/Users/didi/AgentProjects/recruit-agent/services/backend/src/recruit_agent/services/recruit_agent.py)
+- [services/backend/src/recruit_agent/models/domain.py](/Users/didi/AgentProjects/recruit-agent/services/backend/src/recruit_agent/models/domain.py)
+- [Plan.md](/Users/didi/AgentProjects/recruit-agent/Plan.md)
 
 Hermes 官方参考：
 

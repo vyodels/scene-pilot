@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from scene_pilot.agents.autonomous import _resolve_turn_limits
-from scene_pilot.models.domain import GoalSpec
-from scene_pilot.runtime.limits import TurnLimits
+from recruit_agent.agents.autonomous import _resolve_turn_limits
+from recruit_agent.models.domain import GoalSpec
+from recruit_agent.runtime.limits import TurnLimits
 
 
 def test_autonomous_turn_limits_default_round_budget_is_expanded() -> None:

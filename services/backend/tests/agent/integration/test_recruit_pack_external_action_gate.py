@@ -4,13 +4,13 @@ from pathlib import Path
 
 from sqlalchemy.orm import Session
 
-from scene_pilot.core.settings import AppSettings
-from scene_pilot.db.session import create_engine_from_settings, create_session_factory, initialize_database
-from scene_pilot.models.domain import AgentGlobalState, Candidate
-from scene_pilot.plugins.host import PluginHost
-from scene_pilot.plugins.loader import install_manifest
-from scene_pilot.plugins.recruit.manifest import RecruitPluginManifest
-from scene_pilot.runtime.models import InputEnvelope, Observation, ToolCall
+from recruit_agent.core.settings import AppSettings
+from recruit_agent.db.session import create_engine_from_settings, create_session_factory, initialize_database
+from recruit_agent.models.domain import AgentGlobalState, Candidate
+from recruit_agent.plugins.host import PluginHost
+from recruit_agent.plugins.loader import install_manifest
+from recruit_agent.plugins.recruit.manifest import RecruitPluginManifest
+from recruit_agent.runtime.models import InputEnvelope, Observation, ToolCall
 
 
 def _make_session(tmp_path: Path) -> Session:

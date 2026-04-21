@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from scene_pilot.core.settings import AppSettings
-from scene_pilot.models.domain import McpTool
-from scene_pilot.services.container import AppContainer
+from recruit_agent.core.settings import AppSettings
+from recruit_agent.models.domain import McpTool
+from recruit_agent.services.container import AppContainer
 
 
 def test_container_build_and_reload_register_enabled_dynamic_mcp_tools(tmp_path, monkeypatch) -> None:
@@ -39,8 +39,8 @@ def test_container_build_and_reload_register_enabled_dynamic_mcp_tools(tmp_path,
             "source": server.endpoint,
         }
 
-    monkeypatch.setattr("scene_pilot.services.mcp_registry._mcp_list_tools", fake_list_tools)
-    monkeypatch.setattr("scene_pilot.services.mcp_registry._mcp_call_tool", fake_call_tool)
+    monkeypatch.setattr("recruit_agent.services.mcp_registry._mcp_list_tools", fake_list_tools)
+    monkeypatch.setattr("recruit_agent.services.mcp_registry._mcp_call_tool", fake_call_tool)
 
     settings = AppSettings(
         data_dir=str(tmp_path / "data"),
@@ -140,8 +140,8 @@ def test_dynamic_mcp_tool_handler_survives_healthcheck_resync(tmp_path, monkeypa
             "source": server.endpoint,
         }
 
-    monkeypatch.setattr("scene_pilot.services.mcp_registry._mcp_list_tools", fake_list_tools)
-    monkeypatch.setattr("scene_pilot.services.mcp_registry._mcp_call_tool", fake_call_tool)
+    monkeypatch.setattr("recruit_agent.services.mcp_registry._mcp_list_tools", fake_list_tools)
+    monkeypatch.setattr("recruit_agent.services.mcp_registry._mcp_call_tool", fake_call_tool)
 
     settings = AppSettings(
         data_dir=str(tmp_path / "data"),

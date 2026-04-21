@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import json
 
-from scene_pilot.asset_paths import plugin_asset_path
-from scene_pilot.plugins.recruit import persona as persona_module
+from recruit_agent.asset_paths import plugin_asset_path
+from recruit_agent.plugins.recruit import persona as persona_module
 
 
 def test_recruit_persona_fragment_reads_from_plugin_asset_root() -> None:

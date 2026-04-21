@@ -1,5 +1,5 @@
 import React, { useMemo } from "react";
-import type { RecruitmentStateMachine } from "@scene-pilot/shared";
+import type { RecruitmentStateMachine } from "@recruit-agent/shared";
 import { ProgressBars, StatusBadge, Timeline } from "../../components";
 import { formatCompactDate } from "../../lib/format";
 import { useI18n } from "../../lib/i18n";

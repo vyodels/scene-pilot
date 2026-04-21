@@ -20,19 +20,19 @@
 
 ## 桌面端重点入口
 
-- 工作台壳：[/apps/desktop/src/features/workspace/DesktopWorkspace.tsx](/Users/didi/AgentProjects/scene-pilot/apps/desktop/src/features/workspace/DesktopWorkspace.tsx:1)
-- Overlay 主体：[/apps/desktop/src/features/chat-overlay/ChatOverlay.tsx](/Users/didi/AgentProjects/scene-pilot/apps/desktop/src/features/chat-overlay/ChatOverlay.tsx:1)
-- 悬浮球：[/apps/desktop/src/features/chat-overlay/FloatingBubble.tsx](/Users/didi/AgentProjects/scene-pilot/apps/desktop/src/features/chat-overlay/FloatingBubble.tsx:1)
-- 仪表盘：[/apps/desktop/src/features/dashboard/DashboardView.tsx](/Users/didi/AgentProjects/scene-pilot/apps/desktop/src/features/dashboard/DashboardView.tsx:1)
-- 设置页：[/apps/desktop/src/features/settings/SettingsView.tsx](/Users/didi/AgentProjects/scene-pilot/apps/desktop/src/features/settings/SettingsView.tsx:1)
+- 工作台壳：[/apps/desktop/src/features/workspace/DesktopWorkspace.tsx](/Users/didi/AgentProjects/recruit-agent/apps/desktop/src/features/workspace/DesktopWorkspace.tsx:1)
+- Overlay 主体：[/apps/desktop/src/features/chat-overlay/ChatOverlay.tsx](/Users/didi/AgentProjects/recruit-agent/apps/desktop/src/features/chat-overlay/ChatOverlay.tsx:1)
+- 悬浮球：[/apps/desktop/src/features/chat-overlay/FloatingBubble.tsx](/Users/didi/AgentProjects/recruit-agent/apps/desktop/src/features/chat-overlay/FloatingBubble.tsx:1)
+- 仪表盘：[/apps/desktop/src/features/dashboard/DashboardView.tsx](/Users/didi/AgentProjects/recruit-agent/apps/desktop/src/features/dashboard/DashboardView.tsx:1)
+- 设置页：[/apps/desktop/src/features/settings/SettingsView.tsx](/Users/didi/AgentProjects/recruit-agent/apps/desktop/src/features/settings/SettingsView.tsx:1)
 
 ## 后端重点入口
 
-- Agent 路由：[/services/backend/src/scene_pilot/api/routers/agent.py](/Users/didi/AgentProjects/scene-pilot/services/backend/src/scene_pilot/api/routers/agent.py:1)
-- Recruit 路由：[/services/backend/src/scene_pilot/api/routers/recruit_agent.py](/Users/didi/AgentProjects/scene-pilot/services/backend/src/scene_pilot/api/routers/recruit_agent.py:1)
-- Autonomous 主流程：[/services/backend/src/scene_pilot/agents/autonomous.py](/Users/didi/AgentProjects/scene-pilot/services/backend/src/scene_pilot/agents/autonomous.py:1)
-- Recruit 服务：[/services/backend/src/scene_pilot/services/recruit_agent.py](/Users/didi/AgentProjects/scene-pilot/services/backend/src/scene_pilot/services/recruit_agent.py:1)
-- 共享场景模板：[/services/backend/src/scene_pilot/services/scene_templates.py](/Users/didi/AgentProjects/scene-pilot/services/backend/src/scene_pilot/services/scene_templates.py:1)
+- Agent 路由：[/services/backend/src/recruit_agent/api/routers/agent.py](/Users/didi/AgentProjects/recruit-agent/services/backend/src/recruit_agent/api/routers/agent.py:1)
+- Recruit 路由：[/services/backend/src/recruit_agent/api/routers/recruit_agent.py](/Users/didi/AgentProjects/recruit-agent/services/backend/src/recruit_agent/api/routers/recruit_agent.py:1)
+- Autonomous 主流程：[/services/backend/src/recruit_agent/agents/autonomous.py](/Users/didi/AgentProjects/recruit-agent/services/backend/src/recruit_agent/agents/autonomous.py:1)
+- Recruit 服务：[/services/backend/src/recruit_agent/services/recruit_agent.py](/Users/didi/AgentProjects/recruit-agent/services/backend/src/recruit_agent/services/recruit_agent.py:1)
+- 共享场景模板：[/services/backend/src/recruit_agent/services/scene_templates.py](/Users/didi/AgentProjects/recruit-agent/services/backend/src/recruit_agent/services/scene_templates.py:1)
 
 ## 默认验证
 

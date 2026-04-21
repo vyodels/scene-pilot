@@ -6,18 +6,18 @@ from pathlib import Path
 
 from sqlalchemy.orm import Session
 
-from scene_pilot.core.settings import AppSettings
-from scene_pilot.db.session import create_engine_from_settings, create_session_factory, initialize_database
-from scene_pilot.kernel.update_memory import update_memory
-from scene_pilot.memory.global_memory_projection import (
+from recruit_agent.core.settings import AppSettings
+from recruit_agent.db.session import create_engine_from_settings, create_session_factory, initialize_database
+from recruit_agent.kernel.update_memory import update_memory
+from recruit_agent.memory.global_memory_projection import (
     GLOBAL_MEMORY_PROJECTION_SIGNATURE,
     GLOBAL_MEMORY_SCHEMA_VERSION,
     empty_agent_global_memory_payload,
     project_agent_global_memory,
 )
-from scene_pilot.models.domain import AgentGlobalMemory, AgentRun, AgentSession, GoalSpec, RecruitAgentProfile
-from scene_pilot.runtime.models import Deliberation
-from scene_pilot.services.recruit_agent import ensure_global_memory
+from recruit_agent.models.domain import AgentGlobalMemory, AgentRun, AgentSession, GoalSpec, RecruitAgentProfile
+from recruit_agent.runtime.models import Deliberation
+from recruit_agent.services.recruit_agent import ensure_global_memory
 
 
 class CaptureMemoryService:

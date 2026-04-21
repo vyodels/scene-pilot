@@ -5,14 +5,14 @@ from pathlib import Path
 
 from sqlalchemy import select
 
-from scene_pilot.agents.autonomous import AutonomousAgent
-from scene_pilot.evolution.learning_writer import LearningWriter
-from scene_pilot.kernel.kernel import AgentKernel
-from scene_pilot.models.domain import AgentRun, AgentRuntimeEvent, AgentSession, EvolutionArtifact, GoalSpec, RecruitAgentProfile, Skill
-from scene_pilot.plugins.host import PluginHost
-from scene_pilot.runtime.models import LLMResponse, ToolCall
-from scene_pilot.runtime.providers import ScriptedProvider
-from scene_pilot.runtime.tools import ToolRegistry, register_core_tools
+from recruit_agent.agents.autonomous import AutonomousAgent
+from recruit_agent.evolution.learning_writer import LearningWriter
+from recruit_agent.kernel.kernel import AgentKernel
+from recruit_agent.models.domain import AgentRun, AgentRuntimeEvent, AgentSession, EvolutionArtifact, GoalSpec, RecruitAgentProfile, Skill
+from recruit_agent.plugins.host import PluginHost
+from recruit_agent.runtime.models import LLMResponse, ToolCall
+from recruit_agent.runtime.providers import ScriptedProvider
+from recruit_agent.runtime.tools import ToolRegistry, register_core_tools
 
 from ._helpers import make_session_factory
 

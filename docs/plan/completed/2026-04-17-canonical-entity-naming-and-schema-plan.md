@@ -34,27 +34,27 @@
   - 当前这份实施计划
 
 ### 后端 schema / ORM / repository
-- Modify: `services/backend/src/scene_pilot/db/migrations.py`
-- Modify: `services/backend/src/scene_pilot/models/domain.py`
-- Modify: `services/backend/src/scene_pilot/repositories/domain.py`
-- Modify: `services/backend/src/scene_pilot/schemas/domain.py`
-- Modify: `services/backend/src/scene_pilot/services/application_window.py`
-- Modify: `services/backend/src/scene_pilot/services/application_subjects.py`
-- Modify: `services/backend/src/scene_pilot/services/candidate_identity.py`
+- Modify: `services/backend/src/recruit_agent/db/migrations.py`
+- Modify: `services/backend/src/recruit_agent/models/domain.py`
+- Modify: `services/backend/src/recruit_agent/repositories/domain.py`
+- Modify: `services/backend/src/recruit_agent/schemas/domain.py`
+- Modify: `services/backend/src/recruit_agent/services/application_window.py`
+- Modify: `services/backend/src/recruit_agent/services/application_subjects.py`
+- Modify: `services/backend/src/recruit_agent/services/candidate_identity.py`
 
 ### API / runtime / service layer
-- Modify: `services/backend/src/scene_pilot/api/routers/candidate_persons.py`
-- Modify: `services/backend/src/scene_pilot/api/routers/candidate_applications.py`
-- Modify: `services/backend/src/scene_pilot/api/routers/job_descriptions.py`
-- Modify: `services/backend/src/scene_pilot/api/routers/recruit_agent.py`
-- Modify: `services/backend/src/scene_pilot/api/routers/agent.py`
-- Modify: `services/backend/src/scene_pilot/services/agent.py`
-- Modify: `services/backend/src/scene_pilot/services/state_machine.py`
-- Modify: `services/backend/src/scene_pilot/services/runtime_control.py`
-- Modify: `services/backend/src/scene_pilot/services/dashboard.py`
-- Modify: `services/backend/src/scene_pilot/services/context_assembler.py`
-- Modify: `services/backend/src/scene_pilot/services/recruit_agent.py`
-- Modify: `services/backend/src/scene_pilot/playbooks/engine.py`
+- Modify: `services/backend/src/recruit_agent/api/routers/candidate_persons.py`
+- Modify: `services/backend/src/recruit_agent/api/routers/candidate_applications.py`
+- Modify: `services/backend/src/recruit_agent/api/routers/job_descriptions.py`
+- Modify: `services/backend/src/recruit_agent/api/routers/recruit_agent.py`
+- Modify: `services/backend/src/recruit_agent/api/routers/agent.py`
+- Modify: `services/backend/src/recruit_agent/services/agent.py`
+- Modify: `services/backend/src/recruit_agent/services/state_machine.py`
+- Modify: `services/backend/src/recruit_agent/services/runtime_control.py`
+- Modify: `services/backend/src/recruit_agent/services/dashboard.py`
+- Modify: `services/backend/src/recruit_agent/services/context_assembler.py`
+- Modify: `services/backend/src/recruit_agent/services/recruit_agent.py`
+- Modify: `services/backend/src/recruit_agent/playbooks/engine.py`
 
 ### 前端类型 / API / 页面
 - Modify: `apps/desktop/src/lib/types.ts`
@@ -289,8 +289,8 @@ BIGINT
 **Files:**
 - Modify: `services/backend/tests/test_db_migrations.py`
 - Create: `services/backend/tests/test_canonical_schema_naming.py`
-- Modify: `services/backend/src/scene_pilot/db/migrations.py`
-- Modify: `services/backend/src/scene_pilot/models/domain.py`
+- Modify: `services/backend/src/recruit_agent/db/migrations.py`
+- Modify: `services/backend/src/recruit_agent/models/domain.py`
 
 - [x] **Step 1: 写失败测试，明确最终表名和关键字段名**
 
@@ -334,7 +334,7 @@ Expected: FAIL。
 
 - [x] **Step 3: 重写 migration，统一表名/字段名/时间类型**
 
-在 `services/backend/src/scene_pilot/db/migrations.py` 中：
+在 `services/backend/src/recruit_agent/db/migrations.py` 中：
 - 把现有混用表名统一到本计划的 canonical 名称
 - 所有业务主语列改成显式命名
 - 所有时间列改成秒级 int64 存储
@@ -346,7 +346,7 @@ id BIGINT PRIMARY KEY AUTOINCREMENT
 
 - [x] **Step 4: 重写 ORM 模型字段，严格跟随 canonical 名称**
 
-在 `services/backend/src/scene_pilot/models/domain.py` 中：
+在 `services/backend/src/recruit_agent/models/domain.py` 中：
 - 所有主表与附属表字段名必须严格对齐本计划
 - 不要保留 `candidate_id` 这种在主线里语义模糊的列名
 - `Candidate` 类如继续保留，也必须只表达 `candidate_persons`
@@ -364,7 +364,7 @@ Expected: PASS。
 - [x] **Step 6: Commit**
 
 ```bash
-git add services/backend/src/scene_pilot/db/migrations.py services/backend/src/scene_pilot/models/domain.py services/backend/tests/test_db_migrations.py services/backend/tests/test_canonical_schema_naming.py
+git add services/backend/src/recruit_agent/db/migrations.py services/backend/src/recruit_agent/models/domain.py services/backend/tests/test_db_migrations.py services/backend/tests/test_canonical_schema_naming.py
 git commit -m "feat: canonicalize core entity table and field names"
 ```
 
@@ -373,10 +373,10 @@ git commit -m "feat: canonicalize core entity table and field names"
 **当前状态：** `candidate_persons`、`candidate_person_platform_idx` 与相关 person/JD surface 已按 canonical schema 收口，测试链路已完成验证。
 
 **Files:**
-- Modify: `services/backend/src/scene_pilot/models/domain.py`
-- Modify: `services/backend/src/scene_pilot/repositories/domain.py`
-- Modify: `services/backend/src/scene_pilot/schemas/domain.py`
-- Modify: `services/backend/src/scene_pilot/api/routers/candidate_persons.py`
+- Modify: `services/backend/src/recruit_agent/models/domain.py`
+- Modify: `services/backend/src/recruit_agent/repositories/domain.py`
+- Modify: `services/backend/src/recruit_agent/schemas/domain.py`
+- Modify: `services/backend/src/recruit_agent/api/routers/candidate_persons.py`
 - Test: `services/backend/tests/test_api_candidates.py`
 - Test: `services/backend/tests/test_api_recruit_agent.py`
 
@@ -450,7 +450,7 @@ Expected: PASS。
 - [x] **Step 6: Commit**
 
 ```bash
-git add services/backend/src/scene_pilot/models/domain.py services/backend/src/scene_pilot/repositories/domain.py services/backend/src/scene_pilot/schemas/domain.py services/backend/src/scene_pilot/api/routers/candidate_persons.py services/backend/tests/test_api_candidates.py services/backend/tests/test_api_recruit_agent.py
+git add services/backend/src/recruit_agent/models/domain.py services/backend/src/recruit_agent/repositories/domain.py services/backend/src/recruit_agent/schemas/domain.py services/backend/src/recruit_agent/api/routers/candidate_persons.py services/backend/tests/test_api_candidates.py services/backend/tests/test_api_recruit_agent.py
 git commit -m "feat: restrict candidate persons to identity fields only"
 ```
 
@@ -459,11 +459,11 @@ git commit -m "feat: restrict candidate persons to identity fields only"
 **当前状态：** `/api/candidate-applications` CRUD 与 application-centric thread / entries / transitions surface 已按 canonical schema 完成闭环，`application_window` 也已走服务端 canonical 生成与校验。
 
 **Files:**
-- Modify: `services/backend/src/scene_pilot/models/domain.py`
-- Modify: `services/backend/src/scene_pilot/repositories/domain.py`
-- Modify: `services/backend/src/scene_pilot/schemas/domain.py`
-- Modify: `services/backend/src/scene_pilot/services/application_window.py`
-- Modify: `services/backend/src/scene_pilot/api/routers/candidate_applications.py`
+- Modify: `services/backend/src/recruit_agent/models/domain.py`
+- Modify: `services/backend/src/recruit_agent/repositories/domain.py`
+- Modify: `services/backend/src/recruit_agent/schemas/domain.py`
+- Modify: `services/backend/src/recruit_agent/services/application_window.py`
+- Modify: `services/backend/src/recruit_agent/api/routers/candidate_applications.py`
 - Test: `services/backend/tests/test_api_recruit_agent.py`
 
 - [x] **Step 1: 写失败测试，明确 application 字段集**
@@ -519,7 +519,7 @@ Expected: FAIL。
 
 - [x] **Step 4: 修改 `application_window` canonical 生成逻辑**
 
-在 `services/backend/src/scene_pilot/services/application_window.py` 中，把主语参数改清楚：
+在 `services/backend/src/recruit_agent/services/application_window.py` 中，把主语参数改清楚：
 
 ```python
 def make_application_window(candidate_person_id: str, job_description_id: str, at: int) -> str:
@@ -541,7 +541,7 @@ Expected: PASS。
 - [x] **Step 6: Commit**
 
 ```bash
-git add services/backend/src/scene_pilot/models/domain.py services/backend/src/scene_pilot/repositories/domain.py services/backend/src/scene_pilot/schemas/domain.py services/backend/src/scene_pilot/services/application_window.py services/backend/src/scene_pilot/api/routers/candidate_applications.py services/backend/tests/test_api_recruit_agent.py
+git add services/backend/src/recruit_agent/models/domain.py services/backend/src/recruit_agent/repositories/domain.py services/backend/src/recruit_agent/schemas/domain.py services/backend/src/recruit_agent/services/application_window.py services/backend/src/recruit_agent/api/routers/candidate_applications.py services/backend/tests/test_api_recruit_agent.py
 git commit -m "feat: canonicalize candidate application schema"
 ```
 
@@ -550,10 +550,10 @@ git commit -m "feat: canonicalize candidate application schema"
 **当前状态：** application-scoped assessments / scorecards surface 已按目标边界完成收口，独立验证与 API 验证均已通过。
 
 **Files:**
-- Modify: `services/backend/src/scene_pilot/models/domain.py`
-- Modify: `services/backend/src/scene_pilot/repositories/domain.py`
-- Modify: `services/backend/src/scene_pilot/schemas/domain.py`
-- Modify: `services/backend/src/scene_pilot/api/routers/candidate_applications.py`
+- Modify: `services/backend/src/recruit_agent/models/domain.py`
+- Modify: `services/backend/src/recruit_agent/repositories/domain.py`
+- Modify: `services/backend/src/recruit_agent/schemas/domain.py`
+- Modify: `services/backend/src/recruit_agent/api/routers/candidate_applications.py`
 - Test: `services/backend/tests/test_application_assessment_boundaries.py`
 - Test: `services/backend/tests/test_api_recruit_agent.py`
 
@@ -612,7 +612,7 @@ Expected: FAIL。
 
 - [x] **Step 4: 让 application routes 按新边界读写**
 
-在 `services/backend/src/scene_pilot/api/routers/candidate_applications.py`：
+在 `services/backend/src/recruit_agent/api/routers/candidate_applications.py`：
 - assessment routes 返回 stage-bound evaluation records
 - scorecard routes 返回 rubric-scoring records
 - 不要让两条 surface 混着表达同一种东西
@@ -630,7 +630,7 @@ Expected: PASS。
 - [x] **Step 6: Commit**
 
 ```bash
-git add services/backend/src/scene_pilot/models/domain.py services/backend/src/scene_pilot/repositories/domain.py services/backend/src/scene_pilot/schemas/domain.py services/backend/src/scene_pilot/api/routers/candidate_applications.py services/backend/tests/test_application_assessment_boundaries.py services/backend/tests/test_api_recruit_agent.py
+git add services/backend/src/recruit_agent/models/domain.py services/backend/src/recruit_agent/repositories/domain.py services/backend/src/recruit_agent/schemas/domain.py services/backend/src/recruit_agent/api/routers/candidate_applications.py services/backend/tests/test_application_assessment_boundaries.py services/backend/tests/test_api_recruit_agent.py
 git commit -m "feat: clarify application assessment and scorecard boundaries"
 ```
 
@@ -639,12 +639,12 @@ git commit -m "feat: clarify application assessment and scorecard boundaries"
 **当前状态：** application-centric API surface 与 runtime 写入路径已全部切到 canonical 附属表，物理表名、显式业务 ID 与 int64 时间字段均已验证通过。
 
 **Files:**
-- Modify: `services/backend/src/scene_pilot/models/domain.py`
-- Modify: `services/backend/src/scene_pilot/repositories/domain.py`
-- Modify: `services/backend/src/scene_pilot/schemas/domain.py`
-- Modify: `services/backend/src/scene_pilot/api/routers/candidate_applications.py`
-- Modify: `services/backend/src/scene_pilot/services/agent.py`
-- Modify: `services/backend/src/scene_pilot/services/state_machine.py`
+- Modify: `services/backend/src/recruit_agent/models/domain.py`
+- Modify: `services/backend/src/recruit_agent/repositories/domain.py`
+- Modify: `services/backend/src/recruit_agent/schemas/domain.py`
+- Modify: `services/backend/src/recruit_agent/api/routers/candidate_applications.py`
+- Modify: `services/backend/src/recruit_agent/services/agent.py`
+- Modify: `services/backend/src/recruit_agent/services/state_machine.py`
 - Test: `services/backend/tests/test_api_playbook_runtime.py`
 - Test: `services/backend/tests/test_api_recruit_agent.py`
 
@@ -687,8 +687,8 @@ Expected: FAIL。
 - [x] **Step 4: 同步修改 runtime 写入路径**
 
 在：
-- `services/backend/src/scene_pilot/services/agent.py`
-- `services/backend/src/scene_pilot/services/state_machine.py`
+- `services/backend/src/recruit_agent/services/agent.py`
+- `services/backend/src/recruit_agent/services/state_machine.py`
 
 把消息、流转、简历制品、分配、sync 记录的写入改到 canonical 表/字段上。
 
@@ -706,7 +706,7 @@ Status: 已确认通过。
 - [x] **Step 6: Commit**
 
 ```bash
-git add services/backend/src/scene_pilot/models/domain.py services/backend/src/scene_pilot/repositories/domain.py services/backend/src/scene_pilot/schemas/domain.py services/backend/src/scene_pilot/api/routers/candidate_applications.py services/backend/src/scene_pilot/services/agent.py services/backend/src/scene_pilot/services/state_machine.py services/backend/tests/test_api_playbook_runtime.py services/backend/tests/test_api_recruit_agent.py
+git add services/backend/src/recruit_agent/models/domain.py services/backend/src/recruit_agent/repositories/domain.py services/backend/src/recruit_agent/schemas/domain.py services/backend/src/recruit_agent/api/routers/candidate_applications.py services/backend/src/recruit_agent/services/agent.py services/backend/src/recruit_agent/services/state_machine.py services/backend/tests/test_api_playbook_runtime.py services/backend/tests/test_api_recruit_agent.py
 git commit -m "feat: canonicalize application-scoped auxiliary tables"
 ```
 

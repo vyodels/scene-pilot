@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from scene_pilot.kernel.evaluate import evaluate
-from scene_pilot.runtime.models import Deliberation, Effects, LLMUsage
+from recruit_agent.kernel.evaluate import evaluate
+from recruit_agent.runtime.models import Deliberation, Effects, LLMUsage
 
 
 @pytest.mark.parametrize(

@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import pytest
 
-from scene_pilot.core.settings import AppSettings
-from scene_pilot.runtime.models import Message
-from scene_pilot.runtime.providers import ProviderError
-from scene_pilot.services.container import AppContainer
+from recruit_agent.core.settings import AppSettings
+from recruit_agent.runtime.models import Message
+from recruit_agent.runtime.providers import ProviderError
+from recruit_agent.services.container import AppContainer
 
 
 def test_functional_closure_real_provider_path_is_not_fake_default(tmp_path) -> None:

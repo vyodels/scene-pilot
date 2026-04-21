@@ -8,7 +8,7 @@
 > Legacy path retained: docs/autonomous-agent-improvement-plan.md
 
 > 本文档基于 [agent-context-memory-design-reference.md](./agent-context-memory-design-reference.md)
-> 的设计参考，给出 scene-pilot 现有 Autonomous Agent 的改进路径，以及尚未启动的
+> 的设计参考，给出 recruit-agent 现有 Autonomous Agent 的改进路径，以及尚未启动的
 > Assistant Agent 的初步设计规范。
 >
 > 核心思路：把 Autonomous Agent 重构成一个**最小可复用的 round 级 LLM 内核**，外面包装清晰的
@@ -406,7 +406,7 @@ class Heartbeat:
 
 ### 3.2 进程化部署
 
-加一个 entrypoint `python -m scene_pilot.runtime.heartbeat`，独立进程跑。
+加一个 entrypoint `python -m recruit_agent.runtime.heartbeat`，独立进程跑。
 API 进程只管收任务入队，心跳进程只管出队执行。
 
 ## 阶段 4：自学习闭环（2 周）

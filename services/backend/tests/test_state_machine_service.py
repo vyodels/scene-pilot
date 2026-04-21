@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from scene_pilot.services.state_machine import serialize_state_machine_version
+from recruit_agent.services.state_machine import serialize_state_machine_version
 
 
 def test_serialize_state_machine_version_accepts_legacy_datetime_strings() -> None:

@@ -1,5 +1,5 @@
-import { funnelMilestones, getFunnelMilestone, getTriggeredMilestones } from "@scene-pilot/shared";
-import type { HumanActionDefinition, RecruitmentStateMachine, StateNode, StateTransition } from "@scene-pilot/shared";
+import { funnelMilestones, getFunnelMilestone, getTriggeredMilestones } from "@recruit-agent/shared";
+import type { HumanActionDefinition, RecruitmentStateMachine, StateNode, StateTransition } from "@recruit-agent/shared";
 import type { ApplicationRecord, ApplicationThreadRecord } from "../../lib/types";
 
 export interface ApplicationViewModel {

@@ -6,9 +6,9 @@ import time
 
 from fastapi.testclient import TestClient
 
-from scene_pilot.api.routers.agent import AUTONOMOUS_PRIMARY_CONVERSATION_ID
-from scene_pilot.core.settings import load_settings
-from scene_pilot.models.domain import (
+from recruit_agent.api.routers.agent import AUTONOMOUS_PRIMARY_CONVERSATION_ID
+from recruit_agent.core.settings import load_settings
+from recruit_agent.models.domain import (
     AgentGlobalMemory,
     AgentRun,
     AgentRunCheckpoint,
@@ -28,10 +28,10 @@ from scene_pilot.models.domain import (
     RecruitAgentProfile,
     Skill,
 )
-from scene_pilot.runtime.models import GuardVerdict, LLMResponse, ToolCall
-from scene_pilot.runtime.providers import ScriptedProvider
-from scene_pilot.runtime.tools import ToolDefinition
-from scene_pilot.server import create_app
+from recruit_agent.runtime.models import GuardVerdict, LLMResponse, ToolCall
+from recruit_agent.runtime.providers import ScriptedProvider
+from recruit_agent.runtime.tools import ToolDefinition
+from recruit_agent.server import create_app
 
 
 def _build_client(tmp_path: Path) -> tuple[TestClient, object]:

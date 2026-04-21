@@ -65,7 +65,7 @@
 - `apps/desktop/src/features/workbench/WorkbenchView.tsx` 把 candidate progress、`run once`、`goal`、`replay`、`diagnostics`、`adaptive runtime`、queue depth、sync backlog 混在一起。
 - `apps/desktop/src/features/communications/CommunicationsView.tsx` 把 chat、state transition、assessment、structured facts、runtime confirmation 混在一起。
 - `apps/desktop/src/features/recruit-agent/RecruitAgentView.tsx` 把 blueprint、context policy、memory policy、原始编辑面板暴露得过于靠前。
-- `services/backend/src/scene_pilot/api/routers/recruit_agent.py` 明明已经有很完整的 recruiting CRUD 能力，但它们在产品表面仍与 runtime 和治理接口混在一起。
+- `services/backend/src/recruit_agent/api/routers/recruit_agent.py` 明明已经有很完整的 recruiting CRUD 能力，但它们在产品表面仍与 runtime 和治理接口混在一起。
 - `apps/desktop/src/styles.css` 与 `apps/desktop/src/lib/theme.ts` 仍然保留暗色 console 风格，这与新的桌面设计规范相冲突。
 
 ## 产品北极星

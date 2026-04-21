@@ -31,7 +31,7 @@ New entrypoints should prefer `docs/plan/`; old `docs/superpowers/plans/` paths 
 Plans should use the same project wording:
 
 - `.recruit-agent/` is the unified root for repo-level Agent assets, including `prompts/`, `skills/`, and plugin assets/config/metadata
-- `services/backend/src/scene_pilot/plugins/**` refers to backend thin runtime shell / mount code that loads and mounts those plugin assets; it is not the canonical home for project-level plugin assets
+- `services/backend/src/recruit_agent/plugins/**` refers to backend thin runtime shell / mount code that loads and mounts those plugin assets; it is not the canonical home for project-level plugin assets
 
 ## Current index
 

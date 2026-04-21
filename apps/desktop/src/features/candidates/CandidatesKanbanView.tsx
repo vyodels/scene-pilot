@@ -1,5 +1,5 @@
 import React from "react";
-import type { ApplicationTransitionPayload, RecruitmentStateMachine } from "@scene-pilot/shared";
+import type { ApplicationTransitionPayload, RecruitmentStateMachine } from "@recruit-agent/shared";
 import { useI18n } from "../../lib/i18n";
 import type { ApplicationFollowUpSummaryDefinition, ApplicationRecord, ApplicationThreadRecord } from "../../lib/types";
 import { FunnelKanbanView } from "../funnel-kanban/FunnelKanbanView";

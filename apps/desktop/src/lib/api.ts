@@ -5,7 +5,7 @@ import type {
   StateCriteriaOptimizationReport,
   RecruitmentStateMachineVersionRecord,
   RecruitmentStateMachineUpdatePayload,
-} from "@scene-pilot/shared";
+} from "@recruit-agent/shared";
 import type {
   ApplicationAssessmentRecord,
   ApplicationConversationEntry,

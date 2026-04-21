@@ -3,8 +3,8 @@ from __future__ import annotations
 import time
 from threading import Event
 
-from scene_pilot.execution_units.runner import ExecutionUnitRunner
-from scene_pilot.execution_units.store import ExecutionUnitStore
+from recruit_agent.execution_units.runner import ExecutionUnitRunner
+from recruit_agent.execution_units.store import ExecutionUnitStore
 
 
 def test_execution_unit_wait_is_nonblocking_for_inflight_work() -> None:

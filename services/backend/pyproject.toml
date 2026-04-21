@@ -31,7 +31,7 @@ package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["scene_pilot*", "recruit_agent*"]
+include = ["recruit_agent*"]
 namespaces = true
 
 [tool.pytest.ini_options]

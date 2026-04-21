@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import pytest
 
-from scene_pilot.core.settings import AppSettings
-from scene_pilot.repositories.domain import SettingsRepository
-from scene_pilot.runtime.models import Message
-from scene_pilot.runtime.providers import ProviderError
-from scene_pilot.services.container import AppContainer
+from recruit_agent.core.settings import AppSettings
+from recruit_agent.repositories.domain import SettingsRepository
+from recruit_agent.runtime.models import Message
+from recruit_agent.runtime.providers import ProviderError
+from recruit_agent.services.container import AppContainer
 
 
 def test_container_uses_explicit_unavailable_provider_without_credentials(tmp_path) -> None:

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from scene_pilot.runtime.business_state_projection import project_runtime_business_state
+from recruit_agent.runtime.business_state_projection import project_runtime_business_state
 
 
 def test_sync_jd_blocked_summary_uses_goal_fields() -> None:

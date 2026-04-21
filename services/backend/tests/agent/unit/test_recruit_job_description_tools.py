@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from scene_pilot.core.settings import AppSettings
-from scene_pilot.plugins.recruit.toolkit import list_job_descriptions, upsert_job_description
-from scene_pilot.services.container import AppContainer
+from recruit_agent.core.settings import AppSettings
+from recruit_agent.plugins.recruit.toolkit import list_job_descriptions, upsert_job_description
+from recruit_agent.services.container import AppContainer
 
 
 def _build_container(tmp_path) -> AppContainer:
@@ -27,7 +27,7 @@ def test_upsert_job_description_creates_and_updates_same_platform_identity(tmp_p
     created = upsert_job_description(
         container.session_factory,
         title="Backend Engineer",
-        company_name="Scene Pilot",
+        company_name="Recruit Agent",
         department="Platform",
         location="Shanghai",
         employment_type="full_time",
@@ -57,7 +57,7 @@ def test_upsert_job_description_creates_and_updates_same_platform_identity(tmp_p
     assert created["action"] == "created"
     assert updated["action"] == "updated"
     assert created["job_description"]["job_description_id"] == updated["job_description"]["job_description_id"]
-    assert updated["job_description"]["company_name"] == "Scene Pilot"
+    assert updated["job_description"]["company_name"] == "Recruit Agent"
     assert updated["job_description"]["employment_type"] == "full_time"
     assert updated["job_description"]["compensation_text"] == "30k-45k x 14"
     assert updated["job_description"]["experience_requirement"] == "5+ years in backend or platform engineering."

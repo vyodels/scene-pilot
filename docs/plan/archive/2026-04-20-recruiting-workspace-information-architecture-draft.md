@@ -60,7 +60,7 @@ Recruiting business intent
 
 ```text
 ┌──────────────────────────────────────────────────────────────────────┐
-│                    scene-pilot Agent Product（双 Agent 产品层）       │
+│                    recruit-agent Agent Product（双 Agent 产品层）       │
 │                                                                      │
 │  ┌────────────────────────────────────────────────────────────────┐  │
 │  │ Shared Capability Substrate（共享能力底座）                    │  │
@@ -176,11 +176,11 @@ Autonomous（持续推进器）
 
 当前代码里可作为长期锚点参考的部分主要是：
 
-- `services/backend/src/scene_pilot/services/container.py`
+- `services/backend/src/recruit_agent/services/container.py`
   - 体现 built-in agent、plugin host、tool registry、MCP registry、heartbeat、assistant/autonomous 装配
-- `services/backend/src/scene_pilot/agents/autonomous.py`
+- `services/backend/src/recruit_agent/agents/autonomous.py`
   - 体现 `GoalSpec -> AgentRun -> run_turn_from_envelope -> kernel.run_round` 的持续推进主链
-- `services/backend/src/scene_pilot/api/routers/agent.py`
+- `services/backend/src/recruit_agent/api/routers/agent.py`
   - 体现 `/api/agents/...` 作为统一 Agent 高级 API 面
 - `docs/specs/*.md`
   - 体现长期边界定义
@@ -308,7 +308,7 @@ shared scene template selected（选择共享场景模板）
 
 ### 5.4 scene template 的锚点地位
 
-当前代码里，`services/backend/src/scene_pilot/services/scene_templates.py` 已经体现出一个关键方向：
+当前代码里，`services/backend/src/recruit_agent/services/scene_templates.py` 已经体现出一个关键方向：
 
 - 共享场景模板不是 UI 配置
 - 不是私有 Agent 动作目录
@@ -326,7 +326,7 @@ shared scene template selected（选择共享场景模板）
 
 ### 5.5 recruit plugin 的锚点地位
 
-当前 `services/backend/src/scene_pilot/plugins/recruit/manifest.py` 体现出另一个关键方向：
+当前 `services/backend/src/recruit_agent/plugins/recruit/manifest.py` 体现出另一个关键方向：
 
 - 招聘不是写进 kernel 的主流程分支
 - 而是通过 plugin manifest 把 domain-specific 能力挂到共享底座上
@@ -374,14 +374,14 @@ governance / persistence
 
 - `docs/specs/2026-04-20-agent-product-design-principles.md`
 - `docs/specs/2026-04-20-agent-intelligence-boundary-and-capability-evolution.md`
-- `services/backend/src/scene_pilot/api/routers/agent.py`
+- `services/backend/src/recruit_agent/api/routers/agent.py`
   - `/api/agents/{kind}/skills`
   - `_list_workspace_skills(...)`
-- `services/backend/src/scene_pilot/evolution/learning_writer.py`
+- `services/backend/src/recruit_agent/evolution/learning_writer.py`
   - skill draft / auto promote / pending review 路径
-- `services/backend/src/scene_pilot/evolution/queue.py`
+- `services/backend/src/recruit_agent/evolution/queue.py`
   - pending_review / applied / rejected 治理状态
-- `services/backend/src/scene_pilot/services/recruit_agent.py`
+- `services/backend/src/recruit_agent/services/recruit_agent.py`
   - evolution artifact kind/status 约束
 
 不应稳定的是：
@@ -392,7 +392,7 @@ governance / persistence
 
 ### 5.7 memory / context / playbook 在招聘能力体系中的锚点
 
-`services/backend/src/scene_pilot/services/recruit_agent.py` 当前已经体现出另一个关键方向：
+`services/backend/src/recruit_agent/services/recruit_agent.py` 当前已经体现出另一个关键方向：
 
 - 候选人 memory、JD memory、global memory 是分层的
 - context policy 是可配置且按 lane / run_type 有偏好的

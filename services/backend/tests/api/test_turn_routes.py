@@ -5,9 +5,9 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from scene_pilot.core.settings import load_settings
-from scene_pilot.models.domain import AgentRun, AgentSession, AgentTurnRecord, RecruitAgentProfile
-from scene_pilot.server import create_app
+from recruit_agent.core.settings import load_settings
+from recruit_agent.models.domain import AgentRun, AgentSession, AgentTurnRecord, RecruitAgentProfile
+from recruit_agent.server import create_app
 
 
 def test_turn_routes_expose_turns(tmp_path: Path) -> None:

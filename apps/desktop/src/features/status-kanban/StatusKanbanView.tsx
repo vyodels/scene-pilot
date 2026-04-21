@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import type { ApplicationTransitionPayload, RecruitmentStateMachine, StateNode } from "@scene-pilot/shared";
+import type { ApplicationTransitionPayload, RecruitmentStateMachine, StateNode } from "@recruit-agent/shared";
 import { CandidateTable } from "../kanban-shared/CandidateTable";
 import { CandidateCommunicationPanel } from "../kanban-shared/CandidateCommunicationPanel";
 import {

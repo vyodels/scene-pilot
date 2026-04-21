@@ -5,9 +5,9 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from scene_pilot.core.settings import load_settings
-from scene_pilot.models.domain import AgentGlobalMemory, Candidate, CandidatePersonMemory, JobDescription, JobDescriptionMemory, RecruitAgentProfile
-from scene_pilot.server import create_app
+from recruit_agent.core.settings import load_settings
+from recruit_agent.models.domain import AgentGlobalMemory, Candidate, CandidatePersonMemory, JobDescription, JobDescriptionMemory, RecruitAgentProfile
+from recruit_agent.server import create_app
 
 
 def test_agents_memory_routes_isolate_candidate_job_and_global_by_agent(tmp_path: Path) -> None:

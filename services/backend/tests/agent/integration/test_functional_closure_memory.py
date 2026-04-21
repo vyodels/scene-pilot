@@ -4,13 +4,13 @@ from pathlib import Path
 
 from sqlalchemy.orm import Session
 
-from scene_pilot.agents.autonomous import AutonomousAgent
-from scene_pilot.core.settings import AppSettings
-from scene_pilot.db.session import create_engine_from_settings, create_session_factory, initialize_database
-from scene_pilot.kernel.kernel import AgentKernel
-from scene_pilot.models.domain import AgentRun, AgentSession, Candidate, RecruitAgentProfile
-from scene_pilot.plugins.host import PluginHost
-from scene_pilot.runtime.tools import ToolRegistry, register_core_tools
+from recruit_agent.agents.autonomous import AutonomousAgent
+from recruit_agent.core.settings import AppSettings
+from recruit_agent.db.session import create_engine_from_settings, create_session_factory, initialize_database
+from recruit_agent.kernel.kernel import AgentKernel
+from recruit_agent.models.domain import AgentRun, AgentSession, Candidate, RecruitAgentProfile
+from recruit_agent.plugins.host import PluginHost
+from recruit_agent.runtime.tools import ToolRegistry, register_core_tools
 
 from .test_memory_backed_continuity import ContinuityProvider
 

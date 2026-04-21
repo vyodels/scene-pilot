@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 
-ROOT = Path(__file__).resolve().parents[3] / "src" / "scene_pilot"
+ROOT = Path(__file__).resolve().parents[3] / "src" / "recruit_agent"
 
 
 def test_agent_runtime_packages_exist() -> None:

@@ -7,7 +7,7 @@
 > Last reviewed against code: 2026-04-20
 > Legacy path retained: docs/agent-v2-implementation-spec.md
 
-> 本文档是 scene-pilot agent 系统重构的**可执行实施规格**，配合
+> 本文档是 recruit-agent agent 系统重构的**可执行实施规格**，配合
 > `[agent-v2-design-summary.md](./agent-v2-design-summary.md)` 使用。
 >
 > 预期读者：Codex（或任何编码 agent）。格式是可读可照做的规格，不是叙事文档。
@@ -74,7 +74,7 @@
 ### 2.1 新增目录
 
 ```
-services/backend/src/scene_pilot/
+services/backend/src/recruit_agent/
 ├── agents/                            ← NEW, agent-level 装配与 agent 实现
 │   ├── __init__.py
 │   ├── autonomous.py                  AutonomousAgent
@@ -166,7 +166,7 @@ api/routers/*                          → 新增 assistant.py；扩 recruit_age
 ### 2.3 新增独立进程
 
 ```
-bin/heartbeat_daemon.py                → python -m scene_pilot.agents.heartbeat
+bin/heartbeat_daemon.py                → python -m recruit_agent.agents.heartbeat
 bin/evolution_worker.py                → 异步 promotion/compact worker
 bin/mcp_health.py                      → MCP 健康检查 cron
 ```
@@ -1894,7 +1894,7 @@ GET    /api/debug/alerts                        # runtime 告警视图
 - cache_hit、circuit_breaker、mcp_health 各有 API 返回真实指标
 - `services/agent.py` 文件行数 < 500（已被拆空）
 - `pytest services/backend/tests/ -q` 全绿
-- `mypy --strict services/backend/src/scene_pilot/{agents,kernel,memory,evolution,skills,plugins,mcp,assistant}` 通过
+- `mypy --strict services/backend/src/recruit_agent/{agents,kernel,memory,evolution,skills,plugins,mcp,assistant}` 通过
 
 ---
 

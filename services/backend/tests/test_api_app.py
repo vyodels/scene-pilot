@@ -20,8 +20,8 @@ except ModuleNotFoundError:
 @unittest.skipIf(TestClient is None, "FastAPI test dependencies are not installed")
 class ApiAppTests(unittest.TestCase):
     def setUp(self) -> None:
-        from scene_pilot.core.settings import load_settings
-        from scene_pilot.server import create_app
+        from recruit_agent.core.settings import load_settings
+        from recruit_agent.server import create_app
 
         self.tempdir = tempfile.TemporaryDirectory()
         os.environ["RECRUIT_AGENT_DATA_DIR"] = self.tempdir.name
@@ -110,7 +110,7 @@ class ApiAppTests(unittest.TestCase):
                 self.assertEqual(response.status_code, 200, path)
 
     def test_dashboard_learning_alerts_use_business_summary(self) -> None:
-        from scene_pilot.models.domain import AgentLearning
+        from recruit_agent.models.domain import AgentLearning
 
         with self.client.app.state.session_factory() as session:
             session.add(

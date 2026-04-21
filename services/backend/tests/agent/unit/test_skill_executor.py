@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from scene_pilot.core.settings import AppSettings
-from scene_pilot.db.session import create_engine_from_settings, create_session_factory, initialize_database
-from scene_pilot.models.domain import Skill
-from scene_pilot.skills.executor import build_invoke_skill_handler, execute_skill
+from recruit_agent.core.settings import AppSettings
+from recruit_agent.db.session import create_engine_from_settings, create_session_factory, initialize_database
+from recruit_agent.models.domain import Skill
+from recruit_agent.skills.executor import build_invoke_skill_handler, execute_skill
 
 
 def _make_session_factory(tmp_path: Path):

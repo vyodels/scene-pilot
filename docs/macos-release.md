@@ -56,7 +56,7 @@ If `CSC_NAME` is set, it must match an installed `Developer ID Application` iden
 The desktop builder is configured with:
 
 - `hardenedRuntime: true`
-- explicit mac entitlements files under [apps/desktop/build](/Users/didi/AgentProjects/scene-pilot/apps/desktop/build)
+- explicit mac entitlements files under [apps/desktop/build](/Users/didi/AgentProjects/recruit-agent/apps/desktop/build)
 - `notarize: true`
 - `dmg.sign: false`
 

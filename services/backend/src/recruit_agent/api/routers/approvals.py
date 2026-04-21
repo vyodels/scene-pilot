@@ -1,0 +1,380 @@
+from __future__ import annotations
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy.orm import Session
+
+from recruit_agent.api.deps import get_session
+from recruit_agent.db.base import utcnow
+from recruit_agent.repositories import AgentLearningRepository, ApprovalRepository, OperatorInteractionRepository
+from recruit_agent.schemas import (
+    ApprovalCreate,
+    ApprovalDecisionRequest,
+    ApprovalRead,
+    ApprovalUpdate,
+)
+from recruit_agent.services.container import AppContainer
+from recruit_agent.services.evolution import promote_skill_draft_contract, resolve_promoted_skill_snapshot
+from recruit_agent.services.agent_control import AgentControlService
+from recruit_agent.api.deps import get_container
+
+router = APIRouter(prefix="/api/approvals", tags=["approvals"])
+
+
+def _apply_runtime_review(
+    *,
+    approval,
+    approve: bool,
+    payload: ApprovalDecisionRequest,
+    container: AppContainer,
+    session: Session,
+) -> ApprovalRead:
+    _ = container
+    payload_snapshot = dict(approval.payload or {})
+    payload_snapshot["resolution"] = _build_resolution_snapshot(
+        status="approved" if approve else "rejected",
+        reviewer=payload.reviewer,
+        reason=payload.reason,
+        resumed_task=None,
+    )
+    payload_snapshot["runtime_review"] = {
+        "target_type": approval.target_type,
+        "target_id": approval.target_id,
+        "handled_by": "approval_router",
+        "review_kind": "approve" if approve else "reject",
+    }
+    approval.payload = payload_snapshot
+    updated = ApprovalRepository(session).mark_review(
+        approval,
+        "approved" if approve else "rejected",
+        reviewer=payload.reviewer,
+        notes=payload.reason,
+    )
+    _sync_operator_interactions(
+        session,
+        approval_id=updated.id,
+        status="resolved",
+        reviewer=payload.reviewer,
+        action="approve" if approve else "reject",
+        reason=payload.reason,
+        effect_summary="已记录运行时审查结果。",
+    )
+    return ApprovalRead.model_validate(updated)
+
+
+@router.get("", response_model=list[ApprovalRead])
+def list_approvals(
+    pending_only: bool = Query(default=False),
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    session: Session = Depends(get_session),
+) -> list[ApprovalRead]:
+    repo = ApprovalRepository(session)
+    items = repo.pending(limit=limit, offset=offset) if pending_only else repo.list(limit=limit, offset=offset)
+    return [ApprovalRead.model_validate(item) for item in items]
+
+
+@router.post("", response_model=ApprovalRead, status_code=201)
+def create_approval(payload: ApprovalCreate, session: Session = Depends(get_session)) -> ApprovalRead:
+    item = ApprovalRepository(session).create(payload)
+    return ApprovalRead.model_validate(item)
+
+
+@router.patch("/{approval_id}", response_model=ApprovalRead)
+def update_approval(
+    approval_id: str,
+    payload: ApprovalUpdate,
+    session: Session = Depends(get_session),
+) -> ApprovalRead:
+    repo = ApprovalRepository(session)
+    item = repo.get(approval_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Approval not found")
+    updated = repo.update(item, payload)
+    return ApprovalRead.model_validate(updated)
+
+
+@router.post("/{approval_id}/approve", response_model=ApprovalRead)
+def approve_approval(
+    approval_id: str,
+    payload: ApprovalDecisionRequest,
+    container: AppContainer = Depends(get_container),
+    session: Session = Depends(get_session),
+) -> ApprovalRead:
+    repo = ApprovalRepository(session)
+    agent_control = AgentControlService(container.session_factory)
+    item = repo.get(approval_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Approval not found")
+    if item.target_type in {"playbook_patch", "template_candidate"}:
+        return _apply_runtime_review(
+            approval=item,
+            approve=True,
+            payload=payload,
+            container=container,
+            session=session,
+        )
+    if item.target_type == "blocked_task":
+        item = agent_control.apply_approval_resolution(
+            session,
+            item,
+            status="approved",
+            reviewer=payload.reviewer,
+            notes=payload.reason,
+        )
+    else:
+        payload_snapshot = dict(item.payload or {})
+        resumed_task = _extract_resume_task(payload_snapshot)
+        resolution = _build_resolution_snapshot(
+            status="approved",
+            reviewer=payload.reviewer,
+            reason=payload.reason,
+            resumed_task=resumed_task,
+        )
+        if item.target_type == "skill_draft":
+            promoted_skill = _promote_skill_draft(session, container, item, reviewer=payload.reviewer, reason=payload.reason)
+            if promoted_skill is not None:
+                payload_snapshot["promoted_skill"] = promoted_skill
+                resolution["promoted_skill_id"] = promoted_skill["id"]
+                resolution["promoted_skill_status"] = promoted_skill["status"]
+        elif item.target_type == "system_command":
+            item = container.system_commands.apply_resolution(
+                item,
+                status="approved",
+                reviewer=payload.reviewer,
+                notes=payload.reason,
+            )
+            payload_snapshot = dict(item.payload or {})
+            payload_snapshot.setdefault("command_resolution", _build_system_command_resolution(container, payload_snapshot))
+            resolution = dict(payload_snapshot.get("resolution") or resolution)
+
+        payload_snapshot["resolution"] = resolution
+        if resumed_task is not None:
+            payload_snapshot["resumed_task_id"] = resumed_task.get("task_id")
+            payload_snapshot["resumed_at"] = resolution["reviewed_at"]
+            agent_control.enqueue_task(
+                str(resumed_task["task_type"]),
+                task_id=str(resumed_task.get("task_id") or approval_id),
+                payload=dict(resumed_task.get("payload") or {}),
+                metadata={
+                    **dict(resumed_task.get("metadata") or {}),
+                    "resumed_from_approval_id": item.id,
+                    "approval_target_type": item.target_type,
+                    "approval_target_id": item.target_id,
+                    "resume_reason": payload.reason,
+                },
+                priority=int(resumed_task.get("priority", 100) or 100),
+                application_id=resumed_task.get("application_id"),
+                person_id=resumed_task.get("person_id"),
+            )
+            payload_snapshot["resume_task"] = resumed_task
+        item.payload = payload_snapshot
+    updated = repo.mark_review(item, "approved", reviewer=payload.reviewer, notes=payload.reason)
+    _sync_operator_interactions(
+        session,
+        approval_id=updated.id,
+        status="resolved",
+        reviewer=payload.reviewer,
+        action="approve",
+        reason=payload.reason,
+        effect_summary="已按操作员确认恢复或接受这项请求。",
+    )
+    return ApprovalRead.model_validate(updated)
+
+
+@router.post("/{approval_id}/reject", response_model=ApprovalRead)
+def reject_approval(
+    approval_id: str,
+    payload: ApprovalDecisionRequest,
+    container: AppContainer = Depends(get_container),
+    session: Session = Depends(get_session),
+) -> ApprovalRead:
+    repo = ApprovalRepository(session)
+    agent_control = AgentControlService(container.session_factory)
+    item = repo.get(approval_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Approval not found")
+    if item.target_type in {"playbook_patch", "template_candidate"}:
+        return _apply_runtime_review(
+            approval=item,
+            approve=False,
+            payload=payload,
+            container=container,
+            session=session,
+        )
+    if item.target_type == "blocked_task":
+        item = agent_control.apply_approval_resolution(
+            session,
+            item,
+            status="rejected",
+            reviewer=payload.reviewer,
+            notes=payload.reason,
+        )
+    else:
+        payload_snapshot = dict(item.payload or {})
+        payload_snapshot["resolution"] = _build_resolution_snapshot(
+            status="rejected",
+            reviewer=payload.reviewer,
+            reason=payload.reason,
+            resumed_task=None,
+        )
+        payload_snapshot["closed_at"] = payload_snapshot["resolution"]["reviewed_at"]
+        if item.target_type == "skill_draft":
+            _deactivate_learning_draft(session, payload_snapshot)
+        elif item.target_type == "system_command":
+            item = container.system_commands.apply_resolution(
+                item,
+                status="rejected",
+                reviewer=payload.reviewer,
+                notes=payload.reason,
+            )
+            payload_snapshot = dict(item.payload or {})
+            payload_snapshot.setdefault(
+                "command_resolution",
+                {
+                    **_build_system_command_resolution(container, payload_snapshot),
+                    "execution_status": "rejected",
+                },
+            )
+            payload_snapshot.setdefault("closed_at", utcnow().isoformat())
+        item.payload = payload_snapshot
+    updated = repo.mark_review(item, "rejected", reviewer=payload.reviewer, notes=payload.reason)
+    _sync_operator_interactions(
+        session,
+        approval_id=updated.id,
+        status="resolved",
+        reviewer=payload.reviewer,
+        action="reject",
+        reason=payload.reason,
+        effect_summary="已按操作员选择停止当前路径或拒绝这项请求。",
+    )
+    return ApprovalRead.model_validate(updated)
+
+
+def _sync_operator_interactions(
+    session: Session,
+    *,
+    approval_id: str,
+    status: str,
+    reviewer: str,
+    action: str,
+    reason: str | None,
+    effect_summary: str,
+) -> None:
+    repo = OperatorInteractionRepository(session)
+    items = repo.list_recent(status="pending", limit=200, offset=0)
+    for item in items:
+        if item.approval_id != approval_id:
+            continue
+        repo.update(
+            item,
+            {
+                "status": status,
+                "operator_response": {
+                    "action": action,
+                    "comment": reason,
+                },
+                "effect_summary": effect_summary,
+                "resolved_at": utcnow(),
+                "resolved_by": reviewer,
+            },
+        )
+
+
+def _extract_resume_task(payload: dict[str, object]) -> dict[str, object] | None:
+    resume_task = payload.get("resume_task")
+    if isinstance(resume_task, dict) and resume_task.get("task_type"):
+        return dict(resume_task)
+
+    follow_up = payload.get("follow_up_task")
+    if isinstance(follow_up, dict) and follow_up.get("task_type"):
+        return dict(follow_up)
+
+    blocked_task = payload.get("blocked_task")
+    if isinstance(blocked_task, dict) and blocked_task.get("task_type") and payload.get("resume_on_approve", True):
+        return dict(blocked_task)
+
+    return None
+
+
+def _build_resolution_snapshot(
+    *,
+    status: str,
+    reviewer: str,
+    reason: str | None,
+    resumed_task: dict[str, object] | None,
+) -> dict[str, object]:
+    reviewed_at = utcnow().isoformat()
+    resolution: dict[str, object] = {
+        "status": status,
+        "reviewer": reviewer,
+        "reason": reason,
+        "reviewed_at": reviewed_at,
+        "resumed": resumed_task is not None and status == "approved",
+    }
+    if resumed_task is not None and status == "approved":
+        resolution["resumed_task_id"] = resumed_task.get("task_id")
+        resolution["resumed_task_type"] = resumed_task.get("task_type")
+    return resolution
+
+
+def _promote_skill_draft(
+    session: Session,
+    container: AppContainer,
+    approval,
+    *,
+    reviewer: str,
+    reason: str | None,
+) -> dict[str, object] | None:
+    payload = dict(approval.payload or {})
+    existing = resolve_promoted_skill_snapshot(payload)
+    if existing is not None:
+        return existing
+    draft = payload.get("skill_draft")
+    if not isinstance(draft, dict):
+        return None
+
+    learning_repo = AgentLearningRepository(session)
+    learning_id = payload.get("learning_id")
+    learning = learning_repo.get(str(learning_id)) if isinstance(learning_id, str) and learning_id else None
+    promoted = promote_skill_draft_contract(
+        session,
+        auto_activate=bool(container.settings.provider_config.get("skills_auto_activate", False)),
+        draft=draft,
+        reviewer=reviewer,
+        reason=reason,
+        fallback_title=approval.title,
+        fallback_platform=str(payload.get("task_domain") or "").strip() or "runtime-scene",
+        fallback_stage=str(payload.get("adaptive_stage") or payload.get("task_type") or "").strip() or None,
+        learning_id=learning.id if learning is not None else None,
+        promotion_source="approval",
+        source_kind="approval",
+        source_id=approval.id,
+    )
+    if learning is not None:
+        learning.consolidated_at = utcnow()
+        session.commit()
+
+    return promoted
+
+
+def _build_system_command_resolution(container: AppContainer, payload: dict[str, object]) -> dict[str, object]:
+    command = payload.get("command")
+    normalized = list(command) if isinstance(command, list) else []
+    policy = container.system_commands.policy_snapshot()
+    return {
+        "command": normalized,
+        "execution_status": "approved_not_executed" if not policy["executionEnabled"] else "approved_ready",
+        "execution_enabled": bool(policy["executionEnabled"]),
+        "approved_at": utcnow().isoformat(),
+    }
+
+
+def _deactivate_learning_draft(session: Session, payload: dict[str, object]) -> None:
+    learning_id = payload.get("learning_id")
+    if not isinstance(learning_id, str) or not learning_id.strip():
+        return
+    repo = AgentLearningRepository(session)
+    item = repo.get(learning_id)
+    if item is None:
+        return
+    repo.set_active(item, False)

@@ -475,9 +475,9 @@ UI 形态：
 ## 暂缓执行项
 
 - 内部工程标识整体迁移暂缓：
-  - Python 包路径 `scene_pilot`
-  - 仓库目录名 `scene-pilot`
-  - npm workspace 包名 `@scene-pilot/shared`
+  - Python 包路径 `recruit_agent`
+  - 仓库目录名 `recruit-agent`
+  - npm workspace 包名 `@recruit-agent/shared`
 - 这类改动属于工程级迁移，不再计入当前这轮 `Recruit Agent` 产品收口任务。
 - 当前要求是：
   - 对外 CLI、环境变量前缀、桌面启动入口、API 路径、产品文案已经统一到 `Recruit Agent`

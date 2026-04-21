@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from scene_pilot.runtime.models import LLMResponse
-from scene_pilot.runtime.providers import ScriptedProvider
-from scene_pilot.runtime.tools import ToolRegistry, register_core_tools
+from recruit_agent.runtime.models import LLMResponse
+from recruit_agent.runtime.providers import ScriptedProvider
+from recruit_agent.runtime.tools import ToolRegistry, register_core_tools
 
 from ._helpers import build_assistant_client
 

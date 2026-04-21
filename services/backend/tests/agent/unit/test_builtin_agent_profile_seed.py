@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from scene_pilot.core.settings import AppSettings
-from scene_pilot.db.session import create_engine_from_settings, create_session_factory, initialize_database
-from scene_pilot.models.domain import RecruitAgentProfile
-from scene_pilot.services.container import _seed_builtin_agent_profiles
+from recruit_agent.core.settings import AppSettings
+from recruit_agent.db.session import create_engine_from_settings, create_session_factory, initialize_database
+from recruit_agent.models.domain import RecruitAgentProfile
+from recruit_agent.services.container import _seed_builtin_agent_profiles
 
 
 def test_seed_builtin_profiles_normalizes_autonomous_memory_policy(tmp_path: Path) -> None:

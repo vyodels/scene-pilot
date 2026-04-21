@@ -65,7 +65,7 @@ The following files show why the product feels runtime-first instead of recruite
 - `apps/desktop/src/features/workbench/WorkbenchView.tsx` mixes candidate progress with `run once`, `goal`, `replay`, `diagnostics`, `adaptive runtime`, queue depth, and sync backlog.
 - `apps/desktop/src/features/communications/CommunicationsView.tsx` mixes chat, state transition, assessments, structured facts, and runtime confirmations.
 - `apps/desktop/src/features/recruit-agent/RecruitAgentView.tsx` exposes blueprint, context policy, memory policy, and raw editing surfaces too prominently.
-- `services/backend/src/scene_pilot/api/routers/recruit_agent.py` already contains strong recruiting CRUD endpoints, but they live next to runtime and governance endpoints in the same product surface.
+- `services/backend/src/recruit_agent/api/routers/recruit_agent.py` already contains strong recruiting CRUD endpoints, but they live next to runtime and governance endpoints in the same product surface.
 - `apps/desktop/src/styles.css` and `apps/desktop/src/lib/theme.ts` still reflect a dark console visual system, which conflicts with the new desktop design guidelines.
 
 ## Product north star

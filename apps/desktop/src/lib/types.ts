@@ -1,4 +1,4 @@
-import type { ApplicationStatusTransition } from "@scene-pilot/shared";
+import type { ApplicationStatusTransition } from "@recruit-agent/shared";
 
 export type WorkspaceTab =
   | "home"

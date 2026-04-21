@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from scene_pilot.db.base import UnixTimestamp
+from recruit_agent.db.base import UnixTimestamp
 
 
 def test_unix_timestamp_process_result_value_accepts_epoch_int() -> None:

@@ -1,6 +1,6 @@
 import React from "react";
-import { getFunnelMilestone } from "@scene-pilot/shared";
-import type { ApplicationStatusTransition, RecruitmentStateMachine } from "@scene-pilot/shared";
+import { getFunnelMilestone } from "@recruit-agent/shared";
+import type { ApplicationStatusTransition, RecruitmentStateMachine } from "@recruit-agent/shared";
 import { StatusBadge } from "../../components";
 import { formatCompactDate } from "../../lib/format";
 import { useI18n } from "../../lib/i18n";

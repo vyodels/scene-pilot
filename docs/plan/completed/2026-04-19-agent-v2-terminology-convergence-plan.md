@@ -128,7 +128,7 @@
 
 | 改前 | 改后 |
 |------|------|
-| `TickOutcome`（`scene_pilot.runtime.models`） | `RoundOutcome` |
+| `TickOutcome`（`recruit_agent.runtime.models`） | `RoundOutcome` |
 | `TickOutcome.metadata` | `RoundOutcome.metadata`（字段不变） |
 | `TickOutcome.status` | `RoundOutcome.status` |
 | （`TickOutcome` 无 `gate_signal`） | `RoundOutcome.gate_signal: Literal["continue","wait_human","budget_exhausted","goal_done","paused","escalate"] | None` |
@@ -190,17 +190,17 @@
 
 **后端源码（11 个文件）：**
 
-- [ ] `services/backend/src/scene_pilot/runtime/models.py` — `TickOutcome` 定义 + 相关导入
-- [ ] `services/backend/src/scene_pilot/runtime/__init__.py` — `TickOutcome` 导出
-- [ ] `services/backend/src/scene_pilot/kernel/kernel.py` — `run_tick` / `run_turn` 合并为 `run_round`
-- [ ] `services/backend/src/scene_pilot/kernel/evaluate.py` — 产出 `RoundOutcome` + 计算 `gate_signal`
-- [ ] `services/backend/src/scene_pilot/agents/autonomous.py` — `run_tick_from_envelope` 改名 + while 循环
-- [ ] `services/backend/src/scene_pilot/agents/assistant.py` — `run_turn` 改造为 Driver while 循环
-- [ ] `services/backend/src/scene_pilot/agents/heartbeat.py` — 调用点从 `run_tick_from_envelope` 改为 `run_turn_from_envelope`（见 §4.1 末尾说明）
-- [ ] `services/backend/src/scene_pilot/memory/service.py` — `fetch_recent_events` 等里对 `tick_id` 的引用
-- [ ] `services/backend/src/scene_pilot/api/routers/agent.py` — `/ticks` 路由 + 相关 envelope 字段
-- [ ] `services/backend/src/scene_pilot/models/domain.py` — ORM 模型改名（见 §5.1）
-- [ ] `services/backend/src/scene_pilot/models/__init__.py` — 导出更新
+- [ ] `services/backend/src/recruit_agent/runtime/models.py` — `TickOutcome` 定义 + 相关导入
+- [ ] `services/backend/src/recruit_agent/runtime/__init__.py` — `TickOutcome` 导出
+- [ ] `services/backend/src/recruit_agent/kernel/kernel.py` — `run_tick` / `run_turn` 合并为 `run_round`
+- [ ] `services/backend/src/recruit_agent/kernel/evaluate.py` — 产出 `RoundOutcome` + 计算 `gate_signal`
+- [ ] `services/backend/src/recruit_agent/agents/autonomous.py` — `run_tick_from_envelope` 改名 + while 循环
+- [ ] `services/backend/src/recruit_agent/agents/assistant.py` — `run_turn` 改造为 Driver while 循环
+- [ ] `services/backend/src/recruit_agent/agents/heartbeat.py` — 调用点从 `run_tick_from_envelope` 改为 `run_turn_from_envelope`（见 §4.1 末尾说明）
+- [ ] `services/backend/src/recruit_agent/memory/service.py` — `fetch_recent_events` 等里对 `tick_id` 的引用
+- [ ] `services/backend/src/recruit_agent/api/routers/agent.py` — `/ticks` 路由 + 相关 envelope 字段
+- [ ] `services/backend/src/recruit_agent/models/domain.py` — ORM 模型改名（见 §5.1）
+- [ ] `services/backend/src/recruit_agent/models/__init__.py` — 导出更新
 
 **后端测试（至少以下命中，实际开工前再 grep 一次）：**
 
@@ -381,7 +381,7 @@ class RoundOutcome:
 - [ ] turn 起止记录落到 `AgentTurnRecord`（即原 tick 表改名）。
 - [ ] round 级不落独立表；每 round 完成后通过 `AgentRuntimeEvent(event_type="round.completed", payload={"round_seq": n, ...})` 写入事件流。
 - [ ] `AgentRuntimeEvent` 发 `turn.started` / `turn.completed` / `turn.waiting_human`。
-- [ ] **调用点同步改名**：`services/backend/src/scene_pilot/agents/heartbeat.py:31` 目前调用 `self.autonomous_agent.run_tick_from_envelope(...)`，改名完成后必须同步改为 `run_turn_from_envelope(...)`。心跳任务的 payload 结构不变，只是方法名改。
+- [ ] **调用点同步改名**：`services/backend/src/recruit_agent/agents/heartbeat.py:31` 目前调用 `self.autonomous_agent.run_tick_from_envelope(...)`，改名完成后必须同步改为 `run_turn_from_envelope(...)`。心跳任务的 payload 结构不变，只是方法名改。
   - 同时检查 `services/backend/tests/agent/integration/test_heartbeat.py` 里的断言与调用点，一并改名。
 
 ### 4.2 AssistantAgent 改造
@@ -427,7 +427,7 @@ class RoundOutcome:
 
 ### 5.1 ORM 模型改造
 
-全部在 `services/backend/src/scene_pilot/models/domain.py` 里直接改：
+全部在 `services/backend/src/recruit_agent/models/domain.py` 里直接改：
 
 - [ ] **先删除**旧的 `AgentTurnRecord`（内层、`__tablename__ = "agent_turn_records"`、`tick_pk` FK）ORM 类。
 - [ ] **再改名** `AgentTickRecord` → `AgentTurnRecord`，`__tablename__` 从 `"agent_tick_records"` 改为 `"agent_turn_records"`。
@@ -438,8 +438,8 @@ class RoundOutcome:
 
 ### 5.2 导出更新
 
-- [ ] `services/backend/src/scene_pilot/models/__init__.py`：把导出从 `AgentTickRecord` 改为 `AgentTurnRecord`，旧的内层 `AgentTurnRecord` 导出直接删除。
-- [ ] `services/backend/src/scene_pilot/runtime/__init__.py`：`TickOutcome` 导出改为 `RoundOutcome`。
+- [ ] `services/backend/src/recruit_agent/models/__init__.py`：把导出从 `AgentTickRecord` 改为 `AgentTurnRecord`，旧的内层 `AgentTurnRecord` 导出直接删除。
+- [ ] `services/backend/src/recruit_agent/runtime/__init__.py`：`TickOutcome` 导出改为 `RoundOutcome`。
 - [ ] 其他 `from ... import AgentTickRecord` / `TickOutcome` 的调用点全部同步。
 
 ### 5.3 开发环境清理提示

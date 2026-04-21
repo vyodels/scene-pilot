@@ -1,7 +1,7 @@
 # 候选人 / JD / 投递记录 · 目标数据模型规范
 
 ## 文档目标与适用范围
-本文档定义 scene-pilot 在招聘业务对象建模上的长期目标数据模型，用于约束 CandidatePerson、CandidateApplication、JobDescription 及其附属对象的命名、主键规则、字段边界、挂载原则与读写路径。
+本文档定义 recruit-agent 在招聘业务对象建模上的长期目标数据模型，用于约束 CandidatePerson、CandidateApplication、JobDescription 及其附属对象的命名、主键规则、字段边界、挂载原则与读写路径。
 
 本文档记录的是长期稳定的目标规范，不讨论迁移策略、兼容层、旧字段保留、历史数据回填或实施计划。若实现与本文档冲突，应优先修正实现，或先更新本文档后再继续变更。
 

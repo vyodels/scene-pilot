@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from dataclasses import asdict
 
-from scene_pilot.runtime.limits import RoundLimits, TurnLimits
-from scene_pilot.runtime.models import CancellationToken, FairnessState, InputEnvelope, Observation
+from recruit_agent.runtime.limits import RoundLimits, TurnLimits
+from recruit_agent.runtime.models import CancellationToken, FairnessState, InputEnvelope, Observation
 
 
 def test_observation_stays_generic() -> None:

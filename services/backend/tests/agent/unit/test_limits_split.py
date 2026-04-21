@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import fields
 
-from scene_pilot.runtime.limits import RoundLimits, TurnLimits
+from recruit_agent.runtime.limits import RoundLimits, TurnLimits
 
 
 def test_round_and_turn_limits_do_not_leak_each_others_fields() -> None:

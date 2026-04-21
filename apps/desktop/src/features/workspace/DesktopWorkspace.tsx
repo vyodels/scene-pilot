@@ -2,8 +2,8 @@ import React, { startTransition, useCallback, useEffect, useMemo, useState } fro
 import type {
   ApplicationTransitionPayload,
   RecruitmentStateMachine,
-} from "@scene-pilot/shared";
-import { getFunnelMilestone } from "@scene-pilot/shared";
+} from "@recruit-agent/shared";
+import { getFunnelMilestone } from "@recruit-agent/shared";
 import { AppLayout, Panel, SectionTabs, Sidebar, StatusBadge, TopBar } from "../../components";
 import { ChatOverlay, FloatingBubble, useChatOverlay } from "../chat-overlay";
 import { apiClient } from "../../lib/api";

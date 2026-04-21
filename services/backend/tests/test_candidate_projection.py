@@ -5,8 +5,8 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from scene_pilot.core.settings import load_settings
-from scene_pilot.repositories.domain import (
+from recruit_agent.core.settings import load_settings
+from recruit_agent.repositories.domain import (
     AgentSessionRepository,
     ApprovalRepository,
     CandidateApplicationRepository,
@@ -14,8 +14,8 @@ from scene_pilot.repositories.domain import (
     JobDescriptionRepository,
     OperatorInteractionRepository,
 )
-from scene_pilot.server import create_app
-from scene_pilot.services.recruit_agent import ensure_primary_recruit_agent_profile
+from recruit_agent.server import create_app
+from recruit_agent.services.recruit_agent import ensure_primary_recruit_agent_profile
 
 
 def test_resume_artifact_updates_candidate_projection(tmp_path: Path) -> None:

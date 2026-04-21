@@ -16,4 +16,4 @@ This directory contains the repository's long-term normative documents.
 - plans, handoffs, migration steps, and historical notes do not belong here
 - new spec documents must be user-confirmed before becoming canonical
 - repo-level Agent assets should use `.recruit-agent/` as the unified root: `prompts/`, `skills/`, and plugin assets/config/metadata belong there
-- `services/backend/src/scene_pilot/plugins/**` refers to backend thin runtime shell / mount code, not the canonical home for project-level plugin assets
+- `services/backend/src/recruit_agent/plugins/**` refers to backend thin runtime shell / mount code, not the canonical home for project-level plugin assets

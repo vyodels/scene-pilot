@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from scene_pilot.core.settings import AppSettings
-from scene_pilot.plugins.recruit.toolkit import (
+from recruit_agent.core.settings import AppSettings
+from recruit_agent.plugins.recruit.toolkit import (
     archive_candidate,
     attach_resume_artifact,
     create_candidate_review_decision,
@@ -15,7 +15,7 @@ from scene_pilot.plugins.recruit.toolkit import (
     upsert_candidate,
     upsert_job_description,
 )
-from scene_pilot.services.container import AppContainer
+from recruit_agent.services.container import AppContainer
 
 
 def _build_container(tmp_path) -> AppContainer:

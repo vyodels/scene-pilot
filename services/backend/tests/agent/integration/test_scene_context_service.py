@@ -2,14 +2,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from scene_pilot.core.settings import AppSettings
-from scene_pilot.db.session import create_engine_from_settings, create_session_factory, initialize_database
-from scene_pilot.models.domain import AgentLearning, EnvironmentSnapshot, ExecutionEpisode, ExecutionPlan, TaskSpec
-from scene_pilot.plugins.host import PluginHost
-from scene_pilot.runtime.models import LLMResponse, ToolCall
-from scene_pilot.runtime.providers import ScriptedProvider
-from scene_pilot.runtime.tools import ToolDefinition, ToolRegistry
-from scene_pilot.services.scene_context import SceneContextService
+from recruit_agent.core.settings import AppSettings
+from recruit_agent.db.session import create_engine_from_settings, create_session_factory, initialize_database
+from recruit_agent.models.domain import AgentLearning, EnvironmentSnapshot, ExecutionEpisode, ExecutionPlan, TaskSpec
+from recruit_agent.plugins.host import PluginHost
+from recruit_agent.runtime.models import LLMResponse, ToolCall
+from recruit_agent.runtime.providers import ScriptedProvider
+from recruit_agent.runtime.tools import ToolDefinition, ToolRegistry
+from recruit_agent.services.scene_context import SceneContextService
 
 
 def _session_factory(tmp_path: Path):

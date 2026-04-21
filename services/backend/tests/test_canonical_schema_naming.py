@@ -10,8 +10,8 @@ SRC = Path(__file__).resolve().parents[1] / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from scene_pilot.core.settings import AppSettings
-from scene_pilot.db.session import create_engine_from_settings, initialize_database
+from recruit_agent.core.settings import AppSettings
+from recruit_agent.db.session import create_engine_from_settings, initialize_database
 
 
 def _build_engine(tmp_path: Path):

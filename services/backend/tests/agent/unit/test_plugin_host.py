@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from scene_pilot.plugins.host import PluginHost
-from scene_pilot.plugins.loader import install_manifest
-from scene_pilot.runtime.tools import ToolDefinition
-from scene_pilot.runtime.models import GuardVerdict, Observation
+from recruit_agent.plugins.host import PluginHost
+from recruit_agent.plugins.loader import install_manifest
+from recruit_agent.runtime.tools import ToolDefinition
+from recruit_agent.runtime.models import GuardVerdict, Observation
 
 
 def test_plugin_host_registers_and_runs_extensions() -> None:

@@ -4,11 +4,11 @@ from pathlib import Path
 
 from sqlalchemy import select
 
-from scene_pilot.core.settings import AppSettings
-from scene_pilot.db.session import create_engine_from_settings, create_session_factory, initialize_database
-from scene_pilot.evolution.learning_writer import LearningWriter
-from scene_pilot.models.domain import EvolutionArtifact, Skill
-from scene_pilot.services.evolution import build_skill_distill_review_payload
+from recruit_agent.core.settings import AppSettings
+from recruit_agent.db.session import create_engine_from_settings, create_session_factory, initialize_database
+from recruit_agent.evolution.learning_writer import LearningWriter
+from recruit_agent.models.domain import EvolutionArtifact, Skill
+from recruit_agent.services.evolution import build_skill_distill_review_payload
 
 
 def _make_session_factory(tmp_path: Path):

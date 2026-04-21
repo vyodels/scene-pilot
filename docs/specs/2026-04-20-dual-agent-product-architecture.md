@@ -1,7 +1,7 @@
 # 双 Agent 产品架构与协作规范
 
 ## 文档目标与适用范围
-本文档定义 scene-pilot 中 Assistant 与 Autonomous 的长期产品架构边界、共享能力底座、隔离要求、状态可观测性与场景级协作模型。
+本文档定义 recruit-agent 中 Assistant 与 Autonomous 的长期产品架构边界、共享能力底座、隔离要求、状态可观测性与场景级协作模型。
 
 本文档适用于所有影响双 Agent 身份建模、能力装配、配置隔离、UI/API 表达、运行状态可见性、handoff 设计和协作关系的实现与验收工作。
 
@@ -17,7 +17,7 @@
 - 本文档补充双 Agent 之间的角色分工、隔离约束、协作方式和产品可观测性要求。
 
 ## 核心产品模型
-scene-pilot 默认是一个共享能力底座上的双 Agent 产品，而不是一个“万能 Agent 面板”附带几种模式切换。
+recruit-agent 默认是一个共享能力底座上的双 Agent 产品，而不是一个“万能 Agent 面板”附带几种模式切换。
 
 Assistant 与 Autonomous 是两个真正独立的 Agent 身份，拥有不同的目标形态、触发方式、生命周期与协作节奏；但二者应建立在统一的能力底座之上，包括 tool surface、plugin、skill 机制、审批治理、持久化和 prompt 资产体系。
 

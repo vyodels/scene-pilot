@@ -34,10 +34,10 @@
 
 当前仓库已经存在一套可复用但未接入主链的 runtime scene 骨架：
 
-- `TaskSpec`：任务规格 / 任务合同，定义“要做什么”。见 [models/domain.py](/Users/didi/AgentProjects/scene-pilot/services/backend/src/scene_pilot/models/domain.py:1103)
-- `ExecutionPlan`：执行方案，定义“准备怎么试跑、怎么验收”。见 [models/domain.py](/Users/didi/AgentProjects/scene-pilot/services/backend/src/scene_pilot/models/domain.py:1125)
-- `ExecutionEpisode`：某次真实执行实例，适合作为通用环境子上下文容器。见 [models/domain.py](/Users/didi/AgentProjects/scene-pilot/services/backend/src/scene_pilot/models/domain.py:1142)
-- `EnvironmentSnapshot`：执行过程中的环境快照，适合承载 `environment_kind / display_label / resource_locator / observed_entities / action_hints`。见 [models/domain.py](/Users/didi/AgentProjects/scene-pilot/services/backend/src/scene_pilot/models/domain.py:1213)
+- `TaskSpec`：任务规格 / 任务合同，定义“要做什么”。见 [models/domain.py](/Users/didi/AgentProjects/recruit-agent/services/backend/src/recruit_agent/models/domain.py:1103)
+- `ExecutionPlan`：执行方案，定义“准备怎么试跑、怎么验收”。见 [models/domain.py](/Users/didi/AgentProjects/recruit-agent/services/backend/src/recruit_agent/models/domain.py:1125)
+- `ExecutionEpisode`：某次真实执行实例，适合作为通用环境子上下文容器。见 [models/domain.py](/Users/didi/AgentProjects/recruit-agent/services/backend/src/recruit_agent/models/domain.py:1142)
+- `EnvironmentSnapshot`：执行过程中的环境快照，适合承载 `environment_kind / display_label / resource_locator / observed_entities / action_hints`。见 [models/domain.py](/Users/didi/AgentProjects/recruit-agent/services/backend/src/recruit_agent/models/domain.py:1213)
 
 ### 3.2 现有主链
 
@@ -67,10 +67,10 @@ scene context 相关对象目前没有真正接进这条主链。
 
 本计划必须同时满足以下长期约束：
 
-1. 主程序提供环境，不替 Agent 写死站点流程或业务状态机。见 [docs/specs/2026-04-20-agent-intelligence-boundary-and-capability-evolution.md](/Users/didi/AgentProjects/scene-pilot/docs/specs/2026-04-20-agent-intelligence-boundary-and-capability-evolution.md:19)
-2. 网页执行细节属于子上下文 / 工具执行链路内部状态，不得直接上浮为主 Agent 历史自然语言。见 [docs/specs/2026-04-20-agent-intelligence-boundary-and-capability-evolution.md](/Users/didi/AgentProjects/scene-pilot/docs/specs/2026-04-20-agent-intelligence-boundary-and-capability-evolution.md:59)
-3. Global Memory 不得记录 URL、DOM、按钮文案、临时页面布局等网页细节。见 [docs/specs/2026-04-20-autonomous-agent-runtime-constraints.md](/Users/didi/AgentProjects/scene-pilot/docs/specs/2026-04-20-autonomous-agent-runtime-constraints.md:38)
-4. 网站不是固定集成，应被建模为 runtime scene。见 [.recruit-agent/prompts/tasks/runtime_task_compiler.md](/Users/didi/AgentProjects/scene-pilot/.recruit-agent/prompts/tasks/runtime_task_compiler.md:9)
+1. 主程序提供环境，不替 Agent 写死站点流程或业务状态机。见 [docs/specs/2026-04-20-agent-intelligence-boundary-and-capability-evolution.md](/Users/didi/AgentProjects/recruit-agent/docs/specs/2026-04-20-agent-intelligence-boundary-and-capability-evolution.md:19)
+2. 网页执行细节属于子上下文 / 工具执行链路内部状态，不得直接上浮为主 Agent 历史自然语言。见 [docs/specs/2026-04-20-agent-intelligence-boundary-and-capability-evolution.md](/Users/didi/AgentProjects/recruit-agent/docs/specs/2026-04-20-agent-intelligence-boundary-and-capability-evolution.md:59)
+3. Global Memory 不得记录 URL、DOM、按钮文案、临时页面布局等网页细节。见 [docs/specs/2026-04-20-autonomous-agent-runtime-constraints.md](/Users/didi/AgentProjects/recruit-agent/docs/specs/2026-04-20-autonomous-agent-runtime-constraints.md:38)
+4. 网站不是固定集成，应被建模为 runtime scene。见 [.recruit-agent/prompts/tasks/runtime_task_compiler.md](/Users/didi/AgentProjects/recruit-agent/.recruit-agent/prompts/tasks/runtime_task_compiler.md:9)
 
 ## 5. 架构结论
 
@@ -109,7 +109,7 @@ scene context 只负责：
 
 ### 6.1 Phase A：新增 SceneContextService
 
-- [x] 新增 [services/backend/src/scene_pilot/services/scene_context.py](/Users/didi/AgentProjects/scene-pilot/services/backend/src/scene_pilot/services/scene_context.py)
+- [x] 新增 [services/backend/src/recruit_agent/services/scene_context.py](/Users/didi/AgentProjects/recruit-agent/services/backend/src/recruit_agent/services/scene_context.py)
 - [x] 在该 service 中定义一个通用 scene 请求合同，最小字段包括：
   - `instruction`
   - `success_criteria`
@@ -137,7 +137,7 @@ scene context 只负责：
 
 ### 6.2 Phase B：拆分主 Agent 与 scene context 的工具面
 
-- [x] 在 [services/backend/src/scene_pilot/services/container.py](/Users/didi/AgentProjects/scene-pilot/services/backend/src/scene_pilot/services/container.py:88) 中拆出两套 ToolRegistry：
+- [x] 在 [services/backend/src/recruit_agent/services/container.py](/Users/didi/AgentProjects/recruit-agent/services/backend/src/recruit_agent/services/container.py:88) 中拆出两套 ToolRegistry：
   - `parent_agent_tool_registry`
   - `scene_context_tool_registry`
 - [x] 主 Agent 只能看到：
@@ -156,7 +156,7 @@ scene context 只负责：
 
 ### 6.3 Phase C：新增通用委派工具
 
-- [x] 在 [runtime/tools.py](/Users/didi/AgentProjects/scene-pilot/services/backend/src/scene_pilot/runtime/tools.py:184) 新增 `delegate_scene_context`
+- [x] 在 [runtime/tools.py](/Users/didi/AgentProjects/recruit-agent/services/backend/src/recruit_agent/runtime/tools.py:184) 新增 `delegate_scene_context`
 - [x] 工具参数必须是 capability / contract 导向，不能是站点导向
 - [x] `delegate_scene_context` 内部调用 `SceneContextService`
 - [x] `MVP` 先同步执行并返回结构化 `scene_result`
@@ -191,9 +191,9 @@ scene context 只负责：
 
 ### 6.6 Phase F：保持并收紧 skill 蒸馏边界
 
-- [x] 保持 [agents/autonomous.py](/Users/didi/AgentProjects/scene-pilot/services/backend/src/scene_pilot/agents/autonomous.py:355) 的 `_maybe_record_trial_skill()` 为主 skill 蒸馏唯一触发入口
+- [x] 保持 [agents/autonomous.py](/Users/didi/AgentProjects/recruit-agent/services/backend/src/recruit_agent/agents/autonomous.py:355) 的 `_maybe_record_trial_skill()` 为主 skill 蒸馏唯一触发入口
 - [x] 不让 `ExecutionEpisode` 自动触发主 skill 蒸馏
-- [ ] 可选增强：在 [services/evolution.py](/Users/didi/AgentProjects/scene-pilot/services/backend/src/scene_pilot/services/evolution.py:52) 中补入 scene 级证据摘要，但只允许补：
+- [ ] 可选增强：在 [services/evolution.py](/Users/didi/AgentProjects/recruit-agent/services/backend/src/recruit_agent/services/evolution.py:52) 中补入 scene 级证据摘要，但只允许补：
   - `episode result_summary`
   - `episode metrics`
   - `blockers`
@@ -223,18 +223,18 @@ scene context 只负责：
 
 本计划的最小建议改动范围如下：
 
-- [x] 新增 [services/backend/src/scene_pilot/services/scene_context.py](/Users/didi/AgentProjects/scene-pilot/services/backend/src/scene_pilot/services/scene_context.py)
-- [x] 修改 [services/backend/src/scene_pilot/services/container.py](/Users/didi/AgentProjects/scene-pilot/services/backend/src/scene_pilot/services/container.py:88)
-- [x] 修改 [services/backend/src/scene_pilot/runtime/tools.py](/Users/didi/AgentProjects/scene-pilot/services/backend/src/scene_pilot/runtime/tools.py:184)
-- [x] 轻量修改 [services/backend/src/scene_pilot/agents/autonomous.py](/Users/didi/AgentProjects/scene-pilot/services/backend/src/scene_pilot/agents/autonomous.py:47)
-- [ ] 可选修改 [services/backend/src/scene_pilot/services/evolution.py](/Users/didi/AgentProjects/scene-pilot/services/backend/src/scene_pilot/services/evolution.py:52)
+- [x] 新增 [services/backend/src/recruit_agent/services/scene_context.py](/Users/didi/AgentProjects/recruit-agent/services/backend/src/recruit_agent/services/scene_context.py)
+- [x] 修改 [services/backend/src/recruit_agent/services/container.py](/Users/didi/AgentProjects/recruit-agent/services/backend/src/recruit_agent/services/container.py:88)
+- [x] 修改 [services/backend/src/recruit_agent/runtime/tools.py](/Users/didi/AgentProjects/recruit-agent/services/backend/src/recruit_agent/runtime/tools.py:184)
+- [x] 轻量修改 [services/backend/src/recruit_agent/agents/autonomous.py](/Users/didi/AgentProjects/recruit-agent/services/backend/src/recruit_agent/agents/autonomous.py:47)
+- [ ] 可选修改 [services/backend/src/recruit_agent/services/evolution.py](/Users/didi/AgentProjects/recruit-agent/services/backend/src/recruit_agent/services/evolution.py:52)
 
 以下对象本次只复用，不建议大改模型：
 
-- [ ] [models/domain.py](/Users/didi/AgentProjects/scene-pilot/services/backend/src/scene_pilot/models/domain.py:1103) 中的 `TaskSpec`
-- [ ] [models/domain.py](/Users/didi/AgentProjects/scene-pilot/services/backend/src/scene_pilot/models/domain.py:1125) 中的 `ExecutionPlan`
-- [ ] [models/domain.py](/Users/didi/AgentProjects/scene-pilot/services/backend/src/scene_pilot/models/domain.py:1142) 中的 `ExecutionEpisode`
-- [ ] [models/domain.py](/Users/didi/AgentProjects/scene-pilot/services/backend/src/scene_pilot/models/domain.py:1213) 中的 `EnvironmentSnapshot`
+- [ ] [models/domain.py](/Users/didi/AgentProjects/recruit-agent/services/backend/src/recruit_agent/models/domain.py:1103) 中的 `TaskSpec`
+- [ ] [models/domain.py](/Users/didi/AgentProjects/recruit-agent/services/backend/src/recruit_agent/models/domain.py:1125) 中的 `ExecutionPlan`
+- [ ] [models/domain.py](/Users/didi/AgentProjects/recruit-agent/services/backend/src/recruit_agent/models/domain.py:1142) 中的 `ExecutionEpisode`
+- [ ] [models/domain.py](/Users/didi/AgentProjects/recruit-agent/services/backend/src/recruit_agent/models/domain.py:1213) 中的 `EnvironmentSnapshot`
 
 ## 8. 完成判据
 

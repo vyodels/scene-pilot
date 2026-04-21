@@ -7,7 +7,7 @@
 > Last reviewed against code: 2026-04-20
 > Legacy path retained: docs/agent-v2-design-summary.md
 
-> 本文档是 scene-pilot Agent 系统升级的**设计总览**。
+> 本文档是 recruit-agent Agent 系统升级的**设计总览**。
 > 目标：把当前规则驱动、实现耦合的 agent 基础设施，升级为两个真正自主、可长期运行、自进化的 agent —
 > **Autonomous Agent**（自主招聘）与 **Assistant Agent**（对话助手）。
 >

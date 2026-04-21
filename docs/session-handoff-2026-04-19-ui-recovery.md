@@ -28,7 +28,7 @@
 ## 已验证通过
 
 - `python3 -m pytest services/backend/tests/api/test_agents_routes.py -q`
-- `mypy --strict services/backend/src/scene_pilot/api/routers/agent.py`
+- `mypy --strict services/backend/src/recruit_agent/api/routers/agent.py`
 - `npm run desktop:typecheck`
 - `npm --workspace apps/desktop run electron:build`
 

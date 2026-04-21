@@ -5,9 +5,9 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from scene_pilot.core.settings import load_settings
-from scene_pilot.repositories.domain import CandidateApplicationRepository, CandidateRepository, JobDescriptionRepository
-from scene_pilot.server import create_app
+from recruit_agent.core.settings import load_settings
+from recruit_agent.repositories.domain import CandidateApplicationRepository, CandidateRepository, JobDescriptionRepository
+from recruit_agent.server import create_app
 
 
 def test_dashboard_pipeline_uses_cumulative_funnel_counts(tmp_path: Path) -> None:

@@ -5,10 +5,10 @@ from pathlib import Path
 import pytest
 from sqlalchemy.orm import Session
 
-from scene_pilot.core.settings import AppSettings
-from scene_pilot.db.session import create_engine_from_settings, create_session_factory, initialize_database
-from scene_pilot.memory.service import MemoryService, MemoryVersionConflict
-from scene_pilot.models.domain import Candidate, RecruitAgentProfile
+from recruit_agent.core.settings import AppSettings
+from recruit_agent.db.session import create_engine_from_settings, create_session_factory, initialize_database
+from recruit_agent.memory.service import MemoryService, MemoryVersionConflict
+from recruit_agent.models.domain import Candidate, RecruitAgentProfile
 
 
 def _make_session(tmp_path: Path) -> Session:

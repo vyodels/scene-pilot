@@ -74,7 +74,7 @@ Codex 或其它外部开发代理只能通过修改主程序来影响内部 Agen
 
 若上游已经提供标准 MCP server，主程序必须直接连接或启动该标准 MCP server，并通过上游真实的 `tools/list` / `tools/call` 动态发现与调用工具。
 
-若上游尚未提供标准 MCP server，应优先在上游工具仓库或其正式分发物中补齐标准 MCP 支持，而不是在 `scene-pilot` 主程序仓库内临时硬写一个私有 bridge 来模拟上游。
+若上游尚未提供标准 MCP server，应优先在上游工具仓库或其正式分发物中补齐标准 MCP 支持，而不是在 `recruit-agent` 主程序仓库内临时硬写一个私有 bridge 来模拟上游。
 
 主程序允许实现通用的 MCP transport 支持（例如 `stdio`、`unix_socket` 等）与标准协议会话管理，但这些能力必须是对任意标准 MCP server 通用的基础设施，不能退化为某个单独 Browser MCP / 站点 MCP 的专属硬编码适配层。
 

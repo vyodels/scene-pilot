@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from scene_pilot.kernel.kernel import AgentKernel
-from scene_pilot.plugins.host import PluginHost
-from scene_pilot.runtime.limits import RoundLimits
-from scene_pilot.runtime.models import GoalRef, GuardVerdict, InputEnvelope, LLMResponse, Observation, ToolCall
-from scene_pilot.runtime.providers import ScriptedProvider
-from scene_pilot.runtime.tools import ToolDefinition, ToolRegistry
+from recruit_agent.kernel.kernel import AgentKernel
+from recruit_agent.plugins.host import PluginHost
+from recruit_agent.runtime.limits import RoundLimits
+from recruit_agent.runtime.models import GoalRef, GuardVerdict, InputEnvelope, LLMResponse, Observation, ToolCall
+from recruit_agent.runtime.providers import ScriptedProvider
+from recruit_agent.runtime.tools import ToolDefinition, ToolRegistry
 
 
 def test_run_round_waits_for_human_when_guard_blocks_external_tool() -> None:

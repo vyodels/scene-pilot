@@ -5,11 +5,11 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from scene_pilot.core.settings import AppSettings, load_settings
-from scene_pilot.models.domain import McpServer
-from scene_pilot.server import create_app
-from scene_pilot.services.browser_mcp_bridge import BROWSER_SOCKET_PRESET_KEY
-from scene_pilot.services.container import AppContainer
+from recruit_agent.core.settings import AppSettings, load_settings
+from recruit_agent.models.domain import McpServer
+from recruit_agent.server import create_app
+from recruit_agent.services.browser_mcp_bridge import BROWSER_SOCKET_PRESET_KEY
+from recruit_agent.services.container import AppContainer
 
 
 def _settings(tmp_path: Path, name: str) -> AppSettings:
@@ -97,11 +97,11 @@ def _browser_tool_payloads() -> list[dict[str, object]]:
 
 def test_container_build_registers_enabled_browser_mcp_tools(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(
-        "scene_pilot.services.mcp_registry.default_browser_mcp_server_command",
+        "recruit_agent.services.mcp_registry.default_browser_mcp_server_command",
         lambda: ("node", "/virtual/browser-mcp/server.mjs"),
     )
     monkeypatch.setattr(
-        "scene_pilot.services.mcp_registry._mcp_list_tools",
+        "recruit_agent.services.mcp_registry._mcp_list_tools",
         lambda server: _browser_tool_payloads(),
     )
 
@@ -147,11 +147,11 @@ def test_browser_mcp_preset_healthcheck_uses_stdio_mcp_server(tmp_path: Path, mo
     tool_calls: list[dict[str, object]] = []
 
     monkeypatch.setattr(
-        "scene_pilot.services.mcp_registry.default_browser_mcp_server_command",
+        "recruit_agent.services.mcp_registry.default_browser_mcp_server_command",
         lambda: ("node", "/virtual/browser-mcp/server.mjs"),
     )
     monkeypatch.setattr(
-        "scene_pilot.services.mcp_registry._mcp_list_tools",
+        "recruit_agent.services.mcp_registry._mcp_list_tools",
         lambda server: _browser_tool_payloads(),
     )
 
@@ -173,7 +173,7 @@ def test_browser_mcp_preset_healthcheck_uses_stdio_mcp_server(tmp_path: Path, mo
         }
 
     monkeypatch.setattr(
-        "scene_pilot.services.mcp_registry._mcp_call_tool",
+        "recruit_agent.services.mcp_registry._mcp_call_tool",
         fake_call_tool,
     )
 

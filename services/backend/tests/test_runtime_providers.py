@@ -13,9 +13,9 @@ SRC = Path(__file__).resolve().parents[1] / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from scene_pilot.core.settings import AppSettings, load_settings
-from scene_pilot.runtime.models import LLMResponse, Message
-from scene_pilot.runtime.providers import (
+from recruit_agent.core.settings import AppSettings, load_settings
+from recruit_agent.runtime.models import LLMResponse, Message
+from recruit_agent.runtime.providers import (
     AnthropicProvider,
     OpenAICompatibleProvider,
     ProviderConfig,
@@ -183,7 +183,7 @@ class ProviderTests(unittest.TestCase):
                 }
             )
 
-        with mock.patch("scene_pilot.runtime.providers.urlopen", side_effect=fake_urlopen):
+        with mock.patch("recruit_agent.runtime.providers.urlopen", side_effect=fake_urlopen):
             response = provider.generate(
                 [Message(role="system", content="follow policy"), Message(role="user", content="hello")],
                 max_tokens=256,
@@ -234,7 +234,7 @@ class ProviderTests(unittest.TestCase):
                 ]
             )
 
-        with mock.patch("scene_pilot.runtime.providers.urlopen", side_effect=fake_urlopen):
+        with mock.patch("recruit_agent.runtime.providers.urlopen", side_effect=fake_urlopen):
             response = provider.generate([Message(role="user", content="inspect the active tab")])
 
         self.assertEqual(response.content, "hello world")
@@ -266,7 +266,7 @@ class ProviderTests(unittest.TestCase):
                 }
             )
 
-        with mock.patch("scene_pilot.runtime.providers.urlopen", side_effect=fake_urlopen):
+        with mock.patch("recruit_agent.runtime.providers.urlopen", side_effect=fake_urlopen):
             response = provider.generate(
                 [
                     Message(role="system", content="follow policy"),
@@ -314,7 +314,7 @@ class ProviderTests(unittest.TestCase):
             )
         )
 
-        with mock.patch("scene_pilot.runtime.providers.urlopen", side_effect=URLError("down")):
+        with mock.patch("recruit_agent.runtime.providers.urlopen", side_effect=URLError("down")):
             with self.assertRaisesRegex(ProviderError, "Transport error calling"):
                 provider.generate([Message(role="user", content="hi")])
 
@@ -338,8 +338,8 @@ class ProviderTests(unittest.TestCase):
         )
 
         with (
-            mock.patch("scene_pilot.runtime.providers.build_opener", return_value=fake_opener) as build_opener_mock,
-            mock.patch("scene_pilot.runtime.providers.urlopen") as urlopen_mock,
+            mock.patch("recruit_agent.runtime.providers.build_opener", return_value=fake_opener) as build_opener_mock,
+            mock.patch("recruit_agent.runtime.providers.urlopen") as urlopen_mock,
         ):
             response = provider.generate([Message(role="user", content="hello")])
 

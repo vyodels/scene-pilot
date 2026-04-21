@@ -15,16 +15,16 @@
   - 仓库内版本化的 skill 包
 
 当前不收进本目录的内容：
-- `services/backend/src/scene_pilot/plugins/**/*.py`
+- `services/backend/src/recruit_agent/plugins/**/*.py`
   这些仍然是 backend 中可 import 的薄运行时 shell / mount code，用于读取 `.recruit-agent/plugins/` 下资产并挂到系统底座
-- `services/backend/src/scene_pilot/skills/*.py`
+- `services/backend/src/recruit_agent/skills/*.py`
   这些仍然是 skill 机制代码，不是 skill 资产内容
-- `services/backend/src/scene_pilot/services/mcp_registry.py`
+- `services/backend/src/recruit_agent/services/mcp_registry.py`
   这里仍然是 backend 中可 import 的薄运行时 shell，用于读取 `.recruit-agent/mcp/` 下资产并维持 DB 驱动的 MCP 注册/探活流程
 
 约束：
 - 面向 LLM 的自然语言文件资源，优先放在本目录下
 - 插件专属但仍属于文件型资源的内容，优先放在 `plugins/<plugin>/`
 - 可版本化的项目级 skill 包，优先放在本目录下
-- backend 运行时代码可以读取本目录资源，但不应把项目级 plugin 资产的事实来源重新散落回 `services/backend/src/scene_pilot/plugins/**`
+- backend 运行时代码可以读取本目录资源，但不应把项目级 plugin 资产的事实来源重新散落回 `services/backend/src/recruit_agent/plugins/**`
 - 运行时代码可以读取本目录资源，但不应继续把大段 prompt / persona 文本硬编码回 Python

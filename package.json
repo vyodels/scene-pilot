@@ -1,5 +1,5 @@
 {
-  "name": "scene-pilot",
+  "name": "recruit-agent",
   "private": true,
   "version": "0.1.0",
   "workspaces": [
@@ -16,7 +16,7 @@
     "desktop:package": "npm --workspace apps/desktop run package",
     "desktop:package:dir": "npm --workspace apps/desktop run package:dir",
     "desktop:package:distribution": "npm --workspace apps/desktop run package:distribution",
-    "shared:build": "npm --workspace @scene-pilot/shared run build",
+    "shared:build": "npm --workspace @recruit-agent/shared run build",
     "backend:test": "python3 -m pytest services/backend/tests"
   }
 }

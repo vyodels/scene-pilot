@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import asyncio
 
-from scene_pilot.runtime.tools import ToolDefinition, ToolRegistry, register_core_tools
-from scene_pilot.runtime.models import CancellationToken
+from recruit_agent.runtime.tools import ToolDefinition, ToolRegistry, register_core_tools
+from recruit_agent.runtime.models import CancellationToken
 
 
 async def _run_async(tool_registry: ToolRegistry, tool_name: str, arguments: dict[str, object], token: CancellationToken | None = None):

@@ -81,7 +81,7 @@
 
 ### 5.2 Prompt / Runtime / Tool 边界
 
-- 面向 LLM 的自然语言行为约束默认放在 `services/backend/src/scene_pilot/prompts/`
+- 面向 LLM 的自然语言行为约束默认放在 `services/backend/src/recruit_agent/prompts/`
 - 优先通过 prompt、结构化上下文、tool contract、skill 修复能力缺口，而不是往 core runtime 里补业务硬编码
 - 不在 core runtime / agent 主路径里硬编码站点规则、页面词表、选择器或一次性 workflow
 

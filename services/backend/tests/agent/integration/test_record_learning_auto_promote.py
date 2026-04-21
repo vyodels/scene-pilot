@@ -4,8 +4,8 @@ from pathlib import Path
 
 from sqlalchemy import select
 
-from scene_pilot.evolution.learning_writer import LearningWriter
-from scene_pilot.models.domain import EvolutionArtifact, Skill
+from recruit_agent.evolution.learning_writer import LearningWriter
+from recruit_agent.models.domain import EvolutionArtifact, Skill
 
 from ._helpers import make_session_factory
 

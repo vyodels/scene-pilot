@@ -113,13 +113,13 @@
 ### 1.1 现状勘察（**Codex 第一步必须做**，结果写到 commit message）
 
 - grep `boss` / `zhipin` / `直聘` 全仓库，列出所有命中位置，区分"文档提及"vs"代码实现"。
-- 检查 `services/backend/src/scene_pilot/services/browser_mcp_bridge.py`、`services/backend/src/scene_pilot/execution_units/browser_worker.py`、`services/backend/src/scene_pilot/mcp/registry.py`、`services/backend/src/scene_pilot/plugins/recruit/toolkit.py`，判断：
+- 检查 `services/backend/src/recruit_agent/services/browser_mcp_bridge.py`、`services/backend/src/recruit_agent/execution_units/browser_worker.py`、`services/backend/src/recruit_agent/mcp/registry.py`、`services/backend/src/recruit_agent/plugins/recruit/toolkit.py`，判断：
   - 是否已存在通用 Browser MCP / 协议桥与通用招聘流程工具契约？
   - 是否已存在"拉取候选人列表 / 拉取联系方式 / 拉取简历"这三个工具的契约？
-- 在 `services/backend/src/scene_pilot/models/domain.py` 里确认候选人 / 简历 / 联系方式的存储模型：
+- 在 `services/backend/src/recruit_agent/models/domain.py` 里确认候选人 / 简历 / 联系方式的存储模型：
   - `Candidate` 表里是否已有 `phone` / `wechat` / `email` / `resume_url` 等字段？
   - 简历附件是落到本地文件系统、走 BLOB 存储、还是只存 URL？
-- 在 `services/backend/src/scene_pilot/api/routers/` 里找候选人写入 API（POST/PATCH 候选人、上传简历），确认 Agent 工具有路径写入。
+- 在 `services/backend/src/recruit_agent/api/routers/` 里找候选人写入 API（POST/PATCH 候选人、上传简历），确认 Agent 工具有路径写入。
 - 把以上四个调查结果以一段 200 字以内的总结写到本节末尾的 `调研结论` 子小节，并据此回答两个问题：
   - **通用外部站点集成现状是哪一档**：已有可用 / 部分可用（缺 X）/ 完全没有？
   - **如果"完全没有"或"部分可用"，是补做还是先 mock**？补做的范围有多大？
@@ -133,7 +133,7 @@
 
 > 以下任务是"假设 §1.1 调查结论是'部分可用，需要补'"的最小化准备。如果调研结论是"已经齐全"，本节大半任务可以跳过。注意：这里补的是**通用招聘流程语义与通用 MCP 接入**，不是 Boss 专用工具。
 
-- 修通 `services/backend/src/scene_pilot/services/mcp_registry.py` 与 `services/backend/src/scene_pilot/services/container.py`，确保已启用的 Browser MCP / 其它 MCP 动态工具能够真实进入 Agent 可见工具集，而不是只停留在配置层。
+- 修通 `services/backend/src/recruit_agent/services/mcp_registry.py` 与 `services/backend/src/recruit_agent/services/container.py`，确保已启用的 Browser MCP / 其它 MCP 动态工具能够真实进入 Agent 可见工具集，而不是只停留在配置层。
 - 在 prompt / skill / 运行时合同里补齐通用招聘流程语义，让 Agent 能在运行时自行完成：
   - 候选人发现 / 列表筛选
   - 联系方式获取（需要触发 Guard，按"外部动作"上报 `gate_signal=wait_human`）
@@ -144,7 +144,7 @@
 
 ### 1.3 Autonomous goal → run 完整链路打通
 
-- 在 `services/backend/src/scene_pilot/api/routers/agent.py` 里确认/补全以下 API：
+- 在 `services/backend/src/recruit_agent/api/routers/agent.py` 里确认/补全以下 API：
   - `POST /api/agents/autonomous/goals`：入参 `{title, goal_text, jd_id, candidate_count_target, ...}` → 创建 `AgentRun` + `GoalSpec`，并 enqueue 到 scheduler。
   - `GET /api/agents/autonomous/runs/{run_id}`：返回 run + 最近 N 个 turn + 最近 M 个 round 事件。
   - `POST /api/agents/autonomous/runs/{run_id}/cancel`：发送 cancel signal。

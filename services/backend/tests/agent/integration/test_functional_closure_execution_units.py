@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from scene_pilot.execution_units.browser_worker import run_browser_worker
-from scene_pilot.execution_units.runner import ExecutionUnitRunner
-from scene_pilot.execution_units.store import ExecutionUnitStore
+from recruit_agent.execution_units.browser_worker import run_browser_worker
+from recruit_agent.execution_units.runner import ExecutionUnitRunner
+from recruit_agent.execution_units.store import ExecutionUnitStore
 
 
 def test_functional_closure_execution_units_have_intermediate_states() -> None:

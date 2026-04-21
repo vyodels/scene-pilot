@@ -4,8 +4,8 @@ import json
 
 from fastapi.testclient import TestClient
 
-from scene_pilot.core.settings import AppSettings
-from scene_pilot.server import create_app
+from recruit_agent.core.settings import AppSettings
+from recruit_agent.server import create_app
 
 
 def _browser_tool_payloads() -> list[dict[str, object]]:
@@ -102,7 +102,7 @@ def test_mcp_presets_load_from_recruit_agent_assets(tmp_path, monkeypatch) -> No
         encoding="utf-8",
     )
     monkeypatch.setattr(
-        "scene_pilot.services.mcp_registry.mcp_preset_templates_root",
+        "recruit_agent.services.mcp_registry.mcp_preset_templates_root",
         lambda: preset_dir,
     )
 
@@ -170,15 +170,15 @@ def test_browser_preset_healthcheck_uses_upstream_stdio_mcp_server(tmp_path, mon
         return {}
 
     monkeypatch.setattr(
-        "scene_pilot.services.mcp_registry.default_browser_mcp_server_command",
+        "recruit_agent.services.mcp_registry.default_browser_mcp_server_command",
         lambda: ("node", "/virtual/browser-mcp/server.mjs"),
     )
     monkeypatch.setattr(
-        "scene_pilot.services.mcp_registry.default_browser_upstream_endpoint",
+        "recruit_agent.services.mcp_registry.default_browser_upstream_endpoint",
         lambda: "/virtual/default-browser.sock",
     )
     monkeypatch.setattr(
-        "scene_pilot.services.mcp_registry._mcp_session_request",
+        "recruit_agent.services.mcp_registry._mcp_session_request",
         fake_mcp_session_request,
     )
 

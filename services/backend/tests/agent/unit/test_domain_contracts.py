@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from scene_pilot.models.domain import (
+from recruit_agent.models.domain import (
     AgentGlobalMemory,
     AgentRun,
     AgentRuntimeEvent,

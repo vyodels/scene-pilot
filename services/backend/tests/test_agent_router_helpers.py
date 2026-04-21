@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from scene_pilot.api.routers.agent import _serialize_profile
+from recruit_agent.api.routers.agent import _serialize_profile
 
 
 def test_serialize_profile_accepts_legacy_datetime_strings() -> None:
