@@ -1,11 +1,13 @@
 # Autonomous 端到端 + 双 Agent 对话悬浮窗（Claude Desktop 复刻）实施计划
 
-> Status: active
+> Status: archived
 > Supersedes: docs/plan/archive/recruiting-workflow-ux-redesign-plan.md; docs/plan/archive/recruiting-workflow-ux-redesign-plan_cn.md
-> Superseded by: -
-> Distilled into: -
-> Last reviewed against code: 2026-04-20
+> Superseded by: /Users/vyodels/AgentProjects/cross-project-runtime-docs/final-mock-recruiting-validation-2026-04-25.md for the browser / HID mock recruiting execution chain; UI cleanup topics are not current active work.
+> Distilled into: /Users/vyodels/AgentProjects/cross-project-runtime-docs/recruit-agent-browser-virtualhid-overview.md
+> Last reviewed against code: 2026-04-25
 > Historical source path: docs/superpowers/plans/2026-04-19-autonomous-e2e-and-chat-overlay-plan.md
+
+> Archive note 2026-04-25: this plan mixed older real-site E2E assumptions with a separate chat-overlay UI cleanup scope. It no longer guides current browser / HID runtime work. The current accepted boundary is Autonomous Agent in a mock recruiting environment using `delegate_scene_context -> browser snapshot/navigation -> VirtualHID hid_action -> browser_locate_download -> attach_resume_artifact`, with real-site validation tracked separately outside this repo's old active plan.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -363,4 +365,3 @@
 - 7 个 Agent tab 全部可用。
 - 工作台看板与 Settings 完整保留，没有被误删。
 - backend 全绿、typecheck 全绿。
-

@@ -36,7 +36,6 @@ Plans should use the same project wording:
 ## Current index
 
 ### active
-- [`active/2026-04-19-autonomous-e2e-and-chat-overlay-plan.md`](./active/2026-04-19-autonomous-e2e-and-chat-overlay-plan.md)
 - [`active/2026-04-19-autonomous-ui-e2e-test-plan.md`](./active/2026-04-19-autonomous-ui-e2e-test-plan.md)
 - [`active/2026-04-24-recruit-agent-browser-computer-runtime-follow-up-plan.md`](./active/2026-04-24-recruit-agent-browser-computer-runtime-follow-up-plan.md)
 
@@ -58,3 +57,4 @@ Plans should use the same project wording:
 - [`archive/recruiting-workflow-ux-redesign-plan_cn.md`](./archive/recruiting-workflow-ux-redesign-plan_cn.md)
 - [`archive/2026-04-20-agents-claude-shared-standard-draft.md`](./archive/2026-04-20-agents-claude-shared-standard-draft.md)
 - [`archive/2026-04-16-recruitment-kanban-design.md`](./archive/2026-04-16-recruitment-kanban-design.md)
+- [`archive/2026-04-19-autonomous-e2e-and-chat-overlay-plan.md`](./archive/2026-04-19-autonomous-e2e-and-chat-overlay-plan.md)
