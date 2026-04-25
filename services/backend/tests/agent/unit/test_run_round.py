@@ -103,3 +103,51 @@ def test_run_round_marks_structured_blocked_final_result_as_escalate() -> None:
     assert outcome.status == "escalate"
     assert outcome.gate_signal == "escalate"
     assert outcome.final_output is not None
+
+
+def test_run_round_marks_blocked_status_prefix_as_escalate() -> None:
+    provider = ScriptedProvider(
+        provider_name="scripted",
+        responses=[
+            LLMResponse(
+                content=(
+                    '{"status":"blocked_missing_artifact","local_artifact":{"path":null},'
+                    '"blocking_reason":"download record did not produce a local path"}'
+                )
+            )
+        ],
+    )
+    kernel = AgentKernel(provider=provider, tool_registry=ToolRegistry(), plugin_host=PluginHost())
+
+    outcome = kernel.run_round(
+        goal=GoalRef(goal_id="goal-1", scope_kind="conversation", scope_ref="conv-1"),
+        observation=Observation(scope_kind="conversation", scope_ref="conv-1"),
+        limits=RoundLimits(),
+    )
+
+    assert outcome.status == "escalate"
+    assert outcome.gate_signal == "escalate"
+
+
+def test_run_round_marks_failed_status_prefix_as_error() -> None:
+    provider = ScriptedProvider(
+        provider_name="scripted",
+        responses=[
+            LLMResponse(
+                content=(
+                    '{"status":"failed_no_verified_local_artifact",'
+                    '"failure_reason":"download record did not produce a verified local path"}'
+                )
+            )
+        ],
+    )
+    kernel = AgentKernel(provider=provider, tool_registry=ToolRegistry(), plugin_host=PluginHost())
+
+    outcome = kernel.run_round(
+        goal=GoalRef(goal_id="goal-1", scope_kind="conversation", scope_ref="conv-1"),
+        observation=Observation(scope_kind="conversation", scope_ref="conv-1"),
+        limits=RoundLimits(),
+    )
+
+    assert outcome.status == "error"
+    assert outcome.gate_signal == "escalate"

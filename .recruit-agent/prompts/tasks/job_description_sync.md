@@ -4,8 +4,8 @@
 
 - 外部事实来源是当前可通过通用浏览器工具读取的招聘平台页面；目标存储是共享工作区 JD 库，读取用 `list_job_descriptions`，写入用 `upsert_job_description`。
 - 优先复用普通浏览器中已经打开且能够继续任务的活跃目标页。只有当当前工具可达范围内的证据足以支持“没有可复用目标页”时，才自行打开招聘平台并进入可执行页面。
-- 在判断普通浏览器里是否已经存在可复用目标页时，如果浏览器工具参数提供范围控制（例如 `scope`）或其它可扩大可见范围的方式，应先使用能覆盖整个普通浏览器的最大可用范围（例如 `all_windows`）做一次 tab 枚举，再决定是否继续后续动作。
-- 一旦从 tab 枚举结果里定位到候选招聘页面，应立即记录并复用该页面的精确 `tabId`；后续 `snapshot`、`evaluate`、`run_code`、`navigate`、`frames` 等页面读取或导航动作，都应显式带上这个已确认的 `tabId`，不要退回依赖“当前激活 tab”。
+- 在判断普通浏览器里是否已经存在可复用目标页时，优先使用 `browser_list_tabs` 枚举普通浏览器全部窗口里的页签；只有在必须聚焦当前窗口时，才显式传 `currentWindowOnly=true`。
+- 一旦从 tab 枚举结果里定位到候选招聘页面，应立即记录并复用该页面的精确 `tabId`；后续 `browser_snapshot`、`browser_query_elements`、`browser_get_element`、`browser_debug_dom`、`browser_wait_for_*` 等页面读取或等待动作，都应显式带上这个已确认的 `tabId`，不要退回依赖“当前激活 tab”。
 - 如果浏览器工具的 tab / page 可见范围只覆盖当前窗口，而不能确认其它普通浏览器窗口是否已存在可复用目标页，不要把“当前窗口未见目标页”当成直接新开页面的依据；应把这种工具作用域不足明确表述为 blocker。
 - 只有在登录、验证码、权限、设备绑定或其它明确的 human-only blocker 下，才请求 human 协助。human 的职责是解除阻塞，而不是代替 Agent 打开页面或完成站内导航。
 - 严格按 `constraints.sync_mode` 执行：
@@ -15,6 +15,10 @@
 - 本任务只同步当前仍处于活跃招聘中的 JD。应依据页面上通用且可验证的活跃证据判断，例如正在招聘、开放中、发布中、进行中或等价的活跃岗位上下文；对于已关闭、已下线、已归档、已过期、已停止招聘或状态不明确的 JD，默认跳过并在结果中说明原因。
 - 同步时应尽量获取 JD 详细信息。`title` 为必填；其它字段仅在页面明确可见或可直接从证据推导时写入，不猜测薪资、地点、部门、要求等信息。若列表信息不足以确认岗位详情，应继续读取可达的详情页或等价详情区域。
 - 在写入前，如需去重、匹配、判断增量差异或估计同步进度，应先读取共享工作区现有 JD。
+- 当任务需要多轮页面观察、等待、详情读取或浏览器子上下文时，优先通过 `delegate_scene_context` 封装 scene contract。scene contract 至少应保留可复用的 `browser_target`，必要时再补 `target_regions` 或 `action_plan`；不要把临时 DOM、tab 切换轨迹或点击细节写进主历史。
+- 把 `browser_target`、`target_regions`、`action_plan` 当作 scene tool surface 的显式输入字段，而不是正文里的隐式约定。若当前证据已经能锁定页面、窗口、tab 或详情落点，就直接写进 scene contract；若还不能锁定，就在业务结果里说明缺少哪类信号，而不是编造页面细节。
+- scene 子上下文返回结果时，优先返回业务级 `result_data`，至少包含 `created`、`updated`、`skipped`、活跃证据，以及可直接写入 `upsert_job_description` 的规范化 JD 事实；不要把 DOM ref、按钮文案或调试观察结果当作完成摘要。
+- 若本轮 run 暴露出可稳定复用的业务动作，应优先把经验描述成后续可蒸馏的业务级 skill，例如“活跃 JD 增量同步”或“JD 详情补齐”，并让其输入输出尽量贴近当前 tool-surface contract，而不是页面操作脚本。
 - 只使用通用招聘页面语义进行判断，不假设任何站点专用 selector、按钮文案、路由、页面分支、词表或预接好的平台适配器。
 - 不在此任务中执行对外沟通或其它高风险外站变更。
 - 结束时返回紧凑的结构化摘要，至少包含 `created`、`updated`、`skipped`、`blocked`、活跃 JD 的确认依据、被跳过项目的原因，以及任何未解决 blocker 的最小解释。

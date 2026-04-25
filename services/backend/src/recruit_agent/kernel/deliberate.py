@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import inspect
 from typing import Any
 
@@ -116,7 +115,7 @@ def deliberate(
                     )
                 continue
 
-            result = asyncio.run(tool_registry.execute_async(call.name, call.arguments, cancel_token=cancel_token))
+            result = tool_registry.execute(call.name, call.arguments, cancel_token=cancel_token)
             tool_results.append(result)
             if event_sink is not None:
                 event_sink(
@@ -139,6 +138,8 @@ def deliberate(
         tool_calls=tool_calls,
         tool_results=tool_results,
         final_content=final_content,
+        result_data=dict(response.result_data) if isinstance(response.result_data, dict) else None,
+        skill_draft=dict(response.skill_draft) if isinstance(response.skill_draft, dict) else None,
         stop_reason=stop_reason,
         usage=usage,
         metadata={

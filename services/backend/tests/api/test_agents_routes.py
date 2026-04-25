@@ -276,6 +276,7 @@ def test_agents_routes_expose_builtin_profiles_and_runtime_collections(tmp_path:
             "sync_jd_initial",
             "sync_jd_incremental",
             "candidate_discovery",
+            "resume_collection",
             "candidate_scoring",
         ]
         sync_incremental_template = next(item for item in scene_templates.json() if item["key"] == "sync_jd_incremental")

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from recruit_agent.core.settings import AppSettings
+from recruit_agent.models.domain import PersonResumeArtifact, ResumeArtifact
 from recruit_agent.plugins.recruit.toolkit import (
     archive_candidate,
     attach_resume_artifact,
@@ -133,6 +134,12 @@ def test_candidate_lifecycle_tools_cover_writeback_scoring_thread_and_progress(t
     assert len(thread["syncRecords"]) == 1
     assert thread["application"]["resumeAvailable"] is True
     assert thread["stateSnapshot"]["resume_status"] == "received"
+    with container.session_factory() as session:
+        assert session.query(ResumeArtifact).count() == 1
+        assert session.query(PersonResumeArtifact).count() == 1
+        person_artifact = session.query(PersonResumeArtifact).one()
+        assert person_artifact.file_name == "zhao-yunlong-resume.pdf"
+        assert person_artifact.file_path == "/tmp/zhao-yunlong-resume.pdf"
 
     progress = get_goal_progress(
         container.session_factory,

@@ -6,80 +6,247 @@ from fastapi.testclient import TestClient
 
 from recruit_agent.core.settings import AppSettings
 from recruit_agent.server import create_app
+from recruit_agent.services.mcp_registry import VIRTUALHID_SOCKET_PRESET_KEY
 
 
 def _browser_tool_payloads() -> list[dict[str, object]]:
-    names = [
-        "browser_list_tabs",
-        "browser_get_active_tab",
-        "browser_select_tab",
-        "browser_open_tab",
-        "browser_close_tab",
-        "browser_navigate",
-        "browser_go_back",
-        "browser_reload",
-        "browser_snapshot",
-        "browser_query_elements",
-        "browser_get_element",
-        "browser_debug_dom",
-        "browser_click",
-        "browser_hover",
-        "browser_fill",
-        "browser_clear",
-        "browser_select_option",
-        "browser_press_key",
-        "browser_scroll",
-        "browser_wait",
-        "browser_wait_for_element",
-        "browser_wait_for_text",
-        "browser_wait_for_navigation",
-        "browser_wait_for_disappear",
-        "browser_screenshot",
-        "browser_download_file",
-        "browser_save_text",
-        "browser_save_json",
-        "browser_save_csv",
-        "browser_double_click",
-        "browser_scroll_element",
-        "browser_execute_script",
-        "browser_go_forward",
-        "browser_get_cookies",
-        "browser_wait_for_url",
-        "browser_handle_dialog",
+    tools = [
+        ("browser_list_tabs", {"currentWindowOnly": {"type": "boolean"}}),
+        ("browser_get_active_tab", {}),
+        ("browser_select_tab", {"tabId": {"type": "number"}}),
+        ("browser_open_tab", {"tabId": {"type": "number"}, "windowId": {"type": "number"}, "url": {"type": "string"}, "active": {"type": "boolean"}}),
+        (
+            "browser_snapshot",
+            {
+                "tabId": {"type": "number"},
+                "includeHtml": {"type": "boolean"},
+                "includeText": {"type": "boolean"},
+                "maxTextLength": {"type": "number"},
+                "maxHtmlLength": {"type": "number"},
+                "clickableLimit": {"type": "number"},
+            },
+        ),
+        (
+            "browser_query_elements",
+            {
+                "tabId": {"type": "number"},
+                "ref": {"type": "string"},
+                "selector": {"type": "string"},
+                "text": {"type": "string"},
+                "role": {"type": "string"},
+                "index": {"type": "number"},
+                "limit": {"type": "number"},
+                "visibleOnly": {"type": "boolean"},
+            },
+        ),
+        (
+            "browser_get_element",
+            {
+                "tabId": {"type": "number"},
+                "ref": {"type": "string"},
+                "selector": {"type": "string"},
+                "text": {"type": "string"},
+                "role": {"type": "string"},
+                "index": {"type": "number"},
+                "visibleOnly": {"type": "boolean"},
+            },
+        ),
+        ("browser_debug_dom", {"tabId": {"type": "number"}}),
+        (
+            "browser_wait_for_element",
+            {
+                "tabId": {"type": "number"},
+                "ref": {"type": "string"},
+                "selector": {"type": "string"},
+                "text": {"type": "string"},
+                "role": {"type": "string"},
+                "index": {"type": "number"},
+                "limit": {"type": "number"},
+                "visibleOnly": {"type": "boolean"},
+                "timeoutMs": {"type": "number"},
+                "pollIntervalMs": {"type": "number"},
+            },
+        ),
+        (
+            "browser_wait_for_text",
+            {
+                "tabId": {"type": "number"},
+                "text": {"type": "string"},
+                "timeoutMs": {"type": "number"},
+                "pollIntervalMs": {"type": "number"},
+            },
+        ),
+        ("browser_wait_for_navigation", {"tabId": {"type": "number"}, "timeoutMs": {"type": "number"}}),
+        (
+            "browser_wait_for_disappear",
+            {
+                "tabId": {"type": "number"},
+                "ref": {"type": "string"},
+                "selector": {"type": "string"},
+                "text": {"type": "string"},
+                "role": {"type": "string"},
+                "index": {"type": "number"},
+                "limit": {"type": "number"},
+                "visibleOnly": {"type": "boolean"},
+                "timeoutMs": {"type": "number"},
+                "pollIntervalMs": {"type": "number"},
+            },
+        ),
+        ("browser_screenshot", {"tabId": {"type": "number"}}),
+        ("browser_get_cookies", {"url": {"type": "string"}, "domain": {"type": "string"}, "name": {"type": "string"}}),
+        (
+            "browser_locate_download",
+            {
+                "downloadId": {"type": "number"},
+                "fileName": {"type": "string"},
+                "filename": {"type": "string"},
+                "filenameRegex": {"type": "string"},
+                "url": {"type": "string"},
+                "urlRegex": {"type": "string"},
+                "sourceUrl": {"type": "string"},
+                "sourceUrlRegex": {"type": "string"},
+                "finalUrl": {"type": "string"},
+                "finalUrlRegex": {"type": "string"},
+                "referrer": {"type": "string"},
+                "referrerRegex": {"type": "string"},
+                "query": {"type": "string"},
+                "expectedExtensions": {"type": "array", "items": {"type": "string"}},
+                "state": {"type": "string"},
+                "states": {"type": "array", "items": {"type": "string"}},
+                "requireExists": {"type": "boolean"},
+                "requireComplete": {"type": "boolean"},
+                "requireSafe": {"type": "boolean"},
+                "requireSourceCorrelation": {"type": "boolean"},
+                "requireUnique": {"type": "boolean"},
+                "startedAfter": {"type": "string"},
+                "since": {"type": "string"},
+                "endedAfter": {"type": "string"},
+                "limit": {"type": "number"},
+                "waitMs": {"type": "number"},
+                "pollIntervalMs": {"type": "number"},
+            },
+        ),
+        ("browser_wait_for_url", {"tabId": {"type": "number"}, "pattern": {"type": "string"}, "timeoutMs": {"type": "number"}}),
     ]
-    read_only = {
-        "browser_list_tabs",
-        "browser_get_active_tab",
-        "browser_snapshot",
-        "browser_query_elements",
-        "browser_get_element",
-        "browser_debug_dom",
-        "browser_wait",
-        "browser_wait_for_element",
-        "browser_wait_for_text",
-        "browser_wait_for_navigation",
-        "browser_wait_for_disappear",
-        "browser_screenshot",
-        "browser_get_cookies",
-        "browser_wait_for_url",
-    }
-    zero_arg = {"browser_list_tabs", "browser_get_active_tab"}
     return [
         {
             "name": name,
             "description": name,
             "inputSchema": {
                 "type": "object",
-                "properties": {} if name in zero_arg else {"arg": {"type": "string"}},
+                "properties": properties,
                 "additionalProperties": False,
             },
-            "annotations": {
-                "readOnlyHint": name in read_only,
-                "idempotentHint": name in read_only,
-                "openWorldHint": True,
-            },
         }
-        for name in names
+        for name, properties in tools
+    ]
+
+
+def _virtualhid_tool_payloads() -> list[dict[str, object]]:
+    return [
+        {
+            "name": "hid_action",
+            "description": "hid_action",
+            "inputSchema": {
+                "type": "object",
+                "required": ["id", "primitives", "context"],
+                "properties": {
+                    "id": {"type": "string"},
+                    "primitives": {"type": "array"},
+                    "context": {"type": "object"},
+                    "options": {"type": "object"},
+                },
+                "additionalProperties": False,
+            },
+        },
+        {
+            "name": "hid_state",
+            "description": "hid_state",
+            "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+        },
+        {
+            "name": "hid_stop",
+            "description": "hid_stop",
+            "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+        },
+        {
+            "name": "hid_unlock",
+            "description": "hid_unlock",
+            "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+        },
+        {
+            "name": "hid_observe",
+            "description": "hid_observe",
+            "inputSchema": {
+                "type": "object",
+                "required": ["enable"],
+                "properties": {
+                    "enable": {"type": "boolean"},
+                    "host": {"type": "string"},
+                    "taskId": {"type": "string"},
+                },
+                "additionalProperties": False,
+            },
+        },
+        {
+            "name": "hid_profiles_list",
+            "description": "hid_profiles_list",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"host": {"type": "string"}},
+                "additionalProperties": False,
+            },
+        },
+        {
+            "name": "hid_profiles_get",
+            "description": "hid_profiles_get",
+            "inputSchema": {
+                "type": "object",
+                "required": ["host", "sig"],
+                "properties": {"host": {"type": "string"}, "sig": {"type": "string"}},
+                "additionalProperties": False,
+            },
+        },
+        {
+            "name": "hid_profiles_forget",
+            "description": "hid_profiles_forget",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"host": {"type": "string"}, "sig": {"type": "string"}},
+                "additionalProperties": False,
+            },
+        },
+        {
+            "name": "hid_trace_tail",
+            "description": "hid_trace_tail",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "n": {"type": "integer"},
+                    "sinceEventId": {"type": "string"},
+                    "onlyUnresolved": {"type": "boolean"},
+                },
+                "additionalProperties": False,
+            },
+        },
+        {
+            "name": "hid_trace_commit",
+            "description": "hid_trace_commit",
+            "inputSchema": {
+                "type": "object",
+                "required": ["eventId", "elementSig", "host"],
+                "properties": {
+                    "eventId": {"type": "string"},
+                    "elementSig": {"type": "string"},
+                    "host": {"type": "string"},
+                    "role": {"type": "string"},
+                    "text": {"type": "string"},
+                    "taskId": {"type": "string"},
+                    "stage": {"type": "string"},
+                },
+                "additionalProperties": True,
+            },
+        },
     ]
 
 
@@ -219,14 +386,14 @@ def test_browser_preset_healthcheck_uses_upstream_stdio_mcp_server(tmp_path, mon
         checked_payload = checked.json()
         assert checked_payload["health_status"] == "healthy"
         tool_names = {tool["name"] for tool in checked_payload["tools"]}
-        assert len(tool_names) >= 30
+        assert len(tool_names) == 16
         assert {
             "browser_list_tabs",
             "browser_get_active_tab",
             "browser_open_tab",
-            "browser_navigate",
             "browser_snapshot",
-            "browser_execute_script",
+            "browser_query_elements",
+            "browser_locate_download",
             "browser_wait_for_url",
         }.issubset(tool_names)
 
@@ -246,3 +413,111 @@ def test_browser_preset_healthcheck_uses_upstream_stdio_mcp_server(tmp_path, mon
         )
     finally:
         client.__exit__(None, None, None)
+
+
+def test_virtualhid_preset_healthcheck_uses_upstream_stdio_mcp_server(tmp_path, monkeypatch) -> None:
+    runtime_requests: list[tuple[str, str, str, dict[str, object]]] = []
+
+    def fake_mcp_session_request(server, method: str, params: dict[str, object] | None = None, *, timeout_seconds: float = 8.0) -> dict[str, object]:
+        runtime_requests.append(
+            (
+                server.server_key,
+                server.transport_kind,
+                server.endpoint,
+                {"method": method, "params": dict(params or {}), "timeout_seconds": timeout_seconds},
+            )
+        )
+        if method == "tools/list":
+            return {"tools": _virtualhid_tool_payloads()}
+        if method == "tools/call":
+            return {
+                "content": [{"type": "text", "text": '{"killSwitch": false}'}],
+                "structuredContent": {"killSwitch": False},
+                "isError": False,
+            }
+        return {}
+
+    monkeypatch.setattr(
+        "recruit_agent.services.mcp_registry.default_virtualhid_mcp_server_command",
+        lambda: ("node", "/virtual/VirtualHID/mcp/server.mjs"),
+    )
+    monkeypatch.setattr(
+        "recruit_agent.services.mcp_registry.default_virtualhid_upstream_endpoint",
+        lambda: "/virtual/default-virtualhid.sock",
+    )
+    monkeypatch.setattr(
+        "recruit_agent.services.mcp_registry._mcp_session_request",
+        fake_mcp_session_request,
+    )
+
+    settings = AppSettings(
+        data_dir=str(tmp_path / "data"),
+        database_url=f"sqlite:///{tmp_path / 'mcp-virtualhid-routes.db'}",
+        provider_config={},
+    )
+
+    app = create_app(settings)
+    with TestClient(app) as client:
+        presets = client.get("/api/mcp/presets")
+        assert presets.status_code == 200
+        virtualhid_preset = next(item for item in presets.json() if item["key"] == VIRTUALHID_SOCKET_PRESET_KEY)
+        assert virtualhid_preset["transport_kind"] == "stdio"
+        assert virtualhid_preset["protocol"] == "mcp_jsonrpc"
+        assert virtualhid_preset["endpoint_example"] == "/virtual/default-virtualhid.sock"
+
+        installed = client.post(
+            f"/api/mcp/presets/{VIRTUALHID_SOCKET_PRESET_KEY}/install",
+            json={
+                "server_key": "virtualhid-managed",
+                "name": "VirtualHID MCP",
+                "endpoint": "/virtual/upstream-virtualhid.sock",
+            },
+        )
+        assert installed.status_code == 201
+        payload = installed.json()
+        assert payload["protocol"] == "mcp_jsonrpc"
+        assert payload["transport_kind"] == "stdio"
+        assert payload["server_metadata"]["stdio_command"] == ["node", "/virtual/VirtualHID/mcp/server.mjs"]
+        assert payload["server_metadata"]["stdio_env"] == {"VIRTUALHID_SOCKET": "/virtual/upstream-virtualhid.sock"}
+        assert payload["server_metadata"]["runtime_tool_capabilities"] == {
+            "default": ["scene", "computer"],
+            "read_only": ["computer_read"],
+            "mutating": ["computer_write"],
+        }
+        assert payload["server_metadata"]["runtime_tool_read_only_names"] == [
+            "hid_state",
+            "hid_profiles_list",
+            "hid_profiles_get",
+            "hid_trace_tail",
+        ]
+
+        checked = client.post(f"/api/mcp/servers/{payload['id']}/healthcheck")
+        assert checked.status_code == 200
+        checked_payload = checked.json()
+        assert checked_payload["health_status"] == "healthy"
+        tool_names = {tool["name"] for tool in checked_payload["tools"]}
+        assert len(tool_names) == 10
+        assert {"hid_action", "hid_state", "hid_observe", "hid_profiles_get", "hid_trace_commit"}.issubset(tool_names)
+
+        hid_state = next(tool for tool in checked_payload["tools"] if tool["name"] == "hid_state")
+        assert hid_state["risk_level"] == "low"
+        assert set(hid_state["capabilities"]) == {"scene", "computer", "computer_read"}
+
+        hid_action = next(tool for tool in checked_payload["tools"] if tool["name"] == "hid_action")
+        assert hid_action["risk_level"] == "medium"
+        assert set(hid_action["capabilities"]) == {"scene", "computer", "computer_write"}
+
+    assert any(
+        server_key == "virtualhid-managed"
+        and transport_kind == "stdio"
+        and endpoint == "/virtual/upstream-virtualhid.sock"
+        and request["method"] == "tools/list"
+        for server_key, transport_kind, endpoint, request in runtime_requests
+    )
+    assert any(
+        server_key == "virtualhid-managed"
+        and transport_kind == "stdio"
+        and endpoint == "/virtual/upstream-virtualhid.sock"
+        and request["method"] == "tools/call"
+        for server_key, transport_kind, endpoint, request in runtime_requests
+    )

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import inspect
 from collections.abc import Awaitable, Iterable
 from dataclasses import dataclass, field
@@ -9,7 +8,7 @@ from typing import Any, Callable, cast
 from fastapi import APIRouter
 
 from recruit_agent.runtime.models import GuardVerdict, Observation
-from recruit_agent.runtime.tools import ToolDefinition, ToolRegistry
+from recruit_agent.runtime.tools import ToolDefinition, ToolRegistry, run_awaitable_blocking
 
 
 ObservationEnricher = Callable[[Observation], dict[str, Any] | Awaitable[dict[str, Any]]]
@@ -62,7 +61,7 @@ class PluginHost:
         return payload
 
     def run_observation_enrichers_sync(self, observation: Observation) -> dict[str, Any]:
-        return asyncio.run(self.run_observation_enrichers(observation))
+        return run_awaitable_blocking(lambda: self.run_observation_enrichers(observation))
 
     async def run_guard_checks(
         self,
@@ -81,7 +80,7 @@ class PluginHost:
         arguments: dict[str, Any],
         observation: Observation,
     ) -> list[GuardVerdict]:
-        return asyncio.run(self.run_guard_checks(tool_name, arguments, observation))
+        return run_awaitable_blocking(lambda: self.run_guard_checks(tool_name, arguments, observation))
 
     def collect_persona_fragments(self) -> list[str]:
         return [text for _namespace, _label, text in self._persona_fragments]

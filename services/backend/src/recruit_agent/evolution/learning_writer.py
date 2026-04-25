@@ -108,19 +108,36 @@ class LearningWriter:
         source_kind: str = "autonomous",
         agent_profile_id: str | None = None,
         proposed_by: str | None = None,
+        environment_scope: str | None = None,
     ) -> dict[str, Any]:
         with self.session_factory() as session:
-            skill_name = str(draft_contract.get("skill_name") or draft_contract.get("name") or "llm-trial-skill").strip()
+            normalized_contract = _with_environment_scope(
+                dict(draft_contract),
+                tags=tags,
+                trial_metrics=trial_metrics,
+                source_kind=source_kind,
+                environment_scope=environment_scope,
+            )
+            resolved_environment_scope = _environment_scope_from_contract(normalized_contract)
+            is_mock_scope = _is_mock_environment_scope(resolved_environment_scope)
+            skill_name = str(normalized_contract.get("skill_name") or normalized_contract.get("name") or "llm-trial-skill").strip()
             learning = AgentLearning(
-                content=learning_content or json.dumps(draft_contract, ensure_ascii=False),
+                content=learning_content or json.dumps(normalized_contract, ensure_ascii=False),
                 tags=list(tags),
             )
             session.add(learning)
             session.flush()
 
-            skill = self._upsert_skill_contract(session, draft_contract, fallback_name=skill_name)
+            skill = self._upsert_skill_contract(session, normalized_contract, fallback_name=skill_name)
             merged_metrics = _merge_trial_metrics(dict(skill.trial_metrics or {}), dict(trial_metrics or {}))
             judgment = evaluate_trial_metrics(merged_metrics)
+            if is_mock_scope:
+                judgment = {
+                    **dict(judgment),
+                    "auto_promote": False,
+                    "promotion_blocked_reason": "mock_environment_scope",
+                    "environment_scope": resolved_environment_scope,
+                }
             skill.trial_metrics = judgment
             if bool(judgment["auto_promote"]):
                 activate_skill(skill, reviewer="system")
@@ -136,9 +153,10 @@ class LearningWriter:
                 related_skill_id=skill.id,
                 proposed_by=proposed_by or source_kind,
                 artifact_body={
-                    "skill_contract": dict(draft_contract),
+                    "skill_contract": dict(normalized_contract),
                     "tags": list(tags),
                     "trial_metrics": dict(trial_metrics or {}),
+                    "environment_scope": resolved_environment_scope,
                 },
                 artifact_metadata={
                     "learning_id": learning.id,
@@ -149,6 +167,8 @@ class LearningWriter:
                     "source_run_id": source_run_id,
                     "source_turn_id": source_turn_id,
                     "llm_generated": True,
+                    "environment_scope": resolved_environment_scope,
+                    "not_for_real_site": is_mock_scope,
                 },
             )
             session.add(artifact)
@@ -162,6 +182,7 @@ class LearningWriter:
                 "queued": not bool(judgment["auto_promote"]),
                 "judgment": dict(judgment),
                 "skill_name": skill.name,
+                "environment_scope": resolved_environment_scope,
             }
 
     def _upsert_skill(self, session: Session, skill_name: str, content: str) -> Skill:
@@ -199,6 +220,11 @@ class LearningWriter:
             **dict(draft_contract.get("skill_metadata") or {}),
             "llm_generated": True,
         }
+        environment_scope = str(skill_metadata.get("environment_scope") or "").strip()
+        if environment_scope:
+            skill_metadata["environment_scope"] = environment_scope
+            skill_metadata["not_for_real_site"] = _is_mock_environment_scope(environment_scope)
+            skill_metadata["real_site_verified"] = environment_scope == "real_site_verified"
         payload = {
             "name": skill_name,
             "description": str(draft_contract.get("description") or "").strip() or None,
@@ -264,6 +290,75 @@ def _merge_trial_metrics(current: dict[str, Any], incoming: dict[str, Any]) -> d
     if runs == 0 and (successes or failures):
         runs = successes + failures
     return {"runs": runs, "successes": successes, "failures": failures}
+
+
+def _with_environment_scope(
+    draft_contract: dict[str, Any],
+    *,
+    tags: list[str],
+    trial_metrics: dict[str, Any] | None,
+    source_kind: str,
+    environment_scope: str | None,
+) -> dict[str, Any]:
+    metadata = dict(draft_contract.get("skill_metadata") or {})
+    resolved = _normalize_environment_scope(
+        environment_scope
+        or metadata.get("environment_scope")
+        or draft_contract.get("environment_scope")
+        or (trial_metrics or {}).get("environment_scope")
+        or _scope_from_tags(tags)
+        or _scope_from_source_kind(source_kind)
+        or "unspecified"
+    )
+    metadata["environment_scope"] = resolved
+    if _is_mock_environment_scope(resolved):
+        metadata["not_for_real_site"] = True
+        metadata["real_site_verified"] = False
+    elif resolved == "real_site_verified":
+        metadata["not_for_real_site"] = False
+        metadata["real_site_verified"] = True
+    draft_contract["skill_metadata"] = metadata
+    draft_contract["environment_scope"] = resolved
+    return draft_contract
+
+
+def _environment_scope_from_contract(draft_contract: dict[str, Any]) -> str:
+    metadata = dict(draft_contract.get("skill_metadata") or {})
+    return _normalize_environment_scope(metadata.get("environment_scope") or draft_contract.get("environment_scope") or "unspecified")
+
+
+def _normalize_environment_scope(value: Any) -> str:
+    normalized = str(value or "").strip().lower().replace("-", "_")
+    return normalized or "unspecified"
+
+
+def _scope_from_tags(tags: list[str]) -> str | None:
+    normalized = {_normalize_environment_scope(tag) for tag in tags}
+    if normalized & {"mock", "mock_only", "boss_mock", "fixture", "fixture_contract_regression"}:
+        return "mock_only"
+    if normalized & {"simulated", "simulated_environment", "simulated_environment_trace"}:
+        return "simulated"
+    if "real_site_verified" in normalized:
+        return "real_site_verified"
+    return None
+
+
+def _scope_from_source_kind(source_kind: str) -> str | None:
+    normalized = _normalize_environment_scope(source_kind)
+    if normalized in {"mock", "mock_validation", "fixture", "simulated"}:
+        return "mock_only" if normalized != "simulated" else "simulated"
+    return None
+
+
+def _is_mock_environment_scope(environment_scope: str) -> bool:
+    return _normalize_environment_scope(environment_scope) in {
+        "mock",
+        "mock_only",
+        "simulated",
+        "fixture",
+        "test",
+        "fixture_contract_regression",
+    }
 
 
 def _prompt_revision_title(job_description_id: str | None, revision: PromptOverlayRevision | None) -> str | None:

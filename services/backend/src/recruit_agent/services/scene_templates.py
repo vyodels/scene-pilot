@@ -16,7 +16,7 @@ _CONTEXT_HINTS_SECTION = "context hints"
 _TRIAL_BUDGET_SECTION = "trial budget"
 
 _SOURCE_SURFACE_MARKERS: dict[str, tuple[str, ...]] = {
-    "browser_accessible_recruiting_pages": ("职位列表", "职位详情", "jd", "招聘平台", "招聘页面", "zhipin", "boss直聘", "boss 直聘"),
+    "browser_accessible_recruiting_pages": ("职位列表", "职位详情", "jd", "招聘平台", "招聘页面"),
     "browser_accessible_candidate_pages": ("候选人来源", "候选人列表", "人才库", "人才页", "推荐列表", "来源页面"),
 }
 _SOURCE_SURFACE_BLOCKERS: dict[str, str] = {

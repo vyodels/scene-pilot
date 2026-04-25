@@ -437,6 +437,7 @@ class AutonomousAgent:
                 source_kind="autonomous",
                 agent_profile_id=agent_profile_id,
                 proposed_by="autonomous",
+                environment_scope=_skill_environment_scope(run=run, goal=goal),
             )
         except Exception as exc:
             session.rollback()
@@ -564,7 +565,30 @@ def _skill_distill_tags(*, run: AgentRun, goal: GoalSpec | None) -> list[str]:
     goal_kind = str((goal.goal_kind if goal is not None else run.run_type) or "").strip()
     if goal_kind:
         tags.append(goal_kind)
+    environment_scope = _skill_environment_scope(run=run, goal=goal)
+    if environment_scope in {"mock_only", "simulated"}:
+        tags.append(environment_scope)
     return tags
+
+
+def _skill_environment_scope(*, run: AgentRun, goal: GoalSpec | None) -> str:
+    goal_constraints = dict(getattr(goal, "constraints", {}) or {})
+    context_hints = dict(goal_constraints.get("context_hints") or getattr(goal, "context_hints", {}) or {})
+    run_metadata = dict(run.runtime_metadata or {})
+    candidates = [
+        goal_constraints.get("environment_scope"),
+        context_hints.get("environment_scope"),
+        run_metadata.get("environment_scope"),
+    ]
+    if any(bool((value is True)) for value in (context_hints.get("mock_environment"), run_metadata.get("mock_environment"))):
+        return "mock_only"
+    if any(str(value or "").strip().lower().replace("-", "_") in {"mock", "mock_only", "boss_mock", "fixture"} for value in candidates):
+        return "mock_only"
+    if any(str(value or "").strip().lower().replace("-", "_") in {"simulated", "simulation"} for value in candidates):
+        return "simulated"
+    if any(str(value or "").strip().lower().replace("-", "_") == "real_site_verified" for value in candidates):
+        return "real_site_verified"
+    return "unspecified"
 
 
 def _skill_learning_audit_log(review_payload: dict[str, Any], draft_contract: dict[str, Any]) -> str:

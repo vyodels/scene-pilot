@@ -2,12 +2,15 @@
 from __future__ import annotations
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 import inspect
 from dataclasses import dataclass, field
-from typing import Any, Callable, Protocol
+from typing import Any, Awaitable, Callable, Protocol, TypeVar
 
 from .models import CancellationToken, ToolExecutionResult
+
+_T = TypeVar("_T")
 
 
 class ToolExecutionError(RuntimeError):
@@ -99,8 +102,14 @@ class ToolRegistry:
                 names.append(tool.name)
         return names
 
-    def execute(self, tool_name: str, arguments: dict[str, Any] | None = None) -> ToolExecutionResult:
-        return asyncio.run(self.execute_async(tool_name, arguments))
+    def execute(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any] | None = None,
+        *,
+        cancel_token: CancellationToken | None = None,
+    ) -> ToolExecutionResult:
+        return run_awaitable_blocking(lambda: self.execute_async(tool_name, arguments, cancel_token=cancel_token))
 
     async def execute_async(
         self,
@@ -302,7 +311,7 @@ def is_scene_context_tool(tool: ToolDefinition) -> bool:
         or bool(tool.metadata.get("real_environment"))
     ):
         return False
-    return bool(capabilities & {"browser", "document", "search"})
+    return bool(capabilities & {"browser", "document", "search", "computer", "computer_read", "computer_write"})
 
 
 def build_delegate_scene_context_tool(
@@ -319,15 +328,46 @@ def build_delegate_scene_context_tool(
                 "title": {"type": "string"},
                 "instruction": {"type": "string"},
                 "success_criteria": {"type": "object"},
-                "output_contract": {"type": "object"},
+                "output_contract": {
+                    "type": "object",
+                    "description": "Expected structured result. Put artifact_expectations here when local files matter; browser downloads should first be located through browser_locate_download before business path/format verification. For browser-managed downloads, a located complete record with exists/path/fileName/extension or mime/source correlation is valid path/format evidence. If a download affordance is selected, preserve browser-derived sourceUrl/href, expected filename, finalUrl/referrer hints, and startedAfter when available. When a local artifact is located, return it in result_data.artifact plus result_data.browser_download and include business_writeback arguments suitable for the later business tool such as attach_resume_artifact.",
+                },
                 "preferred_capabilities": {
                     "type": "array",
                     "items": {"type": "string"},
                 },
-                "environment_requirements": {"type": "object"},
+                "environment_requirements": {
+                    "type": "object",
+                    "description": "Scene prerequisites and stable targets such as browser_target, computer_target, target_regions, and action_plan. Put these as structured fields here instead of embedding pseudo-JSON in instruction prose.",
+                },
+                "browser_target": {
+                    "type": "object",
+                    "description": "Optional top-level shortcut for the browser target; equivalent to environment_requirements.browser_target.",
+                },
+                "computer_target": {
+                    "type": "object",
+                    "description": "Optional top-level shortcut for the computer/HID target; equivalent to environment_requirements.computer_target.",
+                },
+                "target_regions": {
+                    "type": "array",
+                    "items": {"type": "object"},
+                    "description": "Optional top-level shortcut for candidate landing regions; equivalent to environment_requirements.target_regions.",
+                },
+                "action_plan": {
+                    "type": "array",
+                    "items": {"type": "object"},
+                    "description": "Optional top-level shortcut for intent-level scene actions; equivalent to environment_requirements.action_plan. Download actions may include download_source with source_url/sourceUrl/href, expected_filename/fileName/download, started_after/startedAfter, final_url/finalUrl, or referrer fields copied from browser evidence.",
+                },
+                "artifact_expectations": {
+                    "type": "object",
+                    "description": "Optional top-level shortcut for artifact expectations; equivalent to output_contract.artifact_expectations. For browser downloads, include download_lookup/source_url/expected_filename/started_after when available so browser_locate_download can correlate the local file with the clicked link.",
+                },
                 "approval_policy": {"type": "object"},
                 "input": {"type": "object"},
-                "context": {"type": "object"},
+                "context": {
+                    "type": "object",
+                    "description": "Episode-scoped scene context, including browser/computer targets, candidate landing regions, action intent, and artifact_expectations. Use structured fields, not site-specific hardcoded flow.",
+                },
                 "requested_by": {"type": "string"},
                 "max_rounds": {"type": "integer", "minimum": 1, "maximum": 32},
             },
@@ -360,3 +400,16 @@ def _invoke_handler(
     if "cancel_token" in parameters:
         return handler(arguments, cancel_token=cancel_token)
     return handler(arguments)
+
+
+def run_awaitable_blocking(factory: Callable[[], Awaitable[_T]]) -> _T:
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(factory())
+
+    # Nested scene execution can enter synchronous kernel code while an event
+    # loop is already active. Run the coroutine on an isolated loop instead of
+    # calling asyncio.run() recursively in the same thread.
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        return executor.submit(lambda: asyncio.run(factory())).result()

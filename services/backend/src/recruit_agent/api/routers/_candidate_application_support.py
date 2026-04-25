@@ -20,6 +20,7 @@ from recruit_agent.repositories import (
     CandidateRepository,
     JobDescriptionRepository,
     OperatorInteractionRepository,
+    PersonResumeArtifactRepository,
     ResumeArtifactRepository,
 )
 from recruit_agent.schemas import (
@@ -439,6 +440,13 @@ def create_application_resume_artifact(
             **artifact_payload,
             "application_id": application.id,
             "captured_at": payload.captured_at or _now(),
+        }
+    )
+    PersonResumeArtifactRepository(session).create(
+        {
+            **artifact_payload,
+            "person_id": linked_person.id,
+            "captured_at": item.captured_at,
         }
     )
     snapshot = dict(application.state_snapshot or {}) or default_candidate_state_snapshot(status=application.current_status)

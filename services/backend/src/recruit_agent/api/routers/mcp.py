@@ -98,4 +98,5 @@ def healthcheck_mcp_server(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    _reload_runtime(container)
     return McpServerRead.model_validate(server)

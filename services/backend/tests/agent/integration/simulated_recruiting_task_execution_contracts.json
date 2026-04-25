@@ -1,0 +1,363 @@
+{
+  "execution_key": "simulated_autonomous_recruiting_task_execution_scene_contract_chain",
+  "mock_validation": {
+    "mock_family": "boss_like",
+    "purpose": "validation_material_only",
+    "site_specific_runtime_logic": false,
+    "host_namespace": "boss-mock.test",
+    "contract_surface": [
+      "browser_target",
+      "computer_target",
+      "target_regions",
+      "action_plan",
+      "artifact_expectations"
+    ],
+    "page_set": [
+      {
+        "mock_page_key": "job_list",
+        "maps_to_stage": "sync_jd_incremental",
+        "goal_kind": "job_description_sync"
+      },
+      {
+        "mock_page_key": "candidate_list",
+        "maps_to_stage": "candidate_discovery",
+        "goal_kind": "candidate_discovery"
+      },
+      {
+        "mock_page_key": "candidate_detail_resume",
+        "maps_to_stage": "resume_collection",
+        "goal_kind": "resume_collection"
+      }
+    ],
+    "notes": [
+      "boss-like 页面只复用招聘站点常见的信息架构与交互密度，不向 runtime 注入平台私有逻辑。",
+      "host 仅作为 mock fixture 命名空间，不代表 recruit-agent runtime 对特定招聘平台做分支。"
+    ]
+  },
+  "stages": [
+    {
+      "stage_key": "sync_jd_incremental",
+      "delegate_request": {
+        "title": "模拟 JD 增量同步 contract",
+        "instruction": "观察当前岗位列表与详情页，提炼业务级 JD 增量同步结果。",
+        "preferred_capabilities": ["browser"],
+        "environment_requirements": {
+          "environment_kind": "job_list",
+          "browser_target": {
+            "application": "Google Chrome",
+            "window_title": "Recruiting Workspace",
+            "tabId": 411,
+            "host": "boss-mock.test",
+            "urlPattern": "/jobs"
+          }
+        },
+        "context": {
+          "scene_contract_hint": "business_summary_only"
+        },
+        "success_criteria": {
+          "status": "completed",
+          "must_include": ["created", "updated", "skipped", "active_evidence"]
+        },
+        "output_contract": {
+          "result_kind": "job_description_sync",
+          "required_fields": ["status", "summary", "created", "updated", "skipped", "jobs"]
+        }
+      },
+      "tool_call": {
+        "name": "browser_snapshot",
+        "arguments": {
+          "tabId": 411
+        }
+      },
+      "snapshot_output": {
+        "source": "browser",
+        "environment_key": "tab-411",
+        "url": "https://boss-mock.test/jobs",
+        "title": "职位列表",
+        "page_type": "job_list",
+        "observed_entities": [
+          {
+            "kind": "job_description",
+            "external_id": "jd-sales-001"
+          },
+          {
+            "kind": "job_description",
+            "external_id": "jd-sales-002"
+          }
+        ],
+        "action_hints": [
+          {
+            "kind": "open_detail",
+            "label": "查看职位详情"
+          }
+        ]
+      },
+      "provider_final": {
+        "content": "已完成 JD 增量同步并返回业务摘要。",
+        "result_data": {
+          "status": "completed",
+          "summary": "已完成 JD 增量同步并返回业务摘要。",
+          "created": 1,
+          "updated": 1,
+          "skipped": 1,
+          "active_evidence": [
+            "岗位列表中可见招聘中状态",
+            "详情页显示岗位标题与开放中标签"
+          ],
+          "jobs": [
+            {
+              "title": "国际销售工程师",
+              "platform": "boss_mock",
+              "external_id": "jd-sales-001",
+              "description": "负责海外客户拓展与售前方案协同"
+            },
+            {
+              "title": "解决方案顾问",
+              "platform": "boss_mock",
+              "external_id": "jd-sales-002",
+              "description": "支持售前演示与交付澄清"
+            }
+          ]
+        }
+      },
+      "workspace_write": {
+        "jobs": [
+          {
+            "title": "国际销售工程师",
+            "platform": "boss_mock",
+            "external_id": "jd-sales-001",
+            "description": "负责海外客户拓展与售前方案协同"
+          }
+        ]
+      }
+    },
+    {
+      "stage_key": "candidate_discovery",
+      "delegate_request": {
+        "title": "模拟候选人发现 contract",
+        "instruction": "观察推荐候选人页面，提炼业务级候选人发现结果。",
+        "preferred_capabilities": ["browser"],
+        "environment_requirements": {
+          "environment_kind": "candidate_list",
+          "browser_target": {
+            "application": "Google Chrome",
+            "window_title": "Recruiting Workspace",
+            "tabId": 512,
+            "host": "boss-mock.test",
+            "urlPattern": "/candidates"
+          }
+        },
+        "context": {
+          "scene_contract_hint": "candidate_business_summary_only"
+        },
+        "success_criteria": {
+          "status": "completed",
+          "must_include": ["created", "updated", "skipped", "candidates"]
+        },
+        "output_contract": {
+          "result_kind": "candidate_discovery",
+          "required_fields": ["status", "summary", "created", "updated", "skipped", "candidates"]
+        }
+      },
+      "tool_call": {
+        "name": "browser_snapshot",
+        "arguments": {
+          "tabId": 512
+        }
+      },
+      "snapshot_output": {
+        "source": "browser",
+        "environment_key": "tab-512",
+        "url": "https://boss-mock.test/candidates",
+        "title": "推荐候选人",
+        "page_type": "candidate_list",
+        "observed_entities": [
+          {
+            "kind": "candidate",
+            "external_id": "cand-li-001"
+          }
+        ],
+        "action_hints": [
+          {
+            "kind": "open_candidate_detail",
+            "label": "查看候选人详情"
+          }
+        ]
+      },
+      "provider_final": {
+        "content": "已完成候选人发现并返回业务摘要。",
+        "result_data": {
+          "status": "completed",
+          "summary": "已完成候选人发现并返回业务摘要。",
+          "created": 1,
+          "updated": 0,
+          "skipped": 0,
+          "discovered_count": 1,
+          "candidates": [
+            {
+              "name": "李青",
+              "platform": "boss_mock",
+              "platform_candidate_id": "cand-li-001",
+              "current_status": "discovered",
+              "source_observation": {
+                "viewed_count": 4,
+                "communicated_count": 1,
+                "latest_status": "可继续跟进"
+              },
+              "online_resume_text": "5 年海外销售与解决方案经验，英语流利。",
+              "resume_clues": [
+                "详情页出现附件简历卡片",
+                "可见 PDF 下载入口"
+              ]
+            }
+          ]
+        }
+      },
+      "workspace_write": {
+        "candidates": [
+          {
+            "name": "李青",
+            "platform": "boss_mock",
+            "platform_candidate_id": "cand-li-001",
+            "current_status": "discovered",
+            "source_observation": {
+              "viewed_count": 4,
+              "communicated_count": 1,
+              "latest_status": "可继续跟进"
+            },
+            "online_resume_text": "5 年海外销售与解决方案经验，英语流利。"
+          }
+        ]
+      }
+    },
+    {
+      "stage_key": "resume_collection",
+      "delegate_request": {
+        "title": "模拟简历收集 contract",
+        "instruction": "确认附件下载入口，验证本地简历文件，并返回可入库的业务结果。",
+        "preferred_capabilities": ["browser", "computer"],
+        "environment_requirements": {
+          "environment_kind": "candidate_detail",
+          "browser_target": {
+            "application": "Google Chrome",
+            "window_title": "Recruiting Workspace",
+            "tabId": 613,
+            "host": "boss-mock.test",
+            "urlPattern": "/candidate/613"
+          }
+        },
+        "context": {
+          "computer_target": {
+            "application": "Google Chrome",
+            "window_title": "Recruiting Workspace",
+            "postMode": "auto"
+          },
+          "target_regions": [
+            {
+              "ref": "@resume_download",
+              "sig": "sig-resume-download",
+              "label": "下载简历",
+              "role": "button",
+              "href": "https://recruiting.example.test/downloads/li-qing-resume.pdf",
+              "download": "li-qing-resume.pdf",
+              "region": {
+                "x": 32,
+                "y": 128,
+                "width": 148,
+                "height": 32
+              }
+            }
+          ],
+          "action_plan": [
+            {
+              "intent": "download_resume_artifact",
+              "if_visible": "click",
+              "if_not_visible": "scroll_into_view_then_click",
+              "retries": 2,
+              "download_source": {
+                "sourceUrl": "https://recruiting.example.test/downloads/li-qing-resume.pdf",
+                "fileName": "li-qing-resume.pdf",
+                "startedAfter": "2026-04-25T09:00:00.000Z",
+                "ref": "@resume_download",
+                "sig": "sig-resume-download"
+              }
+            }
+          ]
+        },
+        "success_criteria": {
+          "status": "completed",
+          "must_include": ["artifact.path", "artifact.format", "resume_evidence"]
+        },
+        "output_contract": {
+          "result_kind": "resume_collection",
+          "required_fields": ["status", "summary", "artifact", "resume_evidence"],
+          "artifact_expectations": {
+            "requires_local_artifact": true,
+            "allowed_extensions": ["pdf"],
+            "verify_path": true,
+            "verify_format": true,
+            "expected_kind": "resume",
+            "download_lookup": {
+              "sourceUrl": "https://recruiting.example.test/downloads/li-qing-resume.pdf",
+              "fileName": "li-qing-resume.pdf",
+              "startedAfter": "2026-04-25T09:00:00.000Z"
+            }
+          }
+        }
+      },
+      "tool_call": {
+        "name": "browser_snapshot",
+        "arguments": {
+          "tabId": 613
+        }
+      },
+      "snapshot_output": {
+        "source": "browser",
+        "environment_key": "tab-613",
+        "url": "https://boss-mock.test/candidate/613",
+        "title": "候选人详情",
+        "page_type": "candidate_detail",
+        "observed_entities": [
+          {
+            "kind": "candidate",
+            "external_id": "cand-li-001"
+          }
+        ],
+        "action_hints": [
+          {
+            "kind": "download",
+            "label": "下载简历"
+          }
+        ]
+      },
+      "provider_final": {
+        "content": "已验证本地简历文件并返回可入库结果。",
+        "result_data": {
+          "status": "completed",
+          "summary": "已验证本地简历文件并返回可入库结果。",
+          "candidate": {
+            "platform_candidate_id": "cand-li-001",
+            "name": "李青"
+          },
+          "resume_evidence": [
+            "候选人详情页出现附件简历卡片",
+            "本地已生成 PDF 文件并完成格式校验"
+          ],
+          "artifact": {
+            "path": "/tmp/li-qing-resume.pdf",
+            "format": "pdf",
+            "file_name": "li-qing-resume.pdf"
+          },
+          "extracted_text": "李青，5 年海外销售与解决方案经验，英语流利。",
+          "contact_snapshot": {
+            "email": "liqing@example.com"
+          }
+        }
+      },
+      "workspace_write": {
+        "artifact_type": "resume",
+        "source": "boss_mock"
+      }
+    }
+  ]
+}

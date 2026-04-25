@@ -99,9 +99,13 @@ def infer_non_success_round_outcome(final_output: str | None) -> tuple[str, str]
     normalized_status = execution_status.lower() if execution_status else None
     if normalized_status in _WAIT_HUMAN_RESULT_STATUSES:
         return "wait_human", "wait_human"
-    if normalized_status in _FAILED_RESULT_STATUSES:
+    if (
+        normalized_status in _FAILED_RESULT_STATUSES
+        or (normalized_status is not None and normalized_status.startswith("failed_"))
+        or (normalized_status is not None and normalized_status.startswith("failure_"))
+    ):
         return "error", "escalate"
-    if normalized_status in _BLOCKED_RESULT_STATUSES:
+    if normalized_status in _BLOCKED_RESULT_STATUSES or (normalized_status is not None and normalized_status.startswith("blocked_")):
         return "escalate", "escalate"
     return None
 

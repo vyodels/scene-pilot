@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import APIRouter
 
 from recruit_agent.plugins.host import PluginHost
@@ -58,6 +60,32 @@ def test_plugin_host_registers_and_runs_extensions() -> None:
     assert enriched["world_snapshot"]["plugin_demo"] == {"plugin": "demo", "scope": "candidate-1"}
     assert verdicts[0].allowed is True
     assert host.routers == [router]
+
+
+def test_plugin_host_sync_helpers_work_inside_running_event_loop() -> None:
+    host = PluginHost()
+
+    async def _enricher(observation: Observation) -> dict[str, object]:
+        return {"scope": observation.scope_ref}
+
+    async def _guard(tool_name: str, arguments: dict[str, object], observation: Observation) -> GuardVerdict:
+        return GuardVerdict(allowed=True, metadata={"tool": tool_name, "scope": observation.scope_ref})
+
+    host.register_observation_enricher("demo", _enricher)
+    host.register_guard_check("demo", _guard)
+    observation = Observation(scope_ref="candidate-1", scope_kind="candidate")
+
+    async def _scenario():
+        return (
+            host.run_observation_enrichers_sync(observation),
+            host.run_guard_checks_sync("demo.echo", {}, observation),
+        )
+
+    enriched, verdicts = asyncio.run(_scenario())
+
+    assert enriched["world_snapshot"]["plugin_demo"] == {"scope": "candidate-1"}
+    assert verdicts[0].allowed is True
+    assert verdicts[0].metadata == {"tool": "demo.echo", "scope": "candidate-1"}
 
 
 def test_plugin_loader_calls_manifest_install() -> None:

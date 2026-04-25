@@ -8,7 +8,7 @@ from recruit_agent.core.settings import AppSettings
 from recruit_agent.db.session import create_engine_from_settings, create_session_factory, initialize_database
 from recruit_agent.evolution.learning_writer import LearningWriter
 from recruit_agent.models.domain import EvolutionArtifact, Skill
-from recruit_agent.services.evolution import build_skill_distill_review_payload
+from recruit_agent.services.evolution import build_skill_distill_review_payload, promote_skill_draft_contract
 
 
 def _make_session_factory(tmp_path: Path):
@@ -86,3 +86,67 @@ def test_record_skill_draft_uses_llm_contract_body_instead_of_learning_content(t
         artifact = session.scalars(select(EvolutionArtifact).where(EvolutionArtifact.artifact_kind == "skill_draft")).first()
         assert artifact is not None
         assert artifact.artifact_body["skill_contract"]["skill_name"] == "活跃 JD 增量同步"
+
+
+def test_record_skill_draft_blocks_mock_scope_auto_promotion(tmp_path: Path) -> None:
+    session_factory = _make_session_factory(tmp_path)
+    writer = LearningWriter(session_factory)
+
+    recorded = writer.record_skill_draft(
+        draft_contract={
+            "skill_name": "mock 候选人详情点击",
+            "description": "仅用于 mock 页面验证的候选人详情点击经验。",
+            "category": "recruiting",
+            "platform": "boss_mock",
+            "strategy": {"instruction": "仅适用于 mock fixture。"},
+            "body": {"summary": "mock-only 操作路径。"},
+            "skill_metadata": {"environment_scope": "mock_only"},
+        },
+        tags=["autonomous", "skill_distill", "mock_validation_evidence"],
+        trial_metrics={"runs": 5, "successes": 5},
+        source_run_id="run-mock",
+        source_turn_id="turn-mock",
+        source_kind="autonomous",
+        proposed_by="autonomous",
+    )
+
+    assert recorded["auto_promoted"] is False
+    assert recorded["environment_scope"] == "mock_only"
+    assert recorded["judgment"]["promotion_blocked_reason"] == "mock_environment_scope"
+
+    with session_factory() as session:
+        skill = session.scalars(select(Skill)).first()
+        assert skill is not None
+        assert skill.status == "trial"
+        assert skill.skill_metadata["environment_scope"] == "mock_only"
+        assert skill.skill_metadata["not_for_real_site"] is True
+        assert skill.skill_metadata["real_site_verified"] is False
+
+        artifact = session.scalars(select(EvolutionArtifact).where(EvolutionArtifact.artifact_kind == "skill_draft")).first()
+        assert artifact is not None
+        assert artifact.status == "pending_review"
+        assert artifact.artifact_body["environment_scope"] == "mock_only"
+        assert artifact.artifact_metadata["not_for_real_site"] is True
+
+
+def test_promote_skill_draft_rejects_mock_scope_contract(tmp_path: Path) -> None:
+    session_factory = _make_session_factory(tmp_path)
+
+    with session_factory() as session:
+        try:
+            promote_skill_draft_contract(
+                session,
+                auto_activate=True,
+                draft={
+                    "skill_name": "mock-only skill",
+                    "description": "不能晋升为真实站点 skill。",
+                    "skill_metadata": {"environment_scope": "mock_only"},
+                },
+                reviewer="reviewer",
+                reason="attempted promotion",
+                fallback_title="mock-only skill",
+            )
+        except ValueError as exc:
+            assert "mock-only" in str(exc)
+        else:
+            raise AssertionError("mock-only skill promotion should fail")

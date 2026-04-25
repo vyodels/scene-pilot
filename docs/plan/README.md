@@ -38,12 +38,13 @@ Plans should use the same project wording:
 ### active
 - [`active/2026-04-19-autonomous-e2e-and-chat-overlay-plan.md`](./active/2026-04-19-autonomous-e2e-and-chat-overlay-plan.md)
 - [`active/2026-04-19-autonomous-ui-e2e-test-plan.md`](./active/2026-04-19-autonomous-ui-e2e-test-plan.md)
-- [`active/2026-04-20-autonomous-scene-context-delegation-plan.md`](./active/2026-04-20-autonomous-scene-context-delegation-plan.md)
+- [`active/2026-04-24-recruit-agent-browser-computer-runtime-follow-up-plan.md`](./active/2026-04-24-recruit-agent-browser-computer-runtime-follow-up-plan.md)
 
 ### completed
 - [`completed/2026-04-17-canonical-entity-naming-and-schema-plan.md`](./completed/2026-04-17-canonical-entity-naming-and-schema-plan.md)
 - [`completed/2026-04-19-agent-v2-direct-cutover-plan.md`](./completed/2026-04-19-agent-v2-direct-cutover-plan.md)
 - [`completed/2026-04-19-agent-v2-terminology-convergence-plan.md`](./completed/2026-04-19-agent-v2-terminology-convergence-plan.md)
+- [`completed/2026-04-20-autonomous-scene-context-delegation-plan.md`](./completed/2026-04-20-autonomous-scene-context-delegation-plan.md)
 
 ### archive
 - [`archive/2026-04-16-candidate-target-model-unification.md`](./archive/2026-04-16-candidate-target-model-unification.md)

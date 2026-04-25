@@ -1,0 +1,23 @@
+{
+  "key": "virtualhid-json-socket",
+  "name": "VirtualHID MCP",
+  "description": "通过上游标准 MCP server 接入 VirtualHID 键鼠注入能力。预置只负责注册 stdio server，工具通过 MCP `tools/list` 动态发现。",
+  "transport_kind": "stdio",
+  "protocol": "mcp_jsonrpc",
+  "stdio_command_resolver": "virtualhid_mcp_server",
+  "stdio_env": {
+    "VIRTUALHID_SOCKET": "${endpoint}"
+  },
+  "runtime_tool_capabilities": {
+    "default": ["scene", "computer"],
+    "read_only": ["computer_read"],
+    "mutating": ["computer_write"]
+  },
+  "runtime_tool_read_only_names": [
+    "hid_state",
+    "hid_profiles_list",
+    "hid_profiles_get",
+    "hid_trace_tail"
+  ],
+  "tools": []
+}

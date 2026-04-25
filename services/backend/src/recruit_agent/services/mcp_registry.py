@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import json
+import os
+import shlex
+import shutil
 import socket
+import tempfile
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -30,16 +34,173 @@ STANDARD_MCP_PROTOCOL = "mcp_jsonrpc"
 LEGACY_MCP_TOOL_CALL_PROTOCOL = "json_socket_tool_call"
 LEGACY_BROWSER_COMMAND_PROTOCOL = "json_socket_browser_command"
 MCP_PROTOCOL_VERSION = "2025-03-26"
+MCP_STDIO_REQUEST_TIMEOUT_SECONDS = 8.0
+BROWSER_LOCATE_DOWNLOAD_MAX_WAIT_MS = 5_000
+VIRTUALHID_SOCKET_PRESET_KEY = "virtualhid-json-socket"
+_VIRTUALHID_MCP_SERVER_ENV = "VIRTUALHID_MCP_SERVER"
+_VIRTUALHID_MCP_COMMAND_ENV = "VIRTUALHID_MCP_COMMAND"
+_KNOWN_STDIO_COMMAND_RESOLVERS = {"browser_mcp_server", "virtualhid_mcp_server"}
 
 
 def _default_browser_endpoint() -> str:
     return default_browser_upstream_endpoint()
 
 
+def default_virtualhid_upstream_endpoint() -> str:
+    return os.environ.get("VIRTUALHID_SOCKET") or f"{tempfile.gettempdir()}/virtualhid.sock"
+
+
+def default_virtualhid_mcp_server_command() -> tuple[str, ...] | None:
+    command_override = str(os.environ.get(_VIRTUALHID_MCP_COMMAND_ENV) or "").strip()
+    if command_override:
+        command = tuple(part.strip() for part in shlex.split(command_override) if part.strip())
+        return command or None
+
+    script_path = _discover_virtualhid_mcp_server_script()
+    node_path = shutil.which("node")
+    if script_path is None or node_path is None:
+        return None
+    return (node_path, script_path)
+
+
+def _discover_virtualhid_mcp_server_script() -> str | None:
+    override = str(os.environ.get(_VIRTUALHID_MCP_SERVER_ENV) or "").strip()
+    if override:
+        return override
+    return _discover_local_mcp_server_script("VirtualHID")
+
+
+def _discover_local_mcp_server_script(repo_dir_name: str) -> str | None:
+    current = Path(__file__).resolve()
+    candidates: list[Path] = []
+    seen: set[str] = set()
+    for ancestor in current.parents:
+        for candidate in (
+            ancestor / repo_dir_name / "mcp" / "server.mjs",
+            ancestor.parent / repo_dir_name / "mcp" / "server.mjs",
+        ):
+            candidate_key = str(candidate)
+            if candidate_key in seen:
+                continue
+            seen.add(candidate_key)
+            candidates.append(candidate)
+    for candidate in candidates:
+        if candidate.exists():
+            return str(candidate)
+    return None
+
+
 def _default_endpoint_for_preset(preset_key: str) -> str:
     if preset_key == BROWSER_SOCKET_PRESET_KEY:
         return _default_browser_endpoint()
+    if preset_key == VIRTUALHID_SOCKET_PRESET_KEY:
+        return default_virtualhid_upstream_endpoint()
     return ""
+
+
+def _resolve_stdio_command_from_resolver(resolver_name: str) -> list[str]:
+    normalized = str(resolver_name or "").strip()
+    if not normalized:
+        return []
+    if normalized == "browser_mcp_server":
+        return list(default_browser_mcp_server_command() or [])
+    if normalized == "virtualhid_mcp_server":
+        return list(default_virtualhid_mcp_server_command() or [])
+    raise ValueError(f"Unknown MCP stdio command resolver: {normalized}")
+
+
+def _normalize_preset_stdio_command_resolver(value: Any) -> str:
+    resolver = str(value or "").strip()
+    if resolver and resolver not in _KNOWN_STDIO_COMMAND_RESOLVERS:
+        raise ValueError(f"Invalid MCP preset asset: unknown stdio_command_resolver={resolver}")
+    return resolver
+
+
+def _normalize_runtime_tool_capability_hints(value: Any) -> dict[str, list[str]]:
+    if not isinstance(value, dict):
+        return {}
+    hints = {
+        "default": _normalize_string_list(value.get("default")),
+        "read_only": _normalize_string_list(value.get("read_only")),
+        "mutating": _normalize_string_list(value.get("mutating")),
+    }
+    if not any(hints.values()):
+        return {}
+    return hints
+
+
+def _interpolate_preset_value(value: Any, *, endpoint: str) -> Any:
+    if isinstance(value, str):
+        return value.replace("${endpoint}", endpoint)
+    if isinstance(value, list):
+        return [_interpolate_preset_value(item, endpoint=endpoint) for item in value]
+    if isinstance(value, dict):
+        return {
+            str(key).strip(): _interpolate_preset_value(item, endpoint=endpoint)
+            for key, item in value.items()
+            if str(key).strip()
+        }
+    return value
+
+
+def _resolve_preset_server_metadata(
+    template: dict[str, Any],
+    *,
+    endpoint: str,
+    existing_metadata: dict[str, Any] | None,
+) -> dict[str, Any]:
+    metadata = dict(existing_metadata or {})
+    metadata["preset_installed"] = True
+
+    for key in _normalize_string_list(template.get("metadata_remove_keys")):
+        metadata.pop(key, None)
+
+    if str(template.get("transport_kind") or "").strip() == "stdio":
+        stdio_command = _normalize_string_list(metadata.get("stdio_command"))
+        if not stdio_command:
+            template_command = _normalize_string_list(_interpolate_preset_value(template.get("stdio_command"), endpoint=endpoint))
+            if template_command:
+                stdio_command = template_command
+            else:
+                stdio_command = _resolve_stdio_command_from_resolver(template.get("stdio_command_resolver"))
+        stdio_env = _normalize_string_dict(metadata.get("stdio_env"))
+        stdio_env.update(_normalize_string_dict(_interpolate_preset_value(template.get("stdio_env"), endpoint=endpoint)))
+        metadata["stdio_command"] = stdio_command
+        metadata["stdio_env"] = stdio_env
+
+    runtime_tool_capabilities = _normalize_runtime_tool_capability_hints(template.get("runtime_tool_capabilities"))
+    if runtime_tool_capabilities:
+        metadata["runtime_tool_capabilities"] = runtime_tool_capabilities
+
+    read_only_names = _normalize_string_list(template.get("runtime_tool_read_only_names"))
+    if read_only_names:
+        metadata["runtime_tool_read_only_names"] = read_only_names
+
+    return metadata
+
+
+def _apply_preset_server_defaults(
+    template: dict[str, Any],
+    *,
+    endpoint: str,
+    existing_metadata: dict[str, Any] | None,
+) -> dict[str, Any]:
+    return {
+        "transport_kind": template["transport_kind"],
+        "protocol": template["protocol"],
+        "server_metadata": _resolve_preset_server_metadata(
+            template,
+            endpoint=endpoint,
+            existing_metadata=existing_metadata,
+        ),
+    }
+
+
+def _preset_template_by_key(preset_key: str) -> dict[str, Any] | None:
+    normalized = str(preset_key or "").strip()
+    if not normalized:
+        return None
+    return next((item for item in preset_templates() if item["key"] == normalized), None)
 
 
 def _load_preset_template_asset(path: Path) -> dict[str, Any]:
@@ -55,6 +216,12 @@ def _load_preset_template_asset(path: Path) -> dict[str, Any]:
         "transport_kind": str(payload.get("transport_kind") or "").strip(),
         "protocol": str(payload.get("protocol") or "").strip(),
         "endpoint_example": str(payload.get("endpoint_example") or "").strip(),
+        "stdio_command": _normalize_string_list(payload.get("stdio_command")),
+        "stdio_command_resolver": _normalize_preset_stdio_command_resolver(payload.get("stdio_command_resolver")),
+        "stdio_env": _normalize_string_dict(payload.get("stdio_env")),
+        "runtime_tool_capabilities": _normalize_runtime_tool_capability_hints(payload.get("runtime_tool_capabilities")),
+        "runtime_tool_read_only_names": _normalize_string_list(payload.get("runtime_tool_read_only_names")),
+        "metadata_remove_keys": _normalize_string_list(payload.get("metadata_remove_keys")),
         "tools": [dict(item) for item in list(payload.get("tools") or []) if isinstance(item, dict)],
     }
     if not template["endpoint_example"]:
@@ -206,7 +373,13 @@ def _normalize_string_dict(value: Any) -> dict[str, str]:
     return items
 
 
-def _mcp_session_request(server: McpServer, method: str, params: dict[str, Any] | None = None, *, timeout_seconds: float = 8.0) -> dict[str, Any]:
+def _mcp_session_request(
+    server: McpServer,
+    method: str,
+    params: dict[str, Any] | None = None,
+    *,
+    timeout_seconds: float = MCP_STDIO_REQUEST_TIMEOUT_SECONDS,
+) -> dict[str, Any]:
     if server.transport_kind == "unix_socket":
         return _JsonLineSession(endpoint=server.endpoint, timeout_seconds=timeout_seconds).request(method, params)
     if server.transport_kind == "stdio":
@@ -278,6 +451,30 @@ def _mcp_call_tool(server: McpServer, tool_name: str, arguments: dict[str, Any])
     return result
 
 
+def _normalize_mcp_tool_arguments(tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(arguments or {})
+    if tool_name != "browser_locate_download":
+        return normalized
+    if "waitMs" not in normalized:
+        normalized["waitMs"] = BROWSER_LOCATE_DOWNLOAD_MAX_WAIT_MS
+        return normalized
+    wait_ms = _coerce_number(normalized.get("waitMs"))
+    if wait_ms is None:
+        normalized.pop("waitMs", None)
+        return normalized
+    normalized["waitMs"] = max(0, min(int(wait_ms), BROWSER_LOCATE_DOWNLOAD_MAX_WAIT_MS))
+    return normalized
+
+
+def _coerce_number(value: Any) -> float | None:
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _tool_has_zero_argument_schema(parameters: dict[str, Any]) -> bool:
     required = parameters.get("required")
     if isinstance(required, list) and required:
@@ -301,13 +498,20 @@ def _resolve_runtime_capabilities(server: McpServer, *, read_only: bool) -> list
     return capabilities
 
 
+def _tool_read_only_hint(server: McpServer, name: str, annotations: dict[str, Any]) -> bool:
+    if bool(annotations.get("readOnlyHint")):
+        return True
+    metadata = dict(server.server_metadata or {})
+    return name in _normalize_string_list(metadata.get("runtime_tool_read_only_names"))
+
+
 def _normalize_discovered_tool(server: McpServer, payload: dict[str, Any]) -> dict[str, Any] | None:
     name = str(payload.get("name") or "").strip()
     if not name:
         return None
     annotations = payload.get("annotations") if isinstance(payload.get("annotations"), dict) else {}
     parameters = payload.get("inputSchema") if isinstance(payload.get("inputSchema"), dict) else {"type": "object", "properties": {}, "additionalProperties": True}
-    read_only = bool(annotations.get("readOnlyHint"))
+    read_only = _tool_read_only_hint(server, name, annotations)
     return {
         "name": name,
         "description": str(payload.get("description") or name),
@@ -336,7 +540,7 @@ class McpRegistryService:
         name: str | None = None,
         endpoint: str | None = None,
     ) -> McpServer:
-        template = next((item for item in preset_templates() if item["key"] == preset_key), None)
+        template = _preset_template_by_key(preset_key)
         if template is None:
             raise ValueError("Unknown MCP preset template")
 
@@ -364,13 +568,13 @@ class McpRegistryService:
                 "auth_config": {},
                 "server_metadata": {"preset_installed": True},
             }
-            if preset_key == BROWSER_SOCKET_PRESET_KEY:
-                server_payload["transport_kind"] = "stdio"
-                server_payload["server_metadata"] = self._browser_preset_metadata(
-                    server_key=resolved_server_key,
-                    upstream_endpoint=resolved_endpoint,
+            server_payload.update(
+                _apply_preset_server_defaults(
+                    template,
+                    endpoint=resolved_endpoint,
                     existing_metadata=server_payload["server_metadata"],
                 )
+            )
 
             server = server_repo.create(server_payload)
             for tool in template["tools"]:
@@ -392,16 +596,16 @@ class McpRegistryService:
                 raise ValueError("MCP server key already exists")
 
             protocol = str(payload.get("protocol") or LEGACY_MCP_TOOL_CALL_PROTOCOL).strip()
-            server_key = str(payload.get("server_key") or "").strip()
             endpoint = str(payload.get("endpoint") or "").strip()
             preset_key = str(payload.get("preset_key") or "").strip()
-            if preset_key == BROWSER_SOCKET_PRESET_KEY:
-                payload["transport_kind"] = "stdio"
-                payload["protocol"] = STANDARD_MCP_PROTOCOL
-                payload["server_metadata"] = self._browser_preset_metadata(
-                    server_key=server_key,
-                    upstream_endpoint=endpoint,
-                    existing_metadata=payload.get("server_metadata"),
+            template = _preset_template_by_key(preset_key)
+            if template is not None:
+                payload.update(
+                    _apply_preset_server_defaults(
+                        template,
+                        endpoint=endpoint,
+                        existing_metadata=payload.get("server_metadata"),
+                    )
                 )
 
             server = server_repo.create(payload)
@@ -420,7 +624,7 @@ class McpRegistryService:
             server = server_repo.get(server_id)
             if server is None:
                 raise ValueError("MCP server not found")
-            server = self._upgrade_legacy_browser_preset(session, server)
+            server = self._refresh_server_from_preset(session, server)
 
             next_server_key = str(payload.get("server_key") or server.server_key).strip()
             existing = server_repo.by_key(next_server_key)
@@ -429,20 +633,21 @@ class McpRegistryService:
 
             next_preset_key = str(payload.get("preset_key") or server.preset_key or "").strip()
             next_endpoint = str(payload.get("endpoint") or server.endpoint).strip()
-            if next_preset_key == BROWSER_SOCKET_PRESET_KEY:
-                payload["transport_kind"] = "stdio"
-                payload["protocol"] = STANDARD_MCP_PROTOCOL
-                payload["server_metadata"] = self._browser_preset_metadata(
-                    server_key=next_server_key,
-                    upstream_endpoint=next_endpoint,
-                    existing_metadata={
-                        **dict(server.server_metadata or {}),
-                        **dict(payload.get("server_metadata") or {}),
-                    },
+            template = _preset_template_by_key(next_preset_key)
+            if template is not None:
+                payload.update(
+                    _apply_preset_server_defaults(
+                        template,
+                        endpoint=next_endpoint,
+                        existing_metadata={
+                            **dict(server.server_metadata or {}),
+                            **dict(payload.get("server_metadata") or {}),
+                        },
+                    )
                 )
 
             updated = server_repo.update(server, payload)
-            updated = self._upgrade_legacy_browser_preset(session, updated)
+            updated = self._refresh_server_from_preset(session, updated)
             if updated.protocol == STANDARD_MCP_PROTOCOL:
                 self._best_effort_sync_tools(session, updated, tool_repo=tool_repo, replace_existing=True)
             elif tools is not None:
@@ -467,7 +672,7 @@ class McpRegistryService:
             server = server_repo.get(server_id)
             if server is None:
                 raise ValueError("MCP server not found")
-            server = self._upgrade_legacy_browser_preset(session, server)
+            server = self._refresh_server_from_preset(session, server)
 
             status = "healthy"
             error_message: str | None = None
@@ -517,7 +722,7 @@ class McpRegistryService:
             server_repo = McpServerRepository(session)
             tool_repo = McpToolRepository(session)
             for server in server_repo.enabled():
-                server = self._upgrade_legacy_browser_preset(session, server)
+                server = self._refresh_server_from_preset(session, server)
                 if server.protocol == STANDARD_MCP_PROTOCOL:
                     self._best_effort_sync_tools(session, server, tool_repo=tool_repo, replace_existing=True)
                 for item in tool_repo.by_server(server.id, enabled_only=True):
@@ -528,12 +733,13 @@ class McpRegistryService:
             server_repo = McpServerRepository(session)
             tool_repo = McpToolRepository(session)
             for server in server_repo.list(limit=500, offset=0):
-                server = self._upgrade_legacy_browser_preset(session, server)
+                server = self._refresh_server_from_preset(session, server)
                 if server.protocol == STANDARD_MCP_PROTOCOL:
                     self._best_effort_sync_tools(session, server, tool_repo=tool_repo, replace_existing=True)
 
     def invoke_tool(self, server: McpServer, tool: McpTool, arguments: dict[str, Any]) -> Any:
         remote_name = str(tool.remote_name or tool.name).strip()
+        arguments = _normalize_mcp_tool_arguments(remote_name, arguments)
         if server.protocol == STANDARD_MCP_PROTOCOL:
             return _mcp_call_tool(server, remote_name, arguments)
         if server.transport_kind != "unix_socket":
@@ -575,7 +781,7 @@ class McpRegistryService:
                     )
                 if current_server is None or current_tool is None or not current_server.enabled or not current_tool.enabled:
                     raise McpBridgeError("MCP tool is unavailable or disabled")
-                current_server = self._upgrade_legacy_browser_preset(session, current_server)
+                current_server = self._refresh_server_from_preset(session, current_server)
                 return self.invoke_tool(current_server, current_tool, arguments)
 
         metadata = {
@@ -639,44 +845,20 @@ class McpRegistryService:
             "updated_at": server.updated_at,
         }
 
-    def _browser_preset_metadata(
-        self,
-        *,
-        server_key: str,
-        upstream_endpoint: str,
-        existing_metadata: dict[str, Any] | None,
-    ) -> dict[str, Any]:
-        metadata = dict(existing_metadata or {})
-        stdio_command = _normalize_string_list(metadata.get("stdio_command"))
-        if not stdio_command:
-            stdio_command = list(default_browser_mcp_server_command() or [])
-        stdio_env = _normalize_string_dict(metadata.get("stdio_env"))
-        stdio_env["MCP_BROWSER_CHROME_SOCKET"] = upstream_endpoint
-        metadata.update(
-            {
-                "preset_installed": True,
-                "stdio_command": stdio_command,
-                "stdio_env": stdio_env,
-                "runtime_tool_capabilities": {
-                    "default": ["browser"],
-                    "read_only": ["search", "document"],
-                    "mutating": [],
-                },
-            }
-        )
-        metadata.pop("managed_browser_bridge", None)
-        metadata.pop("runtime_endpoint", None)
-        metadata.pop("upstream_endpoint", None)
-        return metadata
-
-    def _upgrade_legacy_browser_preset(self, session: Session, server: McpServer) -> McpServer:
-        if server.preset_key != BROWSER_SOCKET_PRESET_KEY:
+    def _refresh_server_from_preset(self, session: Session, server: McpServer) -> McpServer:
+        preset_key = str(server.preset_key or "").strip()
+        if not preset_key:
             return server
-        target_protocol = STANDARD_MCP_PROTOCOL if server.protocol == LEGACY_BROWSER_COMMAND_PROTOCOL else server.protocol
-        target_transport = "stdio"
-        target_metadata = self._browser_preset_metadata(
-            server_key=server.server_key,
-            upstream_endpoint=server.endpoint,
+        template = _preset_template_by_key(preset_key)
+        if template is None:
+            return server
+        target_protocol = server.protocol
+        if not str(target_protocol or "").strip() or target_protocol == LEGACY_BROWSER_COMMAND_PROTOCOL:
+            target_protocol = template["protocol"]
+        target_transport = template["transport_kind"]
+        target_metadata = _resolve_preset_server_metadata(
+            template,
+            endpoint=server.endpoint,
             existing_metadata=server.server_metadata,
         )
         if (

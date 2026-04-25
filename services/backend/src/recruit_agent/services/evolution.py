@@ -36,6 +36,22 @@ def _merge_sequence_field(existing: dict[str, Any], incoming: dict[str, Any], fi
     return _dedupe_sequence(merged)[-20:]
 
 
+def _normalize_environment_scope(value: Any) -> str:
+    normalized = str(value or "").strip().lower().replace("-", "_")
+    return normalized or "unspecified"
+
+
+def _is_mock_environment_scope(environment_scope: str) -> bool:
+    return _normalize_environment_scope(environment_scope) in {
+        "mock",
+        "mock_only",
+        "simulated",
+        "fixture",
+        "test",
+        "fixture_contract_regression",
+    }
+
+
 def _normalize_skill_contract(draft: dict[str, Any], *, fallback_title: str) -> dict[str, Any]:
     contract = draft.get("skill_contract")
     if isinstance(contract, dict):
@@ -188,6 +204,13 @@ def promote_skill_draft_contract(
     if not incoming_health_check_config:
         incoming_health_check_config = {"expected_result_status": "pass"}
     incoming_skill_metadata = dict(contract.get("skill_metadata") or contract.get("metadata") or {})
+    environment_scope = _normalize_environment_scope(
+        incoming_skill_metadata.get("environment_scope")
+        or contract.get("environment_scope")
+        or "unspecified"
+    )
+    if _is_mock_environment_scope(environment_scope):
+        raise ValueError("mock-only or simulated skill drafts cannot be promoted into real-site skills")
 
     status = "active" if auto_activate else "approved"
     platform = (
@@ -221,6 +244,7 @@ def promote_skill_draft_contract(
         merged_execution_hints["observed_outcomes"] = _merge_sequence_field(existing_execution_hints, incoming_execution_hints, "observed_outcomes")
 
     merged_skill_metadata = {**existing_skill_metadata, **incoming_skill_metadata}
+    merged_skill_metadata["environment_scope"] = environment_scope
     merged_skill_metadata["promotion_source"] = promotion_source
     if source_kind:
         merged_skill_metadata["promotion_source_kind"] = source_kind

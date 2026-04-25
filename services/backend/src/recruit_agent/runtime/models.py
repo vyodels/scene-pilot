@@ -163,10 +163,9 @@ class ToolExecutionResult:
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     def to_message_content(self) -> str:
-        compact = _compact_tool_output_for_model(self.tool_name, self.output)
-        if isinstance(compact, str):
-            return compact
-        return json.dumps(compact, ensure_ascii=False, sort_keys=True, default=str)
+        if isinstance(self.output, str):
+            return self.output
+        return json.dumps(self.output, ensure_ascii=False, sort_keys=True, default=str)
 
 
 @dataclass(slots=True)
@@ -253,6 +252,8 @@ class Deliberation:
     tool_calls: list[ToolCall] = field(default_factory=list)
     tool_results: list[ToolExecutionResult] = field(default_factory=list)
     final_content: str = ""
+    result_data: dict[str, Any] | None = None
+    skill_draft: dict[str, Any] | None = None
     stop_reason: str = "stop"
     usage: LLMUsage = field(default_factory=LLMUsage)
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -298,6 +299,8 @@ class RoundOutcome:
     status: Literal["continue", "complete", "wait_human", "escalate", "error", "cancelled"]
     gate_signal: Literal["continue", "wait_human", "budget_exhausted", "goal_done", "paused", "escalate"] | None = None
     final_output: str | None = None
+    result_data: dict[str, Any] | None = None
+    skill_draft: dict[str, Any] | None = None
     tool_calls: list[ToolCall] = field(default_factory=list)
     tool_results: list[ToolExecutionResult] = field(default_factory=list)
     memory_updates: list[dict[str, Any]] = field(default_factory=list)
@@ -327,111 +330,3 @@ class CancellationToken:
 
     def wait(self, timeout: float | None = None) -> bool:
         return self._event.wait(timeout)
-
-
-def _compact_tool_output_for_model(tool_name: str, output: Any) -> Any:
-    if isinstance(output, list) and output and all(isinstance(item, dict) for item in output):
-        return {
-            "item_count": len(output),
-            "items": [_compact_generic_value(item, depth=1) for item in output[:4]],
-            "truncated": len(output) > 4,
-        }
-    if isinstance(output, dict):
-        tabs_payload = output.get("tabs")
-        if isinstance(tabs_payload, list) and tabs_payload and all(isinstance(item, dict) for item in tabs_payload):
-            ordered_tabs = [
-                item
-                for item in sorted(
-                    tabs_payload,
-                    key=lambda item: (
-                        0 if item.get("active") else 1,
-                        0 if str(item.get("url") or "").startswith(("http://", "https://")) else 1,
-                        str(item.get("title") or ""),
-                    ),
-                )
-            ]
-            return {
-                "tab_count": len(tabs_payload),
-                "tabs": [
-                    {
-                        "id": item.get("id"),
-                        "title": _truncate_text(item.get("title"), 120),
-                        "url": _truncate_text(item.get("url"), 200),
-                        "active": bool(item.get("active")),
-                    }
-                    for item in ordered_tabs[:12]
-                ],
-                "truncated": len(ordered_tabs) > 12,
-            }
-        tab_payload = output.get("tab")
-        if isinstance(tab_payload, dict) and {"id", "url"} & set(tab_payload.keys()):
-            return {
-                "id": tab_payload.get("id"),
-                "title": _truncate_text(tab_payload.get("title"), 120),
-                "url": _truncate_text(tab_payload.get("url"), 200),
-                "active": bool(tab_payload.get("active", True)),
-            }
-    if tool_name == "browser_snapshot" and isinstance(output, dict):
-        observed_entities = [item for item in list(output.get("observed_entities") or []) if isinstance(item, dict)]
-        action_hints = [
-            item
-            for item in list(output.get("action_hints") or output.get("affordances") or [])
-            if isinstance(item, dict)
-        ]
-        return {
-            "source": output.get("source"),
-            "environment_key": output.get("environment_key"),
-            "resource_locator": output.get("resource_locator") or output.get("url"),
-            "display_label": output.get("display_label") or output.get("title"),
-            "environment_kind": output.get("environment_kind") or output.get("page_type"),
-            "observed_entity_count": len(observed_entities),
-            "action_hint_count": len(action_hints),
-            "runtime_metadata": _compact_generic_value(output.get("runtime_metadata"), depth=0),
-        }
-    if tool_name == "browser_execute_script" and isinstance(output, dict):
-        return _compact_generic_value(
-            {
-                "success": output.get("success", True),
-                "result": output.get("result"),
-            },
-            depth=0,
-        )
-    return _compact_generic_value(output, depth=0)
-
-
-def _compact_generic_value(value: Any, *, depth: int) -> Any:
-    if isinstance(value, str):
-        return _truncate_text(value, 320 if depth < 2 else 180)
-    if isinstance(value, (int, float, bool)) or value is None:
-        return value
-    if isinstance(value, list):
-        items = [_compact_generic_value(item, depth=depth + 1) for item in value[:4]]
-        if len(value) > 4:
-            items.append(f"... {len(value) - 4} more items omitted")
-        return items
-    if isinstance(value, dict):
-        compact: dict[str, Any] = {}
-        for key in list(value.keys())[:12]:
-            text_key = str(key)
-            item = value[key]
-            if text_key in {"candidate_cards", "observed_entities", "affordances", "action_hints", "lines", "links", "buttons"}:
-                if isinstance(item, list):
-                    compact[f"{text_key}_count"] = len(item)
-                continue
-            if text_key in {"online_resume_text", "profile_text", "page_text_excerpt"}:
-                compact[text_key] = _truncate_text(item, 220)
-                continue
-            compact[text_key] = _compact_generic_value(item, depth=depth + 1)
-        if len(value) > 12:
-            compact["_truncated_keys"] = len(value) - 12
-        return compact
-    return _truncate_text(str(value), 180)
-
-
-def _truncate_text(value: Any, limit: int) -> str:
-    text = str(value or "")
-    text = text.replace("\xa0", " ")
-    text = "\n".join(part.strip() for part in text.splitlines() if part.strip())
-    if len(text) <= limit:
-        return text
-    return text[: max(limit - 1, 0)].rstrip() + "…"

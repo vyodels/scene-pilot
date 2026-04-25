@@ -4,5 +4,15 @@
   "description": "通过上游标准 MCP server 接入浏览器能力。预置只提供 browser native-host socket，工具通过 MCP `tools/list` 动态发现。",
   "transport_kind": "stdio",
   "protocol": "mcp_jsonrpc",
+  "stdio_command_resolver": "browser_mcp_server",
+  "stdio_env": {
+    "MCP_BROWSER_CHROME_SOCKET": "${endpoint}"
+  },
+  "runtime_tool_capabilities": {
+    "default": ["browser"],
+    "read_only": ["search", "document"],
+    "mutating": []
+  },
+  "metadata_remove_keys": ["managed_browser_bridge", "runtime_endpoint", "upstream_endpoint"],
   "tools": []
 }

@@ -8,6 +8,8 @@
 > Historical source path: docs/superpowers/plans/2026-04-19-autonomous-ui-e2e-test-plan.md
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+>
+> **Browser Tooling Note (2026-04-24):** 本计划中的 browser tooling 表述部分早于 `browser-mcp` 只读化和 `VirtualHID` MCP 接入。涉及 browser / HID 的当前真实口径，应以 [`docs/guides/agent-operator-guide_cn.md`](../../guides/agent-operator-guide_cn.md) 和 [`2026-04-24-recruit-agent-browser-computer-runtime-follow-up-plan.md`](./2026-04-24-recruit-agent-browser-computer-runtime-follow-up-plan.md) 为准。
 
 **Goal:** 让 Codex 通过 chrome-devtools MCP 模拟 human 的方式，驱动 Recruit Agent 桌面主程序的 UI，反复运行下列端到端场景，直到 **Autonomous Agent 在 zhipin.com 上为每个 JD 拿到 3 个"含离线简历 + 含联系方式"的候选人**，并且这些数据全部上传到主程序、在工作台看板里可见、沟通记录在投递记录沟通界面可查。
 
@@ -107,7 +109,9 @@
   - 查询 / 统计：`recruit.list_pending_jds()` / `recruit.list_pending_candidates()` / `recruit.get_goal_progress(goal_id)` 等。
   - **评判准则**：凡是 human 会在 UI 上做的招聘动作、以及 Agent 需要在自动化流程中完成的业务判断，都应该有一个对应的平台中性业务工具；只能做一个"底层原语集合"把业务语义都推给 Agent 自己在 prompt 里拼是**不允许**的——那是给 Agent 做繁重脑力劳动，不是给它提供完整业务工具包。
 - **通用基础工具包**：
-  - `browser.*` —— browser-mcp 透传：open / snapshot / click / fill / eval / wait_for。
+  - `browser_*` —— browser-mcp 透传：读页面、列 tab、切 tab、等待、快照、查元素、截图、读 cookie。
+  - `hid_*` —— VirtualHID 透传：真实键鼠注入、窗口激活、观察、trace、profile 学习。
+  - `delegate_scene_context` —— 把 browser / computer 细节封装到隔离 scene 子上下文。
   - `bash.run(cmd)` 或 `shell.exec` —— 通用命令行（受沙箱约束）。
   - `http.fetch(url, ...)` —— 通用 HTTP。
   - `fs.read / fs.write` —— 通用文件读写（受沙箱约束）。
@@ -123,7 +127,7 @@
 - 不要在 `services/backend/src/recruit_agent/plugins/recruit/toolkit.py` 这类 backend 薄运行时 shell，或 `services/` 其它路径下提前生成 `def parse_zhipin_jd(...)` / `class BossResumeFetcher` / `def fetch_zhipin_contact(...)` 这类"专门替 Boss/直聘干活的工具函数"——这些是 Agent 的事。
 - 不要写 `if source == "zhipin": <调用某个专属解析逻辑>` 这种**按平台分发到平台专属解析/操作的 if 分支**。（区别于"`if source == 'zhipin': badge = '直聘'`"这种纯展示/标签映射——后者属于业务展示，不在限制范围内。）
 - 不要把 zhipin 的 DOM 结构、字段顺序、CSS selector、xpath 烧进 system prompt 当作"操作手册"。
-- 不要为了让 T1/T2/T3 通过，临时在 toolkit 里加一个"zhipin 一键同步" / "zhipin 一键拉简历"工具——这正好是 Agent 应该靠 `browser.*` + 自己识别 DOM + 自己沉淀 skill 完成的事。
+- 不要为了让 T1/T2/T3 通过，临时在 toolkit 里加一个"zhipin 一键同步" / "zhipin 一键拉简历"工具——这正好是 Agent 应该靠 `browser_*` + `delegate_scene_context` + `hid_*` + 自己沉淀 skill 完成的事。
 - 不要为 zhipin 反爬 / 限频 / 字段缺失写专属 fallback；如果遇到这类问题，只能改 prompt（让 Agent 自己应对）或者补**通用**的浏览器原语能力（如增加一个通用 retry 工具）。
 
 #### 0.5.3 判定准则（Codex 在动手前自检 / 在 review 时复核）
@@ -135,7 +139,7 @@
    - 是工具能力代码 → 进第 2 题。
    - 不是（是数据模型 / 业务字段 / 平台来源映射 / UI 标签 / 唯一键设计 / 通用 schema）→ **允许**。
 2. **它是不是仅服务于 Boss/直聘一家**（不改一行代码就没法用在拉勾 / 猎聘 / linkedin 上）？
-   - 是 → 越线，撤回，让 Agent 自己用 `browser.*` + LLM 语义识别 + `skill.create` 在运行时完成。
+   - 是 → 越线，撤回，让 Agent 自己用 `browser_*` + `delegate_scene_context` + `hid_*` + `skill.create` 在运行时完成。
    - 否 → 允许（说明是平台中性的通用工具）。
 
 **典型允许示例：**
@@ -149,7 +153,7 @@
 - `def parse_zhipin_candidate_card(html_snippet)` 这种专门解析 Boss 候选人卡片 DOM 的函数。
 - `class ZhipinJDFetcher` 这种"封装 Boss 网站抓取流程"的类。
 - prompt 里写"zhipin 的候选人列表是 div.candidate-card"。
-- toolkit 里注册一个 `tool_id="zhipin.search_candidates"` 让 Agent 直接调用（而不是让 Agent 用通用 `browser.*` 自己操作）。
+- toolkit 里注册一个 `tool_id="zhipin.search_candidates"` 让 Agent 直接调用（而不是让 Agent 用通用 `browser_*` / `hid_*` 自己操作）。
 
 #### 0.5.4 自检脚本（Codex 每轮自迭代结束跑一次）
 

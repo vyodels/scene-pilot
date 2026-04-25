@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+import json
 
 from recruit_agent.runtime.limits import RoundLimits, TurnLimits
-from recruit_agent.runtime.models import CancellationToken, FairnessState, InputEnvelope, Observation
+from recruit_agent.runtime.models import CancellationToken, FairnessState, InputEnvelope, Observation, ToolExecutionResult
 
 
 def test_observation_stays_generic() -> None:
@@ -61,3 +62,18 @@ def test_runtime_limits_split_between_round_and_turn() -> None:
     assert round_limits.max_wakeup_delay_seconds >= round_limits.min_wakeup_delay_seconds
     assert turn_limits.max_rounds_per_turn > 0
     assert turn_limits.turn_timeout_seconds > 0
+
+
+def test_tool_execution_result_message_content_uses_raw_serialized_output() -> None:
+    output = {
+        "display_label": "JD Detail",
+        "environment_kind": "job_detail",
+        "resource_locator": "https://example.test/jobs/1",
+        "observed_entities": [{"kind": "candidate", "name": "Alice"}],
+        "action_hints": [{"kind": "button", "label": "立即沟通"}],
+        "runtime_metadata": {"viewport": {"width": 1440, "height": 900}},
+    }
+
+    result = ToolExecutionResult(tool_name="browser_snapshot", output=output)
+
+    assert result.to_message_content() == json.dumps(output, ensure_ascii=False, sort_keys=True, default=str)
