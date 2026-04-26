@@ -375,11 +375,6 @@ def test_browser_hid_runtime_requires_observe_after_substantive_hid_action(tmp_p
         "context": {"host": "recruit.example.test"},
         "primitives": [{"type": "click", "at": {"x": 160, "y": 80}}],
     }
-    move_args = {
-        "target": {"host": "recruit.example.test", "tabId": 42},
-        "context": {"host": "recruit.example.test"},
-        "primitives": [{"type": "move", "to": {"x": 170, "y": 90}}],
-    }
 
     with container.session_factory() as session:
         browser_server, snapshot_tool = get_server_tool("browser", "browser_snapshot")
@@ -395,14 +390,12 @@ def test_browser_hid_runtime_requires_observe_after_substantive_hid_action(tmp_p
         with pytest.raises(McpBridgeError, match="followed by a browser observation"):
             container.mcp_registry.invoke_tool(hid_server, hid_tool, click_args)
 
-        container.mcp_registry.invoke_tool(hid_server, hid_tool, move_args)
         container.mcp_registry.invoke_tool(browser_server, wait_tool, {"text": "message sent"})
         container.mcp_registry.invoke_tool(hid_server, hid_tool, click_args)
 
     assert tool_calls == [
         ("mcp://browser-runtime", "browser_snapshot", {}),
         ("mcp://hid-runtime", "hid_action", click_args),
-        ("mcp://hid-runtime", "hid_action", move_args),
         ("mcp://browser-runtime", "browser_wait_for_text", {"text": "message sent"}),
         ("mcp://hid-runtime", "hid_action", click_args),
     ]

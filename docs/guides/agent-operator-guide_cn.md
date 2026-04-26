@@ -53,8 +53,8 @@ browser observe/wait -> Agent decision -> hid_action write -> browser observe/wa
 
 - `browser_*` 提供类似 Playwright locator / page state 的观察层。
 - `hid_action` 提供类似 Playwright click/type/scroll 的写入层，只是写入由 macOS HID 事件完成。
-- 点击、输入、发送聊天内容、滚动、拖拽、快捷键等实质 HID 动作后，下一次实质 HID 动作前必须先调用 `browser_snapshot`、`browser_wait_for_*`、`browser_query_elements`、`browser_locate_download` 或等价 browser 观察工具确认页面、下载或消息状态。
-- 单纯 `move` 只用于定位、展示轨迹或 hover 前置，不算页面写入；它不替代后续 browser 观察。
+- 点击、输入、发送聊天内容、滚动、拖拽、快捷键等浏览器目标 HID 动作后，下一次浏览器目标 HID 动作前必须先调用 `browser_snapshot`、`browser_wait_for_*`、`browser_query_elements`、`browser_locate_download` 或等价 browser 观察工具确认页面、下载或消息状态。
+- 对外的 `click` 原语本身就是连续 HID 操作：VirtualHID 内部会先规划拟人化鼠标移动轨迹，再完成落点和点击。Agent 不应显式传 `move`，也不应把移动作为单独外部工具动作编排。
 - 这个约束是通用时序协议，不是站点流程硬编码；Agent 仍然必须根据当前 browser 证据自行判断下一步。
 
 ### 1.4 前置条件
@@ -215,7 +215,7 @@ VirtualHID 对外是一个 MCP stdio server，实现上分两层（Node.js shim 
 | `E_KILL_SWITCH` | kill switch 已触发 | 停手，提示用户；等 `hid_unlock` |
 | `E_NO_TARGET` | 找不到目标窗口 | 先补全 `browser_target` / 窗口信息；必要时再 `browser_select_tab` |
 | `E_PERMISSION` | 缺 Accessibility / Input Monitoring | 提示用户去系统设置授权 |
-| `E_PRIMITIVES_REQUIRED` | 没传 HID primitives 或传了空数组 | 回到 browser snapshot / target_regions，用 clickPoint 或允许落点构造 `move/click/type` 原语后再试 |
+| `E_PRIMITIVES_REQUIRED` | 没传 HID primitives 或传了空数组 | 回到 browser snapshot / target_regions，用 clickPoint 或允许落点构造 `click/type/scroll` 等对外原语后再试 |
 | `E_PRIMITIVE_INVALID` | primitive 缺少 `type` 或必需坐标/文本字段 | 修正 primitive schema，不要只传空对象 |
 | `E_CONTEXT_REQUIRED` | 没传 `context` | 必须带 `host` + `element.sig` 再试 |
 | `E_PROFILE_MISS` | 要求用 template 但没学到 | 降级到默认拟人参数 |

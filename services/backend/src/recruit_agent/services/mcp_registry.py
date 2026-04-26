@@ -62,7 +62,7 @@ _BROWSER_OBSERVATION_TOOL_NAMES = {
     "browser_get_cookies",
     "browser_locate_download",
 }
-_HID_MUTATING_PRIMITIVE_TYPES = {"click", "drag", "scroll", "type", "pasteText", "key"}
+_HID_BROWSER_SEQUENCE_PRIMITIVE_TYPES = {"click", "drag", "scroll", "type", "pasteText", "key"}
 
 
 def _default_browser_endpoint() -> str:
@@ -588,33 +588,33 @@ def _hid_action_targets_browser(arguments: dict[str, Any]) -> bool:
     return str(geometry.get("coordSpace") or "").strip() in {"viewport", "document"}
 
 
-def _hid_action_has_substantive_browser_side_effect(arguments: dict[str, Any]) -> bool:
+def _hid_action_has_browser_sequence_primitive(arguments: dict[str, Any]) -> bool:
     primitives = arguments.get("primitives")
     if not isinstance(primitives, list):
         return False
     for primitive in primitives:
         if not isinstance(primitive, dict):
             continue
-        if str(primitive.get("type") or "").strip() in _HID_MUTATING_PRIMITIVE_TYPES:
+        if str(primitive.get("type") or "").strip() in _HID_BROWSER_SEQUENCE_PRIMITIVE_TYPES:
             return True
     return False
 
 
-def _is_substantive_browser_hid_action(server: McpServer, tool_name: str, arguments: dict[str, Any]) -> bool:
+def _is_browser_hid_sequence_action(server: McpServer, tool_name: str, arguments: dict[str, Any]) -> bool:
     if not _is_virtualhid_mcp_tool(server, tool_name):
         return False
     if str(tool_name or "").strip() != "hid_action":
         return False
-    return _hid_action_targets_browser(arguments) and _hid_action_has_substantive_browser_side_effect(arguments)
+    return _hid_action_targets_browser(arguments) and _hid_action_has_browser_sequence_primitive(arguments)
 
 
 def _prepare_linear_browser_hid_tool_call(server: McpServer, tool_name: str, arguments: dict[str, Any]) -> None:
-    if not _is_substantive_browser_hid_action(server, tool_name, arguments):
+    if not _is_browser_hid_sequence_action(server, tool_name, arguments):
         return
     pending = _BROWSER_HID_SEQUENCE_STATE["pending_browser_observation_after_hid"]
     if pending:
         raise McpBridgeError(
-            "Browser/HID sequence violation: the previous substantive hid_action has not been followed by a browser observation. "
+            "Browser/HID sequence violation: the previous browser-targeted hid_action has not been followed by a browser observation. "
             "Call browser_snapshot, browser_wait_for_*, browser_get_active_tab, browser_query_elements, browser_locate_download, or another browser observation tool before the next click/type/scroll HID action."
         )
     if _BROWSER_HID_SEQUENCE_STATE["last_browser_observation"] is None:
@@ -630,7 +630,7 @@ def _record_linear_browser_hid_tool_call(server: McpServer, tool_name: str, argu
         _BROWSER_HID_SEQUENCE_STATE["last_browser_observation"] = name
         _BROWSER_HID_SEQUENCE_STATE["pending_browser_observation_after_hid"] = None
         return
-    if _is_substantive_browser_hid_action(server, name, arguments):
+    if _is_browser_hid_sequence_action(server, name, arguments):
         _BROWSER_HID_SEQUENCE_STATE["pending_browser_observation_after_hid"] = name
 
 
