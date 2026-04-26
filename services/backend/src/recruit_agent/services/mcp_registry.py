@@ -6,6 +6,7 @@ import shlex
 import shutil
 import socket
 import tempfile
+import threading
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -40,6 +41,28 @@ VIRTUALHID_SOCKET_PRESET_KEY = "virtualhid-json-socket"
 _VIRTUALHID_MCP_SERVER_ENV = "VIRTUALHID_MCP_SERVER"
 _VIRTUALHID_MCP_COMMAND_ENV = "VIRTUALHID_MCP_COMMAND"
 _KNOWN_STDIO_COMMAND_RESOLVERS = {"browser_mcp_server", "virtualhid_mcp_server"}
+_BROWSER_HID_TOOL_LOCK = threading.RLock()
+_BROWSER_HID_SEQUENCE_STATE: dict[str, str | None] = {
+    "last_browser_observation": None,
+    "pending_browser_observation_after_hid": None,
+}
+_BROWSER_OBSERVATION_TOOL_NAMES = {
+    "browser_list_tabs",
+    "browser_get_active_tab",
+    "browser_snapshot",
+    "browser_query_elements",
+    "browser_get_element",
+    "browser_debug_dom",
+    "browser_wait_for_element",
+    "browser_wait_for_text",
+    "browser_wait_for_navigation",
+    "browser_wait_for_disappear",
+    "browser_wait_for_url",
+    "browser_screenshot",
+    "browser_get_cookies",
+    "browser_locate_download",
+}
+_HID_MUTATING_PRIMITIVE_TYPES = {"click", "drag", "scroll", "type", "pasteText", "key"}
 
 
 def _default_browser_endpoint() -> str:
@@ -48,6 +71,12 @@ def _default_browser_endpoint() -> str:
 
 def default_virtualhid_upstream_endpoint() -> str:
     return os.environ.get("VIRTUALHID_SOCKET") or f"{tempfile.gettempdir()}/virtualhid.sock"
+
+
+def _reset_browser_hid_sequence_state_for_tests() -> None:
+    with _BROWSER_HID_TOOL_LOCK:
+        _BROWSER_HID_SEQUENCE_STATE["last_browser_observation"] = None
+        _BROWSER_HID_SEQUENCE_STATE["pending_browser_observation_after_hid"] = None
 
 
 def default_virtualhid_mcp_server_command() -> tuple[str, ...] | None:
@@ -505,6 +534,106 @@ def _tool_read_only_hint(server: McpServer, name: str, annotations: dict[str, An
     return name in _normalize_string_list(metadata.get("runtime_tool_read_only_names"))
 
 
+def _mcp_runtime_capability_names(server: McpServer) -> set[str]:
+    metadata = dict(server.server_metadata or {})
+    hints = metadata.get("runtime_tool_capabilities")
+    capabilities: set[str] = set()
+    if isinstance(hints, dict):
+        for key in ("default", "read_only", "mutating"):
+            capabilities.update(_normalize_string_list(hints.get(key)))
+    return capabilities
+
+
+def _is_browser_mcp_tool(server: McpServer, tool_name: str) -> bool:
+    name = str(tool_name or "").strip()
+    if name.startswith("browser_"):
+        return True
+    if str(server.server_key or "").strip() == BROWSER_SOCKET_PRESET_KEY:
+        return True
+    if str(server.preset_key or "").strip() == BROWSER_SOCKET_PRESET_KEY:
+        return True
+    return bool(_mcp_runtime_capability_names(server) & {"browser", "document"})
+
+
+def _is_virtualhid_mcp_tool(server: McpServer, tool_name: str) -> bool:
+    name = str(tool_name or "").strip()
+    if name.startswith("hid_"):
+        return True
+    if str(server.server_key or "").strip() == VIRTUALHID_SOCKET_PRESET_KEY:
+        return True
+    if str(server.preset_key or "").strip() == VIRTUALHID_SOCKET_PRESET_KEY:
+        return True
+    return bool(_mcp_runtime_capability_names(server) & {"computer", "computer_read", "computer_write", "hid", "virtualhid"})
+
+
+def _requires_linear_browser_hid_execution(server: McpServer, tool_name: str) -> bool:
+    return _is_browser_mcp_tool(server, tool_name) or _is_virtualhid_mcp_tool(server, tool_name)
+
+
+def _is_browser_observation_tool(server: McpServer, tool_name: str) -> bool:
+    name = str(tool_name or "").strip()
+    return _is_browser_mcp_tool(server, name) and name in _BROWSER_OBSERVATION_TOOL_NAMES
+
+
+def _hid_action_targets_browser(arguments: dict[str, Any]) -> bool:
+    target = arguments.get("target") if isinstance(arguments.get("target"), dict) else {}
+    context = arguments.get("context") if isinstance(arguments.get("context"), dict) else {}
+    geometry = arguments.get("geometry") if isinstance(arguments.get("geometry"), dict) else {}
+    if str(target.get("host") or context.get("host") or "").strip():
+        return True
+    if str(context.get("url") or "").strip():
+        return True
+    if target.get("tabId") is not None or target.get("tab_id") is not None:
+        return True
+    return str(geometry.get("coordSpace") or "").strip() in {"viewport", "document"}
+
+
+def _hid_action_has_substantive_browser_side_effect(arguments: dict[str, Any]) -> bool:
+    primitives = arguments.get("primitives")
+    if not isinstance(primitives, list):
+        return False
+    for primitive in primitives:
+        if not isinstance(primitive, dict):
+            continue
+        if str(primitive.get("type") or "").strip() in _HID_MUTATING_PRIMITIVE_TYPES:
+            return True
+    return False
+
+
+def _is_substantive_browser_hid_action(server: McpServer, tool_name: str, arguments: dict[str, Any]) -> bool:
+    if not _is_virtualhid_mcp_tool(server, tool_name):
+        return False
+    if str(tool_name or "").strip() != "hid_action":
+        return False
+    return _hid_action_targets_browser(arguments) and _hid_action_has_substantive_browser_side_effect(arguments)
+
+
+def _prepare_linear_browser_hid_tool_call(server: McpServer, tool_name: str, arguments: dict[str, Any]) -> None:
+    if not _is_substantive_browser_hid_action(server, tool_name, arguments):
+        return
+    pending = _BROWSER_HID_SEQUENCE_STATE["pending_browser_observation_after_hid"]
+    if pending:
+        raise McpBridgeError(
+            "Browser/HID sequence violation: the previous substantive hid_action has not been followed by a browser observation. "
+            "Call browser_snapshot, browser_wait_for_*, browser_get_active_tab, browser_query_elements, browser_locate_download, or another browser observation tool before the next click/type/scroll HID action."
+        )
+    if _BROWSER_HID_SEQUENCE_STATE["last_browser_observation"] is None:
+        raise McpBridgeError(
+            "Browser/HID sequence violation: substantive browser HID actions require a prior browser observation. "
+            "Call browser_snapshot or an equivalent browser observation/wait tool before hid_action."
+        )
+
+
+def _record_linear_browser_hid_tool_call(server: McpServer, tool_name: str, arguments: dict[str, Any]) -> None:
+    name = str(tool_name or "").strip()
+    if _is_browser_observation_tool(server, name):
+        _BROWSER_HID_SEQUENCE_STATE["last_browser_observation"] = name
+        _BROWSER_HID_SEQUENCE_STATE["pending_browser_observation_after_hid"] = None
+        return
+    if _is_substantive_browser_hid_action(server, name, arguments):
+        _BROWSER_HID_SEQUENCE_STATE["pending_browser_observation_after_hid"] = name
+
+
 def _normalize_discovered_tool(server: McpServer, payload: dict[str, Any]) -> dict[str, Any] | None:
     name = str(payload.get("name") or "").strip()
     if not name:
@@ -740,6 +869,15 @@ class McpRegistryService:
     def invoke_tool(self, server: McpServer, tool: McpTool, arguments: dict[str, Any]) -> Any:
         remote_name = str(tool.remote_name or tool.name).strip()
         arguments = _normalize_mcp_tool_arguments(remote_name, arguments)
+        if _requires_linear_browser_hid_execution(server, remote_name):
+            with _BROWSER_HID_TOOL_LOCK:
+                _prepare_linear_browser_hid_tool_call(server, remote_name, arguments)
+                result = self._invoke_tool_unlocked(server, remote_name, arguments)
+                _record_linear_browser_hid_tool_call(server, remote_name, arguments)
+                return result
+        return self._invoke_tool_unlocked(server, remote_name, arguments)
+
+    def _invoke_tool_unlocked(self, server: McpServer, remote_name: str, arguments: dict[str, Any]) -> Any:
         if server.protocol == STANDARD_MCP_PROTOCOL:
             return _mcp_call_tool(server, remote_name, arguments)
         if server.transport_kind != "unix_socket":

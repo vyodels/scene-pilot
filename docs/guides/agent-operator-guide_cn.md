@@ -43,7 +43,21 @@ args = ["/Users/vyodels/AgentProjects/VirtualHID/mcp/server.mjs"]
 
 **不要把两组前缀混起来调用**——比如"想点击按钮"的正确做法是：先 `browser_snapshot` 取目标上下文和候选落地区域，再把 `browser_target`、`computer_target`、`target_regions`、`action_plan` 这类稳定合同交给 `hid_action` 或 scene execution 层；**不要**去找什么 `browser_click`（已在只读化重构中删除），也不要让 Agent 自己算最终屏幕绝对坐标。
 
-### 1.3 前置条件
+### 1.3 组合执行器时序
+
+`browser-mcp` 和 `VirtualHID` 在实现上是两个 MCP server，但 Agent 调度时必须把它们当成一个完整的浏览器自动化执行器：
+
+```text
+browser observe/wait -> Agent decision -> hid_action write -> browser observe/wait -> Agent decision -> hid_action write
+```
+
+- `browser_*` 提供类似 Playwright locator / page state 的观察层。
+- `hid_action` 提供类似 Playwright click/type/scroll 的写入层，只是写入由 macOS HID 事件完成。
+- 点击、输入、发送聊天内容、滚动、拖拽、快捷键等实质 HID 动作后，下一次实质 HID 动作前必须先调用 `browser_snapshot`、`browser_wait_for_*`、`browser_query_elements`、`browser_locate_download` 或等价 browser 观察工具确认页面、下载或消息状态。
+- 单纯 `move` 只用于定位、展示轨迹或 hover 前置，不算页面写入；它不替代后续 browser 观察。
+- 这个约束是通用时序协议，不是站点流程硬编码；Agent 仍然必须根据当前 browser 证据自行判断下一步。
+
+### 1.4 前置条件
 
 1. Chrome 加载 `mcp-browser-chrome` 的 `dist/` 扩展
 2. macOS 给 VirtualHID 授过 **Accessibility** 和 **Input Monitoring** 权限（`hid_state` 可以查）
