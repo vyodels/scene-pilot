@@ -33,7 +33,7 @@ class SceneContextService:
     tool_registry: ToolRegistry
     plugin_host: PluginHost
     limits: RoundLimits = field(default_factory=RoundLimits)
-    default_max_rounds: int = 6
+    default_max_rounds: int | None = None
     _kernel: AgentKernel = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -213,7 +213,18 @@ class SceneContextService:
             limits=self.limits,
         )
 
-        for round_seq in range(1, int(request["max_rounds"]) + 1):
+        round_seq = 0
+        while True:
+            if request["max_rounds"] is not None and round_seq >= int(request["max_rounds"]):
+                blockers = blockers or [
+                    {
+                        "kind": "budget_exhausted",
+                        "message": "scene context reached explicit round budget before producing a terminal result",
+                    }
+                ]
+                break
+
+            round_seq += 1
             round_events: list[dict[str, Any]] = []
             observation = Observation(
                 world_snapshot={
@@ -290,13 +301,6 @@ class SceneContextService:
             )
             if not _should_continue(last_outcome):
                 break
-        else:
-            blockers = blockers or [
-                {
-                    "kind": "budget_exhausted",
-                    "message": "scene context reached round budget before producing a terminal result",
-                }
-            ]
 
         return self._finalize_success(
             session=session,
@@ -403,7 +407,22 @@ class SceneContextService:
         }
 
 
-def _normalize_scene_request(arguments: dict[str, Any], *, default_max_rounds: int) -> dict[str, Any]:
+def _normalize_optional_positive_int(value: Any, *, default: int | None = None) -> int | None:
+    raw_value = default if value is None else value
+    if raw_value is None:
+        return None
+    if isinstance(raw_value, str) and raw_value.strip().lower() in {"", "none", "null", "unlimited", "disabled"}:
+        return None
+    try:
+        parsed = int(raw_value)
+    except (TypeError, ValueError):
+        return None
+    if parsed <= 0:
+        return None
+    return parsed
+
+
+def _normalize_scene_request(arguments: dict[str, Any], *, default_max_rounds: int | None) -> dict[str, Any]:
     instruction = str(arguments.get("instruction") or "").strip()
     if not instruction:
         raise ValueError("delegate_scene_context requires instruction")
@@ -449,8 +468,7 @@ def _normalize_scene_request(arguments: dict[str, Any], *, default_max_rounds: i
         context["artifact_expectations"] = artifact_expectations
         environment_requirements["artifact_expectations"] = artifact_expectations
         output_contract["artifact_expectations"] = artifact_expectations
-    max_rounds = int(arguments.get("max_rounds") or default_max_rounds)
-    max_rounds = max(1, min(max_rounds, 32))
+    max_rounds = _normalize_optional_positive_int(arguments.get("max_rounds"), default=default_max_rounds)
     requested_by = str(arguments.get("requested_by") or context.get("requested_by") or "").strip() or None
     approval_policy.setdefault("requires_confirmation", bool(approval_policy.get("requires_confirmation")))
     return {
@@ -486,6 +504,11 @@ def _build_scene_goal_text(request: dict[str, Any]) -> str:
         parts.append(f"结果合同：{request['output_contract']}")
     if request["browser_target"]:
         parts.append(f"浏览器目标：{_compact_value(request['browser_target'])}")
+        parts.append(
+            "当 browser_target.url 存在时，必须以该 URL 的完整 origin（包含端口）作为目标边界。"
+            "不要把同 hostname 但不同端口、不同 origin 或旧测试 tab 当成当前任务目标；"
+            "如果 browser_list_tabs 没有匹配该 origin 的 tab，先用 browser_open_tab 或等价浏览器导航打开目标 URL。"
+        )
     if request["computer_target"] or "computer" in _scene_capabilities(request["preferred_capabilities"]):
         parts.append(
             "如需调用电脑/HID 动作，不要自行计算屏幕绝对坐标；必须先从 browser snapshot 的 clickPoint、"
@@ -659,7 +682,32 @@ def _scene_tool_registry(
     registry = ToolRegistry()
     for tool in tool_registry.tools.values():
         cloned = tool.clone()
-        if cloned.name == "hid_action":
+        if cloned.name.startswith("browser_"):
+            original_handler = cloned.handler
+
+            def _browser_handler(
+                arguments: dict[str, Any],
+                *,
+                _tool_name=cloned.name,
+                _original_handler=original_handler,
+            ) -> Any:
+                precheck = _validate_scene_browser_tool_target(
+                    tool_name=_tool_name,
+                    arguments=arguments,
+                    request=request,
+                    browser_semantics=browser_semantics,
+                )
+                if precheck is not None:
+                    return precheck
+                result = _original_handler(arguments)
+                return _mask_scene_browser_target_mismatch(
+                    tool_name=_tool_name,
+                    result=result,
+                    request=request,
+                )
+
+            cloned.handler = _browser_handler
+        elif cloned.name == "hid_action":
             original_handler = cloned.handler
 
             def _handler(arguments: dict[str, Any], *, _original_handler=original_handler) -> Any:
@@ -675,6 +723,84 @@ def _scene_tool_registry(
             cloned.handler = _handler
         registry.register(cloned)
     return registry
+
+
+def _validate_scene_browser_tool_target(
+    *,
+    tool_name: str,
+    arguments: dict[str, Any],
+    request: dict[str, Any],
+    browser_semantics: dict[str, Any],
+) -> dict[str, Any] | None:
+    if tool_name not in {"browser_select_tab", "browser_snapshot"}:
+        return None
+    target_origin = _scene_target_origin(request)
+    if target_origin is None:
+        return None
+    tab_id = _optional_int(arguments.get("tabId") or arguments.get("tab_id"))
+    if tab_id is None:
+        return None
+    tab_info = dict((browser_semantics.get("tabs") or {}).get(tab_id) or {})
+    tab_url = _optional_string(tab_info.get("url"))
+    if tab_url is None or _scene_url_matches_target_origin(tab_url, target_origin=target_origin):
+        return None
+    return {
+        "success": False,
+        "error": "scene_browser_target_mismatch",
+        "message": "Selected browser tab does not match the scene browser_target origin. Open or select the target URL from the scene contract before observing or acting.",
+        "targetOrigin": target_origin,
+        "tab": {"tabId": tab_id, "url": tab_url},
+    }
+
+
+def _mask_scene_browser_target_mismatch(
+    *,
+    tool_name: str,
+    result: Any,
+    request: dict[str, Any],
+) -> Any:
+    if tool_name not in {"browser_get_active_tab", "browser_select_tab", "browser_snapshot"} or not isinstance(result, dict):
+        return result
+    target_origin = _scene_target_origin(request)
+    if target_origin is None:
+        return result
+    observed_url = _browser_result_url(result)
+    if observed_url is None or _scene_url_matches_target_origin(observed_url, target_origin=target_origin):
+        return result
+    return {
+        "success": False,
+        "error": "scene_browser_target_mismatch",
+        "message": "Observed browser target does not match the scene browser_target origin. Use browser_open_tab or browser navigation to reach the requested target URL before continuing.",
+        "targetOrigin": target_origin,
+        "observedUrl": observed_url,
+    }
+
+
+def _browser_result_url(result: dict[str, Any]) -> str | None:
+    for candidate in (
+        _as_dict(result.get("snapshot")).get("url"),
+        _as_dict(result.get("tab")).get("url"),
+        _as_dict(result.get("target")).get("url"),
+        result.get("url"),
+    ):
+        url = _optional_string(candidate)
+        if url:
+            return url
+    return None
+
+
+def _scene_target_origin(request: dict[str, Any]) -> str | None:
+    browser_target = _as_dict(request.get("browser_target"))
+    url_origin = _origin_from_url(browser_target.get("url"))
+    if url_origin:
+        return url_origin
+    host = _optional_string(browser_target.get("host"), max_length=255)
+    return host.lower() if host else None
+
+
+def _scene_url_matches_target_origin(value: Any, *, target_origin: str) -> bool:
+    observed_origin = _origin_from_url(value) or _host_from_url(value)
+    return observed_origin == target_origin
 
 
 def _normalize_scene_hid_action_arguments(
@@ -990,7 +1116,7 @@ def _collect_blockers(outcome: RoundOutcome, events: list[dict[str, Any]]) -> li
                 }
             )
     if outcome.gate_signal == "budget_exhausted":
-        blockers.append({"kind": "budget_exhausted", "message": "scene context reached round budget"})
+        blockers.append({"kind": "budget_exhausted", "message": "scene context reached explicit safety budget"})
     if outcome.status == "escalate":
         blockers.append({"kind": "escalate", "message": outcome.escalate_reason or "scene context escalated"})
     return blockers
@@ -1044,7 +1170,7 @@ def _public_summary(outcome: RoundOutcome, blockers: list[dict[str, Any]]) -> st
     if blockers:
         return str(blockers[0].get("message") or "scene context reported a blocker")
     if outcome.gate_signal == "budget_exhausted":
-        return "scene context reached round budget before producing a terminal result"
+        return "scene context reached explicit safety budget before producing a terminal result"
     return "scene context finished without a terminal summary"
 
 
@@ -1189,6 +1315,17 @@ def _host_from_url(value: Any) -> str | None:
     return parsed.netloc.rsplit("@", 1)[-1].lower()[:255]
 
 
+def _origin_from_url(value: Any) -> str | None:
+    url = _optional_string(value)
+    if not url:
+        return None
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return None
+    host = parsed.netloc.rsplit("@", 1)[-1].lower()
+    return f"{parsed.scheme.lower()}://{host}"[:2048]
+
+
 def _list_of_dicts(value: Any) -> list[dict[str, Any]]:
     return [_as_dict(item) for item in list(value or []) if isinstance(item, dict)][:8]
 
@@ -1321,12 +1458,17 @@ def _normalize_environment_candidate(payload: dict[str, Any], *, default_source:
 
 def _normalize_browser_target(value: Any) -> dict[str, Any]:
     payload = _as_dict(value)
+    url = _optional_string(payload.get("url"))
+    url_host = _host_from_url(url)
+    host = _optional_string(payload.get("host"), max_length=255)
+    if url_host and (not host or (":" in url_host and ":" not in host and url_host.startswith(f"{host}:"))):
+        host = url_host
     target = {
         "application": _optional_string(payload.get("application") or payload.get("app"), max_length=128),
         "window_title": _optional_string(payload.get("window_title") or payload.get("window"), max_length=255),
         "tab_id": _optional_int(payload.get("tab_id") or payload.get("tabId")),
-        "host": _optional_string(payload.get("host"), max_length=255),
-        "url": _optional_string(payload.get("url")),
+        "host": host,
+        "url": url,
         "url_pattern": _optional_string(payload.get("url_pattern") or payload.get("urlPattern")),
         "site_label": _optional_string(payload.get("site_label") or payload.get("site")),
     }

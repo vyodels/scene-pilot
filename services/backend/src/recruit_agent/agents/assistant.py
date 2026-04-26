@@ -296,14 +296,17 @@ class AssistantAgent:
                 if cancel_token.is_cancelled():
                     last_outcome = RoundOutcome(status="cancelled", gate_signal="paused")
                     break
-                if round_seq >= self.turn_limits.max_rounds_per_turn:
+                if self.turn_limits.max_rounds_per_turn is not None and round_seq >= self.turn_limits.max_rounds_per_turn:
                     last_outcome = RoundOutcome(
                         status="continue",
                         gate_signal="budget_exhausted",
                         final_output=last_outcome.final_output,
                     )
                     break
-                if time.monotonic() - started_at >= self.turn_limits.turn_timeout_seconds:
+                if (
+                    self.turn_limits.turn_timeout_seconds is not None
+                    and time.monotonic() - started_at >= self.turn_limits.turn_timeout_seconds
+                ):
                     last_outcome = RoundOutcome(
                         status="continue",
                         gate_signal="budget_exhausted",

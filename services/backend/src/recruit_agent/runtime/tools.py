@@ -369,7 +369,11 @@ def build_delegate_scene_context_tool(
                     "description": "Episode-scoped scene context, including browser/computer targets, candidate landing regions, action intent, and artifact_expectations. Use structured fields, not site-specific hardcoded flow.",
                 },
                 "requested_by": {"type": "string"},
-                "max_rounds": {"type": "integer", "minimum": 1, "maximum": 32},
+                "max_rounds": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "Optional explicit safety budget for this delegated scene. Only set it when the operator/test request explicitly provides a finite budget; otherwise omit it so the scene runs until terminal outcome, cancellation, or human boundary.",
+                },
             },
             "required": ["instruction"],
             "additionalProperties": True,

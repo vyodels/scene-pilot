@@ -144,14 +144,20 @@ class AutonomousAgent:
             last_outcome = RoundOutcome(status="continue", gate_signal="continue")
             try:
                 while True:
-                    if round_seq >= active_turn_limits.max_rounds_per_turn:
+                    if (
+                        active_turn_limits.max_rounds_per_turn is not None
+                        and round_seq >= active_turn_limits.max_rounds_per_turn
+                    ):
                         last_outcome = RoundOutcome(
                             status="continue",
                             gate_signal="budget_exhausted",
                             final_output=last_outcome.final_output,
                         )
                         break
-                    if time.monotonic() - started_at >= active_turn_limits.turn_timeout_seconds:
+                    if (
+                        active_turn_limits.turn_timeout_seconds is not None
+                        and time.monotonic() - started_at >= active_turn_limits.turn_timeout_seconds
+                    ):
                         last_outcome = RoundOutcome(
                             status="continue",
                             gate_signal="budget_exhausted",
@@ -537,21 +543,23 @@ def _resolve_turn_limits(defaults: TurnLimits, goal_spec: GoalSpec | None) -> Tu
     if not overrides:
         return defaults
 
-    resolved: dict[str, int] = {}
-    for field_name in (
-        "max_rounds_per_turn",
-        "turn_timeout_seconds",
-        "token_budget",
-        "cooldown_seconds",
-    ):
+    resolved: dict[str, int | None] = {}
+    unlimited_fields = {"max_rounds_per_turn", "turn_timeout_seconds", "token_budget"}
+    for field_name in ("max_rounds_per_turn", "turn_timeout_seconds", "token_budget", "cooldown_seconds"):
         raw_value = overrides.get(field_name)
         if raw_value is None:
+            continue
+        if isinstance(raw_value, str) and raw_value.strip().lower() in {"", "none", "null", "unlimited", "disabled"}:
+            if field_name in unlimited_fields:
+                resolved[field_name] = None
             continue
         try:
             parsed = int(raw_value)
         except (TypeError, ValueError):
             continue
         if parsed <= 0:
+            if field_name in unlimited_fields:
+                resolved[field_name] = None
             continue
         resolved[field_name] = parsed
 

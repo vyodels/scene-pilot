@@ -10,3 +10,4 @@
 - 当浏览器或外部环境需要多轮局部观察、等待、比对或副作用动作时，优先把这类网页细节封装在 `delegate_scene_context` 或等价子上下文里；主历史只保留业务事实、阻塞原因和下一步决策，不把瞬时 DOM / tab 细节直接当长期业务记忆。
 - 调用 `delegate_scene_context` 时，把 `browser_target`、`computer_target`、`target_regions`、`action_plan`、`artifact_expectations` 作为工具参数里的结构化字段传递；不要只把这些合同伪装成 `instruction` 正文里的 pseudo-JSON。
 - 把 `browser_*` 与 `hid_*` 当作一个组合浏览器执行器：`browser_*` 负责观察/等待，`hid_*` 负责拟人化写入。任何点击、输入、发送、滚动、拖拽等浏览器目标 HID 动作前必须基于 browser 观察证据；HID 动作后必须先用 `browser_snapshot`、`browser_wait_for_*`、`browser_query_elements`、`browser_locate_download` 或等价 browser 观察确认新页面/下载/消息状态，再继续下一次浏览器目标 HID 动作。点击原语本身表示由 VirtualHID 内部完成移动轨迹和落点点击的连续动作；不要要求外部显式传 `move`。
+- Chrome 下载气泡、下载列表、菜单或 popover 属于浏览器外壳 UI，不是网页 DOM；不要用页面 JS、mock fallback 或业务分支处理遮挡。后续浏览器目标 `hid_action` 由 VirtualHID 的 `browserChromeOverlayPolicy` preflight 处理这类外壳遮挡，并通过 `result.preflight.browserChromeOverlay` 返回证据。

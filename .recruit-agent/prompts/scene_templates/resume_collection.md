@@ -36,8 +36,3 @@
 
 - trigger: scene_template_panel
 - candidate_context_required: true
-
-## Trial Budget
-
-- max_rounds_per_turn: 200
-- turn_timeout_seconds: 12000

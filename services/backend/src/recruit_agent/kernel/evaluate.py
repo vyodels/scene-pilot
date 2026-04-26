@@ -32,7 +32,7 @@ def evaluate(deliberation: Deliberation, effects: Effects, *, limits: RoundLimit
             effects=effects,
             metadata=metadata,
         )
-    if deliberation.usage.total_tokens > active_limits.token_budget:
+    if active_limits.token_budget is not None and deliberation.usage.total_tokens > active_limits.token_budget:
         return RoundOutcome(
             status="continue",
             gate_signal="budget_exhausted",

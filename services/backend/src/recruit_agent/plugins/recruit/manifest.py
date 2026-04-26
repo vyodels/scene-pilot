@@ -386,7 +386,10 @@ class RecruitPluginManifest:
             ),
             _tool(
                 name="attach_resume_artifact",
-                description="Attach an offline resume or related artifact to an application record and refresh contact snapshots.",
+                description=(
+                    "Attach an offline resume or related artifact to an application record and refresh resume/contact snapshots. "
+                    "After this succeeds, do not guess an additional transition_application status; only transition if the returned thread or an explicit operator instruction provides a valid next state."
+                ),
                 parameters={
                     "type": "object",
                     "properties": {
@@ -422,7 +425,10 @@ class RecruitPluginManifest:
             ),
             _tool(
                 name="transition_application",
-                description="Move an application record through the recruiting state machine with stage, note, and channel context.",
+                description=(
+                    "Move an application record through the recruiting state machine with stage, note, and channel context. "
+                    "Use only known valid state-machine statuses and allowed transitions; do not invent statuses such as resume_collected or force a direct jump after attach_resume_artifact."
+                ),
                 parameters={
                     "type": "object",
                     "properties": {

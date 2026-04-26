@@ -57,11 +57,12 @@ def test_runtime_limits_split_between_round_and_turn() -> None:
     round_limits = RoundLimits()
     turn_limits = TurnLimits()
 
-    assert round_limits.token_budget > 0
+    assert round_limits.token_budget is None
     assert round_limits.max_tool_roundtrips > 0
     assert round_limits.max_wakeup_delay_seconds >= round_limits.min_wakeup_delay_seconds
-    assert turn_limits.max_rounds_per_turn > 0
-    assert turn_limits.turn_timeout_seconds > 0
+    assert turn_limits.max_rounds_per_turn is None
+    assert turn_limits.turn_timeout_seconds is None
+    assert turn_limits.token_budget is None
 
 
 def test_tool_execution_result_message_content_uses_raw_serialized_output() -> None:

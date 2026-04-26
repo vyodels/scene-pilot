@@ -36,8 +36,3 @@
 ## Context Hints
 
 - trigger: scene_template_panel
-
-## Trial Budget
-
-- max_rounds_per_turn: 200
-- turn_timeout_seconds: 12000

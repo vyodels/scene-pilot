@@ -117,6 +117,111 @@ def test_scene_context_creates_episode_records_without_learning_side_effects(tmp
         assert observed_snapshot.environment_descriptor["environment_kind"] == "job_detail"
 
 
+def test_scene_context_only_uses_round_budget_when_explicit(tmp_path: Path) -> None:
+    session_factory = _session_factory(tmp_path)
+    provider = ScriptedProvider(provider_name="scene-scripted", responses=[LLMResponse()])
+
+    service = SceneContextService(
+        session_factory=session_factory,
+        provider=provider,
+        tool_registry=ToolRegistry(),
+        plugin_host=PluginHost(),
+    )
+
+    result = service.delegate(
+        {
+            "title": "显式预算测试",
+            "instruction": "保持继续，直到显式预算触发。",
+            "max_rounds": 1,
+        }
+    )
+
+    assert result["status"] == "blocked"
+    assert result["blockers"][0]["kind"] == "budget_exhausted"
+    assert result["metrics"]["round_count"] == 1
+
+
+def test_scene_context_rejects_browser_tab_from_different_target_origin(tmp_path: Path) -> None:
+    session_factory = _session_factory(tmp_path)
+    provider = ScriptedProvider(
+        provider_name="scene-scripted",
+        responses=[
+            LLMResponse(
+                tool_calls=[
+                    ToolCall(id="tabs", name="browser_list_tabs", arguments={"currentWindowOnly": False}),
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                tool_calls=[
+                    ToolCall(id="select", name="browser_select_tab", arguments={"tabId": 1}),
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(content='{"status":"blocked","reason":"target mismatch"}'),
+        ],
+    )
+    select_calls: list[dict[str, object]] = []
+    tools = ToolRegistry()
+    tools.register(
+        ToolDefinition(
+            name="browser_list_tabs",
+            description="List tabs.",
+            parameters={"type": "object", "properties": {}, "additionalProperties": True},
+            handler=lambda arguments: {
+                "success": True,
+                "tabs": [
+                    {
+                        "id": 1,
+                        "url": "http://127.0.0.1:11111/candidate-detail.html?id=old",
+                        "title": "Old mock tab",
+                        "active": True,
+                    }
+                ],
+            },
+            metadata={"capabilities": ["browser"], "external_tool": True, "real_environment": True},
+        )
+    )
+    tools.register(
+        ToolDefinition(
+            name="browser_select_tab",
+            description="Select tab.",
+            parameters={"type": "object", "properties": {"tabId": {"type": "integer"}}, "additionalProperties": True},
+            handler=lambda arguments: select_calls.append(dict(arguments)) or {"success": True, "tabId": arguments["tabId"]},
+            metadata={"capabilities": ["browser"], "external_tool": True, "real_environment": True},
+        )
+    )
+
+    service = SceneContextService(
+        session_factory=session_factory,
+        provider=provider,
+        tool_registry=tools,
+        plugin_host=PluginHost(),
+    )
+
+    result = service.delegate(
+        {
+            "title": "目标 origin 隔离测试",
+            "instruction": "只允许操作当前 scene browser_target origin。",
+            "browser_target": {"url": "http://127.0.0.1:22222/jobs", "host": "127.0.0.1"},
+            "preferred_capabilities": ["browser"],
+        }
+    )
+
+    assert result["status"] == "blocked"
+    assert select_calls == []
+    with session_factory() as session:
+        episode = session.query(ExecutionEpisode).one()
+        mismatch_results = [
+            item
+            for item in episode.observations
+            if item["type"] == "tool_result"
+            and item["payload"]["tool_name"] == "browser_select_tab"
+            and item["payload"]["output"].get("error") == "scene_browser_target_mismatch"
+        ]
+        assert mismatch_results
+
+
 def test_scene_context_does_not_mark_failed_structured_final_as_completed(tmp_path: Path) -> None:
     session_factory = _session_factory(tmp_path)
     provider = ScriptedProvider(

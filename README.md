@@ -47,7 +47,7 @@ The agent runtime is organised in three strict layers. Keeping these boundaries 
 │        human-gate decision, persistence                              │
 │                                                                      │
 │  ┌── one turn lifecycle ─────────────────────────────────────────┐   │
-│  │   while not gate and round_no < max_rounds_per_turn:          │   │
+│  │   while not gate/cancelled/explicit_safety_budget:            │   │
 │  │      ┌── one round ────────────────────────────────────────┐  │   │
 │  │      │  AgentKernel.run_round(goal, observation, limits)   │  │   │
 │  │      │  Sense → Assemble → Deliberate → Guard               │  │   │
@@ -82,8 +82,8 @@ The agent runtime is organised in three strict layers. Keeping these boundaries 
 | Memory read / write | `AgentKernel` (Assemble / UpdateMemory nodes, via injected `MemoryService`) | round-internal I/O |
 | Turn record, SSE stream, run record | Driver | Kernel has no lifecycle concept |
 | Cancel coordination | Driver owns cancellation; Kernel, provider, and tool workers observe `cancel_token` at supported checkpoints | cancellation is cooperative and best-effort; already committed side effects are not rolled back |
-| Round-level budget (tokens per round, tool timeout) | Kernel, via `RoundLimits` | round-internal constraint |
-| Turn-level budget (`max_rounds_per_turn`, turn timeout) | Driver | turn-shell concern |
+| Round-level safety budget (tokens per round if explicitly configured, tool timeout) | Kernel, via `RoundLimits` | round-internal constraint |
+| Turn-level safety budget (`max_rounds_per_turn`, turn timeout, token cap if explicitly configured) | Driver | turn-shell concern; defaults are unlimited so long-running Autonomous tasks stop on terminal outcome, cancellation, human boundary, or explicit safety budget |
 | Scheduler fairness, scope cooldown | Driver (Autonomous only) | cross-turn scheduling, unrelated to Kernel |
 | Human confirmation interaction | Driver | only the Driver knows how to notify a human and wait |
 | Recovery turn after confirm | Driver | a new turn is re-issued by the Driver |

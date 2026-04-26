@@ -1031,7 +1031,7 @@ Autonomous Agent 是**周期性决策**——每次只需要看「当前 Observa
 | 术语          | 含义                                                               | 时间尺度  | 例子                                                                                      |
 | ----------- | ---------------------------------------------------------------- | ----- | --------------------------------------------------------------------------------------- |
 | **Turn**    | Driver 处理一次触发后的完整 LLM 驱动循环，直到遇到 `wait_human` / `complete` / `escalate` 等边界 | 秒级~分钟级 | Heartbeat 取到一个任务后，围绕它跑完若干次 `run_round()`，最终结束当前 turn                                   |
-| **Round**   | `AgentKernel.run_round()` 的一次 `model → tool → observe` 往返       | 毫秒~秒级 | 一个 turn 内可能跑 1-8 个 round（受 `max_rounds_per_turn=8` 约束）                                  |
+| **Round**   | `AgentKernel.run_round()` 的一次 `model → tool → observe` 往返       | 毫秒~秒级 | 一个 turn 内可以持续跑多个 round；默认不因 round 数、turn 墙钟时间或 token 消耗中断，只有显式配置的运行安全预算才会限制。                                  |
 | **Run**     | 围绕**一个具体任务/目标**的完整执行（含多个 turn），对应数据库里的 `AgentRun`                | 分钟~小时 | "评估候选人 X" 这个任务从 queued → running → completed 是一个 run                                    |
 | **Session** | 一段连续的人机/agent 上下文边界，对应 `CandidateSession`、`Claude Code session`  | 小时~天  | 一个候选人从初次接触到最终结案是一个 candidate session；用户在 Claude Code 里 `--continue` 恢复同一上下文也是同一 session |
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from recruit_agent.kernel.evaluate import evaluate
+from recruit_agent.runtime.limits import RoundLimits
 from recruit_agent.runtime.models import Deliberation, Effects, LLMUsage
 
 
@@ -44,3 +45,30 @@ def test_evaluate_keeps_explicit_success_payload_complete() -> None:
 
     assert outcome.status == "complete"
     assert outcome.gate_signal == "goal_done"
+
+
+def test_evaluate_default_token_budget_is_unlimited() -> None:
+    outcome = evaluate(
+        Deliberation(
+            final_content='{"status":"completed","created":1}',
+            usage=LLMUsage(total_tokens=99_999_999),
+        ),
+        Effects(),
+    )
+
+    assert outcome.status == "complete"
+    assert outcome.gate_signal == "goal_done"
+
+
+def test_evaluate_explicit_token_budget_still_gates_round() -> None:
+    outcome = evaluate(
+        Deliberation(
+            final_content='{"status":"completed","created":1}',
+            usage=LLMUsage(total_tokens=101),
+        ),
+        Effects(),
+        limits=RoundLimits(token_budget=100),
+    )
+
+    assert outcome.status == "continue"
+    assert outcome.gate_signal == "budget_exhausted"

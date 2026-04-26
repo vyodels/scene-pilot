@@ -55,6 +55,7 @@ browser observe/wait -> Agent decision -> hid_action write -> browser observe/wa
 - `hid_action` 提供类似 Playwright click/type/scroll 的写入层，只是写入由 macOS HID 事件完成。
 - 点击、输入、发送聊天内容、滚动、拖拽、快捷键等浏览器目标 HID 动作后，下一次浏览器目标 HID 动作前必须先调用 `browser_snapshot`、`browser_wait_for_*`、`browser_query_elements`、`browser_locate_download` 或等价 browser 观察工具确认页面、下载或消息状态。
 - 对外的 `click` 原语本身就是连续 HID 操作：VirtualHID 内部会先规划拟人化鼠标移动轨迹，再完成落点和点击。Agent 不应显式传 `move`，也不应把移动作为单独外部工具动作编排。
+- Chrome 下载气泡、下载列表、菜单和 popover 是浏览器外壳 UI，不属于网页 DOM，也不会稳定出现在 `browser_snapshot`。这类遮挡由 VirtualHID 在浏览器目标 `hid_action` 的 `browserChromeOverlayPolicy` preflight 中处理；Agent 不要写页面 JS、mock fallback 或站点分支来关闭它。
 - 这个约束是通用时序协议，不是站点流程硬编码；Agent 仍然必须根据当前 browser 证据自行判断下一步。
 
 ### 1.4 前置条件
