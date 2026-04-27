@@ -12,12 +12,14 @@ export function candidateInitial(name: string): string {
 
 export function CandidateAvatar({
   name,
+  imageUrl,
   active,
   attention,
   title,
   onClick,
 }: {
   name: string;
+  imageUrl?: string | null;
   active?: boolean;
   attention?: boolean;
   title?: string;
@@ -25,7 +27,11 @@ export function CandidateAvatar({
 }): JSX.Element {
   const content = (
     <>
-      {candidateInitial(name)}
+      {imageUrl ? (
+        <img src={imageUrl} alt="" aria-hidden="true" />
+      ) : (
+        candidateInitial(name)
+      )}
       {attention ? <span aria-hidden="true" /> : null}
     </>
   );
@@ -54,6 +60,7 @@ export function CandidateAvatar({
 
 export function ApplicationRecordCard({
   name,
+  avatarUrl,
   time,
   location,
   age,
@@ -68,6 +75,7 @@ export function ApplicationRecordCard({
   onClick,
 }: {
   name: string;
+  avatarUrl?: string | null;
   time: string;
   location: string;
   age: string;
@@ -90,10 +98,11 @@ export function ApplicationRecordCard({
       data-active={active ? "true" : undefined}
       onClick={onClick}
     >
-      <CandidateAvatar name={name} attention={attention} />
+      <CandidateAvatar name={name} imageUrl={avatarUrl} attention={attention} />
       <span className="application-followup-record__main">
         <span className="application-followup-record__topline">
           <strong>{name}</strong>
+          <span className="application-followup-record__status-chip" data-tone={statusTone}>{statusLabel}</span>
           <time>{time || "—"}</time>
         </span>
         <span className="application-followup-record__profile-line">
@@ -107,7 +116,6 @@ export function ApplicationRecordCard({
           {resolvedJobLocation && resolvedJobLocation !== "—" ? (
             <span data-kind="location">{resolvedJobLocation}</span>
           ) : null}
-          <span data-kind="status" data-tone={statusTone}>{statusLabel}</span>
         </span>
       </span>
     </button>

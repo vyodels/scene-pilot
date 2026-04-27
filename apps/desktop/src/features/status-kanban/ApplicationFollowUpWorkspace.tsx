@@ -241,6 +241,18 @@ function compactValue(value: string | number | null | undefined): string {
   return String(value);
 }
 
+function avatarUrlFromContactInfo(contactInfo: unknown): string | undefined {
+  const record = asObject(contactInfo);
+  return pickFirstString(
+    record.avatarUrl,
+    record.avatar_url,
+    record.photoUrl,
+    record.photo_url,
+    record.imageUrl,
+    record.image_url,
+  );
+}
+
 function ageText(age: number | null | undefined, resumeText?: string | null): string {
   if (!age) {
     const parsedAge = parseResumeBasics(resumeText).age;
@@ -381,14 +393,7 @@ export function ApplicationFollowUpWorkspace({
   const facts = asObject(selectedRecord.thread?.facts);
   const contactInfo = asObject(person.contactInfo);
   const parsedResumeBasics = parseResumeBasics(personResumeText(person));
-  const profilePhoto = pickFirstString(
-    contactInfo.avatarUrl,
-    contactInfo.avatar_url,
-    contactInfo.photoUrl,
-    contactInfo.photo_url,
-    contactInfo.imageUrl,
-    contactInfo.image_url,
-  );
+  const profilePhoto = avatarUrlFromContactInfo(contactInfo);
   const profileGender = pickFirstString(contactInfo.gender, contactInfo.sex, facts.gender, facts.sex);
   const profileAge = person.age ?? parsedResumeBasics.age;
   const profileEducation = person.education || parsedResumeBasics.education;
@@ -413,6 +418,21 @@ export function ApplicationFollowUpWorkspace({
     facts.currentCompany,
   );
   const profileCurrentRole = pickFirstString(contactInfo.currentRole, contactInfo.current_role, person.title);
+  const profileDepartment = pickFirstString(
+    contactInfo.department,
+    contactInfo.businessUnit,
+    contactInfo.business_unit,
+    facts.department,
+    facts.businessUnit,
+    job.department,
+  );
+  const profileExpectedRole = pickFirstString(
+    contactInfo.expectedRole,
+    contactInfo.expected_role,
+    contactInfo.targetRole,
+    contactInfo.target_role,
+    job.title,
+  );
   const profileSource = pickFirstString(contactInfo.source, contactInfo.channel, selectedRecord.application.platform);
   const profileAvailability = pickFirstString(contactInfo.availability, contactInfo.availableAt, contactInfo.available_at);
   const profileUpdatedAt = selectedRecord.latestActivityAt ? formatChineseMessageTime(selectedRecord.latestActivityAt) : "—";
@@ -514,6 +534,7 @@ export function ApplicationFollowUpWorkspace({
             <ApplicationRecordCard
               key={item.application.id}
               name={item.application.person.name}
+              avatarUrl={avatarUrlFromContactInfo(item.application.person.contactInfo)}
               time={item.latestActivityAt ? formatChineseMessageTime(item.latestActivityAt) : "—"}
               location={compactValue(item.application.person.location)}
               age={ageText(item.application.person.age, personResumeText(item.application.person))}
@@ -562,19 +583,24 @@ export function ApplicationFollowUpWorkspace({
               <span>◉ {profileSchool || "—"}</span>
               <span>⌂ {person.location || "—"}{profileDistrict ? ` · ${profileDistrict}` : ""}</span>
             </div>
-            <div className="application-followup-profile__work-grid">
-              <span><strong>{copy("Current company", "现公司")}</strong>{profileCurrentCompany || "—"}</span>
-              <span><strong>{copy("Current role", "当前职位")}</strong>{profileCurrentRole || "—"}</span>
-              <span><strong>{copy("Expected city", "期望城市")}</strong>{job.location || person.location || "—"}</span>
-              <span><strong>{copy("Expected salary", "期望薪资")}</strong>{job.compensationText || "—"}</span>
-              <span><strong>{copy("Availability", "到岗时间")}</strong>{profileAvailability || "—"}</span>
-              <span><strong>{copy("Source", "来源渠道")}</strong>{profileSource || "—"}</span>
-              <span><strong>{copy("Updated", "更新时间")}</strong>{profileUpdatedAt}</span>
-            </div>
             <div className="application-followup-profile__tags">
               {person.tags.slice(0, 8).map((tag) => <StatusBadge key={tag} tone="neutral">{tag}</StatusBadge>)}
               {person.tags.length > 8 ? <StatusBadge tone="neutral">+{person.tags.length - 8}</StatusBadge> : null}
             </div>
+          </div>
+          <div className="application-followup-profile__info-column">
+            <span><strong>{copy("Current company", "现公司")}</strong>{profileCurrentCompany || "—"}</span>
+            <span><strong>{copy("Current role", "当前职位")}</strong>{profileCurrentRole || "—"}</span>
+            <span><strong>{copy("Business unit", "所属业务组")}</strong>{profileDepartment || "—"}</span>
+            <span><strong>{copy("Expected role", "期望职位")}</strong>{profileExpectedRole || "—"}</span>
+          </div>
+          <div className="application-followup-profile__info-column">
+            <span><strong>{copy("Expected city", "期望城市")}</strong>{job.location || person.location || "—"}</span>
+            <span><strong>{copy("Expected salary", "期望薪资")}</strong>{job.compensationText || "—"}</span>
+            <span><strong>{copy("Experience", "工作年限")}</strong>{experienceText(person.experienceYears, personResumeText(person))}</span>
+            <span><strong>{copy("Availability", "到岗时间")}</strong>{profileAvailability || "—"}</span>
+            <span><strong>{copy("Source", "来源渠道")}</strong>{profileSource || "—"}</span>
+            <span><strong>{copy("Updated", "更新时间")}</strong>{profileUpdatedAt}</span>
           </div>
           <div className="application-followup-profile__job">
             <strong>{copy("Current role", "当前沟通岗位")}</strong>
