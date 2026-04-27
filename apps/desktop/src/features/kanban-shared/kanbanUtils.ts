@@ -104,52 +104,6 @@ function summarizeSourceToken(value: string): string {
     .trim();
 }
 
-function maskPhoneValue(value: string): string {
-  const digits = value.replace(/\D+/g, "");
-  if (!digits) {
-    return value;
-  }
-  if (digits.length <= 4) {
-    return `${digits.slice(0, 1)}***`;
-  }
-  if (digits.length <= 7) {
-    return `${digits.slice(0, 2)}***${digits.slice(-2)}`;
-  }
-  return `${digits.slice(0, 3)}****${digits.slice(-4)}`;
-}
-
-function maskEmailValue(value: string): string {
-  const [localPart, domain] = value.split("@");
-  if (!localPart || !domain) {
-    return value;
-  }
-  if (localPart.length <= 2) {
-    return `${localPart.slice(0, 1)}***@${domain}`;
-  }
-  return `${localPart.slice(0, 2)}***@${domain}`;
-}
-
-function maskGenericValue(value: string): string {
-  if (value.length <= 2) {
-    return `${value.slice(0, 1)}***`;
-  }
-  if (value.length <= 5) {
-    return `${value.slice(0, 1)}***${value.slice(-1)}`;
-  }
-  return `${value.slice(0, 2)}***${value.slice(-2)}`;
-}
-
-function maskContactValue(channel: ContactDetailSummary["channel"], value: string): string {
-  switch (channel) {
-    case "phone":
-      return maskPhoneValue(value);
-    case "email":
-      return maskEmailValue(value);
-    default:
-      return maskGenericValue(value);
-  }
-}
-
 function normalizeContactIdentity(channel: ContactDetailSummary["channel"], value: string): string {
   switch (channel) {
     case "phone":
@@ -193,7 +147,7 @@ function extractContactDetails(
     const channel = normalizeContactChannel(key);
     entries.push({
       channel,
-      value: maskContactValue(channel, direct),
+      value: direct,
       identity: normalizeContactIdentity(channel, direct),
       source: formatContactSourceLabel(source, detail),
       recordedAt,

@@ -81,6 +81,8 @@ export function ApplicationRecordCard({
   attention?: boolean;
   onClick(): void;
 }): JSX.Element {
+  const resolvedJobLocation = jobLocation.trim();
+
   return (
     <button
       type="button"
@@ -102,7 +104,9 @@ export function ApplicationRecordCard({
         </span>
         <span className="application-followup-record__application-line">
           <span data-kind="job">{jobTitle}</span>
-          <span data-kind="location">{jobLocation}</span>
+          {resolvedJobLocation && resolvedJobLocation !== "—" ? (
+            <span data-kind="location">{resolvedJobLocation}</span>
+          ) : null}
           <span data-kind="status" data-tone={statusTone}>{statusLabel}</span>
         </span>
       </span>

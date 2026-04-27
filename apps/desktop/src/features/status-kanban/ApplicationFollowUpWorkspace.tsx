@@ -396,11 +396,11 @@ export function ApplicationFollowUpWorkspace({
     pickFirstString(contactInfo.workStatus, contactInfo.work_status, facts.workStatus, facts.work_status) ??
     parsedResumeBasics.workStatus;
   const profilePhone = pickFirstString(
-    contactInfo.maskedPhone,
-    contactInfo.masked_phone,
     contactInfo.phone,
     contactInfo.mobile,
     contactInfo.telephone,
+    contactInfo.maskedPhone,
+    contactInfo.masked_phone,
   );
   const profileEmail = pickFirstString(contactInfo.email, contactInfo.mail);
   const profileSchool = pickFirstString(contactInfo.school, contactInfo.university, contactInfo.college, facts.school, facts.university);
