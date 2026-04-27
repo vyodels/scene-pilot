@@ -573,11 +573,7 @@ export function ApplicationFollowUpWorkspace({
 
       <main className="application-followup-workspace__main">
         <section className="application-followup-profile">
-          {profilePhoto ? (
-            <img className="application-followup-profile__portrait" src={profilePhoto} alt={person.name} />
-          ) : (
-            <CandidateAvatar name={person.name} />
-          )}
+          <CandidateAvatar name={person.name} imageUrl={profilePhoto} />
           <div className="application-followup-profile__identity">
             <div className="application-followup-profile__title-row">
               <h2>{person.name}</h2>

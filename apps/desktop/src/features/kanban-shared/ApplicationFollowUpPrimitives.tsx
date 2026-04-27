@@ -25,10 +25,17 @@ export function CandidateAvatar({
   title?: string;
   onClick?: () => void;
 }): JSX.Element {
+  const [imageFailed, setImageFailed] = React.useState(false);
+
+  React.useEffect(() => {
+    setImageFailed(false);
+  }, [imageUrl]);
+
+  const canRenderImage = Boolean(imageUrl && !imageFailed);
   const content = (
     <>
-      {imageUrl ? (
-        <img src={imageUrl} alt="" aria-hidden="true" />
+      {canRenderImage ? (
+        <img src={imageUrl ?? undefined} alt="" aria-hidden="true" onError={() => setImageFailed(true)} />
       ) : (
         candidateInitial(name)
       )}

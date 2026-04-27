@@ -45,6 +45,29 @@ function padDatePart(value: number): string {
   return String(value).padStart(2, "0");
 }
 
+function formatDateTimeParts(date: Date): {
+  year: string;
+  month: string;
+  day: string;
+  hours: string;
+  minutes: string;
+  seconds: string;
+} {
+  return {
+    year: String(date.getFullYear()),
+    month: padDatePart(date.getMonth() + 1),
+    day: padDatePart(date.getDate()),
+    hours: padDatePart(date.getHours()),
+    minutes: padDatePart(date.getMinutes()),
+    seconds: padDatePart(date.getSeconds()),
+  };
+}
+
+function formatFullDateTime(date: Date): string {
+  const { year, month, day, hours, minutes, seconds } = formatDateTimeParts(date);
+  return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+}
+
 export function formatPercent(value: number): string {
   return `${Math.round(value)}%`;
 }
@@ -54,12 +77,7 @@ export function formatCompactDate(iso: string | number | Date | null | undefined
   if (!date) {
     return iso == null ? "" : String(iso);
   }
-  return new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(date);
+  return formatFullDateTime(date);
 }
 
 export function formatChineseMessageTime(iso: string | number | Date | null | undefined): string {
@@ -69,17 +87,14 @@ export function formatChineseMessageTime(iso: string | number | Date | null | un
   }
 
   const now = new Date();
+  const { year, month, day, hours, minutes } = formatDateTimeParts(date);
   const isSameDay =
     date.getFullYear() === now.getFullYear() &&
     date.getMonth() === now.getMonth() &&
     date.getDate() === now.getDate();
 
   if (isSameDay) {
-    return new Intl.DateTimeFormat("zh-CN", {
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-    }).format(date);
+    return `${hours}:${minutes}`;
   }
 
   const yesterday = new Date(now);
@@ -89,15 +104,28 @@ export function formatChineseMessageTime(iso: string | number | Date | null | un
     date.getMonth() === yesterday.getMonth() &&
     date.getDate() === yesterday.getDate();
 
-  if (isYesterday) {
-    return "昨天";
+  if (isYesterday && date.getFullYear() === now.getFullYear()) {
+    return `昨天 ${hours}:${minutes}`;
   }
 
   if (date.getFullYear() === now.getFullYear()) {
-    return `${date.getMonth() + 1}月${date.getDate()}日`;
+    return `${month}-${day} ${hours}:${minutes}`;
   }
 
-  return `${date.getFullYear()}/${padDatePart(date.getMonth() + 1)}/${padDatePart(date.getDate())}`;
+  return `${year}-${month}-${day} ${hours}:${minutes}`;
+}
+
+export function formatChineseChatTime(iso: string | number | Date | null | undefined): string {
+  const date = parseDateCandidate(iso);
+  if (!date) {
+    return iso == null ? "" : String(iso);
+  }
+
+  const { year, month, day, hours, minutes } = formatDateTimeParts(date);
+  if (date.getFullYear() === new Date().getFullYear()) {
+    return `${month}-${day} ${hours}:${minutes}`;
+  }
+  return `${year}-${month}-${day} ${hours}:${minutes}`;
 }
 
 export function formatDateTime(iso: string | number | Date | null | undefined): string {
@@ -106,14 +134,7 @@ export function formatDateTime(iso: string | number | Date | null | undefined): 
     return iso == null ? "" : String(iso);
   }
 
-  const year = date.getFullYear();
-  const month = padDatePart(date.getMonth() + 1);
-  const day = padDatePart(date.getDate());
-  const hours = padDatePart(date.getHours());
-  const minutes = padDatePart(date.getMinutes());
-  const seconds = padDatePart(date.getSeconds());
-
-  return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+  return formatFullDateTime(date);
 }
 
 export function formatMoney(value: number): string {
