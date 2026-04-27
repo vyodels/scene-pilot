@@ -7,6 +7,8 @@ interface SidebarProps {
   active: WorkspaceTab;
   onChange(tab: WorkspaceTab): void;
   counts: Partial<Record<WorkspaceTab, number>>;
+  expanded?: boolean;
+  onExpandedChange?(expanded: boolean): void;
   agentsOpen?: boolean;
   agentStatus?: AgentSnapshot["status"];
   agentCount?: number;
@@ -15,7 +17,9 @@ interface SidebarProps {
 
 const tabs: Array<{ key: WorkspaceTab; labelEn: string; labelZh: string; shortZh: string }> = [
   { key: "home", labelEn: "Home", labelZh: "首页", shortZh: "首页" },
-  { key: "candidates", labelEn: "Candidates", labelZh: "候选人", shortZh: "工作台" },
+  { key: "applicationFunnel", labelEn: "Application funnel", labelZh: "投递记录漏斗", shortZh: "漏斗" },
+  { key: "applicationFollowUp", labelEn: "Application follow-up", labelZh: "投递记录跟进", shortZh: "跟进" },
+  { key: "jdManagement", labelEn: "Position management", labelZh: "职位管理", shortZh: "职位" },
   { key: "settings", labelEn: "Settings", labelZh: "设置", shortZh: "设置" },
 ];
 
@@ -40,13 +44,29 @@ function SidebarGlyph({ tab }: { tab: WorkspaceTab | "agents" }): JSX.Element {
           <path d="M6.5 10.5V19h11v-8.5" />
         </svg>
       );
-    case "candidates":
+    case "applicationFunnel":
       return (
         <svg {...shared}>
-          <circle cx="9" cy="8" r="3" />
-          <path d="M4.5 18c.9-2.4 2.8-4 4.5-4s3.6 1.6 4.5 4" />
-          <path d="M16 10.5c1.7.4 3 1.8 3.5 3.5" />
-          <path d="M16.5 6.5a2.5 2.5 0 0 1 0 5" />
+          <path d="M4 5h16" />
+          <path d="M7 10h10" />
+          <path d="M10 15h4" />
+          <path d="M12 15v4" />
+        </svg>
+      );
+    case "applicationFollowUp":
+      return (
+        <svg {...shared}>
+          <path d="m4.5 12 15-7-4.6 14-3.1-5.8L4.5 12Z" />
+          <path d="m11.8 13.2 3.1-3.1" />
+        </svg>
+      );
+    case "jdManagement":
+      return (
+        <svg {...shared}>
+          <rect x="4.5" y="7" width="15" height="12" rx="2" />
+          <path d="M9 7V5.8C9 4.8 9.8 4 10.8 4h2.4C14.2 4 15 4.8 15 5.8V7" />
+          <path d="M4.5 12h15" />
+          <path d="M10 12v1.2h4V12" />
         </svg>
       );
     case "settings":
@@ -66,12 +86,13 @@ function SidebarGlyph({ tab }: { tab: WorkspaceTab | "agents" }): JSX.Element {
     default:
       return (
         <svg {...shared}>
-          <rect x="5" y="5" width="14" height="14" rx="4" />
-          <path d="M9 9h6v6H9z" />
-          <path d="M9 3.5v2" />
-          <path d="M15 3.5v2" />
-          <path d="M9 18.5v2" />
-          <path d="M15 18.5v2" />
+          <rect x="6" y="8" width="12" height="10" rx="3" />
+          <path d="M12 5v3" />
+          <path d="M9.5 13h.01" />
+          <path d="M14.5 13h.01" />
+          <path d="M9.5 16h5" />
+          <path d="M4 12.5h2" />
+          <path d="M18 12.5h2" />
         </svg>
       );
   }
@@ -81,6 +102,8 @@ export function Sidebar({
   active,
   onChange,
   counts,
+  expanded = false,
+  onExpandedChange,
   agentsOpen = false,
   agentStatus = "idle",
   agentCount = 0,
@@ -89,10 +112,19 @@ export function Sidebar({
   const { copy } = useI18n();
 
   return (
-    <aside className="workspace-sidebar">
+    <aside className="workspace-sidebar" data-expanded={expanded ? "true" : undefined}>
       <div className="workspace-sidebar__brand">
         <div className="workspace-sidebar__logo">RA</div>
         <div className="workspace-sidebar__eyebrow">{copy("Smart recruiting", "智能招聘")}</div>
+        <button
+          type="button"
+          className="workspace-sidebar__toggle"
+          aria-label={expanded ? copy("Collapse sidebar", "收起侧边栏") : copy("Expand sidebar", "展开侧边栏")}
+          aria-expanded={expanded}
+          onClick={() => onExpandedChange?.(!expanded)}
+        >
+          {expanded ? "‹" : "›"}
+        </button>
       </div>
 
       <nav className="workspace-sidebar__nav" aria-label={copy("Workspace sections", "工作区分区")}>
@@ -112,7 +144,7 @@ export function Sidebar({
               <span className="workspace-sidebar__item-icon">
                 <SidebarGlyph tab={tab.key} />
               </span>
-              <span className="workspace-sidebar__item-label">{copy(tab.labelEn, tab.shortZh)}</span>
+              <span className="workspace-sidebar__item-label">{copy(tab.labelEn, expanded ? tab.labelZh : tab.shortZh)}</span>
               {count > 0 ? <span className="workspace-sidebar__count">{count > 9 ? "9+" : count}</span> : null}
             </button>
           );

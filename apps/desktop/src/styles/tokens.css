@@ -95,7 +95,7 @@
   --line-height-base:  1.6;
 
   /* —— 骨架尺寸（见规范第 5 节） —— */
-  --layout-sider-width:       72px;
+  --layout-sider-width:       56px;
   --layout-topnav-height:     56px;
   --layout-left-list-width:   280px;
   --layout-right-panel-width: 320px;

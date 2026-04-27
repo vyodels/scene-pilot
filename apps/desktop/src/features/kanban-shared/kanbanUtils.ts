@@ -44,6 +44,13 @@ export interface ResumeArtifactSummary {
   contactSummary?: string;
 }
 
+export function applicationScopedLabel(label: string): string {
+  return label
+    .replace(/候选人/g, "投递人")
+    .replace(/\bCandidate\b/g, "Applicant")
+    .replace(/\bcandidate\b/g, "applicant");
+}
+
 const orderedContactKeys = [
   "phone",
   "mobile",

@@ -23,6 +23,7 @@ interface CandidatesKanbanViewProps {
     payload: { direction: string; content: string; messageType?: string; platform?: string },
   ): Promise<unknown> | void;
   onTransition(applicationId: string, payload: ApplicationTransitionPayload): Promise<unknown> | void;
+  onOpenDashboard(): void;
 }
 
 export function CandidatesKanbanView({
@@ -38,6 +39,7 @@ export function CandidatesKanbanView({
   onRefresh,
   onCreateEntry,
   onTransition,
+  onOpenDashboard,
 }: CandidatesKanbanViewProps): JSX.Element {
   const { copy } = useI18n();
 
@@ -76,6 +78,7 @@ export function CandidatesKanbanView({
         onRefresh={onRefresh}
         onCreateEntry={onCreateEntry}
         onTransition={onTransition}
+        onOpenDashboard={onOpenDashboard}
       />
     )
   );

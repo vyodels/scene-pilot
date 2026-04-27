@@ -1,19 +1,20 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import type { ApplicationTransitionPayload, RecruitmentStateMachine, StateNode } from "@recruit-agent/shared";
-import { CandidateTable } from "../kanban-shared/CandidateTable";
-import { CandidateCommunicationPanel } from "../kanban-shared/CandidateCommunicationPanel";
 import {
   CandidateDateRangeControl,
   createApplicationDateRangeState,
   resolveApplicationDateRangeFilter,
   type ApplicationDateRangeState,
 } from "../kanban-shared/CandidateDateRangeControl";
-import { CandidateDetailDrawer } from "../kanban-shared/CandidateDetailDrawer";
-import { ManualStatusOverrideDrawer } from "../kanban-shared/ManualStatusOverrideDrawer";
-import { StatusChain } from "../kanban-shared/StatusChain";
-import { buildApplicationViewModels, isWithinApplicationDateFilter, nodeTone } from "../kanban-shared/kanbanUtils";
+import {
+  applicationScopedLabel,
+  buildApplicationViewModels,
+  isWithinApplicationDateFilter,
+  nodeTone,
+} from "../kanban-shared/kanbanUtils";
 import type { ApplicationFollowUpSummaryDefinition, ApplicationRecord, ApplicationThreadRecord } from "../../lib/types";
 import { useI18n } from "../../lib/i18n";
+import { ApplicationFollowUpWorkspace } from "./ApplicationFollowUpWorkspace";
 
 interface StatusKanbanViewProps {
   applications: ApplicationRecord[];
@@ -29,6 +30,7 @@ interface StatusKanbanViewProps {
     payload: { direction: string; content: string; messageType?: string; platform?: string },
   ): Promise<unknown> | void;
   onTransition(applicationId: string, payload: ApplicationTransitionPayload): Promise<unknown> | void;
+  onOpenDashboard(): void;
 }
 
 function isGlobalTerminal(node: StateNode): boolean {
@@ -42,48 +44,8 @@ function isBranchNode(node: StateNode): boolean {
   return (node.isTerminal || node.isSoftTerminal) && !node.isSuccess;
 }
 
-function isProcessNode(node: StateNode): boolean {
-  return !isGlobalTerminal(node) && !node.isTerminal && !node.isSoftTerminal;
-}
-
-function estimateStatusNodeWidth(label: string): number {
-  const contentWidth = Array.from(label).reduce((total, char) => {
-    if (/[A-Za-z0-9]/.test(char)) {
-      return total + 8;
-    }
-    if (char === "·" || char === "-" || char === " ") {
-      return total + 5;
-    }
-    return total + 12;
-  }, 0);
-  return contentWidth + 30;
-}
-
-function splitMainNodesIntoRows(nodes: StateNode[], availableWidth: number): StateNode[][] {
-  const rows: StateNode[][] = [];
-  let currentRow: StateNode[] = [];
-  let currentWidth = 0;
-  const maxWidth = Math.max(availableWidth, 720);
-  const connectorWidth = 18;
-
-  for (const node of nodes) {
-    const itemWidth = estimateStatusNodeWidth(`${node.label}-0`);
-    const nextWidth = currentRow.length ? currentWidth + connectorWidth + itemWidth : currentWidth + itemWidth;
-    if (currentRow.length && nextWidth > maxWidth) {
-      rows.push(currentRow);
-      currentRow = [node];
-      currentWidth = itemWidth;
-      continue;
-    }
-    currentRow.push(node);
-    currentWidth = nextWidth;
-  }
-
-  if (currentRow.length) {
-    rows.push(currentRow);
-  }
-
-  return rows;
+function applicationStatusLabel(label: string): string {
+  return applicationScopedLabel(label);
 }
 
 function buildFallbackSummaryDefinitions(
@@ -107,7 +69,7 @@ function buildFallbackSummaryDefinitions(
   const humanRequiredStatuses = visibleNodes
     .filter((node) => activeStatuses.includes(node.id) && node.executionConfig?.mode === "human_required")
     .map((node) => node.id);
-  const labelById = new Map(visibleNodes.map((node) => [node.id, node.label]));
+  const labelById = new Map(visibleNodes.map((node) => [node.id, applicationStatusLabel(node.label)]));
 
   const toLabels = (statusIds: string[]) => statusIds.map((statusId) => labelById.get(statusId) ?? statusId);
 
@@ -116,8 +78,8 @@ function buildFallbackSummaryDefinitions(
       key: "all",
       label: copy("All statuses", "全部状态"),
       summary: copy(
-        "All candidates currently visible under the current role and date filters.",
-        "当前岗位与时间筛选下可见的全部候选人。",
+        "All applications currently visible under the current role and date filters.",
+        "当前岗位与时间筛选下可见的全部投递记录。",
       ),
       relation: copy("Base pool", "基准池"),
       matchingMode: "all",
@@ -130,8 +92,8 @@ function buildFallbackSummaryDefinitions(
       key: "active",
       label: copy("In follow-up", "跟进中"),
       summary: copy(
-        "Candidates still progressing in the main follow-up workflow.",
-        "仍在主流程里活跃推进的候选人总池。",
+        "Applications still progressing in the main follow-up workflow.",
+        "仍在主流程里活跃推进的投递记录。",
       ),
       relation: copy("Main workflow pool", "主流程总池"),
       matchingMode: "status_set",
@@ -144,8 +106,8 @@ function buildFallbackSummaryDefinitions(
       key: "human",
       label: copy("Needs human", "等待人工"),
       summary: copy(
-        "Candidates currently stopped at a recruiter-operated step.",
-        "当前停在需要招聘员处理或确认节点的候选人。",
+        "Applications currently stopped at a recruiter-operated step.",
+        "当前停在需要招聘员处理或确认节点的投递记录。",
       ),
       relation: copy("Subset of in follow-up", "跟进中的子集"),
       matchingMode: "status_set",
@@ -158,8 +120,8 @@ function buildFallbackSummaryDefinitions(
       key: "no_response",
       label: copy("Retry pending", "无回复·可重试"),
       summary: copy(
-        "Candidates still inside the retry window after no response.",
-        "已发送跟进但尚未回复，仍处于可自动重试窗口内的候选人。",
+        "Applications still inside the retry window after no response.",
+        "已发送跟进但尚未回复，仍处于可自动重试窗口内的投递记录。",
       ),
       relation: copy("Independent waiting pool", "独立等待池"),
       matchingMode: "status_set",
@@ -172,8 +134,8 @@ function buildFallbackSummaryDefinitions(
       key: "cooldown",
       label: copy("Cooldown", "冷却中"),
       summary: copy(
-        "Candidates temporarily paused and waiting for manual reactivation or cooldown expiry.",
-        "已暂时暂停推进，等待冷却期结束或人工重新激活的候选人。",
+        "Applications temporarily paused and waiting for manual reactivation or cooldown expiry.",
+        "已暂时暂停推进，等待冷却期结束或人工重新激活的投递记录。",
       ),
       relation: copy("Paused pool", "暂停池"),
       matchingMode: "status_set",
@@ -186,8 +148,8 @@ function buildFallbackSummaryDefinitions(
       key: "archived",
       label: copy("Archived", "已归档"),
       summary: copy(
-        "Candidates already closed and kept only for record.",
-        "流程已收口，仅做记录保留的候选人。",
+        "Applications already closed and kept only for record.",
+        "流程已收口，仅做记录保留的投递记录。",
       ),
       relation: copy("Closed state", "收口态"),
       matchingMode: "status_set",
@@ -198,10 +160,10 @@ function buildFallbackSummaryDefinitions(
     },
     {
       key: "candidate_withdrew",
-      label: copy("Candidate withdrew", "候选人主动放弃"),
+      label: copy("Application withdrew", "投递人主动放弃"),
       summary: copy(
-        "Candidates who explicitly withdrew from the current process.",
-        "候选人明确表示退出当前流程，不再继续推进。",
+        "Applications where the applicant explicitly withdrew from the current process.",
+        "投递人明确表示退出当前流程，不再继续推进。",
       ),
       relation: copy("Closed state", "收口态"),
       matchingMode: "status_set",
@@ -224,19 +186,16 @@ export function StatusKanbanView({
   onRefresh,
   onCreateEntry,
   onTransition,
+  onOpenDashboard,
 }: StatusKanbanViewProps): JSX.Element {
   const { copy } = useI18n();
   const [jobFilter, setJobFilter] = useState("all");
-  const [visibilityFilter, setVisibilityFilter] = useState<"all" | "active" | "human">("all");
+  const [statusFilter, setStatusFilter] = useState<ApplicationFollowUpSummaryDefinition["key"]>("all");
   const [dateRange, setDateRange] = useState<ApplicationDateRangeState>(() => createApplicationDateRangeState());
   const [selectedStatus, setSelectedStatus] = useState<string>("all");
-  const [hoveredSummaryKey, setHoveredSummaryKey] =
-    useState<ApplicationFollowUpSummaryDefinition["key"] | null>(null);
-  const [activeConversationApplicationId, setActiveConversationApplicationId] = useState<string>();
-  const [detailApplicationId, setDetailApplicationId] = useState<string>();
-  const [overrideApplicationId, setOverrideApplicationId] = useState<string>();
-  const chainContainerRef = useRef<HTMLDivElement | null>(null);
-  const [chainWidth, setChainWidth] = useState(1200);
+  const [selectedApplicationId, setSelectedApplicationId] = useState<string>();
+  const [stageExpanded, setStageExpanded] = useState(false);
+  const [topSearch, setTopSearch] = useState("");
 
   const models = useMemo(
     () => buildApplicationViewModels(applications, threads, stateMachine),
@@ -292,20 +251,38 @@ export function StatusKanbanView({
         if (!isWithinApplicationDateFilter(item.latestActivityAt, effectiveDateFilter)) {
           return false;
         }
+        const keyword = topSearch.trim().toLowerCase();
+        if (keyword) {
+          const haystack = [
+            item.application.person.name,
+            item.application.person.title,
+            item.application.person.location,
+            item.application.jobDescription.title,
+            item.application.platform,
+            item.currentStatusLabel,
+            item.contactSummary,
+          ]
+            .filter(Boolean)
+            .join(" ")
+            .toLowerCase();
+          if (!haystack.includes(keyword)) {
+            return false;
+          }
+        }
         return true;
       }),
-    [effectiveDateFilter, jobFilter, models],
+    [effectiveDateFilter, jobFilter, models, topSearch],
   );
 
   const filteredModels = useMemo(
     () =>
       baseFilteredModels.filter((item) => {
-        if (visibilityFilter !== "all" && !matchesSummaryDefinition(item, visibilityFilter)) {
+        if (statusFilter !== "all" && !matchesSummaryDefinition(item, statusFilter)) {
           return false;
         }
         return true;
       }),
-    [baseFilteredModels, matchesSummaryDefinition, visibilityFilter],
+    [baseFilteredModels, matchesSummaryDefinition, statusFilter],
   );
 
   const countByStatus = useMemo(() => {
@@ -342,26 +319,13 @@ export function StatusKanbanView({
     [stateMachine.nodes],
   );
 
-  const transitionsByFromState = useMemo(() => {
-    const map = new Map<string, string[]>();
-    for (const transition of [...stateMachine.transitions, ...stateMachine.globalTransitions]) {
-      if (!transition.fromState || transition.fromState === "*") {
-        continue;
-      }
-      const current = map.get(transition.fromState) ?? [];
-      current.push(transition.toState);
-      map.set(transition.fromState, current);
-    }
-    return map;
-  }, [stateMachine.globalTransitions, stateMachine.transitions]);
-
   const statusSummaryOptions = useMemo(() => {
     return effectiveSummaryDefinitions.map((definition) => ({
       ...definition,
       label:
         definition.key === "all"
           ? copy("All statuses", "全部状态")
-          : definition.label,
+          : applicationScopedLabel(definition.label),
       count:
         definition.key === "all"
           ? baseFilteredModels.length
@@ -372,33 +336,59 @@ export function StatusKanbanView({
     }));
   }, [baseFilteredModels, copy, effectiveSummaryDefinitions, matchesSummaryDefinition]);
 
-  const rows = useMemo(
-    () =>
-      splitMainNodesIntoRows(mainNodes, chainWidth - 8).map((nodesInRow, rowIndex) => ({
-        key: `main-${rowIndex + 1}`,
-        items: nodesInRow.map((node) => {
-          const count = countByStatus.get(node.id) ?? 0;
-          return {
-            statusId: node.id,
-            label: node.label,
-            count,
-            tone: nodeTone(node),
-            emphasized: node.executionConfig?.mode === "human_required",
-            showAlertMarker: isProcessNode(node) && count > 0,
-            branches: branchNodes
-              .filter((branch) => (transitionsByFromState.get(node.id) ?? []).includes(branch.id))
-              .map((branch) => ({
-                statusId: branch.id,
-                label: branch.label,
-                count: countByStatus.get(branch.id) ?? 0,
-                tone: nodeTone(branch),
-                emphasized: branch.executionConfig?.mode === "human_required",
-              })),
-          };
-        }),
-      })),
-    [branchNodes, chainWidth, countByStatus, mainNodes, transitionsByFromState],
+  const statusFilterOptions = useMemo(
+    () => statusSummaryOptions.filter((option) => option.key === "all" || option.kind === "status"),
+    [statusSummaryOptions],
   );
+
+  const stageItems = useMemo(
+    () =>
+      mainNodes.map((node) => ({
+        node,
+        count: countByStatus.get(node.id) ?? 0,
+        tone: nodeTone(node),
+      })),
+    [countByStatus, mainNodes],
+  );
+
+  const branchItems = useMemo(() => {
+    const nodeById = new Map(stateMachine.nodes.map((node) => [node.id, node]));
+    const mainNodeIds = new Set(mainNodes.map((node) => node.id));
+    return branchNodes.map((branch) => {
+      const parentLinks = [...stateMachine.transitions, ...stateMachine.globalTransitions]
+        .filter((transition) => transition.toState === branch.id)
+        .map((transition) => transition.fromState)
+        .filter((fromState, index, array) => fromState !== "*" && array.indexOf(fromState) === index)
+        .map((fromState) => {
+          const parent = nodeById.get(fromState);
+          const parentId = mainNodeIds.has(fromState) ? fromState : "all";
+          return {
+            parentId,
+            fromState,
+            fromLabel: parent ? applicationStatusLabel(parent.label) : fromState,
+          };
+        });
+      return {
+        node: branch,
+        count: countByStatus.get(branch.id) ?? 0,
+        links: parentLinks.length
+          ? parentLinks
+          : [{ parentId: "all", fromState: "*", fromLabel: copy("Any main stage", "任意主流程节点") }],
+      };
+    });
+  }, [branchNodes, copy, countByStatus, mainNodes, stateMachine.globalTransitions, stateMachine.nodes, stateMachine.transitions]);
+
+  const branchItemsByParent = useMemo(() => {
+    const itemsByParent = new Map<string, Array<(typeof branchItems)[number] & { fromLabel: string }>>();
+    for (const item of branchItems) {
+      for (const link of item.links) {
+        const current = itemsByParent.get(link.parentId) ?? [];
+        current.push({ ...item, fromLabel: link.fromLabel });
+        itemsByParent.set(link.parentId, current);
+      }
+    }
+    return itemsByParent;
+  }, [branchItems]);
 
   const tableApplications = useMemo(
     () =>
@@ -407,42 +397,15 @@ export function StatusKanbanView({
         : filteredModels.filter((item) => item.displayStatus === selectedStatus),
     [filteredModels, selectedStatus],
   );
-  const detailRecord = tableApplications.find((item) => item.application.id === detailApplicationId) ?? null;
-  const overrideRecord =
-    tableApplications.find((item) => item.application.id === overrideApplicationId) ??
-    (detailRecord?.application.id === overrideApplicationId ? detailRecord : null);
-
-  useEffect(() => {
-    if (!chainContainerRef.current || typeof ResizeObserver === "undefined") {
-      return undefined;
-    }
-    const observer = new ResizeObserver((entries) => {
-      const nextWidth = entries[0]?.contentRect.width ?? 0;
-      if (nextWidth > 0) {
-        setChainWidth(nextWidth);
-      }
-    });
-    observer.observe(chainContainerRef.current);
-    return () => observer.disconnect();
-  }, []);
-
   useEffect(() => {
     if (!tableApplications.length) {
-      setActiveConversationApplicationId(undefined);
-      setDetailApplicationId(undefined);
-      setOverrideApplicationId(undefined);
+      setSelectedApplicationId(undefined);
       return;
     }
-    if (activeConversationApplicationId && !tableApplications.some((item) => item.application.id === activeConversationApplicationId)) {
-      setActiveConversationApplicationId(undefined);
+    if (!selectedApplicationId || !tableApplications.some((item) => item.application.id === selectedApplicationId)) {
+      setSelectedApplicationId(tableApplications[0]?.application.id);
     }
-    if (detailApplicationId && !tableApplications.some((item) => item.application.id === detailApplicationId)) {
-      setDetailApplicationId(undefined);
-    }
-    if (overrideApplicationId && !tableApplications.some((item) => item.application.id === overrideApplicationId)) {
-      setOverrideApplicationId(undefined);
-    }
-  }, [activeConversationApplicationId, detailApplicationId, overrideApplicationId, tableApplications]);
+  }, [selectedApplicationId, tableApplications]);
 
   useEffect(() => {
     if (!preferredApplicationId || preferredConversationToken == null) {
@@ -453,26 +416,17 @@ export function StatusKanbanView({
       return;
     }
     setJobFilter("all");
-    setVisibilityFilter("all");
+    setStatusFilter("all");
     setSelectedStatus(target.displayStatus);
-    setActiveConversationApplicationId(preferredApplicationId);
+    setSelectedApplicationId(preferredApplicationId);
   }, [models, preferredApplicationId, preferredConversationToken]);
 
-  const selectedLabel =
-    selectedStatus === "all"
-      ? copy("All candidates", "全部候选人")
-      : selectedStatus === "cooldown"
-        ? copy("Cooldown candidates", "冷却中候选人")
-        : selectedStatus === "no_response"
-          ? copy("Retry pending candidates", "无回复·可重试候选人")
-      : stateMachine.nodes.find((node) => node.id === selectedStatus)?.label ?? copy("Status not mapped", "状态未映射");
-
   return (
-    <div className="kanban-page">
-      <div className="kanban-filter-row status-kanban__summary-row">
-        <label className="kanban-filter">
-          <span className="kanban-filter__label">{copy("Role", "岗位")}</span>
-          <select value={jobFilter} onChange={(event) => setJobFilter(event.target.value)} className="kanban-filter__select">
+    <div className="application-followup-page">
+      <div className="application-followup-toolbar">
+        <label>
+          <span>{copy("Role", "岗位")}</span>
+          <select value={jobFilter} onChange={(event) => setJobFilter(event.target.value)}>
             <option value="all">{copy("All roles", "全部")}</option>
             {jobOptions.map((jobTitle) => (
               <option key={jobTitle} value={jobTitle}>
@@ -481,135 +435,138 @@ export function StatusKanbanView({
             ))}
           </select>
         </label>
+        <label>
+          <span>{copy("Status filter", "状态筛选")}</span>
+          <select value={statusFilter} onChange={(event) => {
+            setStatusFilter(event.target.value as ApplicationFollowUpSummaryDefinition["key"]);
+            setSelectedStatus("all");
+          }}>
+            {statusFilterOptions.map((option) => (
+              <option key={option.key} value={option.key}>
+                {option.key === "all" ? copy("All", "全部") : option.label} · {option.count}
+              </option>
+            ))}
+          </select>
+        </label>
         <CandidateDateRangeControl value={dateRange} onChange={setDateRange} />
-        <div className="kanban-filter__group">
-          {statusSummaryOptions.map((option) => (
-            <div
-              key={option.key}
-              className="kanban-summary-filter"
-              onMouseEnter={() => setHoveredSummaryKey(option.key)}
-              onMouseLeave={() => setHoveredSummaryKey((current) => (current === option.key ? null : current))}
-            >
+        <label>
+          <span>{copy("Status view", "状态视图")}</span>
+          <select value={selectedStatus} onChange={(event) => setSelectedStatus(event.target.value)}>
+            <option value="all">{copy("Main flow", "主流程")}</option>
+            {stateMachine.nodes
+              .filter((node) => node.uiConfig?.showInKanban !== false && !node.isTransient)
+              .map((node) => (
+                <option key={node.id} value={node.id}>
+                  {applicationStatusLabel(node.label)}
+                </option>
+              ))}
+          </select>
+        </label>
+        <label className="application-followup-toolbar__search">
+          <span>{copy("Search", "搜索")}</span>
+          <input
+            value={topSearch}
+            onChange={(event) => setTopSearch(event.target.value)}
+            placeholder={copy("Application / name / phone / email", "搜索投递记录 / 姓名 / 手机号 / 邮箱")}
+          />
+        </label>
+        <button type="button" onClick={() => void onRefresh?.()}>{copy("Refresh", "刷新")}</button>
+      </div>
+
+      <div
+        className="application-followup-stage-strip"
+        data-expanded={stageExpanded ? "true" : undefined}
+        aria-label={copy("Application stages", "投递状态流程")}
+      >
+        <div className="application-followup-stage-strip__scroller">
+          <div className="application-followup-stage-strip__flow">
+            <div className="application-followup-stage-strip__stage-column">
               <button
                 type="button"
-                className="kanban-filter__toggle"
-                data-active={
-                  option.kind === "visibility"
-                    ? visibilityFilter === option.key && selectedStatus === "all"
-                    : selectedStatus === option.key
-                }
-                onFocus={() => setHoveredSummaryKey(option.key)}
-                onBlur={() => setHoveredSummaryKey((current) => (current === option.key ? null : current))}
-                onClick={() => {
-                  if (option.kind === "visibility") {
-                    setVisibilityFilter(option.key as "all" | "active" | "human");
-                    setSelectedStatus("all");
-                  } else {
-                    setVisibilityFilter("all");
-                    setSelectedStatus(option.key);
-                  }
-                }}
+                className="application-followup-stage-strip__node"
+                data-active={selectedStatus === "all"}
+                onClick={() => setSelectedStatus("all")}
               >
-                {`${option.label}-${option.count}`}
+                <span>{copy("All", "全部")}</span>
+                <strong>{filteredModels.length}</strong>
               </button>
-              {hoveredSummaryKey === option.key ? (
-                <div className="kanban-summary-filter__popover" role="dialog" aria-label={option.label}>
-                  <div className="kanban-summary-filter__title">{option.label}</div>
-                  <div className="kanban-summary-filter__summary">{option.summary}</div>
-                  {option.relation ? (
-                    <div className="kanban-summary-filter__meta">
-                      <span className="kanban-summary-filter__pill">{option.relation}</span>
-                    </div>
-                  ) : null}
-                  {option.includeLabels.length ? (
-                    <div className="kanban-summary-filter__group">
-                      <div className="kanban-summary-filter__group-label">{copy("Includes", "包含")}</div>
-                      <div className="kanban-summary-filter__pill-row">
-                        {option.includeLabels.map((label) => (
-                          <span key={`${option.key}:include:${label}`} className="kanban-summary-filter__pill">
-                            {label}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  ) : null}
-                  {option.excludeLabels.length ? (
-                    <div className="kanban-summary-filter__group">
-                      <div className="kanban-summary-filter__group-label">{copy("Excludes", "不包含")}</div>
-                      <div className="kanban-summary-filter__pill-row">
-                        {option.excludeLabels.map((label) => (
-                          <span
-                            key={`${option.key}:exclude:${label}`}
-                            className="kanban-summary-filter__pill kanban-summary-filter__pill--muted"
-                          >
-                            {label}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  ) : null}
+              {stageExpanded && branchItemsByParent.get("all")?.length ? (
+                <div className="application-followup-stage-strip__branch-slot">
+                  {branchItemsByParent.get("all")?.map((item) => (
+                    <button
+                      key={item.node.id}
+                      type="button"
+                      className="application-followup-stage-strip__branch-node"
+                      data-active={selectedStatus === item.node.id}
+                      onClick={() => setSelectedStatus(item.node.id)}
+                    >
+                      <span className="application-followup-stage-strip__branch-parent">{item.fromLabel}</span>
+                      <span className="application-followup-stage-strip__branch-connector">↓</span>
+                      <strong>{applicationStatusLabel(item.node.label)}</strong>
+                      <em>{item.count}</em>
+                    </button>
+                  ))}
                 </div>
               ) : null}
             </div>
-          ))}
+            {stageItems.map((item) => (
+              <React.Fragment key={item.node.id}>
+                <span className="application-followup-stage-strip__arrow">→</span>
+                <div className="application-followup-stage-strip__stage-column">
+                  <button
+                    type="button"
+                    className="application-followup-stage-strip__node"
+                    data-active={selectedStatus === item.node.id}
+                    data-tone={item.tone}
+                    onClick={() => setSelectedStatus(item.node.id)}
+                  >
+                    <span>{applicationStatusLabel(item.node.label)}</span>
+                    <strong>{item.count}</strong>
+                  </button>
+                  {stageExpanded && branchItemsByParent.get(item.node.id)?.length ? (
+                    <div className="application-followup-stage-strip__branch-slot">
+                      {branchItemsByParent.get(item.node.id)?.map((branchItem) => (
+                        <button
+                          key={`${item.node.id}:${branchItem.node.id}`}
+                          type="button"
+                          className="application-followup-stage-strip__branch-node"
+                          data-active={selectedStatus === branchItem.node.id}
+                          onClick={() => setSelectedStatus(branchItem.node.id)}
+                        >
+                          <span className="application-followup-stage-strip__branch-parent">{branchItem.fromLabel}</span>
+                          <span className="application-followup-stage-strip__branch-connector">↓</span>
+                          <strong>{applicationStatusLabel(branchItem.node.label)}</strong>
+                          <em>{branchItem.count}</em>
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              </React.Fragment>
+            ))}
+            {branchNodes.length ? (
+              <button
+                type="button"
+                className="application-followup-stage-strip__toggle"
+                onClick={() => setStageExpanded((current) => !current)}
+              >
+                {stageExpanded ? copy("Collapse exception flow", "收起异常流程") : copy("Expand exception flow", "展开异常流程")}
+              </button>
+            ) : null}
+          </div>
         </div>
       </div>
 
-      <div ref={chainContainerRef}>
-        <StatusChain
-          rows={rows}
-          globalTerminalItems={[]}
-          activeStatus={selectedStatus === "no_response" ? "cooldown" : selectedStatus}
-          showOverview={false}
-          humanRequiredTooltip={copy("This node requires recruiter action.", "这个节点是需要人工操作的节点。")}
-          onSelect={setSelectedStatus}
-        />
-      </div>
-
-      <CandidateTable
-        title={selectedLabel}
-        count={tableApplications.length}
+      <ApplicationFollowUpWorkspace
         applications={tableApplications}
+        selectedApplicationId={selectedApplicationId}
         stateMachine={stateMachine}
-        emptyMessage={copy("No candidates in this status under the current filters.", "当前筛选条件下该状态没有候选人。")}
-        onOpenDetail={setDetailApplicationId}
-        onOpenCommunication={setActiveConversationApplicationId}
+        onSelectApplication={setSelectedApplicationId}
+        onOpenFullCockpit={onOpenApplication}
+        onOpenDashboard={onOpenDashboard}
+        onRefresh={onRefresh}
+        onCreateEntry={onCreateEntry}
         onTransition={onTransition}
-      />
-
-      {activeConversationApplicationId ? (
-        <CandidateCommunicationPanel
-          applications={tableApplications}
-          selectedApplicationId={activeConversationApplicationId}
-          stateMachine={stateMachine}
-          onSelectApplication={setActiveConversationApplicationId}
-          onClose={() => setActiveConversationApplicationId(undefined)}
-          onOpenFullCockpit={onOpenApplication}
-          onRefresh={onRefresh}
-          onCreateEntry={onCreateEntry}
-          onTransition={onTransition}
-        />
-      ) : null}
-
-      <CandidateDetailDrawer
-        open={Boolean(detailRecord)}
-        record={detailRecord}
-        stateMachine={stateMachine}
-        onClose={() => setDetailApplicationId(undefined)}
-        onTransition={onTransition}
-        onRequestOverride={() => {
-          if (detailRecord) {
-            setOverrideApplicationId(detailRecord.application.id);
-          }
-        }}
-      />
-
-      <ManualStatusOverrideDrawer
-        open={Boolean(overrideRecord)}
-        record={overrideRecord}
-        stateMachine={stateMachine}
-        onClose={() => setOverrideApplicationId(undefined)}
-        onSubmit={onTransition}
       />
     </div>
   );

@@ -290,7 +290,7 @@ class ApplicationPersonSummaryRead(BaseModel):
     online_resume_text: str | None = Field(default=None, serialization_alias="onlineResumeText")
 
 
-class JobDescriptionSummaryRead(BaseModel):
+class JobDescriptionSummaryRead(JobDescriptionBase):
     model_config = ConfigDict(populate_by_name=True)
 
     job_description_id: str | None = Field(
@@ -298,7 +298,6 @@ class JobDescriptionSummaryRead(BaseModel):
         validation_alias=AliasChoices("job_description_id", "jobDescriptionId"),
         serialization_alias="jobDescriptionId",
     )
-    title: str = "未分配岗位"
 
 
 class ApplicationSubjectRead(BaseModel):
@@ -2214,8 +2213,6 @@ class AgentQueueItemRead(BaseModel):
             "applicationId",
             AliasPath("payload", "application_id"),
             AliasPath("payload", "applicationId"),
-            AliasPath("payload", "candidate_id"),
-            AliasPath("payload", "candidateId"),
         ),
         serialization_alias="applicationId",
     )
@@ -2444,7 +2441,7 @@ class ExecutionTraceRead(BaseModel):
     goal_spec_id: str | None = None
     person_id: str | None = Field(
         default=None,
-        validation_alias=AliasChoices("person_id", "personId", "candidate_id", "candidateId"),
+        validation_alias=AliasChoices("person_id", "personId"),
         serialization_alias="personId",
     )
     application_id: str | None = Field(
@@ -2481,7 +2478,7 @@ class StrategyFragmentRead(BaseModel):
     run_id: str | None = None
     person_id: str | None = Field(
         default=None,
-        validation_alias=AliasChoices("person_id", "personId", "candidate_id", "candidateId"),
+        validation_alias=AliasChoices("person_id", "personId"),
         serialization_alias="personId",
     )
     application_id: str | None = Field(
@@ -2521,7 +2518,7 @@ class ExecutionGraphProjectionRead(BaseModel):
     run_id: str | None = None
     person_id: str | None = Field(
         default=None,
-        validation_alias=AliasChoices("person_id", "personId", "candidate_id", "candidateId"),
+        validation_alias=AliasChoices("person_id", "personId"),
         serialization_alias="personId",
     )
     application_id: str | None = Field(

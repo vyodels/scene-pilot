@@ -1,9 +1,10 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import type { ApplicationTransitionPayload, HumanActionDefinition, RecruitmentStateMachine } from "@recruit-agent/shared";
 import { SectionTabs, StatusBadge } from "../../components";
 import { formatCompactDate } from "../../lib/format";
 import { useI18n } from "../../lib/i18n";
 import {
+  applicationScopedLabel,
   deriveHumanActionsForNode,
   getContactChannels,
   getContactDetails,
@@ -17,12 +18,13 @@ interface CandidateDetailDrawerProps {
   open: boolean;
   record: ApplicationViewModel | null;
   stateMachine: RecruitmentStateMachine;
+  initialTab?: DetailTab;
   onClose(): void;
   onTransition(applicationId: string, payload: ApplicationTransitionPayload): Promise<unknown> | void;
   onRequestOverride(): void;
 }
 
-type DetailTab = "profile" | "resume" | "scores" | "history" | "contact";
+export type DetailTab = "profile" | "resume" | "scores" | "history" | "contact";
 
 interface PendingActionState {
   action: HumanActionDefinition;
@@ -64,7 +66,7 @@ function summarizeSource(
   const trimmed = source.trim();
   const normalized = trimmed.toLowerCase();
   if (normalized === "profile") {
-    return copy("Candidate profile", "候选人资料");
+    return copy("Application profile", "投递记录资料");
   }
   if (normalized.startsWith("resume artifact")) {
     const detail = trimmed.replace(/^resume artifact/i, "").replace(/^[\s·-]+/, "").trim();
@@ -92,6 +94,7 @@ export function CandidateDetailDrawer({
   open,
   record,
   stateMachine,
+  initialTab = "profile",
   onClose,
   onTransition,
   onRequestOverride,
@@ -127,18 +130,25 @@ export function CandidateDetailDrawer({
   const primaryResumePath =
     pickString(personContactInfo.resumePath) ?? pickString(personContactInfo.resume_path);
 
+  useEffect(() => {
+    if (open) {
+      setActiveTab(initialTab);
+    }
+  }, [initialTab, open, record?.application.id]);
+
   if (!open || !record) {
     return null;
   }
 
   const submitAction = async (action: HumanActionDefinition, note?: string) => {
-    const key = `${record.application.id}:${action.toStatus}:${action.label}`;
+    const actionLabel = applicationScopedLabel(action.label);
+    const key = `${record.application.id}:${action.toStatus}:${actionLabel}`;
     setSubmittingKey(key);
     try {
       await onTransition(record.application.id, {
         actor: "recruiter",
         toStatus: action.toStatus,
-        trigger: action.label,
+        trigger: actionLabel,
         note: note?.trim() || undefined,
         metadata: { initiated_from: "candidate_detail_drawer" },
       });
@@ -153,7 +163,7 @@ export function CandidateDetailDrawer({
       <aside className="drawer">
         <header className="drawer__header">
           <div>
-            <div className="drawer__eyebrow">{copy("Candidate detail", "候选人详情")}</div>
+            <div className="drawer__eyebrow">{copy("Application detail", "投递记录详情")}</div>
             <h2 className="drawer__title">{record.application.person.name}</h2>
             <p className="drawer__description">
               {record.application.person.title} · {record.application.person.location}
@@ -382,28 +392,31 @@ export function CandidateDetailDrawer({
 
         <footer className="drawer__footer drawer__footer--spread">
           <div className="drawer__actions">
-            {actions.map((action) => (
-              <button
-                key={action.label}
-                type="button"
-                className="drawer__button"
-                data-style={action.style}
-                disabled={submittingKey === `${record.application.id}:${action.toStatus}:${action.label}`}
-                onClick={() => {
-                  if (action.requiresNote) {
-                    setPendingAction({ action, note: "" });
-                    return;
-                  }
-                  void submitAction(action);
-                }}
-              >
-                {action.label}
-              </button>
-            ))}
+            {actions.map((action) => {
+              const actionLabel = applicationScopedLabel(action.label);
+              return (
+                <button
+                  key={actionLabel}
+                  type="button"
+                  className="drawer__button"
+                  data-style={action.style}
+                  disabled={submittingKey === `${record.application.id}:${action.toStatus}:${actionLabel}`}
+                  onClick={() => {
+                    if (action.requiresNote) {
+                      setPendingAction({ action, note: "" });
+                      return;
+                    }
+                    void submitAction(action);
+                  }}
+                >
+                  {actionLabel}
+                </button>
+              );
+            })}
           </div>
           {pendingAction ? (
             <div className="drawer__note-box">
-              <strong>{pendingAction.action.label}</strong>
+              <strong>{applicationScopedLabel(pendingAction.action.label)}</strong>
               <textarea
                 className="drawer__textarea"
                 rows={3}

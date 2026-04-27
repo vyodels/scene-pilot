@@ -111,6 +111,7 @@ export function FunnelKanbanView({
 
   const selectedNodeLabel =
     visibleMilestones.find((milestone) => milestone.id === selectedMilestone)?.label ?? copy("Selected stage", "当前阶段");
+  const selectedStageCount = stageItems.find((item) => item.milestoneId === selectedMilestone)?.count ?? 0;
   const selectedApplications = useMemo(
     () =>
       jobFilteredModels
@@ -171,36 +172,64 @@ export function FunnelKanbanView({
   }, [models, preferredApplicationId, preferredConversationToken]);
 
   return (
-    <div className="kanban-page">
-      <div className="kanban-filter-row funnel-kanban__filter-row">
-        <label className="kanban-filter">
-          <span className="kanban-filter__label">{copy("Role", "岗位")}</span>
-          <select value={jobFilter} onChange={(event) => setJobFilter(event.target.value)} className="kanban-filter__select">
-            <option value="all">{copy("All roles", "全部")}</option>
-            {jobOptions.map((jobTitle) => (
-              <option key={jobTitle} value={jobTitle}>
-                {jobTitle}
-              </option>
-            ))}
-          </select>
-        </label>
-        <CandidateDateRangeControl value={dateRange} onChange={setDateRange} />
-      </div>
+    <div className="application-funnel-page">
+      <aside className="application-funnel-sidebar">
+        <div className="application-funnel-sidebar__header">
+          <strong>{copy("Application funnel", "投递记录漏斗")}</strong>
+          <span>{copy(`${jobFilteredModels.length} applications`, `${jobFilteredModels.length} 条投递记录`)}</span>
+        </div>
 
-      <div className="funnel-kanban__stage-row">
-        <FunnelStageBar items={stageItems} activeMilestoneId={selectedMilestone} onSelect={setSelectedMilestone} />
-      </div>
+        <div className="application-funnel-sidebar__filters">
+          <label className="kanban-filter">
+            <span className="kanban-filter__label">{copy("Role", "岗位")}</span>
+            <select value={jobFilter} onChange={(event) => setJobFilter(event.target.value)} className="kanban-filter__select">
+              <option value="all">{copy("All roles", "全部")}</option>
+              {jobOptions.map((jobTitle) => (
+                <option key={jobTitle} value={jobTitle}>
+                  {jobTitle}
+                </option>
+              ))}
+            </select>
+          </label>
+          <CandidateDateRangeControl value={dateRange} onChange={setDateRange} />
+        </div>
 
-      <CandidateTable
-        title={selectedNodeLabel}
-        count={selectedApplications.length}
-        applications={selectedApplications}
-        stateMachine={stateMachine}
-        emptyMessage={copy("No candidates reached this funnel milestone under the current filters.", "当前筛选条件下该漏斗阶段没有候选人。")}
-        onOpenDetail={setDetailApplicationId}
-        onOpenCommunication={setActiveConversationApplicationId}
-        onTransition={onTransition}
-      />
+        <div className="application-funnel-sidebar__stage-list" aria-label={copy("Funnel stages", "漏斗阶段")}>
+          {stageItems.map((item) => (
+            <button
+              key={item.milestoneId}
+              type="button"
+              data-active={selectedMilestone === item.milestoneId}
+              onClick={() => setSelectedMilestone(item.milestoneId)}
+            >
+              <span>{item.label}</span>
+              <strong>{item.count}</strong>
+            </button>
+          ))}
+        </div>
+      </aside>
+
+      <main className="application-funnel-main">
+        <div className="application-funnel-main__summary">
+          <strong>{selectedNodeLabel}</strong>
+          <span>{copy(`${selectedStageCount} applications`, `${selectedStageCount} 条投递记录`)}</span>
+        </div>
+
+        <div className="funnel-kanban__stage-row">
+          <FunnelStageBar items={stageItems} activeMilestoneId={selectedMilestone} onSelect={setSelectedMilestone} />
+        </div>
+
+        <CandidateTable
+          title={selectedNodeLabel}
+          count={selectedApplications.length}
+          applications={selectedApplications}
+          stateMachine={stateMachine}
+          emptyMessage={copy("No applications reached this funnel milestone under the current filters.", "当前筛选条件下该漏斗阶段没有投递记录。")}
+          onOpenDetail={setDetailApplicationId}
+          onOpenCommunication={setActiveConversationApplicationId}
+          onTransition={onTransition}
+        />
+      </main>
 
       {activeConversationApplicationId ? (
         <CandidateCommunicationPanel

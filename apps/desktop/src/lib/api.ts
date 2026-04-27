@@ -1080,6 +1080,26 @@ function normalizeApplicationFollowUpSummaryDefinition(raw: unknown): Applicatio
 function normalizePersonSummary(raw: unknown, fallbackContactInfo?: Record<string, unknown>): PersonSummaryRecord {
   const record = asRecord(raw);
   const contactInfo = asRecord(record.contactInfo ?? record.contact_info ?? fallbackContactInfo);
+  const ageValue = Number(
+    record.age ??
+      record.ageYears ??
+      record.age_years ??
+      contactInfo.age ??
+      contactInfo.ageYears ??
+      contactInfo.age_years ??
+      0,
+  );
+  const education = String(
+    record.education ??
+      record.degree ??
+      record.educationBackground ??
+      record.education_background ??
+      contactInfo.education ??
+      contactInfo.degree ??
+      contactInfo.educationBackground ??
+      contactInfo.education_background ??
+      "",
+  ).trim();
   return {
     personId:
       record.personId != null ? String(record.personId) : record.person_id != null ? String(record.person_id) : null,
@@ -1089,10 +1109,12 @@ function normalizePersonSummary(raw: unknown, fallbackContactInfo?: Record<strin
         : record.platform_candidate_id != null
           ? String(record.platform_candidate_id)
           : null,
-    name: String(record.name ?? "Unknown candidate"),
-    title: String(record.title ?? contactInfo.title ?? "候选人"),
+    name: String(record.name ?? "Unknown applicant"),
+    title: String(record.title ?? contactInfo.title ?? "投递人"),
     location: String(record.location ?? contactInfo.location ?? "未知"),
+    age: Number.isFinite(ageValue) && ageValue > 0 ? ageValue : null,
     experienceYears: Number(record.experienceYears ?? record.experience_years ?? contactInfo.experience_years ?? 0),
+    education: education || null,
     tags: asArray<string>(record.tags ?? contactInfo.tags),
     contactInfo,
     resumePath: record.resumePath ? String(record.resumePath) : record.resume_path ? String(record.resume_path) : null,
@@ -1206,11 +1228,12 @@ function normalizeApplicationRecord(raw: unknown): ApplicationRecord {
         record.ai_reasoning ??
         record.onlineResumeText ??
         record.online_resume_text ??
-        "候选人档案等待补充。",
+        "投递记录档案等待补充。",
     ),
     resumeAvailable: Boolean(record.resumeAvailable ?? record.resume_available ?? false),
     person: normalizePersonSummary(
       record.person ?? {},
+      asRecord(record.contactInfo ?? record.contact_info ?? record.contactSnapshot ?? record.contact_snapshot),
     ),
     jobDescription: normalizeJobDescriptionSummary(
       record.jobDescription ?? record.job_description ?? {},

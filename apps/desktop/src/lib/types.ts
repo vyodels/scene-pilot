@@ -2,7 +2,9 @@ import type { ApplicationStatusTransition } from "@recruit-agent/shared";
 
 export type WorkspaceTab =
   | "home"
-  | "candidates"
+  | "applicationFunnel"
+  | "applicationFollowUp"
+  | "jdManagement"
   | "settings";
 
 export type ProviderKind = "openai-compatible" | "anthropic";
@@ -26,7 +28,9 @@ export interface PersonSummaryRecord {
   name: string;
   title: string;
   location: string;
+  age?: number | null;
   experienceYears: number;
+  education?: string | null;
   tags: string[];
   contactInfo: Record<string, unknown>;
   resumePath?: string | null;

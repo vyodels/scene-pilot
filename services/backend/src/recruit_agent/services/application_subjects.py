@@ -45,7 +45,7 @@ def application_payload_from_application(
     person_payload = {
         "person_id": person_id,
         "name": str(getattr(person, "name", "") or ""),
-        "title": str(contact_info.get("title", "候选人") or "候选人"),
+        "title": str(contact_info.get("title", "投递人") or "投递人"),
         "location": str(contact_info.get("location", "未知") or "未知"),
         "experience_years": int(contact_info.get("experience_years", 0) or 0),
         "tags": list(contact_info.get("tags", []) or []),
@@ -84,6 +84,23 @@ def application_payload_from_application(
     job_description_payload = {
         "job_description_id": job_description_id,
         "title": str(getattr(job_description, "title", None) or job_description_id or "未分配岗位"),
+        "company_name": getattr(job_description, "company_name", None),
+        "department": getattr(job_description, "department", None),
+        "location": getattr(job_description, "location", None),
+        "employment_type": getattr(job_description, "employment_type", None),
+        "headcount": getattr(job_description, "headcount", None),
+        "salary_min": getattr(job_description, "salary_min", None),
+        "salary_max": getattr(job_description, "salary_max", None),
+        "compensation_text": getattr(job_description, "compensation_text", None),
+        "experience_requirement": getattr(job_description, "experience_requirement", None),
+        "education_requirement": getattr(job_description, "education_requirement", None),
+        "summary": getattr(job_description, "summary", None),
+        "description": getattr(job_description, "description", None),
+        "requirements": getattr(job_description, "requirements", None),
+        "benefit_tags": list(getattr(job_description, "benefit_tags", None) or []),
+        "detail_metadata": dict(getattr(job_description, "detail_metadata", None) or {}),
+        "status": str(getattr(job_description, "status", None) or "active"),
+        "source": str(getattr(job_description, "source", None) or "manual"),
     }
     return {
         "application_id": application_id,

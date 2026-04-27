@@ -62,6 +62,44 @@ export function formatCompactDate(iso: string | number | Date | null | undefined
   }).format(date);
 }
 
+export function formatChineseMessageTime(iso: string | number | Date | null | undefined): string {
+  const date = parseDateCandidate(iso);
+  if (!date) {
+    return iso == null ? "" : String(iso);
+  }
+
+  const now = new Date();
+  const isSameDay =
+    date.getFullYear() === now.getFullYear() &&
+    date.getMonth() === now.getMonth() &&
+    date.getDate() === now.getDate();
+
+  if (isSameDay) {
+    return new Intl.DateTimeFormat("zh-CN", {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    }).format(date);
+  }
+
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  const isYesterday =
+    date.getFullYear() === yesterday.getFullYear() &&
+    date.getMonth() === yesterday.getMonth() &&
+    date.getDate() === yesterday.getDate();
+
+  if (isYesterday) {
+    return "昨天";
+  }
+
+  if (date.getFullYear() === now.getFullYear()) {
+    return `${date.getMonth() + 1}月${date.getDate()}日`;
+  }
+
+  return `${date.getFullYear()}/${padDatePart(date.getMonth() + 1)}/${padDatePart(date.getDate())}`;
+}
+
 export function formatDateTime(iso: string | number | Date | null | undefined): string {
   const date = parseDateCandidate(iso);
   if (!date) {

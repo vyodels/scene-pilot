@@ -4,7 +4,7 @@ import type {
   RecruitmentStateMachine,
 } from "@recruit-agent/shared";
 import { getFunnelMilestone } from "@recruit-agent/shared";
-import { AppLayout, Panel, SectionTabs, Sidebar, StatusBadge, TopBar } from "../../components";
+import { AppLayout, Panel, Sidebar, StatusBadge, TopBar } from "../../components";
 import { ChatOverlay, FloatingBubble, useChatOverlay } from "../chat-overlay";
 import { apiClient } from "../../lib/api";
 import { formatDateTime } from "../../lib/format";
@@ -206,8 +206,37 @@ function JdWorkspaceSurface({
   ].filter((item) => isPresentText(item.value)) : [];
 
   return (
-    <div style={{ display: "grid", gap: "var(--space-4)" }}>
-      {!jdGroups.length ? (
+    <section className="jd-management-page">
+      <aside className="jd-management-sidebar">
+        <div className="jd-management-sidebar__header">
+          <strong>{copy("JD management", "JD 管理")}</strong>
+          <span>{copy(`${jdGroups.length} roles`, `${jdGroups.length} 个岗位`)}</span>
+        </div>
+
+        {jdGroups.length ? (
+          <div className="jd-management-sidebar__list">
+            {jdGroups.map((group) => (
+              <button
+                key={group.key}
+                type="button"
+                data-active={selectedJdKey === group.key}
+                onClick={() => setSelectedJdKey(group.key)}
+              >
+                <strong>{group.job.title}</strong>
+                <span>{group.job.summary || group.job.description || copy("No JD summary available yet.", "当前还没有 JD 摘要。")}</span>
+                <i>{copy(`${group.applications.length} applications`, `${group.applications.length} 条投递记录`)}</i>
+              </button>
+            ))}
+          </div>
+        ) : (
+          <div className="jd-management-sidebar__empty">
+            {copy("No job description has been synced yet.", "当前还没有同步到工作区的 JD。")}
+          </div>
+        )}
+      </aside>
+
+      <main className="jd-management-main">
+        {!jdGroups.length ? (
         <Panel
           title={copy("JD management", "JD 管理")}
           eyebrow={copy("Roles", "岗位")}
@@ -228,58 +257,6 @@ function JdWorkspaceSurface({
           </div>
         </Panel>
       ) : (
-        <div
-          style={{
-            display: "grid",
-            gap: "var(--space-4)",
-            gridTemplateColumns: "minmax(320px, 420px) minmax(0, 1fr)",
-            alignItems: "start",
-          }}
-        >
-          <div style={{ display: "grid", gap: "var(--space-3)" }}>
-            {jdGroups.map((group) => (
-              <button
-                key={group.key}
-                type="button"
-                onClick={() => setSelectedJdKey(group.key)}
-                style={{
-                  textAlign: "left",
-                  padding: "var(--space-4)",
-                  borderRadius: "var(--radius-md)",
-                  border: selectedJdKey === group.key ? "1px solid var(--brand-primary)" : "1px solid var(--border-line)",
-                  background: selectedJdKey === group.key ? "var(--brand-primary-soft)" : "var(--bg-card)",
-                  cursor: "pointer",
-                }}
-              >
-                <div style={{ fontWeight: 600, color: "var(--text-primary)" }}>{group.job.title}</div>
-                <div
-                  style={{
-                    marginTop: "var(--space-2)",
-                    fontSize: "var(--font-size-sm)",
-                    color: "var(--text-secondary)",
-                    lineHeight: 1.6,
-                  }}
-                >
-                  {group.job.summary || group.job.description || copy("No JD summary available yet.", "当前还没有 JD 摘要。")}
-                </div>
-                <div
-                  style={{
-                    display: "flex",
-                    gap: "var(--space-2)",
-                    flexWrap: "wrap",
-                    marginTop: "var(--space-3)",
-                  }}
-                >
-                  <StatusBadge tone="neutral">
-                    {copy(`${group.applications.length} applications`, `${group.applications.length} 条申请`)}
-                  </StatusBadge>
-                  {group.job.compensationText ? <StatusBadge tone="neutral">{group.job.compensationText}</StatusBadge> : null}
-                  {group.job.location ? <StatusBadge tone="neutral">{group.job.location}</StatusBadge> : null}
-                </div>
-              </button>
-            ))}
-          </div>
-
           <Panel
             key={selectedGroup?.key || "jd-detail"}
             title={selectedGroup?.job.title || copy("JD detail", "JD 详情")}
@@ -296,7 +273,7 @@ function JdWorkspaceSurface({
                   }}
                 >
                   <StatusBadge tone="neutral">
-                    {copy(`${selectedGroup.applications.length} applications`, `${selectedGroup.applications.length} 条申请`)}
+                    {copy(`${selectedGroup.applications.length} applications`, `${selectedGroup.applications.length} 条投递记录`)}
                   </StatusBadge>
                   {selectedGroup.job.status ? <StatusBadge tone="neutral">{selectedGroup.job.status}</StatusBadge> : null}
                   {selectedGroup.job.source ? <StatusBadge tone="neutral">{selectedGroup.job.source}</StatusBadge> : null}
@@ -389,9 +366,9 @@ function JdWorkspaceSurface({
                 </div>
             )}
           </Panel>
-        </div>
       )}
-    </div>
+      </main>
+    </section>
   );
 }
 
@@ -399,6 +376,7 @@ export function DesktopWorkspace(): JSX.Element {
   const { copy } = useI18n();
   const { open, isOpen } = useChatOverlay();
   const [tab, setTab] = useState<WorkspaceTab>("home");
+  const [sidebarExpanded, setSidebarExpanded] = useState(false);
   const [summary, setSummary] = useState<DashboardSummary>(emptySummary);
   const [jobDescriptions, setJobDescriptions] = useState<JobDescriptionSummaryRecord[]>([]);
   const [applicationThreads, setApplicationThreads] = useState<ApplicationThreadRecord[]>([]);
@@ -417,7 +395,6 @@ export function DesktopWorkspace(): JSX.Element {
     applicationId: undefined,
     conversationToken: 0,
   });
-  const [candidateKanbanTab, setCandidateKanbanTab] = useState<CandidatesKanbanTab>("funnel");
 
   const loadCoreWorkspace = useCallback(async () => {
     setRefreshing(true);
@@ -495,12 +472,28 @@ export function DesktopWorkspace(): JSX.Element {
           "从招聘待办、阻塞事项和今天最重要的下一步动作开始。",
         ),
       },
-      candidates: {
+      applicationFunnel: {
         eyebrow: copy("Application funnel", "投递记录漏斗"),
-        title: copy("Applications", "投递记录"),
+        title: copy("Application funnel", "投递记录漏斗"),
         description: copy(
-          "Review candidate materials, triage incoming signals, and progress active application records through the hiring workflow.",
-          "审阅候选资料、分流新信号，并在招聘工作流中推进活跃投递记录。",
+          "Track application records by funnel milestone and inspect the current pool for each role.",
+          "按漏斗阶段查看投递记录，并检查各岗位当前池子。",
+        ),
+      },
+      applicationFollowUp: {
+        eyebrow: copy("Application follow-up", "投递记录跟进"),
+        title: copy("Application follow-up", "投递记录跟进"),
+        description: copy(
+          "Follow up application records through communication, scoring, interviews, and offers.",
+          "围绕沟通、评分、面试与 Offer 推进投递记录。",
+        ),
+      },
+      jdManagement: {
+        eyebrow: copy("JD management", "JD 管理"),
+        title: copy("JD management", "JD 管理"),
+        description: copy(
+          "Inspect synced job descriptions and their related application funnel snapshots.",
+          "查看已同步 JD 以及对应投递漏斗快照。",
         ),
       },
       settings: {
@@ -521,25 +514,8 @@ export function DesktopWorkspace(): JSX.Element {
   );
 
   const counts = useMemo(
-    () =>
-      ({
-        candidates: candidateKanbanModels.length,
-        settings: mcpServers.filter((server) => !server.enabled || !/healthy/i.test(server.healthStatus)).length,
-      }) satisfies Partial<Record<WorkspaceTab, number>>,
-    [candidateKanbanModels.length, mcpServers],
-  );
-
-  const candidateKanbanTabItems = useMemo(
-    () => [
-      {
-        key: "funnel",
-        label: copy("Application funnel", "投递记录漏斗"),
-        count: candidateKanbanModels.length,
-      },
-      {
-        key: "status",
-        label: copy("Application follow-up", "投递记录跟进"),
-        count: candidateKanbanModels.filter((item) => {
+    () => {
+      const followUpCount = candidateKanbanModels.filter((item) => {
           const node = item.displayNode;
           if (!node || node.uiConfig?.showInKanban === false || node.isTransient) {
             return false;
@@ -548,19 +524,15 @@ export function DesktopWorkspace(): JSX.Element {
             return false;
           }
           return node.phase !== "Z" && (((!node.isTerminal && !node.isSoftTerminal) || node.isSuccess));
-        }).length,
-      },
-      {
-        key: "jd",
-        label: copy("JD management", "JD 管理"),
-        count: new Set(
-          candidateKanbanModels.map(
-            (application) => application.application.jobDescription.title || copy("Unassigned role", "未分配岗位"),
-          ),
-        ).size,
-      },
-    ],
-    [candidateKanbanModels, copy],
+      }).length;
+      return {
+        applicationFunnel: candidateKanbanModels.length,
+        applicationFollowUp: followUpCount,
+        jdManagement: jobDescriptions.length,
+        settings: mcpServers.filter((server) => !server.enabled || !/healthy/i.test(server.healthStatus)).length,
+      } satisfies Partial<Record<WorkspaceTab, number>>;
+    },
+    [candidateKanbanModels, jobDescriptions.length, mcpServers],
   );
 
   const handleSaveSettings = async (patch: Partial<SettingsSnapshot>) => {
@@ -674,17 +646,23 @@ export function DesktopWorkspace(): JSX.Element {
 
   const openApplicationWorkspace = (statusFilter?: string, applicationIdLike?: string) => {
     const applicationId = resolveApplicationId(applicationIdLike);
-    setCandidateKanbanTab(statusFilter === "application" || applicationId ? "status" : "funnel");
     setCandidateWorkspaceFocus((current) => ({
       applicationId,
       conversationToken: applicationId ? current.conversationToken + 1 : current.conversationToken,
     }));
-    setTab("candidates");
+    setTab(statusFilter || applicationId ? "applicationFollowUp" : "applicationFunnel");
   };
 
   const openJdManagement = () => {
-    setCandidateKanbanTab("jd");
-    setTab("candidates");
+    setTab("jdManagement");
+  };
+
+  const openApplicationFunnel = () => {
+    setTab("applicationFunnel");
+  };
+
+  const openDashboard = () => {
+    setTab("home");
   };
 
   const openAgents = (panel: "conversation" | "config" | "approvals", agent: "assistant" | "autonomous") => {
@@ -700,27 +678,69 @@ export function DesktopWorkspace(): JSX.Element {
         return (
           <DashboardView
             summary={summary}
-            onOpenCandidates={() => setTab("candidates")}
+            onOpenCandidates={openApplicationFunnel}
             onOpenJdWorkspace={openJdManagement}
             onOpenCommunications={() => openApplicationWorkspace("active")}
             onOpenAgentApprovals={() => openAgents("approvals", "autonomous")}
             onOpenAgentConfig={() => openAgents("config", "assistant")}
           />
         );
-      case "candidates":
+      case "applicationFunnel":
         return (
           <CandidatesKanbanView
             applications={summary.applications}
             threads={applicationThreads}
             stateMachine={stateMachine}
             summaryDefinitions={summary.applicationFollowUpSummaryDefinitions}
-            activeTab={candidateKanbanTab}
+            activeTab={"funnel" satisfies CandidatesKanbanTab}
             preferredApplicationId={candidateWorkspaceFocus.applicationId}
             preferredConversationToken={candidateWorkspaceFocus.conversationToken}
             onOpenApplication={(applicationId) => openApplicationWorkspace("application", applicationId)}
             onRefresh={() => void refreshWorkspace()}
             onCreateEntry={handleCreateApplicationEntry}
             onTransition={handleTransitionApplicationState}
+            onOpenDashboard={openDashboard}
+            jdContent={
+              <JdWorkspaceSurface
+                applications={candidateKanbanModels}
+                jobDescriptions={jobDescriptions}
+              />
+            }
+          />
+        );
+      case "applicationFollowUp":
+        return (
+          <CandidatesKanbanView
+            applications={summary.applications}
+            threads={applicationThreads}
+            stateMachine={stateMachine}
+            summaryDefinitions={summary.applicationFollowUpSummaryDefinitions}
+            activeTab={"status" satisfies CandidatesKanbanTab}
+            preferredApplicationId={candidateWorkspaceFocus.applicationId}
+            preferredConversationToken={candidateWorkspaceFocus.conversationToken}
+            onOpenApplication={(applicationId) => openApplicationWorkspace("application", applicationId)}
+            onRefresh={() => void refreshWorkspace()}
+            onCreateEntry={handleCreateApplicationEntry}
+            onTransition={handleTransitionApplicationState}
+            onOpenDashboard={openDashboard}
+            jdContent={null}
+          />
+        );
+      case "jdManagement":
+        return (
+          <CandidatesKanbanView
+            applications={summary.applications}
+            threads={applicationThreads}
+            stateMachine={stateMachine}
+            summaryDefinitions={summary.applicationFollowUpSummaryDefinitions}
+            activeTab={"jd" satisfies CandidatesKanbanTab}
+            preferredApplicationId={candidateWorkspaceFocus.applicationId}
+            preferredConversationToken={candidateWorkspaceFocus.conversationToken}
+            onOpenApplication={(applicationId) => openApplicationWorkspace("application", applicationId)}
+            onRefresh={() => void refreshWorkspace()}
+            onCreateEntry={handleCreateApplicationEntry}
+            onTransition={handleTransitionApplicationState}
+            onOpenDashboard={openDashboard}
             jdContent={
               <JdWorkspaceSurface
                 applications={candidateKanbanModels}
@@ -748,15 +768,21 @@ export function DesktopWorkspace(): JSX.Element {
         return <DashboardView summary={summary} stateMachine={stateMachine} />;
     }
   })();
+  const applicationSurface =
+    tab === "applicationFunnel" || tab === "applicationFollowUp" || tab === "jdManagement";
 
   return (
     <>
       <AppLayout
+        hideTopbar={tab === "applicationFollowUp"}
+        sidebarExpanded={sidebarExpanded}
         sidebar={
           <Sidebar
             active={tab}
             onChange={setTab}
             counts={counts}
+            expanded={sidebarExpanded}
+            onExpandedChange={setSidebarExpanded}
             agentsOpen={isOpen}
             agentStatus={summary.agent.status}
             agentCount={summary.approvals.filter((approval) => approval.status === "pending").length}
@@ -769,19 +795,7 @@ export function DesktopWorkspace(): JSX.Element {
             transport={transport}
             sectionEyebrow={sectionMeta[tab].eyebrow}
             sectionTitle={sectionMeta[tab].title}
-            hideSectionSummary={tab === "candidates"}
-            leadingContent={
-              tab === "candidates" ? (
-                <div className="workspace-topbar__candidate-tabs">
-                  <SectionTabs
-                    variant="topbar"
-                    items={candidateKanbanTabItems}
-                    active={candidateKanbanTab}
-                    onChange={(key) => setCandidateKanbanTab(key as CandidatesKanbanTab)}
-                  />
-                </div>
-              ) : undefined
-            }
+            hideSectionSummary={applicationSurface}
             onRefresh={() => void refreshWorkspace()}
             refreshing={refreshing}
           />

@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import type { ApplicationTransitionPayload, RecruitmentStateMachine } from "@recruit-agent/shared";
 import { StatusBadge } from "../../components";
 import { useI18n } from "../../lib/i18n";
-import type { ApplicationViewModel } from "./kanbanUtils";
+import { applicationScopedLabel, type ApplicationViewModel } from "./kanbanUtils";
 
 interface ManualStatusOverrideDrawerProps {
   open: boolean;
@@ -68,7 +68,9 @@ export function ManualStatusOverrideDrawer({
           <div className="drawer__preview">
             <StatusBadge tone="neutral">{record.currentStatusLabel}</StatusBadge>
             <span>→</span>
-            <StatusBadge tone="warning">{targetNode?.label ?? targetStatus ?? copy("Select target", "选择目标状态")}</StatusBadge>
+            <StatusBadge tone="warning">
+              {targetNode?.label ? applicationScopedLabel(targetNode.label) : targetStatus || copy("Select target", "选择目标状态")}
+            </StatusBadge>
           </div>
 
           <label className="drawer__field">
@@ -80,7 +82,7 @@ export function ManualStatusOverrideDrawer({
             >
               {statusOptions.map((option) => (
                 <option key={option.id} value={option.id}>
-                  {option.label}
+                  {applicationScopedLabel(option.label)}
                 </option>
               ))}
             </select>
