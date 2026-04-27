@@ -2233,6 +2233,7 @@ button.application-followup-avatar {
   max-height: 184px;
   display: grid;
   grid-template-columns: 88px minmax(224px, 1.14fr) minmax(190px, 0.92fr) minmax(172px, 0.82fr) 178px;
+  grid-template-rows: minmax(112px, auto) 24px;
   gap: 14px;
   padding: 12px 16px;
   border-bottom: 1px solid var(--border-line);
@@ -2279,7 +2280,7 @@ button.application-followup-avatar {
   color: var(--text-primary);
   font-size: 20px;
   line-height: var(--line-height-tight);
-  font-weight: var(--font-weight-medium);
+  font-weight: 600;
 }
 
 .application-followup-profile__title-actions {
@@ -2334,14 +2335,15 @@ button.application-followup-avatar {
   min-width: 0;
   display: grid;
   align-items: center;
-  gap: 5px 12px;
+  gap: 5px 10px;
   color: var(--text-secondary);
   font-size: 12px;
-  line-height: 17px;
+  line-height: 18px;
 }
 
 .application-followup-profile__contact-grid {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px;
 }
 
 .application-followup-profile__work-grid {
@@ -2350,8 +2352,7 @@ button.application-followup-avatar {
 
 .application-followup-profile__contact-grid span,
 .application-followup-profile__contact-grid button,
-.application-followup-profile__work-grid span,
-.application-followup-profile__info-column span {
+.application-followup-profile__work-grid span {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2373,15 +2374,60 @@ button.application-followup-avatar {
   color: var(--brand-primary);
 }
 
+.application-followup-profile__info-column {
+  grid-auto-rows: 18px;
+  padding-left: 18px;
+  border-left: 1px solid var(--border-line);
+}
+
+.application-followup-profile__fact {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
 .application-followup-profile__work-grid strong,
-.application-followup-profile__info-column strong {
-  margin-right: 4px;
+.application-followup-profile__fact strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-right: 0;
+  color: var(--text-placeholder);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.application-followup-profile__fact em {
+  min-width: 0;
+  overflow: hidden;
   color: var(--text-secondary);
-  font-weight: var(--font-weight-medium);
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 500;
+  text-overflow: ellipsis;
+}
+
+.application-followup-profile__info-column span {
+  color: var(--text-secondary);
 }
 
 .application-followup-profile__tags {
+  grid-column: 1 / -1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
   gap: 5px;
+  flex-wrap: nowrap;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.application-followup-profile__tags .status-badge {
+  flex: 0 0 auto;
 }
 
 .application-followup-profile__job {

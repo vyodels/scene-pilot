@@ -241,6 +241,15 @@ function compactValue(value: string | number | null | undefined): string {
   return String(value);
 }
 
+function ProfileFact({ label, value }: { label: string; value: React.ReactNode }): JSX.Element {
+  return (
+    <span className="application-followup-profile__fact">
+      <strong>{label}</strong>
+      <em>{value || "—"}</em>
+    </span>
+  );
+}
+
 function avatarUrlFromContactInfo(contactInfo: unknown): string | undefined {
   const record = asObject(contactInfo);
   return pickFirstString(
@@ -409,6 +418,16 @@ export function ApplicationFollowUpWorkspace({
   );
   const profileEmail = pickFirstString(contactInfo.email, contactInfo.mail);
   const profileSchool = pickFirstString(contactInfo.school, contactInfo.university, contactInfo.college, facts.school, facts.university);
+  const profileMajor = pickFirstString(
+    contactInfo.major,
+    contactInfo.majorName,
+    contactInfo.major_name,
+    contactInfo.profession,
+    contactInfo.specialty,
+    contactInfo.speciality,
+    facts.major,
+    facts.profession,
+  );
   const profileDistrict = pickFirstString(contactInfo.district, contactInfo.area, contactInfo.address, facts.district);
   const profileCurrentCompany = pickFirstString(
     contactInfo.company,
@@ -580,27 +599,23 @@ export function ApplicationFollowUpWorkspace({
             <div className="application-followup-profile__contact-grid">
               <button type="button" onClick={() => openDetail("contact")}>☎ {profilePhone || selectedRecord.contactSummary || "—"}</button>
               <span>✉ {profileEmail || "—"}</span>
-              <span>◉ {profileSchool || "—"}</span>
+              <span>◉ {profileSchool || "—"}{profileMajor ? ` · ${profileMajor}` : ""}</span>
               <span>⌂ {person.location || "—"}{profileDistrict ? ` · ${profileDistrict}` : ""}</span>
             </div>
-            <div className="application-followup-profile__tags">
-              {person.tags.slice(0, 8).map((tag) => <StatusBadge key={tag} tone="neutral">{tag}</StatusBadge>)}
-              {person.tags.length > 8 ? <StatusBadge tone="neutral">+{person.tags.length - 8}</StatusBadge> : null}
-            </div>
           </div>
           <div className="application-followup-profile__info-column">
-            <span><strong>{copy("Current company", "现公司")}</strong>{profileCurrentCompany || "—"}</span>
-            <span><strong>{copy("Current role", "当前职位")}</strong>{profileCurrentRole || "—"}</span>
-            <span><strong>{copy("Business unit", "所属业务组")}</strong>{profileDepartment || "—"}</span>
-            <span><strong>{copy("Expected role", "期望职位")}</strong>{profileExpectedRole || "—"}</span>
+            <ProfileFact label={copy("Current company", "现公司")} value={profileCurrentCompany} />
+            <ProfileFact label={copy("Current role", "当前职位")} value={profileCurrentRole} />
+            <ProfileFact label={copy("Business unit", "所属业务组")} value={profileDepartment} />
+            <ProfileFact label={copy("Expected role", "期望职位")} value={profileExpectedRole} />
           </div>
           <div className="application-followup-profile__info-column">
-            <span><strong>{copy("Expected city", "期望城市")}</strong>{job.location || person.location || "—"}</span>
-            <span><strong>{copy("Expected salary", "期望薪资")}</strong>{job.compensationText || "—"}</span>
-            <span><strong>{copy("Experience", "工作年限")}</strong>{experienceText(person.experienceYears, personResumeText(person))}</span>
-            <span><strong>{copy("Availability", "到岗时间")}</strong>{profileAvailability || "—"}</span>
-            <span><strong>{copy("Source", "来源渠道")}</strong>{profileSource || "—"}</span>
-            <span><strong>{copy("Updated", "更新时间")}</strong>{profileUpdatedAt}</span>
+            <ProfileFact label={copy("Expected city", "期望城市")} value={job.location || person.location} />
+            <ProfileFact label={copy("Expected salary", "期望薪资")} value={job.compensationText} />
+            <ProfileFact label={copy("Experience", "工作年限")} value={experienceText(person.experienceYears, personResumeText(person))} />
+            <ProfileFact label={copy("Availability", "到岗时间")} value={profileAvailability} />
+            <ProfileFact label={copy("Source", "来源渠道")} value={profileSource} />
+            <ProfileFact label={copy("Updated", "更新时间")} value={profileUpdatedAt} />
           </div>
           <div className="application-followup-profile__job">
             <strong>{copy("Current role", "当前沟通岗位")}</strong>
@@ -609,6 +624,10 @@ export function ApplicationFollowUpWorkspace({
             <button type="button" onClick={() => onOpenFullCockpit(selectedRecord.application.id)}>
               {copy("Locate", "定位记录")}
             </button>
+          </div>
+          <div className="application-followup-profile__tags">
+            {person.tags.slice(0, 8).map((tag) => <StatusBadge key={tag} tone="neutral">{tag}</StatusBadge>)}
+            {person.tags.length > 8 ? <StatusBadge tone="neutral">+{person.tags.length - 8}</StatusBadge> : null}
           </div>
         </section>
 
