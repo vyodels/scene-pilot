@@ -121,7 +121,12 @@ function scoreFromRecord(record: ApplicationViewModel): number | undefined {
   if (explicitScore != null) {
     return clampScore(explicitScore);
   }
-  return record.application.matchScore > 0 ? clampScore(record.application.matchScore) : undefined;
+  return undefined;
+}
+
+function optionalScore(source: Record<string, unknown>, keys: string[]): number | undefined {
+  const value = pickScore(source, keys);
+  return value != null ? clampScore(value) : undefined;
 }
 
 function scoreMetrics(
@@ -131,23 +136,22 @@ function scoreMetrics(
   const aiScores = asObject(record.application.aiScores);
   const scorecard = record.thread?.scorecards[0];
   const dimensionScores = asObject(scorecard?.dimensionScores);
-  const base = scoreFromRecord(record);
   const metrics: ScoreMetric[] = [
     {
       label: copy("Role match", "岗位匹配度"),
-      value: clampScore(pickScore(aiScores, ["roleMatch", "role_match", "job_match"]) ?? pickScore(dimensionScores, ["roleMatch", "role_match"]), base ?? 0),
+      value: optionalScore(aiScores, ["roleMatch", "role_match", "job_match"]) ?? optionalScore(dimensionScores, ["roleMatch", "role_match"]),
     },
     {
       label: copy("Resume match", "履历匹配度"),
-      value: clampScore(pickScore(aiScores, ["resumeMatch", "resume_match", "experience_match"]) ?? pickScore(dimensionScores, ["resumeMatch", "resume_match"]), (base ?? 4) - 4),
+      value: optionalScore(aiScores, ["resumeMatch", "resume_match", "experience_match"]) ?? optionalScore(dimensionScores, ["resumeMatch", "resume_match"]),
     },
     {
       label: copy("Stability", "稳定性匹配度"),
-      value: clampScore(pickScore(aiScores, ["stability", "stability_match"]) ?? pickScore(dimensionScores, ["stability"]), (base ?? 2) - 2),
+      value: optionalScore(aiScores, ["stability", "stability_match"]) ?? optionalScore(dimensionScores, ["stability"]),
     },
     {
       label: copy("Potential", "潜力评分"),
-      value: clampScore(pickScore(aiScores, ["potential", "potential_score"]) ?? pickScore(dimensionScores, ["potential"]), base ?? 0),
+      value: optionalScore(aiScores, ["potential", "potential_score"]) ?? optionalScore(dimensionScores, ["potential"]),
     },
   ];
   return metrics;
@@ -159,12 +163,31 @@ function onlineResumeScore(record: ApplicationViewModel): number | undefined {
   if (explicitScore != null) {
     return clampScore(explicitScore);
   }
-  return record.application.matchScore > 0 ? clampScore(record.application.matchScore) : undefined;
+  return undefined;
 }
 
 function offlineResumeScore(record: ApplicationViewModel): number | undefined {
   const scorecard = record.thread?.scorecards[0];
   return scorecard?.scoreTotal != null ? clampScore(scorecard.scoreTotal) : undefined;
+}
+
+function offlineResumeMetrics(record: ApplicationViewModel, copy: (en: string, zh: string) => string): ScoreMetric[] {
+  const scorecard = record.thread?.scorecards[0];
+  const dimensionScores = asObject(scorecard?.dimensionScores);
+  return [
+    {
+      label: copy("Content match", "内容匹配度"),
+      value: optionalScore(dimensionScores, ["contentMatch", "content_match", "content"]),
+    },
+    {
+      label: copy("Information completeness", "信息完整度"),
+      value: optionalScore(dimensionScores, ["informationCompleteness", "information_completeness", "completeness"]),
+    },
+    {
+      label: copy("Key skills", "关键技能覆盖"),
+      value: optionalScore(dimensionScores, ["keySkills", "key_skills", "skills"]),
+    },
+  ];
 }
 
 function createGreeting(record: ApplicationViewModel): string {
@@ -395,6 +418,7 @@ export function ApplicationFollowUpWorkspace({
   const hasOnlineScore = onlineScore != null;
   const hasOfflineScore = offlineScore != null;
   const metrics = scoreMetrics(selectedRecord, copy);
+  const offlineMetrics = offlineResumeMetrics(selectedRecord, copy);
   const currentActions = selectedRecord.currentNode
     ? deriveHumanActionsForNode(selectedRecord.currentNode, stateMachine)
     : [];
@@ -809,11 +833,7 @@ export function ApplicationFollowUpWorkspace({
               <strong>{scoreText(offlineScore)}</strong>
               <span>{offlineQuality}</span>
               <ScoreBars
-                metrics={[
-                  { label: copy("Content match", "内容匹配度"), value: offlineScore ?? 0 },
-                  { label: copy("Information completeness", "信息完整度"), value: resumeArtifacts.length ? 78 : 0 },
-                  { label: copy("Key skills", "关键技能覆盖"), value: offlineScore ?? 0 },
-                ]}
+                metrics={offlineMetrics}
               />
             </div>
           </FollowUpCollapsiblePanel>

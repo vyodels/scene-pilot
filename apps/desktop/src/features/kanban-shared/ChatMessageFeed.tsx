@@ -4,8 +4,6 @@ import { useI18n } from "../../lib/i18n";
 import type { ApplicationViewModel } from "./kanbanUtils";
 import { CandidateAvatar } from "./ApplicationFollowUpPrimitives";
 
-const recruiterAvatarUrl = "/demo-avatar-recruiter.jpg";
-
 function avatarUrlFromContactInfo(contactInfo: Record<string, unknown>): string | undefined {
   const value =
     contactInfo.avatarUrl ??
@@ -75,12 +73,12 @@ export function ChatMessageFeed({ record }: ChatMessageFeedProps): JSX.Element {
           <article key={log.id} className="chat-feed__message" data-direction={side}>
             {sender === "candidate" ? <CandidateAvatar name={record.application.person.name} imageUrl={candidateAvatarUrl} /> : null}
             <div className="chat-feed__stack">
-              <time className="chat-feed__time">{formatChineseChatTime(log.timestamp) || copy("Just now", "刚刚")}</time>
+              <time className="chat-feed__time">{formatChineseChatTime(log.timestamp) || "—"}</time>
               <div className="chat-feed__bubble">
                 <div className="chat-feed__content">{log.content}</div>
               </div>
             </div>
-            {sender === "operator" ? <CandidateAvatar name={copy("Recruiter", "招聘方")} imageUrl={recruiterAvatarUrl} /> : null}
+            {sender === "operator" ? <CandidateAvatar name={copy("Recruiter", "招聘方")} /> : null}
           </article>
         );
       })}

@@ -283,7 +283,7 @@ export function CandidateDetailDrawer({
           {activeTab === "scores" ? (
             <div className="drawer__stack">
               <div className="drawer__grid">
-                <div><strong>{copy("Online", "在线")}</strong><span>{typeof aiScores.overall === "number" ? `${Math.round(Number(aiScores.overall))}/100` : `${Math.round(record.application.matchScore)}/100`}</span></div>
+                <div><strong>{copy("Online", "在线")}</strong><span>{typeof aiScores.overall === "number" ? `${Math.round(Number(aiScores.overall))}/100` : copy("Pending", "待获取")}</span></div>
                 <div><strong>{copy("Offline", "线下")}</strong><span>{record.thread?.scorecards[0]?.scoreTotal ?? copy("Pending", "待评分")}</span></div>
               </div>
               {record.thread?.scorecards.length ? (

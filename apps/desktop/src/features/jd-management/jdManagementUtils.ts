@@ -131,7 +131,6 @@ function applicationBelongsToJob(application: ApplicationViewModel, job: JobDesc
 
 function mergeJobDescriptions(
   jobDescriptions: JobDescriptionSummaryRecord[],
-  applications: ApplicationViewModel[],
 ): JobDescriptionSummaryRecord[] {
   const jobs = new Map<string, JobDescriptionSummaryRecord>();
   for (const job of jobDescriptions) {
@@ -139,22 +138,6 @@ function mergeJobDescriptions(
       continue;
     }
     jobs.set(normalizeJobKey(job), job);
-  }
-  for (const application of applications) {
-    const job = application.application.jobDescription;
-    const key = normalizeJobKey({
-      ...job,
-      jobDescriptionId: application.application.jobDescriptionId || job.jobDescriptionId,
-    });
-    if (!isAssignableJob({ ...job, jobDescriptionId: application.application.jobDescriptionId || job.jobDescriptionId })) {
-      continue;
-    }
-    if (!jobs.has(key)) {
-      jobs.set(key, {
-        ...job,
-        jobDescriptionId: application.application.jobDescriptionId || job.jobDescriptionId,
-      });
-    }
   }
   return [...jobs.values()];
 }
@@ -208,8 +191,8 @@ function buildRecentApplications(applications: ApplicationViewModel[]): JdRecent
       const contactInfo = asObject(application.application.person.contactInfo);
       return {
         id: application.application.applicationId || application.application.id,
-        personName: application.application.person.name || "未命名投递人",
-        personTitle: application.application.person.title || application.application.jobDescription.title || "—",
+        personName: application.application.person.name || "—",
+        personTitle: application.application.person.title || "—",
         statusLabel: application.displayStatusLabel || application.currentStatusLabel || application.application.currentStatus,
         updatedAt: formatDateTime(getApplicationUpdatedAt(application)),
         avatarUrl:
@@ -281,7 +264,7 @@ export function buildJdManagementModel(
   jobDescriptions: JobDescriptionSummaryRecord[],
   applications: ApplicationViewModel[],
 ): JdManagementModel {
-  const jobs = mergeJobDescriptions(jobDescriptions, applications);
+  const jobs = mergeJobDescriptions(jobDescriptions);
   const rows = jobs.map((job) => {
     const relatedApplications = applications.filter((application) => applicationBelongsToJob(application, job));
     const statusBucket = normalizeStatusBucket(job);

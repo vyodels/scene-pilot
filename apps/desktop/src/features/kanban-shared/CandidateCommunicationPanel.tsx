@@ -83,7 +83,7 @@ export function CandidateCommunicationPanel({
 
   const aiScores = asObject(selectedRecord.application.aiScores);
   const onlineScore =
-    typeof aiScores.overall === "number" ? Number(aiScores.overall) : Math.round(selectedRecord.application.matchScore);
+    typeof aiScores.overall === "number" ? Number(aiScores.overall) : undefined;
   const offlineScore = selectedRecord.thread?.scorecards[0]?.scoreTotal;
 
   const submitHumanAction = async (action: HumanActionDefinition, note?: string) => {
@@ -148,7 +148,7 @@ export function CandidateCommunicationPanel({
               <strong>{selectedRecord.application.platform}</strong>
               <span>
                 {copy("Last synced", "最后同步")}{" "}
-                {selectedRecord.latestActivityAt ? formatCompactDate(selectedRecord.latestActivityAt) : copy("just now", "刚刚")}
+                {selectedRecord.latestActivityAt ? formatCompactDate(selectedRecord.latestActivityAt) : "—"}
               </span>
             </div>
             <button
@@ -207,7 +207,7 @@ export function CandidateCommunicationPanel({
             <div className="candidate-communication-panel__section-title">{copy("AI scores", "AI 评分")}</div>
             <div className="candidate-communication-panel__metric">
               <span>{copy("Online", "在线")}</span>
-              <strong>{onlineScore}/100</strong>
+              <strong>{onlineScore != null ? `${onlineScore}/100` : copy("Pending", "待获取")}</strong>
             </div>
             <div className="candidate-communication-panel__metric">
               <span>{copy("Offline", "线下")}</span>

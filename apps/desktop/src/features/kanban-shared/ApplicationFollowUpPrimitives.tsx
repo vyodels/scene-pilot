@@ -2,7 +2,7 @@ import React from "react";
 
 export interface ScoreMetric {
   label: string;
-  value: number;
+  value?: number;
 }
 
 export function candidateInitial(name: string): string {
@@ -133,12 +133,12 @@ export function ScoreBars({ metrics }: { metrics: ScoreMetric[] }): JSX.Element 
   return (
     <div className="application-followup-score-bars">
       {metrics.map((metric) => (
-        <div key={metric.label} className="application-followup-score-bars__row">
+        <div key={metric.label} className="application-followup-score-bars__row" data-disabled={metric.value == null ? "true" : undefined}>
           <span>{metric.label}</span>
           <div className="application-followup-score-bars__track" aria-hidden="true">
-            <span style={{ width: `${metric.value}%` }} />
+            <span style={{ width: `${metric.value ?? 0}%` }} />
           </div>
-          <strong>{metric.value}</strong>
+          <strong>{metric.value ?? "—"}</strong>
         </div>
       ))}
     </div>

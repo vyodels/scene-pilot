@@ -9,6 +9,7 @@ import {
   getJdMetadataString,
   jdStatusLabel,
   type JdManagementRow,
+  type JdManagementStats,
   type JdStatusBucket,
 } from "./jdManagementUtils";
 
@@ -39,7 +40,7 @@ interface JdFormState {
 }
 
 const emptyJob: JobDescriptionSummaryRecord = {
-  title: "新建职位",
+  title: "",
   companyName: "",
   department: "",
   location: "",
@@ -54,7 +55,7 @@ const emptyJob: JobDescriptionSummaryRecord = {
   benefitTags: [],
   detailMetadata: {},
   status: "active",
-  source: "manual",
+  source: "",
 };
 
 function asObject(value: unknown): Record<string, unknown> {
@@ -125,7 +126,7 @@ function makeFormState(job: JobDescriptionSummaryRecord): JdFormState {
     experienceRequirement: job.experienceRequirement || "",
     educationRequirement: job.educationRequirement || "",
     employmentType: job.employmentType || "",
-    source: job.source || "manual",
+    source: job.source || "",
     summary: job.summary || "",
     description: job.description || "",
     requirements: job.requirements || "",
@@ -139,7 +140,7 @@ function formToPayload(form: JdFormState, original?: JobDescriptionSummaryRecord
     ownerName: form.ownerName.trim() || undefined,
   };
   return {
-    title: form.title.trim() || "未命名职位",
+    title: form.title.trim(),
     companyName: form.companyName.trim() || null,
     department: form.department.trim() || null,
     location: form.location.trim() || null,
@@ -157,7 +158,7 @@ function formToPayload(form: JdFormState, original?: JobDescriptionSummaryRecord
       .filter(Boolean),
     detailMetadata,
     status: statusApiValue(form.status),
-    source: form.source.trim() || "manual",
+    source: form.source.trim() || undefined,
   };
 }
 
@@ -168,16 +169,27 @@ function percentOf(value: number, total: number): string {
   return `${Math.round((value / total) * 1000) / 10}%`;
 }
 
-function getDemoOwner(row: JdManagementRow): string {
-  return row.ownerName === "—" ? "未设置" : row.ownerName;
+function optionalPercentOf(value: number | undefined, total: number | undefined): string | undefined {
+  return value != null && total != null ? percentOf(value, total) : undefined;
+}
+
+function clampPage(value: number, pageCount: number): number {
+  if (!Number.isFinite(value)) {
+    return 1;
+  }
+  return Math.min(Math.max(1, Math.trunc(value)), pageCount);
+}
+
+function getOwnerDisplay(row: JdManagementRow): string {
+  return row.ownerName && row.ownerName !== "—" ? row.ownerName : "—";
 }
 
 function getOwnerInitial(row: JdManagementRow | null): string {
   if (!row) {
-    return "招";
+    return "";
   }
-  const owner = getDemoOwner(row);
-  return owner && owner !== "未设置" ? owner.slice(0, 1) : "招";
+  const owner = getOwnerDisplay(row);
+  return owner !== "—" ? owner.slice(0, 1) : "";
 }
 
 function JdStatusPill({ status }: { status: JdStatusBucket }): JSX.Element {
@@ -197,8 +209,8 @@ function JdStatCard({
   icon,
 }: {
   label: string;
-  value: number;
-  caption: string;
+  value: number | string;
+  caption?: string;
   ratio?: string;
   tone?: "positive" | "warning" | "neutral";
   icon: "briefcase" | "cap" | "pause" | "closed";
@@ -209,11 +221,21 @@ function JdStatCard({
       <div className="jd-management-kpi__body">
         <span className="jd-management-kpi__label">{label}</span>
         <strong className="jd-management-kpi__value">{value}</strong>
-        <span className="jd-management-kpi__caption">{caption}</span>
+        {caption ? <span className="jd-management-kpi__caption">{caption}</span> : null}
       </div>
       {ratio ? <span className="jd-management-kpi__ratio">{ratio}</span> : null}
     </div>
   );
+}
+
+function optionalJdMetadataNumber(job: JobDescriptionSummaryRecord, keys: string[]): number | undefined {
+  const value = getJdMetadataNumber(job, keys, Number.NaN);
+  return Number.isFinite(value) ? value : undefined;
+}
+
+function optionalJdMetadataString(job: JobDescriptionSummaryRecord, keys: string[]): string | undefined {
+  const value = getJdMetadataString(job, keys, "");
+  return value.trim() ? value : undefined;
 }
 
 function JdDetailCard({
@@ -232,14 +254,10 @@ function JdDetailCard({
   }
 
   const job = row.job;
-  const trendCount = getJdMetadataNumber(job, ["trendCount", "trend_count"], row.currentApplicants);
-  const trendRate = getJdMetadataString(job, ["trendRate", "trend_rate"], row.currentApplicants ? "+4.2%" : "0%");
-  const recommendedBy = getJdMetadataString(job, ["recommendedBy", "recommended_by", "sourceName"], "Agent 推荐");
-  const focus = getJdMetadataString(
-    job,
-    ["focus", "focusText", "focus_text", "keyFocus"],
-    job.requirements || "请在完整 JD 中维护关键职责、候选人要求与交付目标。",
-  );
+  const trendCount = optionalJdMetadataNumber(job, ["trendCount", "trend_count"]);
+  const trendRate = optionalJdMetadataString(job, ["trendRate", "trend_rate"]);
+  const recommendedBy = optionalJdMetadataString(job, ["recommendedBy", "recommended_by", "sourceName"]);
+  const focus = optionalJdMetadataString(job, ["focus", "focusText", "focus_text", "keyFocus"]) ?? job.requirements;
 
   return (
     <aside className="jd-management-detail">
@@ -250,7 +268,7 @@ function JdDetailCard({
             <JdStatusPill status={row.statusBucket} />
           </div>
           <span className="jd-management-detail__subtitle">{job.jobDescriptionId || "—"}</span>
-          <span className="jd-management-agent-badge">{recommendedBy}</span>
+          {recommendedBy ? <span className="jd-management-agent-badge">{recommendedBy}</span> : null}
         </div>
       </header>
 
@@ -265,7 +283,7 @@ function JdDetailCard({
           <span className="jd-management-detail__label">负责人</span>
           <span className="jd-management-owner-line">
             <span className="jd-management-avatar jd-management-avatar--sm">{getOwnerInitial(row)}</span>
-            <span>{getDemoOwner(row)}</span>
+            <span>{getOwnerDisplay(row)}</span>
           </span>
           <span className="jd-management-detail__label">招聘目标</span>
           <span className="jd-management-detail__value">{job.headcount != null ? `${job.headcount} 人` : "—"}</span>
@@ -324,13 +342,16 @@ function JdDetailCard({
           <section className="jd-management-panel-card jd-management-panel-card--compact">
             <div className="jd-management-detail__section-head">
               <strong className="jd-management-drawer__section-title">当前转化概览</strong>
-              <span>近7天</span>
+              <span>当前岗位</span>
             </div>
-            <div className="jd-management-detail__metric-list">
+            <div className="jd-management-detail__metric-list" data-disabled={trendCount == null && trendRate == null ? "true" : undefined}>
               <span>投递量</span>
-              <strong>{trendCount}</strong>
+              <strong>{trendCount ?? "—"}</strong>
               <span>沟通率</span>
-              <strong>{percentOf(row.communicating, row.currentApplicants)} <i>{trendRate}</i></strong>
+              <strong>
+                {percentOf(row.communicating, row.currentApplicants)}
+                {trendRate ? <i>{trendRate}</i> : null}
+              </strong>
               <span>面试率</span>
               <strong>{percentOf(row.interviewing, row.currentApplicants)}</strong>
               <span>Offer率</span>
@@ -343,7 +364,7 @@ function JdDetailCard({
               <strong className="jd-management-drawer__section-title">关键要点</strong>
               <span>摘要</span>
             </div>
-            <p className="jd-management-summary-text">{focus}</p>
+            <p className="jd-management-summary-text">{focus || "—"}</p>
           </section>
         </div>
 
@@ -354,7 +375,7 @@ function JdDetailCard({
               查看完整 JD
             </button>
           </div>
-          <p className="jd-management-summary-text">{job.summary || job.description || "暂无 JD 摘要。"}</p>
+          <p className="jd-management-summary-text">{job.summary || job.description || "—"}</p>
         </section>
       </div>
     </aside>
@@ -553,7 +574,12 @@ export function JdManagementView({
   jobDescriptions,
   onRefresh,
 }: JdManagementViewProps): JSX.Element {
-  const model = useMemo(() => buildJdManagementModel(jobDescriptions, applications), [applications, jobDescriptions]);
+  const [serverJobs, setServerJobs] = useState<JobDescriptionSummaryRecord[]>(jobDescriptions);
+  const [serverTotal, setServerTotal] = useState(jobDescriptions.length);
+  const [kpiTotals, setKpiTotals] = useState<JdManagementStats | null>(null);
+  const [serverLoading, setServerLoading] = useState(false);
+  const [serverError, setServerError] = useState<string | null>(null);
+  const [reloadToken, setReloadToken] = useState(0);
   const [statusFilter, setStatusFilter] = useState<"all" | JdStatusBucket>("all");
   const [cityFilter, setCityFilter] = useState("all");
   const [departmentFilter, setDepartmentFilter] = useState("all");
@@ -563,33 +589,119 @@ export function JdManagementView({
   const [drawerRow, setDrawerRow] = useState<JdManagementRow | null>(null);
   const [creating, setCreating] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [pageSize, setPageSize] = useState(20);
+  const [page, setPage] = useState(1);
 
-  const cityOptions = useMemo(() => [...new Set(model.rows.map((row) => row.job.location).filter(Boolean) as string[])], [model.rows]);
-  const departmentOptions = useMemo(() => [...new Set(model.rows.map((row) => row.job.department).filter(Boolean) as string[])], [model.rows]);
-  const ownerOptions = useMemo(() => [...new Set(model.rows.map(getDemoOwner).filter((owner) => owner !== "未设置"))], [model.rows]);
+  const catalogModel = useMemo(() => buildJdManagementModel(jobDescriptions, applications), [applications, jobDescriptions]);
+  const model = useMemo(() => buildJdManagementModel(serverJobs, applications), [applications, serverJobs]);
+  const cityOptions = useMemo(() => [...new Set(catalogModel.rows.map((row) => row.job.location).filter(Boolean) as string[])], [catalogModel.rows]);
+  const departmentOptions = useMemo(() => [...new Set(catalogModel.rows.map((row) => row.job.department).filter(Boolean) as string[])], [catalogModel.rows]);
+  const ownerOptions = useMemo(() => [...new Set(catalogModel.rows.map(getOwnerDisplay).filter((owner) => owner !== "—"))], [catalogModel.rows]);
+  const kpiTotal = kpiTotals?.total;
 
   const filteredRows = useMemo(
     () => model.rows.filter((row) => (
       (statusFilter === "all" || row.statusBucket === statusFilter) &&
       (cityFilter === "all" || row.job.location === cityFilter) &&
       (departmentFilter === "all" || row.job.department === departmentFilter) &&
-      (ownerFilter === "all" || getDemoOwner(row) === ownerFilter) &&
+      (ownerFilter === "all" || getOwnerDisplay(row) === ownerFilter) &&
       rowMatchesKeyword(row, keyword)
     )),
     [cityFilter, departmentFilter, keyword, model.rows, ownerFilter, statusFilter],
   );
+  const pageCount = Math.max(1, Math.ceil(serverTotal / pageSize));
+  const currentPage = clampPage(page, pageCount);
+  const paginatedRows = filteredRows;
+  const pageStart = serverTotal ? (currentPage - 1) * pageSize + 1 : 0;
+  const pageEnd = Math.min((currentPage - 1) * pageSize + paginatedRows.length, serverTotal);
+  const pageNumbers = useMemo(() => {
+    const windowSize = 5;
+    const halfWindow = Math.floor(windowSize / 2);
+    const start = Math.max(1, Math.min(currentPage - halfWindow, pageCount - windowSize + 1));
+    const end = Math.min(pageCount, start + windowSize - 1);
+    return Array.from({ length: end - start + 1 }, (_, index) => start + index);
+  }, [currentPage, pageCount]);
 
   useEffect(() => {
-    if (!filteredRows.length) {
+    setPage(1);
+  }, [cityFilter, departmentFilter, keyword, ownerFilter, pageSize, statusFilter]);
+
+  useEffect(() => {
+    setPage((current) => clampPage(current, pageCount));
+  }, [pageCount]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void Promise.all([
+      apiClient.listJobDescriptionsPage({ limit: 1, offset: 0 }),
+      apiClient.listJobDescriptionsPage({ limit: 1, offset: 0, status: "active" }),
+      apiClient.listJobDescriptionsPage({ limit: 1, offset: 0, status: "paused" }),
+      apiClient.listJobDescriptionsPage({ limit: 1, offset: 0, status: "closed" }),
+    ]).then(([all, recruiting, paused, closed]) => {
+      if (!cancelled) {
+        setKpiTotals({
+          total: all.total,
+          recruiting: recruiting.total,
+          paused: paused.total,
+          closed: closed.total,
+        });
+      }
+    }).catch(() => {
+      if (!cancelled) {
+        setKpiTotals(null);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [reloadToken]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setServerLoading(true);
+    setServerError(null);
+    void apiClient.listJobDescriptionsPage({
+      limit: pageSize,
+      offset: (currentPage - 1) * pageSize,
+      status: statusFilter === "all" ? null : statusApiValue(statusFilter),
+      location: cityFilter === "all" ? null : cityFilter,
+      department: departmentFilter === "all" ? null : departmentFilter,
+      owner: ownerFilter === "all" ? null : ownerFilter,
+      keyword: keyword.trim() || null,
+    }).then((result) => {
+      if (cancelled) {
+        return;
+      }
+      setServerJobs(result.items);
+      setServerTotal(result.total);
+    }).catch((error) => {
+      if (cancelled) {
+        return;
+      }
+      setServerJobs([]);
+      setServerTotal(0);
+      setServerError(error instanceof Error ? error.message : "职位列表加载失败");
+    }).finally(() => {
+      if (!cancelled) {
+        setServerLoading(false);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [cityFilter, currentPage, departmentFilter, keyword, ownerFilter, pageSize, reloadToken, statusFilter]);
+
+  useEffect(() => {
+    if (!paginatedRows.length) {
       setSelectedKey(null);
       return;
     }
-    if (!selectedKey || !filteredRows.some((row) => row.key === selectedKey)) {
-      setSelectedKey(filteredRows[0]?.key ?? null);
+    if (!selectedKey || !paginatedRows.some((row) => row.key === selectedKey)) {
+      setSelectedKey(paginatedRows[0]?.key ?? null);
     }
-  }, [filteredRows, selectedKey]);
+  }, [paginatedRows, selectedKey]);
 
-  const selectedRow = filteredRows.find((row) => row.key === selectedKey) ?? filteredRows[0] ?? null;
+  const selectedRow = paginatedRows.find((row) => row.key === selectedKey) ?? paginatedRows[0] ?? null;
 
   const openDrawer = async (row: JdManagementRow) => {
     if (!row.job.jobDescriptionId) {
@@ -617,6 +729,7 @@ export function JdManagementView({
         await apiClient.updateJobDescription(drawerRow.job.jobDescriptionId, payload);
       }
       await onRefresh();
+      setReloadToken((value) => value + 1);
       setCreating(false);
       setDrawerRow(null);
     } finally {
@@ -636,6 +749,7 @@ export function JdManagementView({
     try {
       await apiClient.deleteJobDescription(jobDescriptionId);
       await onRefresh();
+      setReloadToken((value) => value + 1);
       setDrawerRow(null);
       setCreating(false);
     } finally {
@@ -654,7 +768,7 @@ export function JdManagementView({
             <input className="jd-management-global-search" placeholder="搜索候选人姓名/手机号" />
             <span className="jd-management-user-avatar" aria-label="当前用户">{getOwnerInitial(selectedRow)}</span>
             <span className="jd-management-user-name">
-              {selectedRow && getDemoOwner(selectedRow) !== "未设置" ? getDemoOwner(selectedRow) : "招聘负责人"}
+              {selectedRow ? getOwnerDisplay(selectedRow) : "—"}
             </span>
           </div>
         </header>
@@ -705,17 +819,20 @@ export function JdManagementView({
             }}>
               + 新建职位
             </button>
-            <button type="button" className="jd-management-button" onClick={() => void onRefresh()}>
+            <button type="button" className="jd-management-button" onClick={() => {
+              void onRefresh();
+              setReloadToken((value) => value + 1);
+            }}>
               刷新
             </button>
           </div>
         </div>
 
         <section className="jd-management-kpis">
-          <JdStatCard label="全部职位" value={model.stats.total} caption="较昨日 +3" icon="briefcase" />
-          <JdStatCard label="招聘中" value={model.stats.recruiting} caption="较昨日 +2" ratio={percentOf(model.stats.recruiting, model.stats.total)} icon="cap" />
-          <JdStatCard label="暂停中" value={model.stats.paused} caption="较昨日 -1" ratio={percentOf(model.stats.paused, model.stats.total)} tone="warning" icon="pause" />
-          <JdStatCard label="已关闭" value={model.stats.closed} caption="较昨日 +2" ratio={percentOf(model.stats.closed, model.stats.total)} tone="neutral" icon="closed" />
+          <JdStatCard label="全部职位" value={kpiTotal ?? "—"} icon="briefcase" />
+          <JdStatCard label="招聘中" value={kpiTotals?.recruiting ?? "—"} ratio={optionalPercentOf(kpiTotals?.recruiting, kpiTotal)} icon="cap" />
+          <JdStatCard label="暂停中" value={kpiTotals?.paused ?? "—"} ratio={optionalPercentOf(kpiTotals?.paused, kpiTotal)} tone="warning" icon="pause" />
+          <JdStatCard label="已关闭" value={kpiTotals?.closed ?? "—"} ratio={optionalPercentOf(kpiTotals?.closed, kpiTotal)} tone="neutral" icon="closed" />
         </section>
 
         <section className="jd-management-table-card">
@@ -738,7 +855,17 @@ export function JdManagementView({
                 </tr>
               </thead>
               <tbody>
-                {filteredRows.map((row) => (
+                {serverError ? (
+                  <tr>
+                    <td colSpan={12} className="jd-management-table__empty">{serverError}</td>
+                  </tr>
+                ) : null}
+                {!serverError && !paginatedRows.length ? (
+                  <tr>
+                    <td colSpan={12} className="jd-management-table__empty">{serverLoading ? "加载中" : "暂无职位"}</td>
+                  </tr>
+                ) : null}
+                {paginatedRows.map((row) => (
                   <tr key={row.key} data-active={selectedRow?.key === row.key ? "true" : undefined} onClick={() => setSelectedKey(row.key)}>
                     <td><input className="jd-management-checkbox" type="checkbox" checked={selectedRow?.key === row.key} readOnly aria-label={`选择 ${row.job.title}`} /></td>
                     <td>
@@ -772,15 +899,50 @@ export function JdManagementView({
         </section>
 
         <footer className="jd-management-pagination">
-          <span className="jd-management-detail__value">共 {filteredRows.length} 条</span>
-          <select className="jd-management-select" defaultValue="20">
+          <span className="jd-management-detail__value">共 {serverTotal} 条</span>
+          <select className="jd-management-select" value={pageSize} onChange={(event) => setPageSize(Number(event.target.value))}>
             <option value="20">20 条/页</option>
             <option value="50">50 条/页</option>
           </select>
-          <span className="jd-management-detail__value">1 2 3 4 5 ...</span>
+          <span className="jd-management-detail__value">{pageStart}-{pageEnd}</span>
+          <button
+            type="button"
+            className="jd-management-page-button"
+            disabled={currentPage <= 1}
+            onClick={() => setPage((value) => clampPage(value - 1, pageCount))}
+          >
+            ‹
+          </button>
+          {pageNumbers.map((pageNumber) => (
+            <button
+              key={pageNumber}
+              type="button"
+              className="jd-management-page-button"
+              data-active={pageNumber === currentPage ? "true" : undefined}
+              onClick={() => setPage(pageNumber)}
+            >
+              {pageNumber}
+            </button>
+          ))}
+          <button
+            type="button"
+            className="jd-management-page-button"
+            disabled={currentPage >= pageCount}
+            onClick={() => setPage((value) => clampPage(value + 1, pageCount))}
+          >
+            ›
+          </button>
           <label className="jd-management-filter">
             前往
-            <input className="jd-management-input" style={{ width: "56px" }} defaultValue="1" />
+            <input
+              className="jd-management-input"
+              style={{ width: "56px" }}
+              type="number"
+              min={1}
+              max={pageCount}
+              value={currentPage}
+              onChange={(event) => setPage(clampPage(Number(event.target.value), pageCount))}
+            />
             页
           </label>
         </footer>

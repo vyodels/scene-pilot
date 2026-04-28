@@ -80,6 +80,8 @@ import type {
   ApplicationReviewDecisionRecord,
   ApplicationScorecardRecord,
   JobDescriptionPayload,
+  JobDescriptionPageRecord,
+  JobDescriptionPageParams,
   JobDescriptionSummaryRecord,
   PersonMemoryRecord,
   PersonSummaryRecord,
@@ -166,7 +168,8 @@ export interface DesktopApiClient {
   getSyncStatus(): Promise<SyncStatusSnapshot>;
   listSyncBacklog(): Promise<SyncBacklogItem[]>;
   flushSyncBacklog(): Promise<SyncFlushResult>;
-  listJobDescriptions(): Promise<JobDescriptionSummaryRecord[]>;
+  listJobDescriptions(params?: JobDescriptionPageParams): Promise<JobDescriptionSummaryRecord[]>;
+  listJobDescriptionsPage(params?: JobDescriptionPageParams): Promise<JobDescriptionPageRecord>;
   getJobDescription(jobDescriptionId: string): Promise<JobDescriptionSummaryRecord>;
   createJobDescription(payload: JobDescriptionPayload): Promise<JobDescriptionSummaryRecord>;
   updateJobDescription(
@@ -1108,6 +1111,8 @@ function normalizePersonSummary(raw: unknown, fallbackContactInfo?: Record<strin
       contactInfo.education_background ??
       "",
   ).trim();
+  const rawExperienceYears = record.experienceYears ?? record.experience_years ?? contactInfo.experience_years;
+  const experienceYears = rawExperienceYears != null ? Number(rawExperienceYears) : null;
   return {
     personId:
       record.personId != null ? String(record.personId) : record.person_id != null ? String(record.person_id) : null,
@@ -1117,11 +1122,11 @@ function normalizePersonSummary(raw: unknown, fallbackContactInfo?: Record<strin
         : record.platform_candidate_id != null
           ? String(record.platform_candidate_id)
           : null,
-    name: String(record.name ?? "Unknown applicant"),
-    title: String(record.title ?? contactInfo.title ?? "投递人"),
-    location: String(record.location ?? contactInfo.location ?? "未知"),
+    name: String(record.name ?? "").trim(),
+    title: String(record.title ?? contactInfo.title ?? "").trim(),
+    location: String(record.location ?? contactInfo.location ?? "").trim(),
     age: Number.isFinite(ageValue) && ageValue > 0 ? ageValue : null,
-    experienceYears: Number(record.experienceYears ?? record.experience_years ?? contactInfo.experience_years ?? 0),
+    experienceYears: experienceYears != null && Number.isFinite(experienceYears) ? experienceYears : null,
     education: education || null,
     tags: asArray<string>(record.tags ?? contactInfo.tags),
     contactInfo,
@@ -1139,7 +1144,7 @@ function normalizeJobDescriptionSummary(raw: unknown, fallbackId?: string | null
         : record.job_description_id != null
           ? String(record.job_description_id)
           : fallbackId,
-    title: String(record.title ?? fallbackId ?? "未分配岗位"),
+    title: String(record.title ?? "").trim(),
     companyName:
       record.companyName != null ? String(record.companyName) : record.company_name != null ? String(record.company_name) : null,
     department:
@@ -1198,6 +1203,51 @@ function normalizeJobDescriptionSummary(raw: unknown, fallbackId?: string | null
   };
 }
 
+function requirePageNumber(value: unknown, fieldName: string): number {
+  const numberValue = Number(value);
+  if (!Number.isFinite(numberValue)) {
+    throw new Error(`Invalid job descriptions page field: ${fieldName}`);
+  }
+  return numberValue;
+}
+
+function normalizeJobDescriptionPage(raw: unknown): JobDescriptionPageRecord {
+  const record = asRecord(raw);
+  const rawHasNext = record.hasNext ?? record.has_next;
+  if (typeof rawHasNext !== "boolean") {
+    throw new Error("Invalid job descriptions page field: hasNext");
+  }
+  return {
+    items: asArray(record.items).map((item) =>
+      normalizeJobDescriptionSummary(item, String(asRecord(item).jobDescriptionId ?? asRecord(item).job_description_id ?? "")),
+    ),
+    total: requirePageNumber(record.total, "total"),
+    limit: requirePageNumber(record.limit, "limit"),
+    offset: requirePageNumber(record.offset, "offset"),
+    hasNext: rawHasNext,
+  };
+}
+
+function jobDescriptionPagePath(params?: JobDescriptionPageParams): string {
+  const search = new URLSearchParams();
+  const entries: Array<[string, string | number | null | undefined]> = [
+    ["limit", params?.limit],
+    ["offset", params?.offset],
+    ["status", params?.status],
+    ["location", params?.location],
+    ["department", params?.department],
+    ["owner", params?.owner],
+    ["keyword", params?.keyword],
+  ];
+  for (const [key, value] of entries) {
+    if (value != null && String(value).trim()) {
+      search.set(key, String(value).trim());
+    }
+  }
+  const query = search.toString();
+  return query ? `/api/job-descriptions?${query}` : "/api/job-descriptions";
+}
+
 function serializeJobDescriptionPayload(payload: Partial<JobDescriptionPayload>): Record<string, unknown> {
   return {
     title: payload.title,
@@ -1225,6 +1275,8 @@ function normalizeApplicationRecord(raw: unknown): ApplicationRecord {
   const record = asRecord(raw);
   const aiScores = asRecord(record.aiScores ?? record.ai_scores);
   const applicationId = String(record.applicationId ?? record.application_id ?? record.id ?? "");
+  const rawMatchScore = record.matchScore ?? record.match_score ?? aiScores.overall;
+  const matchScore = rawMatchScore != null ? Number(rawMatchScore) : null;
   const personId =
     record.personId != null ? String(record.personId) : record.person_id != null ? String(record.person_id) : null;
   const jobDescriptionId =
@@ -1238,29 +1290,25 @@ function normalizeApplicationRecord(raw: unknown): ApplicationRecord {
     applicationId,
     personId,
     jobDescriptionId,
-    platform: String(record.platform ?? "site"),
-    currentStatus: String(record.currentStatus ?? record.current_status ?? "discovered") as ApplicationRecord["currentStatus"],
-    stageKey: String(record.stageKey ?? record.stage_key ?? record.currentStageKey ?? record.current_stage_key ?? "candidate_probe"),
+    platform: String(record.platform ?? "").trim(),
+    currentStatus: String(record.currentStatus ?? record.current_status ?? "").trim() as ApplicationRecord["currentStatus"],
+    stageKey: String(record.stageKey ?? record.stage_key ?? record.currentStageKey ?? record.current_stage_key ?? "").trim(),
     deepestMilestone:
       record.deepestMilestone
         ? String(record.deepestMilestone)
         : record.deepest_milestone
           ? String(record.deepest_milestone)
           : null,
-    matchScore: Number(record.matchScore ?? record.match_score ?? aiScores.overall ?? 0),
-    nextAction: String(
-      record.nextAction ??
-        record.next_action ??
-        "等待 Recruit Agent 选择下一步动作。",
-    ),
+    matchScore: matchScore != null && Number.isFinite(matchScore) ? matchScore : null,
+    nextAction: String(record.nextAction ?? record.next_action ?? "").trim(),
     summary: String(
       record.summary ??
         record.aiReasoning ??
         record.ai_reasoning ??
         record.onlineResumeText ??
         record.online_resume_text ??
-        "投递记录档案等待补充。",
-    ),
+        "",
+    ).trim(),
     resumeAvailable: Boolean(record.resumeAvailable ?? record.resume_available ?? false),
     person: normalizePersonSummary(
       record.person ?? {},
@@ -3228,10 +3276,10 @@ function createFetchClient(baseUrl: string): DesktopApiClient {
           body: JSON.stringify({ initiated_by: "desktop-user" }),
         }),
       ),
-    listJobDescriptions: async () =>
-      asArray(await requestJson<unknown>(baseUrl, "/api/job-descriptions")).map((item) =>
-        normalizeJobDescriptionSummary(item, String(asRecord(item).jobDescriptionId ?? asRecord(item).job_description_id ?? "")),
-      ),
+    listJobDescriptions: async (params) =>
+      normalizeJobDescriptionPage(await requestJson<unknown>(baseUrl, jobDescriptionPagePath(params))).items,
+    listJobDescriptionsPage: async (params) =>
+      normalizeJobDescriptionPage(await requestJson<unknown>(baseUrl, jobDescriptionPagePath(params))),
     getJobDescription: async (jobDescriptionId) =>
       normalizeJobDescriptionSummary(
         await requestJson<unknown>(baseUrl, `/api/job-descriptions/${encodeURIComponent(jobDescriptionId)}`),

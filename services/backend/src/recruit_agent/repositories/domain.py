@@ -95,6 +95,10 @@ class BaseRepository(Generic[ModelT]):
         stmt = select(self.model).offset(offset).limit(limit)
         return list(self.session.scalars(stmt).all())
 
+    def count(self) -> int:
+        stmt = select(func.count()).select_from(self.model)
+        return int(self.session.scalar(stmt) or 0)
+
     def get(self, item_id: str) -> ModelT | None:
         return self.session.get(self.model, item_id)
 
@@ -219,6 +223,81 @@ class CandidatePlatformIdxRepository(BaseRepository[CandidatePlatformIdx]):
 
 class JobDescriptionRepository(BaseRepository[JobDescription]):
     model = JobDescription
+
+    def _filtered_query(
+        self,
+        *,
+        status: str | None = None,
+        location: str | None = None,
+        department: str | None = None,
+        owner: str | None = None,
+        keyword: str | None = None,
+    ):
+        stmt = select(JobDescription)
+        normalized_status = str(status or "").strip()
+        if normalized_status:
+            stmt = stmt.where(JobDescription.status == normalized_status)
+        normalized_location = str(location or "").strip()
+        if normalized_location:
+            stmt = stmt.where(JobDescription.location == normalized_location)
+        normalized_department = str(department or "").strip()
+        if normalized_department:
+            stmt = stmt.where(JobDescription.department == normalized_department)
+        normalized_owner = str(owner or "").strip()
+        if normalized_owner:
+            stmt = stmt.where(
+                or_(
+                    JobDescription.detail_metadata["ownerName"].as_string() == normalized_owner,
+                    JobDescription.detail_metadata["owner_name"].as_string() == normalized_owner,
+                    JobDescription.detail_metadata["recruiterName"].as_string() == normalized_owner,
+                    JobDescription.detail_metadata["recruiter_name"].as_string() == normalized_owner,
+                )
+            )
+        normalized_keyword = str(keyword or "").strip()
+        if normalized_keyword:
+            pattern = f"%{normalized_keyword}%"
+            stmt = stmt.where(
+                or_(
+                    JobDescription.title.ilike(pattern),
+                    JobDescription.job_description_id.ilike(pattern),
+                    JobDescription.company_name.ilike(pattern),
+                    JobDescription.department.ilike(pattern),
+                    JobDescription.location.ilike(pattern),
+                )
+            )
+        return stmt
+
+    def list_page(
+        self,
+        *,
+        status: str | None = None,
+        location: str | None = None,
+        department: str | None = None,
+        owner: str | None = None,
+        keyword: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[JobDescription]:
+        stmt = (
+            self._filtered_query(status=status, location=location, department=department, owner=owner, keyword=keyword)
+            .order_by(JobDescription.updated_at.desc(), JobDescription.job_description_id.asc())
+            .offset(offset)
+            .limit(limit)
+        )
+        return list(self.session.scalars(stmt).all())
+
+    def count_page(
+        self,
+        *,
+        status: str | None = None,
+        location: str | None = None,
+        department: str | None = None,
+        owner: str | None = None,
+        keyword: str | None = None,
+    ) -> int:
+        filtered = self._filtered_query(status=status, location=location, department=department, owner=owner, keyword=keyword).subquery()
+        stmt = select(func.count()).select_from(filtered)
+        return int(self.session.scalar(stmt) or 0)
 
     def get_by_business_id(self, job_description_id: str) -> JobDescription | None:
         stmt = select(JobDescription).where(JobDescription.job_description_id == job_description_id)

@@ -29,7 +29,7 @@ export interface PersonSummaryRecord {
   title: string;
   location: string;
   age?: number | null;
-  experienceYears: number;
+  experienceYears: number | null;
   education?: string | null;
   tags: string[];
   contactInfo: Record<string, unknown>;
@@ -59,6 +59,24 @@ export interface JobDescriptionSummaryRecord {
   source?: string | null;
   createdAt?: string | number | null;
   updatedAt?: string | number | null;
+}
+
+export interface JobDescriptionPageRecord {
+  items: JobDescriptionSummaryRecord[];
+  total: number;
+  limit: number;
+  offset: number;
+  hasNext: boolean;
+}
+
+export interface JobDescriptionPageParams {
+  limit?: number;
+  offset?: number;
+  status?: string | null;
+  location?: string | null;
+  department?: string | null;
+  owner?: string | null;
+  keyword?: string | null;
 }
 
 export type JobDescriptionPayload = Pick<JobDescriptionSummaryRecord, "title"> &
@@ -116,7 +134,7 @@ export interface ApplicationRecord {
   currentStatus: ApplicationStatus;
   stageKey: string;
   deepestMilestone?: string | null;
-  matchScore: number;
+  matchScore: number | null;
   nextAction: string;
   summary: string;
   resumeAvailable: boolean;

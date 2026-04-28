@@ -1411,6 +1411,12 @@ a:hover {
   white-space: nowrap;
 }
 
+.jd-management-table__empty {
+  height: 160px;
+  color: var(--text-secondary);
+  text-align: center;
+}
+
 .jd-management-table tr:hover td {
   background: var(--bg-hover);
 }
@@ -1806,10 +1812,38 @@ a:hover {
   white-space: nowrap;
 }
 
+.jd-management-detail__metric-list[data-disabled="true"] {
+  opacity: 0.48;
+}
+
 .jd-management-detail__metric-list i {
   color: var(--success);
   font-style: normal;
   margin-left: 4px;
+}
+
+.jd-management-page-button {
+  min-width: 32px;
+  height: 32px;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  line-height: 1;
+  cursor: pointer;
+}
+
+.jd-management-page-button[data-active="true"] {
+  border-color: var(--brand-primary);
+  background: var(--brand-primary);
+  color: var(--text-inverse);
+}
+
+.jd-management-page-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
 }
 
 .jd-management-empty {
@@ -3831,6 +3865,11 @@ button.application-followup-info-card:hover {
   background: var(--brand-primary);
 }
 
+.application-followup-score-bars__row[data-disabled="true"] {
+  opacity: 0.55;
+}
+
+.application-followup-score-bars__row[data-disabled="true"] .application-followup-score-bars__track span,
 .application-followup-score-card[data-disabled="true"] .application-followup-score-bars__track span,
 .application-followup-side-panel[data-disabled="true"] .application-followup-score-bars__track span {
   background: var(--border-input);

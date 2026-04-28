@@ -250,7 +250,7 @@ function resolveContactSummaryFromSnapshot(snapshot: Record<string, unknown>): s
 }
 
 export function resolveApplicationCurrentStatus(application: ApplicationRecord): string {
-  return application.currentStatus.trim() || "discovered";
+  return application.currentStatus.trim();
 }
 
 export function createNodeMap(stateMachine: RecruitmentStateMachine): Map<string, StateNode> {

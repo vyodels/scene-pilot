@@ -45,8 +45,10 @@ export function CandidateTable({
         if (left.humanRequired !== right.humanRequired) {
           return left.humanRequired ? -1 : 1;
         }
-        if (right.application.matchScore !== left.application.matchScore) {
-          return right.application.matchScore - left.application.matchScore;
+        const rightScore = right.application.matchScore;
+        const leftScore = left.application.matchScore;
+        if (rightScore !== leftScore) {
+          return (rightScore ?? -1) - (leftScore ?? -1);
         }
         return left.application.person.name.localeCompare(right.application.person.name);
       }),
@@ -124,7 +126,7 @@ export function CandidateTable({
                 <div className="candidate-table__cell">
                   <span>{record.application.person.title}</span>
                   <span className="candidate-table__meta">
-                    {copy("Match", "匹配度")} {Math.round(record.application.matchScore)}
+                    {copy("Match", "匹配度")} {record.application.matchScore != null ? Math.round(record.application.matchScore) : "—"}
                   </span>
                 </div>
                 <div className="candidate-table__cell">

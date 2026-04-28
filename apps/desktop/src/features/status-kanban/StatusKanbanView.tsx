@@ -48,133 +48,6 @@ function applicationStatusLabel(label: string): string {
   return applicationScopedLabel(label);
 }
 
-function buildFallbackSummaryDefinitions(
-  stateMachine: RecruitmentStateMachine,
-  copy: (en: string, zh: string) => string,
-): ApplicationFollowUpSummaryDefinition[] {
-  const visibleNodes = stateMachine.nodes.filter(
-    (node) => node.uiConfig?.showInKanban !== false && !node.isTransient,
-  );
-  const closureStatuses = visibleNodes
-    .filter((node) => ["no_response", "cooldown", "archived", "candidate_withdrew"].includes(node.id))
-    .map((node) => node.id);
-  const activeStatuses = visibleNodes
-    .filter(
-      (node) =>
-        node.phase !== "Z" &&
-        (((!node.isTerminal && !node.isSoftTerminal) || node.isSuccess)) &&
-        !closureStatuses.includes(node.id),
-    )
-    .map((node) => node.id);
-  const humanRequiredStatuses = visibleNodes
-    .filter((node) => activeStatuses.includes(node.id) && node.executionConfig?.mode === "human_required")
-    .map((node) => node.id);
-  const labelById = new Map(visibleNodes.map((node) => [node.id, applicationStatusLabel(node.label)]));
-
-  const toLabels = (statusIds: string[]) => statusIds.map((statusId) => labelById.get(statusId) ?? statusId);
-
-  return [
-    {
-      key: "all",
-      label: copy("All statuses", "全部状态"),
-      summary: copy(
-        "All applications currently visible under the current role and date filters.",
-        "当前岗位与时间筛选下可见的全部投递记录。",
-      ),
-      relation: copy("Base pool", "基准池"),
-      matchingMode: "all",
-      includeStatuses: visibleNodes.map((node) => node.id),
-      excludeStatuses: [],
-      includeLabels: toLabels(visibleNodes.map((node) => node.id)),
-      excludeLabels: [],
-    },
-    {
-      key: "active",
-      label: copy("In follow-up", "跟进中"),
-      summary: copy(
-        "Applications still progressing in the main follow-up workflow.",
-        "仍在主流程里活跃推进的投递记录。",
-      ),
-      relation: copy("Main workflow pool", "主流程总池"),
-      matchingMode: "status_set",
-      includeStatuses: activeStatuses,
-      excludeStatuses: closureStatuses,
-      includeLabels: toLabels(activeStatuses),
-      excludeLabels: toLabels(closureStatuses),
-    },
-    {
-      key: "human",
-      label: copy("Needs human", "等待人工"),
-      summary: copy(
-        "Applications currently stopped at a recruiter-operated step.",
-        "当前停在需要招聘员处理或确认节点的投递记录。",
-      ),
-      relation: copy("Subset of in follow-up", "跟进中的子集"),
-      matchingMode: "status_set",
-      includeStatuses: humanRequiredStatuses,
-      excludeStatuses: closureStatuses,
-      includeLabels: toLabels(humanRequiredStatuses),
-      excludeLabels: toLabels(closureStatuses),
-    },
-    {
-      key: "no_response",
-      label: copy("Retry pending", "无回复·可重试"),
-      summary: copy(
-        "Applications still inside the retry window after no response.",
-        "已发送跟进但尚未回复，仍处于可自动重试窗口内的投递记录。",
-      ),
-      relation: copy("Independent waiting pool", "独立等待池"),
-      matchingMode: "status_set",
-      includeStatuses: visibleNodes.filter((node) => node.id === "no_response").map((node) => node.id),
-      excludeStatuses: [],
-      includeLabels: toLabels(visibleNodes.filter((node) => node.id === "no_response").map((node) => node.id)),
-      excludeLabels: [],
-    },
-    {
-      key: "cooldown",
-      label: copy("Cooldown", "冷却中"),
-      summary: copy(
-        "Applications temporarily paused and waiting for manual reactivation or cooldown expiry.",
-        "已暂时暂停推进，等待冷却期结束或人工重新激活的投递记录。",
-      ),
-      relation: copy("Paused pool", "暂停池"),
-      matchingMode: "status_set",
-      includeStatuses: visibleNodes.filter((node) => node.id === "cooldown").map((node) => node.id),
-      excludeStatuses: [],
-      includeLabels: toLabels(visibleNodes.filter((node) => node.id === "cooldown").map((node) => node.id)),
-      excludeLabels: [],
-    },
-    {
-      key: "archived",
-      label: copy("Archived", "已归档"),
-      summary: copy(
-        "Applications already closed and kept only for record.",
-        "流程已收口，仅做记录保留的投递记录。",
-      ),
-      relation: copy("Closed state", "收口态"),
-      matchingMode: "status_set",
-      includeStatuses: visibleNodes.filter((node) => node.id === "archived").map((node) => node.id),
-      excludeStatuses: [],
-      includeLabels: toLabels(visibleNodes.filter((node) => node.id === "archived").map((node) => node.id)),
-      excludeLabels: [],
-    },
-    {
-      key: "candidate_withdrew",
-      label: copy("Application withdrew", "投递人主动放弃"),
-      summary: copy(
-        "Applications where the applicant explicitly withdrew from the current process.",
-        "投递人明确表示退出当前流程，不再继续推进。",
-      ),
-      relation: copy("Closed state", "收口态"),
-      matchingMode: "status_set",
-      includeStatuses: visibleNodes.filter((node) => node.id === "candidate_withdrew").map((node) => node.id),
-      excludeStatuses: [],
-      includeLabels: toLabels(visibleNodes.filter((node) => node.id === "candidate_withdrew").map((node) => node.id)),
-      excludeLabels: [],
-    },
-  ];
-}
-
 export function StatusKanbanView({
   applications,
   threads,
@@ -212,8 +85,8 @@ export function StatusKanbanView({
 
   const effectiveDateFilter = useMemo(() => resolveApplicationDateRangeFilter(dateRange), [dateRange]);
   const effectiveSummaryDefinitions = useMemo(
-    () => (summaryDefinitions.length ? summaryDefinitions : buildFallbackSummaryDefinitions(stateMachine, copy)),
-    [copy, stateMachine, summaryDefinitions],
+    () => summaryDefinitions,
+    [summaryDefinitions],
   );
 
   const summaryDefinitionByKey = useMemo(

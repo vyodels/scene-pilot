@@ -166,6 +166,14 @@ class JobDescriptionRead(JobDescriptionBase):
     updated_at: int = Field(serialization_alias="updatedAt")
 
 
+class JobDescriptionPageRead(BaseModel):
+    items: list[JobDescriptionRead]
+    total: int
+    limit: int
+    offset: int
+    has_next: bool = Field(serialization_alias="hasNext")
+
+
 class CandidateApplicationBase(BaseModel):
     person_id: str = Field(validation_alias=AliasChoices("person_id", "personId", "candidate_person_id", "candidatePersonId"))
     job_description_id: str | None = Field(

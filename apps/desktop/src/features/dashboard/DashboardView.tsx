@@ -291,8 +291,10 @@ export function DashboardView({
       if (laneDiff !== 0) {
         return laneDiff;
       }
-      if (right.application.matchScore !== left.application.matchScore) {
-        return right.application.matchScore - left.application.matchScore;
+      const rightScore = right.application.matchScore;
+      const leftScore = left.application.matchScore;
+      if (rightScore !== leftScore) {
+        return (rightScore ?? -1) - (leftScore ?? -1);
       }
       return left.application.person.name.localeCompare(right.application.person.name);
     });
@@ -454,9 +456,11 @@ export function DashboardView({
                     <div style={{ display: "flex", gap: "var(--space-2)", flexWrap: "wrap" }}>
                       <StatusBadge tone={laneTone(lane)}>{laneLabel(lane, copy)}</StatusBadge>
                       <StatusBadge tone="neutral">{application.currentStatusLabel}</StatusBadge>
-                      <StatusBadge tone="neutral">
-                        {copy(`score ${application.application.matchScore}`, `分数 ${application.application.matchScore}`)}
-                      </StatusBadge>
+                      {application.application.matchScore != null ? (
+                        <StatusBadge tone="neutral">
+                          {copy(`score ${application.application.matchScore}`, `分数 ${application.application.matchScore}`)}
+                        </StatusBadge>
+                      ) : null}
                     </div>
                   </div>
                   <div style={{ color: "var(--text-regular)", fontSize: "var(--font-size-sm)", lineHeight: "var(--line-height-base)" }}>

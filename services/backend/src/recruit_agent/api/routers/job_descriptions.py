@@ -7,7 +7,15 @@ from sqlalchemy.orm import Session
 
 from recruit_agent.api.deps import get_container, get_session
 from recruit_agent.repositories import JobDescriptionMemoryRepository, JobDescriptionRepository
-from recruit_agent.schemas import JobDescriptionCreate, JobDescriptionRead, JobDescriptionUpdate, JobMemoryRead, JobMemoryUpdate, MemoryCompactRequest
+from recruit_agent.schemas import (
+    JobDescriptionCreate,
+    JobDescriptionPageRead,
+    JobDescriptionRead,
+    JobDescriptionUpdate,
+    JobMemoryRead,
+    JobMemoryUpdate,
+    MemoryCompactRequest,
+)
 from recruit_agent.services.container import AppContainer
 from recruit_agent.services.recruit_agent import (
     AUTO_COMPACT_THRESHOLD,
@@ -25,13 +33,38 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-@router.get("", response_model=list[JobDescriptionRead])
+@router.get("", response_model=JobDescriptionPageRead)
 def list_job_descriptions(
     limit: int = Query(default=100, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
+    status: str | None = Query(default=None),
+    location: str | None = Query(default=None),
+    department: str | None = Query(default=None),
+    owner: str | None = Query(default=None),
+    keyword: str | None = Query(default=None),
     session: Session = Depends(get_session),
-) -> list[JobDescriptionRead]:
-    return [JobDescriptionRead.model_validate(item) for item in JobDescriptionRepository(session).list(limit=limit, offset=offset)]
+) -> JobDescriptionPageRead:
+    repo = JobDescriptionRepository(session)
+    items = [
+        JobDescriptionRead.model_validate(item)
+        for item in repo.list_page(
+            status=status,
+            location=location,
+            department=department,
+            owner=owner,
+            keyword=keyword,
+            limit=limit,
+            offset=offset,
+        )
+    ]
+    total = repo.count_page(status=status, location=location, department=department, owner=owner, keyword=keyword)
+    return JobDescriptionPageRead(
+        items=items,
+        total=total,
+        limit=limit,
+        offset=offset,
+        has_next=offset + len(items) < total,
+    )
 
 
 @router.post("", response_model=JobDescriptionRead, status_code=201)

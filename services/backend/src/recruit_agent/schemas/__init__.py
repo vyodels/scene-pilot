@@ -80,6 +80,7 @@ from .domain import (
     FeatureFlags,
     HealthResponse,
     JobDescriptionCreate,
+    JobDescriptionPageRead,
     JobDescriptionRead,
     JobMemoryCreate,
     JobMemoryRead,
