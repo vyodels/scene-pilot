@@ -1380,6 +1380,8 @@ function normalizeApplicationRecord(raw: unknown): ApplicationRecord {
       record.stateSnapshot ?? record.state_snapshot
         ? normalizeApplicationStateSnapshot(record.stateSnapshot ?? record.state_snapshot)
         : undefined,
+    contactSnapshot: asRecord(record.contactSnapshot ?? record.contact_snapshot),
+    resumeSnapshot: asRecord(record.resumeSnapshot ?? record.resume_snapshot),
     aiScores,
     cooldownUntil: record.cooldownUntil
       ? String(record.cooldownUntil)

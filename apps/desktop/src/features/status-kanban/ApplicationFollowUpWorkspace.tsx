@@ -212,45 +212,21 @@ function pickFirstString(...values: unknown[]): string | undefined {
   return undefined;
 }
 
-function parseResumeBasics(text: string | null | undefined): {
-  age?: number;
-  education?: string;
-  experience?: string;
-  workStatus?: string;
-} {
-  const raw = text?.trim();
-  if (!raw) {
-    return {};
-  }
-  const ageMatch = raw.match(/(\d{2})\s*岁/);
-  const experienceMatch = raw.match(/(\d{1,2})\s*年(?:以上)?/);
-  const educationMatch = raw.match(/博士|硕士|本科|大专|专科|高中|中专/);
-  const workStatusMatch = raw.match(/离职|在职|已到岗|应届/);
-  return {
-    age: ageMatch ? Number(ageMatch[1]) : undefined,
-    education: educationMatch?.[0],
-    experience: experienceMatch ? `${experienceMatch[1]}年${raw.includes(`${experienceMatch[1]}年以上`) ? "以上" : ""}` : undefined,
-    workStatus: workStatusMatch?.[0],
-  };
-}
-
-function personResumeText(person: { onlineResumeText?: string | null; contactInfo?: Record<string, unknown> }): string | undefined {
-  const contactInfo = asObject(person.contactInfo);
-  return pickFirstString(
-    person.onlineResumeText,
-    contactInfo.summary,
-    contactInfo.resumeSummary,
-    contactInfo.resume_summary,
-    contactInfo.profileSummary,
-    contactInfo.profile_summary,
-  );
-}
-
 function compactValue(value: string | number | null | undefined): string {
   if (value == null || value === "") {
     return "—";
   }
   return String(value);
+}
+
+function structuredFactsFromResumeSnapshot(value: unknown): Record<string, unknown> {
+  const snapshot = asObject(value);
+  return asObject(snapshot.structured_facts ?? snapshot.structuredFacts);
+}
+
+function numberFact(value: unknown): number | null {
+  const numberValue = Number(value);
+  return Number.isFinite(numberValue) && numberValue > 0 ? numberValue : null;
 }
 
 function ProfileFact({ label, value }: { label: string; value: React.ReactNode }): JSX.Element {
@@ -274,20 +250,16 @@ function avatarUrlFromContactInfo(contactInfo: unknown): string | undefined {
   );
 }
 
-function ageText(age: number | null | undefined, resumeText?: string | null): string {
-  if (!age) {
-    const parsedAge = parseResumeBasics(resumeText).age;
-    return parsedAge ? `${parsedAge}岁` : "—";
-  }
+function ageText(age: number | null | undefined): string {
   return age ? `${age}岁` : "—";
 }
 
-function educationText(education: string | null | undefined, resumeText?: string | null): string {
-  return education || parseResumeBasics(resumeText).education || "—";
+function educationText(education: string | null | undefined): string {
+  return education || "—";
 }
 
-function experienceText(years: number | null | undefined, resumeText?: string | null): string {
-  return years ? `${years}年` : parseResumeBasics(resumeText).experience || "—";
+function experienceText(years: number | null | undefined, experience?: string | null): string {
+  return years ? `${years}年` : experience || "—";
 }
 
 export function ApplicationFollowUpWorkspace({
@@ -415,14 +387,17 @@ export function ApplicationFollowUpWorkspace({
   const resumeArtifacts = getResumeArtifactSummaries(selectedRecord.thread);
   const facts = asObject(selectedRecord.thread?.facts);
   const contactInfo = asObject(person.contactInfo);
-  const parsedResumeBasics = parseResumeBasics(personResumeText(person));
+  const resumeSnapshot = asObject(selectedRecord.application.resumeSnapshot);
+  const structuredResumeFacts = structuredFactsFromResumeSnapshot(resumeSnapshot);
   const profilePhoto = avatarUrlFromContactInfo(contactInfo);
   const profileGender = pickFirstString(contactInfo.gender, contactInfo.sex, facts.gender, facts.sex);
-  const profileAge = person.age ?? parsedResumeBasics.age;
-  const profileEducation = person.education || parsedResumeBasics.education;
+  const profileAge = person.age ?? numberFact(structuredResumeFacts.age);
+  const profileEducation = person.education || pickFirstString(structuredResumeFacts.education);
+  const structuredExperienceYears = numberFact(structuredResumeFacts.experienceYears ?? structuredResumeFacts.experience_years);
+  const structuredExperienceText = pickFirstString(structuredResumeFacts.experienceText, structuredResumeFacts.experience_text);
   const profileWorkStatus =
     pickFirstString(contactInfo.workStatus, contactInfo.work_status, facts.workStatus, facts.work_status) ??
-    parsedResumeBasics.workStatus;
+    pickFirstString(structuredResumeFacts.workStatus, structuredResumeFacts.work_status);
   const profilePhone = pickFirstString(
     contactInfo.phone,
     contactInfo.mobile,
@@ -588,25 +563,32 @@ export function ApplicationFollowUpWorkspace({
         </label>
 
         <div className="application-followup-records__list">
-          {filteredApplications.map((item) => (
-            <ApplicationRecordCard
-              key={item.application.id}
-              name={item.application.person.name}
-              avatarUrl={avatarUrlFromContactInfo(item.application.person.contactInfo)}
-              time={item.latestActivityAt ? formatChineseMessageTime(item.latestActivityAt) : "—"}
-              location={compactValue(item.application.person.location)}
-              age={ageText(item.application.person.age, personResumeText(item.application.person))}
-              experienceYears={experienceText(item.application.person.experienceYears, personResumeText(item.application.person))}
-              education={educationText(item.application.person.education, personResumeText(item.application.person))}
-              jobTitle={item.application.jobDescription.title || "—"}
-              jobLocation={compactValue(item.application.jobDescription.location)}
-              statusLabel={item.currentStatusLabel}
-              statusTone={nodeTone(item.currentNode)}
-              active={item.application.id === selectedRecord.application.id}
-              attention={item.humanRequired}
-              onClick={() => onSelectApplication(item.application.id)}
-            />
-          ))}
+          {filteredApplications.map((item) => {
+            const itemStructuredFacts = structuredFactsFromResumeSnapshot(item.application.resumeSnapshot);
+            const itemExperienceYears =
+              item.application.person.experienceYears ??
+              numberFact(itemStructuredFacts.experienceYears ?? itemStructuredFacts.experience_years);
+            const itemExperienceText = pickFirstString(itemStructuredFacts.experienceText, itemStructuredFacts.experience_text);
+            return (
+              <ApplicationRecordCard
+                key={item.application.id}
+                name={item.application.person.name}
+                avatarUrl={avatarUrlFromContactInfo(item.application.person.contactInfo)}
+                time={item.latestActivityAt ? formatChineseMessageTime(item.latestActivityAt) : "—"}
+                location={compactValue(item.application.person.location)}
+                age={ageText(item.application.person.age ?? numberFact(itemStructuredFacts.age))}
+                experienceYears={experienceText(itemExperienceYears, itemExperienceText)}
+                education={educationText(item.application.person.education || pickFirstString(itemStructuredFacts.education))}
+                jobTitle={item.application.jobDescription.title || "—"}
+                jobLocation={compactValue(item.application.jobDescription.location)}
+                statusLabel={item.currentStatusLabel}
+                statusTone={nodeTone(item.currentNode)}
+                active={item.application.id === selectedRecord.application.id}
+                attention={item.humanRequired}
+                onClick={() => onSelectApplication(item.application.id)}
+              />
+            );
+          })}
         </div>
       </aside>
 
@@ -628,7 +610,7 @@ export function ApplicationFollowUpWorkspace({
               <span>{profileGender || "—"}</span>
               <span>{profileAge ? `${profileAge}岁` : "—"}</span>
               <span>{profileEducation || "—"}</span>
-              <span>{experienceText(person.experienceYears, personResumeText(person))}</span>
+              <span>{experienceText(person.experienceYears ?? structuredExperienceYears, structuredExperienceText)}</span>
               <span>{profileWorkStatus || "—"}</span>
             </div>
             <div className="application-followup-profile__contact-grid">
@@ -647,7 +629,7 @@ export function ApplicationFollowUpWorkspace({
           <div className="application-followup-profile__info-column">
             <ProfileFact label={copy("Expected city", "期望城市")} value={job.location || person.location} />
             <ProfileFact label={copy("Expected salary", "期望薪资")} value={job.compensationText} />
-            <ProfileFact label={copy("Experience", "工作年限")} value={experienceText(person.experienceYears, personResumeText(person))} />
+            <ProfileFact label={copy("Experience", "工作年限")} value={experienceText(person.experienceYears ?? structuredExperienceYears, structuredExperienceText)} />
             <ProfileFact label={copy("Availability", "到岗时间")} value={profileAvailability} />
             <ProfileFact label={copy("Source", "来源渠道")} value={profileSource} />
             <ProfileFact label={copy("Updated", "更新时间")} value={profileUpdatedAt} />

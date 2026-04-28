@@ -49,6 +49,7 @@ from recruit_agent.schemas import (
 from recruit_agent.services.application_subjects import application_payload_from_application
 from recruit_agent.services.candidate_identity import merge_contact_info, relink_application_person_by_contact_info
 from recruit_agent.services.recruit_agent import default_candidate_state_snapshot
+from recruit_agent.services.resume_structure import extract_resume_structured_facts
 from recruit_agent.services.state_machine import (
     available_state_statuses,
     available_state_transition_targets,
@@ -441,6 +442,11 @@ def create_application_resume_artifact(
     artifact_payload = payload.model_dump(exclude_unset=True)
     artifact_payload.pop("person_id", None)
     artifact_payload.pop("application_id", None)
+    structured_facts = extract_resume_structured_facts(payload.extracted_text, payload.contact_snapshot)
+    if structured_facts:
+        artifact_metadata = dict(artifact_payload.get("artifact_metadata") or {})
+        artifact_metadata["structured_facts"] = structured_facts
+        artifact_payload["artifact_metadata"] = artifact_metadata
     item = ResumeArtifactRepository(session).create(
         {
             **artifact_payload,
@@ -472,6 +478,8 @@ def create_application_resume_artifact(
             "captured_at": _timestamp(payload.captured_at or item.captured_at),
             "source": payload.source,
         }
+        if structured_facts:
+            resume_snapshot["structured_facts"] = structured_facts
         application_metadata["resume_available"] = True
         application_metadata["resume_snapshot"] = resume_snapshot
         application_metadata["resume_status"] = "received"

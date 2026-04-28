@@ -181,6 +181,8 @@ export interface ApplicationRecord {
   person: PersonSummaryRecord;
   jobDescription: JobDescriptionSummaryRecord;
   stateSnapshot?: ApplicationStateSnapshotRecord;
+  contactSnapshot: Record<string, unknown>;
+  resumeSnapshot: Record<string, unknown>;
   aiScores?: Record<string, unknown>;
   cooldownUntil?: string;
   lastContactedAt?: string;

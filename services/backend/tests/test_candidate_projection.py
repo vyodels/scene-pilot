@@ -52,7 +52,7 @@ def test_resume_artifact_updates_candidate_projection(tmp_path: Path) -> None:
                 "artifactType": "resume",
                 "fileName": "alice-resume.pdf",
                 "filePath": "/tmp/alice-resume.pdf",
-                "extractedText": "Alice has 8 years of backend experience.",
+                "extractedText": "Alice，29岁，本科，8年以上后端经验，在职。",
                 "contactSnapshot": {
                     "phone": "13800138000",
                     "email": "alice@example.com",
@@ -71,15 +71,18 @@ def test_resume_artifact_updates_candidate_projection(tmp_path: Path) -> None:
         assert payload["resumeAvailable"] is True
         assert payload["contactInfo"]["phone"] == "13800138000"
         assert payload["resumePath"] == "/tmp/alice-resume.pdf"
-        assert payload["onlineResumeText"] == "Alice has 8 years of backend experience."
+        assert payload["onlineResumeText"] == "Alice，29岁，本科，8年以上后端经验，在职。"
         assert payload["contactSnapshot"]["phone"] == "13800138000"
         assert payload["resumeSnapshot"]["file_path"] == "/tmp/alice-resume.pdf"
+        assert payload["resumeSnapshot"]["structured_facts"]["age"] == 29
+        assert payload["resumeSnapshot"]["structured_facts"]["education"] == "本科"
+        assert payload["resumeSnapshot"]["structured_facts"]["experience_years"] == 8
 
         thread = client.get(f"/api/candidate-applications/{application.candidate_application_id}/thread")
         assert thread.status_code == 200
         thread_payload = thread.json()
         assert thread_payload["application"]["person"]["resumePath"] == "/tmp/alice-resume.pdf"
-        assert thread_payload["application"]["person"]["onlineResumeText"] == "Alice has 8 years of backend experience."
+        assert thread_payload["application"]["person"]["onlineResumeText"] == "Alice，29岁，本科，8年以上后端经验，在职。"
         assert thread_payload["application"]["contactSnapshot"]["email"] == "alice@example.com"
         assert thread_payload["application"]["resumeSnapshot"]["status"] == "received"
         assert len(thread_payload["resumeArtifacts"]) == 1
