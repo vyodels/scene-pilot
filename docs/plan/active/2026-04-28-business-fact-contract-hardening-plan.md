@@ -16,6 +16,7 @@
 - `/api/job-descriptions` 改为分页对象，并支持 `limit/offset/status/location/department/owner/keyword` 服务端过滤。
 - JD 管理页表格分页与筛选改为通过后端分页接口读取。
 - JD KPI 的状态数量通过后端分页接口的 `total` 读取，不再使用前端假增减。
+- JD 漏斗统计新增 `GET /api/job-descriptions/{id}/funnel-stats`，前端 JD 管理页当前页逐 JD 读取后端 typed stats，不再用前端状态文本 token 归类沟通、面试、Offer。
 - 删除静态 demo 头像资源，头像只允许读取后端 `contactInfo/avatarUrl` 等真实字段，缺失时降级为空或首字。
 - AI 评分、简历评分、状态汇总、时间线等前端兜底假值已收敛为缺失态。
 
@@ -54,13 +55,9 @@
 
 ### 3. JD 漏斗阶段统计
 
-现状：
-- 前端 JD 管理页仍基于投递记录状态文本 token 计算沟通中、面试中、Offer 中等数量。
-- 后端 recruit toolkit 已有 `get_goal_progress`，能按 JD 汇总状态数量、联系方式、简历、AI 分数。
-- `packages/shared/src/types/milestone.ts` 已定义 funnel milestones，但后端未直接暴露 typed JD funnel stats。
-
-建议设计：
-- 后端新增 `JobDescriptionFunnelStatsRead`，按 `CandidateApplication.current_status`、`deepest_milestone`、`state_snapshot` 计算：
+已落地基础版：
+- 后端已提供 `GET /api/job-descriptions/{id}/funnel-stats`。
+- 当前统计通过后端 state machine 的 phase / milestone 计算累计漏斗：
   - `applications`
   - `communicating`
   - `interviewing`
@@ -69,11 +66,13 @@
   - `withContact`
   - `withResume`
   - `withAiScore`
-- 新增 `GET /api/job-descriptions/{id}/funnel-stats`，列表接口可选择后续内嵌轻量 stats。
-- 统计口径优先复用共享 milestone 定义；如果 Python 后端无法直接复用 TS 包，应沉淀一份后端 state-machine/milestone 投影服务，并用契约测试防止前后端口径分裂。
+- 前端只展示后端返回的 stats，缺失时显示缺失态。
+
+后续建议：
+- 列表接口后续可选择内嵌轻量 stats，避免当前页 N+1 请求。
+- 统计口径应继续收敛到后端 state-machine/milestone 投影服务，并用契约测试防止前后端口径分裂。
 
 待确认：
-- JD 管理列表是否需要每行内嵌 funnel stats，还是详情侧栏打开后再拉取。
 - 漏斗统计是否按当前筛选时间范围计算。
 
 ## 当前不新增的字段

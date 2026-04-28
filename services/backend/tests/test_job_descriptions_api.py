@@ -6,6 +6,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from recruit_agent.core.settings import load_settings
+from recruit_agent.repositories.domain import CandidateApplicationRepository, CandidateRepository, JobDescriptionRepository
 from recruit_agent.server import create_app
 
 
@@ -105,6 +106,68 @@ def test_job_description_list_pagination_metadata(tmp_path: Path) -> None:
         assert filtered.status_code == 200
         assert filtered.json()["total"] == 1
         assert filtered.json()["items"][0]["title"] == "销售工程师 2"
+    finally:
+        client.__exit__(None, None, None)
+        os.environ.pop("RECRUIT_AGENT_DATA_DIR", None)
+        load_settings.cache_clear()
+
+
+def test_job_description_funnel_stats_use_state_machine_milestones(tmp_path: Path) -> None:
+    os.environ["RECRUIT_AGENT_DATA_DIR"] = str(tmp_path)
+    load_settings.cache_clear()
+    app = create_app()
+    client = TestClient(app)
+    client.__enter__()
+    try:
+        session_factory = app.state.session_factory
+        with session_factory() as session:
+            job = JobDescriptionRepository(session).create({"title": "销售工程师"})
+
+            def create_application(index: int, status: str, milestone: str | None = None) -> None:
+                candidate = CandidateRepository(session).create(
+                    {
+                        "name": f"投递人 {index}",
+                        "platform": "boss",
+                        "platform_candidate_id": f"boss-{index:03d}",
+                    }
+                )
+                CandidateApplicationRepository(session).create(
+                    {
+                        "person_id": candidate.candidate_person_id,
+                        "job_description_id": job.job_description_id,
+                        "platform": "boss",
+                        "source_platform": "boss",
+                        "current_status": status,
+                        "current_stage_key": status,
+                        "deepest_milestone": milestone,
+                        "contact_snapshot": {"phone": "13800138000"} if index == 3 else {},
+                        "resume_snapshot": {"available": True, "file_path": "/tmp/resume.pdf"} if index == 4 else {},
+                        "ai_scores": {"overall": 81} if index == 5 else {},
+                    }
+                )
+
+            create_application(1, "discovered", "M01")
+            create_application(2, "outreach_pending", "M03")
+            create_application(3, "contact_acquired", "M11")
+            create_application(4, "interview_scheduled", "M12")
+            create_application(5, "offer_accepted", "M14")
+
+        response = client.get(f"/api/job-descriptions/{job.job_description_id}/funnel-stats")
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["jobDescriptionId"] == job.job_description_id
+        assert payload["applications"] == 5
+        assert payload["communicating"] == 4
+        assert payload["interviewing"] == 2
+        assert payload["offers"] == 1
+        assert payload["hired"] == 1
+        assert payload["withContact"] == 1
+        assert payload["withResume"] == 1
+        assert payload["withAiScore"] == 1
+        assert payload["byStatus"]["offer_accepted"] == 1
+        steps = {item["key"]: item for item in payload["steps"]}
+        assert steps["communicating"]["label"] == "沟通中"
+        assert steps["communicating"]["percent"] == 80.0
     finally:
         client.__exit__(None, None, None)
         os.environ.pop("RECRUIT_AGENT_DATA_DIR", None)

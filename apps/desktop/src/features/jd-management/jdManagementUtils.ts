@@ -1,4 +1,4 @@
-import type { JobDescriptionSummaryRecord } from "../../lib/types";
+import type { JobDescriptionFunnelStatsRecord, JobDescriptionSummaryRecord } from "../../lib/types";
 import { formatDateTime } from "../../lib/format";
 import type { ApplicationViewModel } from "../kanban-shared/kanbanUtils";
 
@@ -7,8 +7,8 @@ export type JdStatusBucket = "recruiting" | "paused" | "closed";
 export interface JdFunnelStep {
   key: string;
   label: string;
-  value: number;
-  percent: number;
+  value: number | null;
+  percent: number | null;
 }
 
 export interface JdRecentApplication {
@@ -26,10 +26,12 @@ export interface JdManagementRow {
   statusBucket: JdStatusBucket;
   statusLabel: string;
   applications: ApplicationViewModel[];
-  currentApplicants: number;
-  communicating: number;
-  interviewing: number;
-  offers: number;
+  currentApplicants: number | null;
+  communicating: number | null;
+  interviewing: number | null;
+  offers: number | null;
+  hired: number | null;
+  funnelStats?: JobDescriptionFunnelStatsRecord;
   ownerName: string;
   latestUpdateText: string;
   funnelSteps: JdFunnelStep[];
@@ -142,34 +144,12 @@ function mergeJobDescriptions(
   return [...jobs.values()];
 }
 
-function hasStatusToken(application: ApplicationViewModel, tokens: string[]): boolean {
-  const haystack = [
-    application.currentStatus,
-    application.displayStatus,
-    application.currentStatusLabel,
-    application.displayStatusLabel,
-    application.application.currentStatus,
-    application.application.stageKey,
-  ].join(" ").toLowerCase();
-  return tokens.some((token) => haystack.includes(token));
-}
-
-function buildFunnelSteps(applications: ApplicationViewModel[]): JdFunnelStep[] {
-  const total = applications.length;
-  const communicating = applications.filter((item) => hasStatusToken(item, ["communicat", "dialogue", "沟通", "对话"])).length;
-  const interviewing = applications.filter((item) => hasStatusToken(item, ["interview", "面试"])).length;
-  const offers = applications.filter((item) => hasStatusToken(item, ["offer", "录用"])).length;
-  const hired = applications.filter((item) => hasStatusToken(item, ["hired", "入职"])).length;
-  const steps = [
-    { key: "applications", label: "投递", value: total },
-    { key: "communicating", label: "沟通中", value: communicating },
-    { key: "interviewing", label: "面试中", value: interviewing },
-    { key: "offers", label: "Offer中", value: offers },
-    { key: "hired", label: "入职", value: hired },
-  ];
-  return steps.map((step) => ({
-    ...step,
-    percent: total > 0 ? Math.round((step.value / total) * 1000) / 10 : 0,
+function buildFunnelSteps(stats: JobDescriptionFunnelStatsRecord | undefined): JdFunnelStep[] {
+  return (stats?.steps ?? []).map((step) => ({
+    key: step.key,
+    label: step.label,
+    value: step.value,
+    percent: step.percent,
   }));
 }
 
@@ -224,17 +204,19 @@ function resolveLatestUpdateText(job: JobDescriptionSummaryRecord, applications:
   return formatDateTime(latestApplicationAt || job.updatedAt || job.createdAt);
 }
 
-function resolveJdCounts(applications: ApplicationViewModel[]): {
-  currentApplicants: number;
-  communicating: number;
-  interviewing: number;
-  offers: number;
+function resolveJdCounts(stats: JobDescriptionFunnelStatsRecord | undefined): {
+  currentApplicants: number | null;
+  communicating: number | null;
+  interviewing: number | null;
+  offers: number | null;
+  hired: number | null;
 } {
   return {
-    currentApplicants: applications.length,
-    communicating: applications.filter((item) => hasStatusToken(item, ["communicat", "dialogue", "沟通", "对话"])).length,
-    interviewing: applications.filter((item) => hasStatusToken(item, ["interview", "面试"])).length,
-    offers: applications.filter((item) => hasStatusToken(item, ["offer", "录用"])).length,
+    currentApplicants: stats?.applications ?? null,
+    communicating: stats?.communicating ?? null,
+    interviewing: stats?.interviewing ?? null,
+    offers: stats?.offers ?? null,
+    hired: stats?.hired ?? null,
   };
 }
 
@@ -263,12 +245,14 @@ export function getJdMetadataNumber(job: JobDescriptionSummaryRecord, keys: stri
 export function buildJdManagementModel(
   jobDescriptions: JobDescriptionSummaryRecord[],
   applications: ApplicationViewModel[],
+  funnelStatsByJobId: Record<string, JobDescriptionFunnelStatsRecord> = {},
 ): JdManagementModel {
   const jobs = mergeJobDescriptions(jobDescriptions);
   const rows = jobs.map((job) => {
     const relatedApplications = applications.filter((application) => applicationBelongsToJob(application, job));
     const statusBucket = normalizeStatusBucket(job);
-    const counts = resolveJdCounts(relatedApplications);
+    const stats = job.jobDescriptionId ? funnelStatsByJobId[job.jobDescriptionId] : undefined;
+    const counts = resolveJdCounts(stats);
     return {
       key: normalizeJobKey(job),
       job,
@@ -276,14 +260,15 @@ export function buildJdManagementModel(
       statusLabel: jdStatusLabel(statusBucket),
       applications: relatedApplications,
       ...counts,
+      funnelStats: stats,
       ownerName: resolveOwnerName(job, relatedApplications),
       latestUpdateText: resolveLatestUpdateText(job, relatedApplications),
-      funnelSteps: buildFunnelSteps(relatedApplications),
+      funnelSteps: buildFunnelSteps(stats),
       recentApplications: buildRecentApplications(relatedApplications),
     } satisfies JdManagementRow;
   }).sort((left, right) => (
     statusRank(left.statusBucket) - statusRank(right.statusBucket) ||
-    right.currentApplicants - left.currentApplicants ||
+    (right.currentApplicants ?? -1) - (left.currentApplicants ?? -1) ||
     left.job.title.localeCompare(right.job.title, "zh-CN")
   ));
 

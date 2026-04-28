@@ -79,6 +79,7 @@ import type {
   PlaybookDefinition,
   ApplicationReviewDecisionRecord,
   ApplicationScorecardRecord,
+  JobDescriptionFunnelStatsRecord,
   JobDescriptionPayload,
   JobDescriptionPageRecord,
   JobDescriptionPageParams,
@@ -170,6 +171,7 @@ export interface DesktopApiClient {
   flushSyncBacklog(): Promise<SyncFlushResult>;
   listJobDescriptions(params?: JobDescriptionPageParams): Promise<JobDescriptionSummaryRecord[]>;
   listJobDescriptionsPage(params?: JobDescriptionPageParams): Promise<JobDescriptionPageRecord>;
+  getJobDescriptionFunnelStats(jobDescriptionId: string): Promise<JobDescriptionFunnelStatsRecord>;
   getJobDescription(jobDescriptionId: string): Promise<JobDescriptionSummaryRecord>;
   createJobDescription(payload: JobDescriptionPayload): Promise<JobDescriptionSummaryRecord>;
   updateJobDescription(
@@ -1225,6 +1227,33 @@ function normalizeJobDescriptionPage(raw: unknown): JobDescriptionPageRecord {
     limit: requirePageNumber(record.limit, "limit"),
     offset: requirePageNumber(record.offset, "offset"),
     hasNext: rawHasNext,
+  };
+}
+
+function normalizeJobDescriptionFunnelStats(raw: unknown): JobDescriptionFunnelStatsRecord {
+  const record = asRecord(raw);
+  return {
+    jobDescriptionId: String(record.jobDescriptionId ?? record.job_description_id ?? ""),
+    steps: asArray(record.steps).map((step) => {
+      const stepRecord = asRecord(step);
+      return {
+        key: String(stepRecord.key ?? ""),
+        label: String(stepRecord.label ?? ""),
+        value: requirePageNumber(stepRecord.value, "steps.value"),
+        percent: requirePageNumber(stepRecord.percent, "steps.percent"),
+      };
+    }),
+    applications: requirePageNumber(record.applications, "applications"),
+    communicating: requirePageNumber(record.communicating, "communicating"),
+    interviewing: requirePageNumber(record.interviewing, "interviewing"),
+    offers: requirePageNumber(record.offers, "offers"),
+    hired: requirePageNumber(record.hired, "hired"),
+    withContact: requirePageNumber(record.withContact ?? record.with_contact, "withContact"),
+    withResume: requirePageNumber(record.withResume ?? record.with_resume, "withResume"),
+    withAiScore: requirePageNumber(record.withAiScore ?? record.with_ai_score, "withAiScore"),
+    byStatus: Object.fromEntries(
+      Object.entries(asRecord(record.byStatus ?? record.by_status)).map(([key, value]) => [key, requirePageNumber(value, `byStatus.${key}`)]),
+    ),
   };
 }
 
@@ -3280,6 +3309,10 @@ function createFetchClient(baseUrl: string): DesktopApiClient {
       normalizeJobDescriptionPage(await requestJson<unknown>(baseUrl, jobDescriptionPagePath(params))).items,
     listJobDescriptionsPage: async (params) =>
       normalizeJobDescriptionPage(await requestJson<unknown>(baseUrl, jobDescriptionPagePath(params))),
+    getJobDescriptionFunnelStats: async (jobDescriptionId) =>
+      normalizeJobDescriptionFunnelStats(
+        await requestJson<unknown>(baseUrl, `/api/job-descriptions/${encodeURIComponent(jobDescriptionId)}/funnel-stats`),
+      ),
     getJobDescription: async (jobDescriptionId) =>
       normalizeJobDescriptionSummary(
         await requestJson<unknown>(baseUrl, `/api/job-descriptions/${encodeURIComponent(jobDescriptionId)}`),

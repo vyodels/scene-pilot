@@ -174,6 +174,29 @@ class JobDescriptionPageRead(BaseModel):
     has_next: bool = Field(serialization_alias="hasNext")
 
 
+class JobDescriptionFunnelStepRead(BaseModel):
+    key: str
+    label: str
+    value: int
+    percent: float
+
+
+class JobDescriptionFunnelStatsRead(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    job_description_id: str = Field(serialization_alias="jobDescriptionId")
+    steps: list[JobDescriptionFunnelStepRead]
+    applications: int
+    communicating: int
+    interviewing: int
+    offers: int
+    hired: int
+    with_contact: int = Field(serialization_alias="withContact")
+    with_resume: int = Field(serialization_alias="withResume")
+    with_ai_score: int = Field(serialization_alias="withAiScore")
+    by_status: dict[str, int] = Field(default_factory=dict, serialization_alias="byStatus")
+
+
 class CandidateApplicationBase(BaseModel):
     person_id: str = Field(validation_alias=AliasChoices("person_id", "personId", "candidate_person_id", "candidatePersonId"))
     job_description_id: str | None = Field(

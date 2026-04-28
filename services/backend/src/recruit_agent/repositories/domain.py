@@ -382,6 +382,22 @@ class CandidateApplicationRepository(BaseRepository[CandidateApplication]):
         stmt = select(func.count()).select_from(CandidateApplication).where(CandidateApplication.current_status.in_(normalized))
         return int(self.session.scalar(stmt) or 0)
 
+    def by_job_description_storage_id(
+        self,
+        job_description_id: str,
+        *,
+        limit: int = 5000,
+        offset: int = 0,
+    ) -> list[CandidateApplication]:
+        stmt = (
+            select(CandidateApplication)
+            .where(CandidateApplication.job_description_id == job_description_id)
+            .order_by(CandidateApplication.updated_at.desc(), CandidateApplication.id.asc())
+            .offset(offset)
+            .limit(limit)
+        )
+        return list(self.session.scalars(stmt).all())
+
     def by_current_statuses(self, statuses: list[str], *, limit: int = 500, offset: int = 0) -> list[CandidateApplication]:
         normalized = [str(status).strip() for status in statuses if str(status).strip()]
         if not normalized:

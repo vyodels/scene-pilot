@@ -9,6 +9,7 @@ from recruit_agent.api.deps import get_container, get_session
 from recruit_agent.repositories import JobDescriptionMemoryRepository, JobDescriptionRepository
 from recruit_agent.schemas import (
     JobDescriptionCreate,
+    JobDescriptionFunnelStatsRead,
     JobDescriptionPageRead,
     JobDescriptionRead,
     JobDescriptionUpdate,
@@ -16,6 +17,7 @@ from recruit_agent.schemas import (
     JobMemoryUpdate,
     MemoryCompactRequest,
 )
+from recruit_agent.services.job_description_stats import build_job_description_funnel_stats
 from recruit_agent.services.container import AppContainer
 from recruit_agent.services.recruit_agent import (
     AUTO_COMPACT_THRESHOLD,
@@ -182,6 +184,14 @@ def compact_job_description_memory(
         },
     )
     return JobMemoryRead.model_validate(updated)
+
+
+@router.get("/{job_description_id}/funnel-stats", response_model=JobDescriptionFunnelStatsRead)
+def get_job_description_funnel_stats(job_description_id: str, session: Session = Depends(get_session)) -> JobDescriptionFunnelStatsRead:
+    stats = build_job_description_funnel_stats(session, job_description_id)
+    if stats is None:
+        raise HTTPException(status_code=404, detail="Job description not found")
+    return JobDescriptionFunnelStatsRead.model_validate(stats)
 
 
 @router.get("/{job_description_id}", response_model=JobDescriptionRead)

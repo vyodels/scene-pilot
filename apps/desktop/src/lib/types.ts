@@ -79,6 +79,27 @@ export interface JobDescriptionPageParams {
   keyword?: string | null;
 }
 
+export interface JobDescriptionFunnelStepRecord {
+  key: string;
+  label: string;
+  value: number;
+  percent: number;
+}
+
+export interface JobDescriptionFunnelStatsRecord {
+  jobDescriptionId: string;
+  steps: JobDescriptionFunnelStepRecord[];
+  applications: number;
+  communicating: number;
+  interviewing: number;
+  offers: number;
+  hired: number;
+  withContact: number;
+  withResume: number;
+  withAiScore: number;
+  byStatus: Record<string, number>;
+}
+
 export type JobDescriptionPayload = Pick<JobDescriptionSummaryRecord, "title"> &
   Partial<
     Pick<

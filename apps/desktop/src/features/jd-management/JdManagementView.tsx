@@ -2,10 +2,9 @@ import React, { useEffect, useMemo, useState } from "react";
 import type { ApplicationViewModel } from "../kanban-shared/kanbanUtils";
 import { apiClient } from "../../lib/api";
 import { formatDateTime } from "../../lib/format";
-import type { JobDescriptionPayload, JobDescriptionSummaryRecord } from "../../lib/types";
+import type { JobDescriptionFunnelStatsRecord, JobDescriptionPayload, JobDescriptionSummaryRecord } from "../../lib/types";
 import {
   buildJdManagementModel,
-  getJdMetadataNumber,
   getJdMetadataString,
   jdStatusLabel,
   type JdManagementRow,
@@ -173,6 +172,10 @@ function optionalPercentOf(value: number | undefined, total: number | undefined)
   return value != null && total != null ? percentOf(value, total) : undefined;
 }
 
+function statValue(value: number | null | undefined): string | number {
+  return value == null ? "—" : value;
+}
+
 function clampPage(value: number, pageCount: number): number {
   if (!Number.isFinite(value)) {
     return 1;
@@ -228,11 +231,6 @@ function JdStatCard({
   );
 }
 
-function optionalJdMetadataNumber(job: JobDescriptionSummaryRecord, keys: string[]): number | undefined {
-  const value = getJdMetadataNumber(job, keys, Number.NaN);
-  return Number.isFinite(value) ? value : undefined;
-}
-
 function optionalJdMetadataString(job: JobDescriptionSummaryRecord, keys: string[]): string | undefined {
   const value = getJdMetadataString(job, keys, "");
   return value.trim() ? value : undefined;
@@ -254,8 +252,6 @@ function JdDetailCard({
   }
 
   const job = row.job;
-  const trendCount = optionalJdMetadataNumber(job, ["trendCount", "trend_count"]);
-  const trendRate = optionalJdMetadataString(job, ["trendRate", "trend_rate"]);
   const recommendedBy = optionalJdMetadataString(job, ["recommendedBy", "recommended_by", "sourceName"]);
   const focus = optionalJdMetadataString(job, ["focus", "focusText", "focus_text", "keyFocus"]) ?? job.requirements;
 
@@ -307,13 +303,13 @@ function JdDetailCard({
             <span>当前岗位</span>
           </div>
           <div className="jd-management-funnel">
-            {row.funnelSteps.map((step) => (
+            {row.funnelSteps.length ? row.funnelSteps.map((step) => (
               <div key={step.key} className="jd-management-funnel__step">
                 <span>{step.label}</span>
-                <strong>{step.value}</strong>
-                <span>{step.percent}%</span>
+                <strong>{statValue(step.value)}</strong>
+                <span>{step.percent == null ? "—" : `${step.percent}%`}</span>
               </div>
-            ))}
+            )) : <span className="jd-management-summary-text">—</span>}
           </div>
         </section>
 
@@ -344,18 +340,17 @@ function JdDetailCard({
               <strong className="jd-management-drawer__section-title">当前转化概览</strong>
               <span>当前岗位</span>
             </div>
-            <div className="jd-management-detail__metric-list" data-disabled={trendCount == null && trendRate == null ? "true" : undefined}>
+            <div className="jd-management-detail__metric-list" data-disabled={row.currentApplicants == null ? "true" : undefined}>
               <span>投递量</span>
-              <strong>{trendCount ?? "—"}</strong>
+              <strong>{statValue(row.currentApplicants)}</strong>
               <span>沟通率</span>
               <strong>
-                {percentOf(row.communicating, row.currentApplicants)}
-                {trendRate ? <i>{trendRate}</i> : null}
+                {optionalPercentOf(row.communicating ?? undefined, row.currentApplicants ?? undefined) ?? "—"}
               </strong>
               <span>面试率</span>
-              <strong>{percentOf(row.interviewing, row.currentApplicants)}</strong>
+              <strong>{optionalPercentOf(row.interviewing ?? undefined, row.currentApplicants ?? undefined) ?? "—"}</strong>
               <span>Offer率</span>
-              <strong>{percentOf(row.offers, row.currentApplicants)}</strong>
+              <strong>{optionalPercentOf(row.offers ?? undefined, row.currentApplicants ?? undefined) ?? "—"}</strong>
             </div>
           </section>
 
@@ -577,6 +572,7 @@ export function JdManagementView({
   const [serverJobs, setServerJobs] = useState<JobDescriptionSummaryRecord[]>(jobDescriptions);
   const [serverTotal, setServerTotal] = useState(jobDescriptions.length);
   const [kpiTotals, setKpiTotals] = useState<JdManagementStats | null>(null);
+  const [funnelStatsByJobId, setFunnelStatsByJobId] = useState<Record<string, JobDescriptionFunnelStatsRecord>>({});
   const [serverLoading, setServerLoading] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
   const [reloadToken, setReloadToken] = useState(0);
@@ -593,7 +589,10 @@ export function JdManagementView({
   const [page, setPage] = useState(1);
 
   const catalogModel = useMemo(() => buildJdManagementModel(jobDescriptions, applications), [applications, jobDescriptions]);
-  const model = useMemo(() => buildJdManagementModel(serverJobs, applications), [applications, serverJobs]);
+  const model = useMemo(
+    () => buildJdManagementModel(serverJobs, applications, funnelStatsByJobId),
+    [applications, funnelStatsByJobId, serverJobs],
+  );
   const cityOptions = useMemo(() => [...new Set(catalogModel.rows.map((row) => row.job.location).filter(Boolean) as string[])], [catalogModel.rows]);
   const departmentOptions = useMemo(() => [...new Set(catalogModel.rows.map((row) => row.job.department).filter(Boolean) as string[])], [catalogModel.rows]);
   const ownerOptions = useMemo(() => [...new Set(catalogModel.rows.map(getOwnerDisplay).filter((owner) => owner !== "—"))], [catalogModel.rows]);
@@ -690,6 +689,33 @@ export function JdManagementView({
       cancelled = true;
     };
   }, [cityFilter, currentPage, departmentFilter, keyword, ownerFilter, pageSize, reloadToken, statusFilter]);
+
+  useEffect(() => {
+    const ids = serverJobs
+      .map((job) => job.jobDescriptionId)
+      .filter((id): id is string => Boolean(id));
+    if (!ids.length) {
+      setFunnelStatsByJobId({});
+      return;
+    }
+    let cancelled = false;
+    void Promise.all(
+      ids.map((jobDescriptionId) =>
+        apiClient.getJobDescriptionFunnelStats(jobDescriptionId).then((stats) => [jobDescriptionId, stats] as const),
+      ),
+    ).then((entries) => {
+      if (!cancelled) {
+        setFunnelStatsByJobId(Object.fromEntries(entries));
+      }
+    }).catch(() => {
+      if (!cancelled) {
+        setFunnelStatsByJobId({});
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [serverJobs]);
 
   useEffect(() => {
     if (!paginatedRows.length) {
@@ -878,10 +904,10 @@ export function JdManagementView({
                     <td>{row.job.department || "—"}</td>
                     <td>{row.job.headcount ?? "—"}</td>
                     <td><JdStatusPill status={row.statusBucket} /></td>
-                    <td>{row.currentApplicants}</td>
-                    <td>{row.communicating}</td>
-                    <td>{row.interviewing}</td>
-                    <td>{row.offers}</td>
+                    <td>{statValue(row.currentApplicants)}</td>
+                    <td>{statValue(row.communicating)}</td>
+                    <td>{statValue(row.interviewing)}</td>
+                    <td>{statValue(row.offers)}</td>
                     <td>{row.latestUpdateText || "—"}</td>
                     <td>
                       <button type="button" className="jd-management-link-button" onClick={(event) => {

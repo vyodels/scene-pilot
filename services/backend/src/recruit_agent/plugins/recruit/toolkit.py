@@ -27,6 +27,7 @@ from recruit_agent.schemas import (
 )
 from recruit_agent.services.application_window import make_application_window
 from recruit_agent.services.candidate_identity import canonicalize_contact_info, contact_channels_from_info, merge_contact_info
+from recruit_agent.services.job_description_stats import build_job_description_funnel_stats
 from recruit_agent.services.recruit_agent import default_candidate_state_snapshot
 from recruit_agent.services.state_machine import available_state_statuses
 
@@ -905,35 +906,24 @@ def get_goal_progress(
 ) -> dict[str, Any]:
     normalized_job_description_id = _normalize_required_text(job_description_id, field_name="job_description_id")
     with session_factory() as session:
-        applications = CandidateApplicationRepository(session).list(limit=5000, offset=0)
-        matched = [
-            application
-            for application in applications
-            if _application_job_description_id(session, application) == normalized_job_description_id
-        ]
-        by_status: dict[str, int] = {}
-        with_contact = 0
-        with_resume = 0
-        with_ai_score = 0
-        for application in matched:
-            status = str(application.current_status or "unknown")
-            by_status[status] = by_status.get(status, 0) + 1
-            contact_snapshot = dict(application.contact_snapshot or {})
-            resume_snapshot = dict(application.resume_snapshot or {})
-            ai_scores = dict(application.ai_scores or {})
-            if contact_snapshot:
-                with_contact += 1
-            if resume_snapshot.get("available") or resume_snapshot.get("file_path") or resume_snapshot.get("filePath"):
-                with_resume += 1
-            if ai_scores.get("overall") is not None or ai_scores.get("decision"):
-                with_ai_score += 1
+        stats = build_job_description_funnel_stats(session, normalized_job_description_id)
+        if stats is None:
+            return {
+                "job_description_id": normalized_job_description_id,
+                "candidate_count": 0,
+                "by_status": {},
+                "with_contact": 0,
+                "with_resume": 0,
+                "with_ai_score": 0,
+            }
         return {
             "job_description_id": normalized_job_description_id,
-            "candidate_count": len(matched),
-            "by_status": by_status,
-            "with_contact": with_contact,
-            "with_resume": with_resume,
-            "with_ai_score": with_ai_score,
+            "candidate_count": stats["applications"],
+            "by_status": stats["by_status"],
+            "with_contact": stats["with_contact"],
+            "with_resume": stats["with_resume"],
+            "with_ai_score": stats["with_ai_score"],
+            "funnel": stats["steps"],
         }
 
 
