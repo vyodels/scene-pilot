@@ -1218,6 +1218,9 @@ function requirePageNumber(value: unknown, fieldName: string): number {
 }
 
 function normalizeJobDescriptionPage(raw: unknown): JobDescriptionPageRecord {
+  if (Array.isArray(raw)) {
+    throw new Error("Invalid job descriptions page response: expected pagination envelope, got legacy array");
+  }
   const record = asRecord(raw);
   const rawHasNext = record.hasNext ?? record.has_next;
   if (typeof rawHasNext !== "boolean") {
