@@ -8,6 +8,7 @@ from .routers.agent import build_router as build_agent_router
 from .routers.assistant import build_router as build_assistant_router
 from .routers.candidate_applications import router as candidate_applications_router
 from .routers.candidate_persons import router as candidate_persons_router
+from .routers.communication_templates import router as communication_templates_router
 from .routers.dashboard import router as dashboard_router
 from .routers.debug import build_router as build_debug_router
 from .routers.evolution import build_router as build_evolution_router
@@ -34,6 +35,7 @@ def include_api_routers(app: FastAPI, container: AppContainer) -> None:
     app.include_router(skills_router)
     app.include_router(sync_router)
     app.include_router(mcp_router)
+    app.include_router(communication_templates_router)
     app.include_router(candidate_persons_router)
     app.include_router(job_descriptions_router)
     app.include_router(candidate_applications_router)

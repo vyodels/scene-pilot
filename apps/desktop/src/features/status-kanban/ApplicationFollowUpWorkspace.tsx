@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import type { ApplicationTransitionPayload, HumanActionDefinition, RecruitmentStateMachine } from "@recruit-agent/shared";
 import { StatusBadge } from "../../components";
+import { apiClient } from "../../lib/api";
 import { formatChineseMessageTime, formatCompactDate } from "../../lib/format";
 import { useI18n } from "../../lib/i18n";
 import { CandidateDetailDrawer, type DetailTab } from "../kanban-shared/CandidateDetailDrawer";
@@ -36,6 +37,7 @@ type SidePanelKey =
   | "statusHistory"
   | "quickActions";
 type SidebarStatusFilter = string;
+type CommunicationTemplateKey = "application_greeting" | "job_share" | "wechat_request";
 
 interface ApplicationFollowUpWorkspaceProps {
   applications: ApplicationViewModel[];
@@ -190,19 +192,6 @@ function offlineResumeMetrics(record: ApplicationViewModel, copy: (en: string, z
   ];
 }
 
-function createGreeting(record: ApplicationViewModel): string {
-  return `您好，看到您在 ${record.application.person.title || "相关方向"} 的背景和我们 ${record.application.jobDescription.title} 岗位很匹配，方便了解一下您最近的机会考虑吗？`;
-}
-
-function createJobShare(record: ApplicationViewModel): string {
-  const job = record.application.jobDescription;
-  return `给您同步一下岗位信息：${job.title}${job.companyName ? `，公司 ${job.companyName}` : ""}${job.location ? `，地点 ${job.location}` : ""}${job.compensationText ? `，薪资 ${job.compensationText}` : ""}。如果您感兴趣，我可以继续发您更完整的岗位说明。`;
-}
-
-function createWechatRequest(record: ApplicationViewModel): string {
-  return `为了后续沟通更及时，方便交换一下微信吗？我这边会继续围绕 ${record.application.jobDescription.title} 岗位和您确认细节。`;
-}
-
 function renderFactValue(value: unknown): string {
   if (value == null || value === "") {
     return "—";
@@ -330,6 +319,7 @@ export function ApplicationFollowUpWorkspace({
   const [draft, setDraft] = useState("");
   const [composerInputHeight, setComposerInputHeight] = useState(38);
   const [sending, setSending] = useState(false);
+  const [renderingTemplate, setRenderingTemplate] = useState<CommunicationTemplateKey | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [detailOpen, setDetailOpen] = useState(false);
   const [detailTab, setDetailTab] = useState<DetailTab>("profile");
@@ -507,6 +497,31 @@ export function ApplicationFollowUpWorkspace({
       setDraft("");
     } finally {
       setSending(false);
+    }
+  };
+
+  const renderTemplate = async (templateKey: CommunicationTemplateKey) => {
+    setRenderingTemplate(templateKey);
+    try {
+      return await apiClient.renderCommunicationTemplate(templateKey, {
+        applicationId: selectedRecord.application.id,
+      });
+    } finally {
+      setRenderingTemplate(null);
+    }
+  };
+
+  const applyTemplateToDraft = async (templateKey: CommunicationTemplateKey) => {
+    const rendered = await renderTemplate(templateKey);
+    if (rendered.content.trim()) {
+      setDraft(rendered.content);
+    }
+  };
+
+  const sendTemplateMessage = async (templateKey: CommunicationTemplateKey) => {
+    const rendered = await renderTemplate(templateKey);
+    if (rendered.content.trim()) {
+      await sendMessage(rendered.content, rendered.messageType);
     }
   };
 
@@ -748,11 +763,11 @@ export function ApplicationFollowUpWorkspace({
 
           <div className="application-followup-composer">
             <div className="application-followup-composer__tools">
-              <button type="button" onClick={() => setDraft(createGreeting(selectedRecord))}>{copy("Phrases", "常用语")}</button>
-              <button type="button" disabled={sending} onClick={() => void sendMessage(createJobShare(selectedRecord), "job_share")}>
+              <button type="button" disabled={renderingTemplate != null} onClick={() => void applyTemplateToDraft("application_greeting")}>{copy("Phrases", "常用语")}</button>
+              <button type="button" disabled={sending || renderingTemplate != null} onClick={() => void sendTemplateMessage("job_share")}>
                 {copy("Send role", "发送职位")}
               </button>
-              <button type="button" disabled={sending} onClick={() => void sendMessage(createWechatRequest(selectedRecord), "wechat_request")}>
+              <button type="button" disabled={sending || renderingTemplate != null} onClick={() => void sendTemplateMessage("wechat_request")}>
                 {copy("Exchange WeChat", "交换微信")}
               </button>
               <button type="button" onClick={() => openDetail("profile")}>{copy("More", "更多")}</button>

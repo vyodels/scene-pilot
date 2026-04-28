@@ -79,6 +79,8 @@ import type {
   PlaybookDefinition,
   ApplicationReviewDecisionRecord,
   ApplicationScorecardRecord,
+  CommunicationTemplateRecord,
+  CommunicationTemplateRenderRecord,
   JobDescriptionFunnelStatsRecord,
   JobDescriptionPayload,
   JobDescriptionPageRecord,
@@ -164,6 +166,8 @@ export interface DesktopApiClient {
   createApplicationEntry(applicationId: string, payload: { direction: string; content: string; messageType?: string; platform?: string }): Promise<ApplicationConversationEntry>;
   transitionApplicationState(applicationId: string, payload: ApplicationTransitionPayload): Promise<ApplicationThreadRecord>;
   createApplicationAssessment(applicationId: string, payload: { assessmentType: string; stageKey?: string; status?: string; decision?: string; score?: number; summary?: string; evidenceRefs?: unknown[]; metadata?: Record<string, unknown>; createdBy?: string; reviewedBy?: string }): Promise<ApplicationAssessmentRecord>;
+  listCommunicationTemplates(): Promise<CommunicationTemplateRecord[]>;
+  renderCommunicationTemplate(templateId: string, payload: { applicationId: string; variables?: Record<string, unknown> }): Promise<CommunicationTemplateRenderRecord>;
   listEvolutionArtifacts(): Promise<EvolutionArtifactRecord[]>;
   updateEvolutionArtifact(artifactId: string, payload: Partial<EvolutionArtifactRecord>): Promise<EvolutionArtifactRecord>;
   getSyncStatus(): Promise<SyncStatusSnapshot>;
@@ -1254,6 +1258,31 @@ function normalizeJobDescriptionFunnelStats(raw: unknown): JobDescriptionFunnelS
     byStatus: Object.fromEntries(
       Object.entries(asRecord(record.byStatus ?? record.by_status)).map(([key, value]) => [key, requirePageNumber(value, `byStatus.${key}`)]),
     ),
+  };
+}
+
+function normalizeCommunicationTemplate(raw: unknown): CommunicationTemplateRecord {
+  const record = asRecord(raw);
+  return {
+    templateId: String(record.templateId ?? record.template_id ?? ""),
+    name: String(record.name ?? ""),
+    category: String(record.category ?? ""),
+    messageType: String(record.messageType ?? record.message_type ?? "text"),
+    body: String(record.body ?? ""),
+    variables: asArray<string>(record.variables),
+    status: String(record.status ?? ""),
+  };
+}
+
+function normalizeCommunicationTemplateRender(raw: unknown): CommunicationTemplateRenderRecord {
+  const record = asRecord(raw);
+  return {
+    templateId: String(record.templateId ?? record.template_id ?? ""),
+    name: String(record.name ?? ""),
+    category: String(record.category ?? ""),
+    messageType: String(record.messageType ?? record.message_type ?? "text"),
+    content: String(record.content ?? ""),
+    missingVariables: asArray<string>(record.missingVariables ?? record.missing_variables),
   };
 }
 
@@ -3276,6 +3305,18 @@ function createFetchClient(baseUrl: string): DesktopApiClient {
             metadata: payload.metadata ?? {},
             created_by: payload.createdBy ?? "desktop-user",
             reviewed_by: payload.reviewedBy,
+          }),
+        }),
+      ),
+    listCommunicationTemplates: async () =>
+      asArray(await requestJson<unknown>(baseUrl, "/api/communication-templates")).map(normalizeCommunicationTemplate),
+    renderCommunicationTemplate: async (templateId, payload) =>
+      normalizeCommunicationTemplateRender(
+        await requestJson<unknown>(baseUrl, `/api/communication-templates/${encodeURIComponent(templateId)}/render`, {
+          method: "POST",
+          body: JSON.stringify({
+            application_id: payload.applicationId,
+            variables: payload.variables ?? {},
           }),
         }),
       ),

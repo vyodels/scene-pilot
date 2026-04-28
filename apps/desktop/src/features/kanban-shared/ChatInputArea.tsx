@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { apiClient } from "../../lib/api";
 import { useI18n } from "../../lib/i18n";
 import type { ApplicationViewModel } from "./kanbanUtils";
 
@@ -8,18 +9,10 @@ interface ChatInputAreaProps {
   onSubmit(payload: { content: string; messageType?: string }): Promise<unknown> | void;
 }
 
-function createGreeting(record: ApplicationViewModel): string {
-  return `您好，看到您在 ${record.application.person.title} 方向的背景和我们 ${record.application.jobDescription.title} 岗位很匹配，方便了解一下您最近的机会考虑吗？`;
-}
-
-function createSuggestedReply(record: ApplicationViewModel): string {
-  const strengths = record.application.person.tags.slice(0, 2).join("、");
-  return `结合您在 ${strengths || record.application.person.title} 方面的经验，我想进一步了解您最近做过的项目，以及是否方便补充一份最新简历。`;
-}
-
 export function ChatInputArea({ record, sending, onSubmit }: ChatInputAreaProps): JSX.Element {
   const { copy } = useI18n();
   const [draft, setDraft] = useState("");
+  const [renderingTemplate, setRenderingTemplate] = useState(false);
 
   useEffect(() => {
     setDraft("");
@@ -34,15 +27,29 @@ export function ChatInputArea({ record, sending, onSubmit }: ChatInputAreaProps)
     setDraft("");
   };
 
+  const applyTemplate = async (templateId: string) => {
+    setRenderingTemplate(true);
+    try {
+      const rendered = await apiClient.renderCommunicationTemplate(templateId, {
+        applicationId: record.application.id,
+      });
+      if (rendered.content.trim()) {
+        setDraft(rendered.content);
+      }
+    } finally {
+      setRenderingTemplate(false);
+    }
+  };
+
   const hasMessages = Boolean(record.thread?.communicationLogs.length);
 
   return (
     <div className="chat-input-area">
       <div className="chat-input-area__toolbar">
-        <button type="button" className="chat-input-area__tool" onClick={() => setDraft(createGreeting(record))}>
+        <button type="button" className="chat-input-area__tool" disabled={renderingTemplate} onClick={() => void applyTemplate("application_greeting")}>
           {copy("Template", "模板")}
         </button>
-        <button type="button" className="chat-input-area__tool" onClick={() => setDraft(createSuggestedReply(record))}>
+        <button type="button" className="chat-input-area__tool" disabled={renderingTemplate} onClick={() => void applyTemplate("resume_request")}>
           {copy("Suggested phrasing", "建议话术")}
         </button>
       </div>

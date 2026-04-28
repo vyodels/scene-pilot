@@ -197,6 +197,39 @@ class JobDescriptionFunnelStatsRead(BaseModel):
     by_status: dict[str, int] = Field(default_factory=dict, serialization_alias="byStatus")
 
 
+class CommunicationTemplateRead(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    template_id: str = Field(serialization_alias="templateId")
+    name: str
+    category: str
+    message_type: str = Field(serialization_alias="messageType")
+    body: str
+    variables: list[str] = Field(default_factory=list)
+    status: str
+
+
+class CommunicationTemplateRenderRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    application_id: str = Field(
+        validation_alias=AliasChoices("application_id", "applicationId"),
+        serialization_alias="applicationId",
+    )
+    variables: dict[str, Any] = Field(default_factory=dict)
+
+
+class CommunicationTemplateRenderRead(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    template_id: str = Field(serialization_alias="templateId")
+    name: str
+    category: str
+    message_type: str = Field(serialization_alias="messageType")
+    content: str
+    missing_variables: list[str] = Field(default_factory=list, serialization_alias="missingVariables")
+
+
 class CandidateApplicationBase(BaseModel):
     person_id: str = Field(validation_alias=AliasChoices("person_id", "personId", "candidate_person_id", "candidatePersonId"))
     job_description_id: str | None = Field(

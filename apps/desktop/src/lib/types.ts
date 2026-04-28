@@ -100,6 +100,25 @@ export interface JobDescriptionFunnelStatsRecord {
   byStatus: Record<string, number>;
 }
 
+export interface CommunicationTemplateRecord {
+  templateId: string;
+  name: string;
+  category: string;
+  messageType: string;
+  body: string;
+  variables: string[];
+  status: string;
+}
+
+export interface CommunicationTemplateRenderRecord {
+  templateId: string;
+  name: string;
+  category: string;
+  messageType: string;
+  content: string;
+  missingVariables: string[];
+}
+
 export type JobDescriptionPayload = Pick<JobDescriptionSummaryRecord, "title"> &
   Partial<
     Pick<

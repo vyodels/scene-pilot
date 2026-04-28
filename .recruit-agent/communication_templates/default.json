@@ -1,0 +1,38 @@
+[
+  {
+    "templateId": "application_greeting",
+    "name": "常用语",
+    "category": "opening",
+    "messageType": "text",
+    "body": "您好，看到您在 {{personTitle}} 方向的背景和我们 {{jobTitle}} 岗位很匹配，方便了解一下您最近的机会考虑吗？",
+    "variables": ["personTitle", "jobTitle"],
+    "status": "active"
+  },
+  {
+    "templateId": "job_share",
+    "name": "发送职位",
+    "category": "job_share",
+    "messageType": "job_share",
+    "body": "给您同步一下岗位信息：{{jobTitle}}{{jobCompanyLine}}{{jobLocationLine}}{{jobCompensationLine}}。如果您感兴趣，我可以继续发您更完整的岗位说明。",
+    "variables": ["jobTitle", "jobCompanyLine", "jobLocationLine", "jobCompensationLine"],
+    "status": "active"
+  },
+  {
+    "templateId": "wechat_request",
+    "name": "交换微信",
+    "category": "contact_request",
+    "messageType": "wechat_request",
+    "body": "为了后续沟通更及时，方便交换一下微信吗？我这边会继续围绕 {{jobTitle}} 岗位和您确认细节。",
+    "variables": ["jobTitle"],
+    "status": "active"
+  },
+  {
+    "templateId": "resume_request",
+    "name": "建议话术",
+    "category": "resume_request",
+    "messageType": "text",
+    "body": "结合您在 {{personTagLine}} 方面的经验，我想进一步了解您最近做过的项目，以及是否方便补充一份最新简历。",
+    "variables": ["personTagLine"],
+    "status": "active"
+  }
+]

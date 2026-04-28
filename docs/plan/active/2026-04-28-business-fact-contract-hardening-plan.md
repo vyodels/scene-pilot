@@ -17,6 +17,7 @@
 - JD 管理页表格分页与筛选改为通过后端分页接口读取。
 - JD KPI 的状态数量通过后端分页接口的 `total` 读取，不再使用前端假增减。
 - JD 漏斗统计新增 `GET /api/job-descriptions/{id}/funnel-stats`，前端 JD 管理页当前页逐 JD 读取后端 typed stats，不再用前端状态文本 token 归类沟通、面试、Offer。
+- 沟通话术模板迁移到 `.recruit-agent/communication_templates/default.json`，后端提供 `GET /api/communication-templates` 与 `POST /api/communication-templates/{id}/render`；前端不再拼接常用语、发送职位、交换微信、建议话术文案。
 - 删除静态 demo 头像资源，头像只允许读取后端 `contactInfo/avatarUrl` 等真实字段，缺失时降级为空或首字。
 - AI 评分、简历评分、状态汇总、时间线等前端兜底假值已收敛为缺失态。
 
@@ -24,14 +25,14 @@
 
 ### 1. 话术模板
 
-现状：
-- 投递记录跟进页仍有前端函数生成打招呼、发送职位、交换微信等话术。
-- 后端已有 `PlaybookVersion`、共享场景模板和 runtime template 能力，但它们面向 agent 任务编排，不是招聘沟通话术模板。
+已落地基础版：
+- 默认模板以资产文件方式存放在 `.recruit-agent/communication_templates/default.json`。
+- 后端提供模板列表与按投递记录上下文渲染接口。
+- 前端投递记录跟进页与共享 `ChatInputArea` 只调用后端渲染接口，不再拼接话术正文。
 
-建议设计：
-- 新增后端领域对象 `CommunicationTemplate`，字段至少包括 `templateId`、`name`、`category`、`channel`、`applicationStatus`、`jobDescriptionId`、`body`、`variables`、`status`、`createdBy`、`updatedAt`。
-- 后端提供 `GET /api/communication-templates` 与 `POST /api/communication-templates/{id}/render`，前端只负责选择模板和展示后端渲染结果。
-- 可复用现有 `ApplicationThreadRead`、`JobDescriptionRead`、`PersonSummaryRead` 作为模板变量上下文，避免前端自行拼业务文案。
+后续建议：
+- 如果需要运营可编辑，应新增持久化领域对象 `CommunicationTemplate`，字段至少包括 `templateId`、`name`、`category`、`channel`、`applicationStatus`、`jobDescriptionId`、`body`、`variables`、`status`、`createdBy`、`updatedAt`。
+- 可继续复用现有 `ApplicationThreadRead`、`JobDescriptionRead`、`PersonSummaryRead` 作为模板变量上下文。
 
 待确认：
 - 模板是否需要按 JD、岗位族、招聘阶段、渠道分别配置。

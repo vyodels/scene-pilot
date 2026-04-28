@@ -38,3 +38,7 @@ def mcp_root() -> Path:
 
 def mcp_preset_templates_root() -> Path:
     return mcp_root() / "presets"
+
+
+def communication_templates_root() -> Path:
+    return recruit_agent_root() / "communication_templates"
