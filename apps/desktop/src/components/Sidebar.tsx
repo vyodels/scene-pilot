@@ -17,9 +17,9 @@ interface SidebarProps {
 
 const tabs: Array<{ key: WorkspaceTab; labelEn: string; labelZh: string; shortZh: string }> = [
   { key: "home", labelEn: "Home", labelZh: "首页", shortZh: "首页" },
-  { key: "applicationFunnel", labelEn: "Application funnel", labelZh: "投递记录漏斗", shortZh: "漏斗" },
-  { key: "applicationFollowUp", labelEn: "Application follow-up", labelZh: "投递记录跟进", shortZh: "跟进" },
   { key: "jdManagement", labelEn: "Position management", labelZh: "职位管理", shortZh: "职位" },
+  { key: "applicationFollowUp", labelEn: "Application records", labelZh: "投递记录", shortZh: "投递" },
+  { key: "applicationFunnel", labelEn: "Funnel board", labelZh: "漏斗看板", shortZh: "漏斗" },
   { key: "settings", labelEn: "Settings", labelZh: "设置", shortZh: "设置" },
 ];
 
@@ -161,7 +161,7 @@ export function Sidebar({
           <span className="workspace-sidebar__item-icon">
             <SidebarGlyph tab="agents" />
           </span>
-          <span className="workspace-sidebar__item-label">{copy("Agents", "Agents")}</span>
+          <span className="workspace-sidebar__item-label">{copy("Agent management", "Agent管理")}</span>
           <span className="workspace-sidebar__status-dot" aria-hidden="true" />
           {agentCount > 0 ? <span className="workspace-sidebar__count">{agentCount > 9 ? "9+" : agentCount}</span> : null}
         </button>

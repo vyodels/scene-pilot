@@ -61,6 +61,30 @@ export interface JobDescriptionSummaryRecord {
   updatedAt?: string | number | null;
 }
 
+export type JobDescriptionPayload = Pick<JobDescriptionSummaryRecord, "title"> &
+  Partial<
+    Pick<
+      JobDescriptionSummaryRecord,
+      | "companyName"
+      | "department"
+      | "location"
+      | "employmentType"
+      | "headcount"
+      | "salaryMin"
+      | "salaryMax"
+      | "compensationText"
+      | "experienceRequirement"
+      | "educationRequirement"
+      | "summary"
+      | "description"
+      | "requirements"
+      | "benefitTags"
+      | "detailMetadata"
+      | "status"
+      | "source"
+    >
+  >;
+
 export interface MetricSummary {
   label: string;
   value: string;

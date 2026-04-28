@@ -171,3 +171,12 @@ def update_job_description(
         raise HTTPException(status_code=404, detail="Job description not found")
     updated = repo.update(item, payload)
     return JobDescriptionRead.model_validate(updated)
+
+
+@router.delete("/{job_description_id}", status_code=204)
+def delete_job_description(job_description_id: str, session: Session = Depends(get_session)) -> None:
+    repo = JobDescriptionRepository(session)
+    item = repo.get(job_description_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Job description not found")
+    repo.delete(item)

@@ -79,6 +79,7 @@ import type {
   PlaybookDefinition,
   ApplicationReviewDecisionRecord,
   ApplicationScorecardRecord,
+  JobDescriptionPayload,
   JobDescriptionSummaryRecord,
   PersonMemoryRecord,
   PersonSummaryRecord,
@@ -166,6 +167,13 @@ export interface DesktopApiClient {
   listSyncBacklog(): Promise<SyncBacklogItem[]>;
   flushSyncBacklog(): Promise<SyncFlushResult>;
   listJobDescriptions(): Promise<JobDescriptionSummaryRecord[]>;
+  getJobDescription(jobDescriptionId: string): Promise<JobDescriptionSummaryRecord>;
+  createJobDescription(payload: JobDescriptionPayload): Promise<JobDescriptionSummaryRecord>;
+  updateJobDescription(
+    jobDescriptionId: string,
+    payload: Partial<JobDescriptionPayload>,
+  ): Promise<JobDescriptionSummaryRecord>;
+  deleteJobDescription(jobDescriptionId: string): Promise<void>;
   listApplications(): Promise<ApplicationRecord[]>;
   listPlaybooks(): Promise<PlaybookDefinition[]>;
   listSkills(): Promise<SkillRecord[]>;
@@ -1187,6 +1195,29 @@ function normalizeJobDescriptionSummary(raw: unknown, fallbackId?: string | null
         : typeof record.updated_at === "string" || typeof record.updated_at === "number"
           ? record.updated_at
           : null,
+  };
+}
+
+function serializeJobDescriptionPayload(payload: Partial<JobDescriptionPayload>): Record<string, unknown> {
+  return {
+    title: payload.title,
+    company_name: payload.companyName,
+    department: payload.department,
+    location: payload.location,
+    employment_type: payload.employmentType,
+    headcount: payload.headcount,
+    salary_min: payload.salaryMin,
+    salary_max: payload.salaryMax,
+    compensation_text: payload.compensationText,
+    experience_requirement: payload.experienceRequirement,
+    education_requirement: payload.educationRequirement,
+    summary: payload.summary,
+    description: payload.description,
+    requirements: payload.requirements,
+    benefit_tags: payload.benefitTags,
+    detail_metadata: payload.detailMetadata,
+    status: payload.status,
+    source: payload.source,
   };
 }
 
@@ -3201,6 +3232,31 @@ function createFetchClient(baseUrl: string): DesktopApiClient {
       asArray(await requestJson<unknown>(baseUrl, "/api/job-descriptions")).map((item) =>
         normalizeJobDescriptionSummary(item, String(asRecord(item).jobDescriptionId ?? asRecord(item).job_description_id ?? "")),
       ),
+    getJobDescription: async (jobDescriptionId) =>
+      normalizeJobDescriptionSummary(
+        await requestJson<unknown>(baseUrl, `/api/job-descriptions/${encodeURIComponent(jobDescriptionId)}`),
+        jobDescriptionId,
+      ),
+    createJobDescription: async (payload) =>
+      normalizeJobDescriptionSummary(
+        await requestJson<unknown>(baseUrl, "/api/job-descriptions", {
+          method: "POST",
+          body: JSON.stringify(serializeJobDescriptionPayload(payload)),
+        }),
+      ),
+    updateJobDescription: async (jobDescriptionId, payload) =>
+      normalizeJobDescriptionSummary(
+        await requestJson<unknown>(baseUrl, `/api/job-descriptions/${encodeURIComponent(jobDescriptionId)}`, {
+          method: "PATCH",
+          body: JSON.stringify(serializeJobDescriptionPayload(payload)),
+        }),
+        jobDescriptionId,
+      ),
+    deleteJobDescription: async (jobDescriptionId) => {
+      await requestVoid(baseUrl, `/api/job-descriptions/${encodeURIComponent(jobDescriptionId)}`, {
+        method: "DELETE",
+      });
+    },
     listApplications: async () => normalizeDashboard(await requestJson<unknown>(baseUrl, "/api/dashboard")).applications,
     listPlaybooks: async () => normalizeDashboard(await requestJson<unknown>(baseUrl, "/api/dashboard")).playbooks,
     listSkills: async () => asArray(await requestJson<unknown>(baseUrl, "/api/skills")).map(normalizeSkillRecord),
