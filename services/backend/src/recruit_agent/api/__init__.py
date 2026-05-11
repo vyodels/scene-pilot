@@ -30,7 +30,7 @@ def include_api_routers(app: FastAPI, container: AppContainer) -> None:
     app.include_router(dashboard_router)
     app.include_router(settings_router)
     app.include_router(build_agent_router(container))
-    app.include_router(build_assistant_router(container.assistant_agent))
+    app.include_router(build_assistant_router(container.assistant_adapter))
     app.include_router(approvals_router)
     app.include_router(skills_router)
     app.include_router(sync_router)

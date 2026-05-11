@@ -6,7 +6,7 @@ from threading import Event, Thread
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from recruit_agent.agents.autonomous import AutonomousAgent
+from recruit_agent.agents.autonomous import AutonomousAdapter
 from recruit_agent.agents.heartbeat import Heartbeat
 from recruit_agent.agent_runtime.types import LLMInvocationResult, LLMMessage, LLMRequest, LLMResponse as RuntimeLLMResponse
 from recruit_agent.core.settings import AppSettings
@@ -26,10 +26,10 @@ from recruit_agent.models.domain import (
 )
 from recruit_agent.plugins.host import PluginHost
 from recruit_agent.repositories.domain import TaskQueueRepository
-from recruit_agent.runtime.models import LLMResponse, ToolCall
-from recruit_agent.runtime.tools import ToolRegistry, register_core_tools
+from agent_runtime.fixtures import LLMResponse, ToolCall
+from recruit_agent.capabilities.tools import ToolRegistry, register_core_tools
 from agent_runtime.fixtures import ScriptedProvider
-from recruit_agent.runtime.tools import ToolDefinition
+from recruit_agent.capabilities.tools import ToolDefinition
 
 
 class BlockingProvider:
@@ -126,13 +126,13 @@ def test_heartbeat_persists_running_state_and_progress_events_before_completion(
         tools = ToolRegistry()
         register_core_tools(tools)
         session_factory = create_session_factory(session.get_bind())
-        agent = AutonomousAgent(
+        agent = AutonomousAdapter(
             session_factory=session_factory,
             provider=provider,
             tool_registry=tools,
             plugin_host=PluginHost(),
         )
-        heartbeat = Heartbeat(session_factory=session_factory, autonomous_agent=agent)
+        heartbeat = Heartbeat(session_factory=session_factory, autonomous_adapter=agent)
 
         result_holder: dict[str, object] = {}
 
@@ -169,8 +169,8 @@ def test_heartbeat_persists_running_state_and_progress_events_before_completion(
                     .order_by(AgentRuntimeEvent.occurred_at.asc(), AgentRuntimeEvent.id.asc())
                 ).all()
             ]
-            assert "turn.started" in event_types
-            assert "provider.started" in event_types
+            assert "turn_started" in event_types
+            assert "llm_invocation_started" in event_types
 
         provider.release.set()
         worker.join(timeout=2.0)
@@ -266,7 +266,7 @@ def test_wait_human_records_keep_application_subject_when_run_has_application_sc
                 )
             ],
         )
-        agent = AutonomousAgent(
+        agent = AutonomousAdapter(
             session_factory=create_session_factory(session.get_bind()),
             provider=provider,
             tool_registry=tools,

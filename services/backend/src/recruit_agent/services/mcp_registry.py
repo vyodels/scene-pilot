@@ -19,7 +19,7 @@ from recruit_agent.asset_paths import mcp_preset_templates_root
 from recruit_agent.db.base import utcnow
 from recruit_agent.models import McpServer, McpTool
 from recruit_agent.repositories import McpServerRepository, McpToolRepository
-from recruit_agent.runtime.tools import ToolDefinition, ToolRegistry
+from recruit_agent.capabilities.tools import ToolDefinition, ToolRegistry
 from recruit_agent.services.browser_mcp_bridge import (
     BROWSER_SOCKET_PRESET_KEY,
     default_browser_mcp_server_command,
@@ -1083,9 +1083,7 @@ class McpRegistryService:
                 )
             )
 
-    def _handle_list_mcp_resources(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        server_key = str(arguments.get("server_key") or "").strip()
-        server_id = str(arguments.get("server_id") or "").strip()
+    def list_mcp_resources(self, *, server_key: str = "", server_id: str = "") -> dict[str, Any]:
         with self.session_factory() as session:
             servers = self._select_enabled_standard_servers(session, server_key=server_key, server_id=server_id)
             return {
@@ -1100,21 +1098,30 @@ class McpRegistryService:
                 ]
             }
 
-    def _handle_read_mcp_resource(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        uri = str(arguments.get("uri") or "").strip()
-        if not uri:
+    def read_mcp_resource(self, *, uri: str, server_key: str = "", server_id: str = "") -> dict[str, Any]:
+        normalized_uri = str(uri or "").strip()
+        if not normalized_uri:
             raise McpBridgeError("read_mcp_resource requires uri")
-        server_key = str(arguments.get("server_key") or "").strip()
-        server_id = str(arguments.get("server_id") or "").strip()
         with self.session_factory() as session:
             server = self._resolve_enabled_standard_server(session, server_key=server_key, server_id=server_id)
             return {
                 "server_id": server.id,
                 "server_key": server.server_key,
                 "name": server.name,
-                "uri": uri,
-                "resource": _mcp_read_resource(server, uri),
+                "uri": normalized_uri,
+                "resource": _mcp_read_resource(server, normalized_uri),
             }
+
+    def _handle_list_mcp_resources(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        server_key = str(arguments.get("server_key") or "").strip()
+        server_id = str(arguments.get("server_id") or "").strip()
+        return self.list_mcp_resources(server_key=server_key, server_id=server_id)
+
+    def _handle_read_mcp_resource(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        uri = str(arguments.get("uri") or "").strip()
+        server_key = str(arguments.get("server_key") or "").strip()
+        server_id = str(arguments.get("server_id") or "").strip()
+        return self.read_mcp_resource(uri=uri, server_key=server_key, server_id=server_id)
 
     def _select_enabled_standard_servers(self, session: Session, *, server_key: str, server_id: str) -> list[McpServer]:
         if server_key or server_id:

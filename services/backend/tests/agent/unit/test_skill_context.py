@@ -119,3 +119,53 @@ def test_build_skill_context_injections_uses_category_relevance_for_ordering() -
     )
 
     assert [item.skill_id for item in injections] == ["screening-score", "outreach-draft"]
+
+
+def test_build_skill_context_injections_matches_explicit_name_and_alias() -> None:
+    alias_skill = Skill(
+        skill_id="resume-parser",
+        name="Resume parser",
+        status="active",
+        skill_metadata={"aliases": ["cv parser"]},
+    )
+    named_skill = Skill(
+        skill_id="candidate-summary",
+        name="Candidate summary",
+        status="active",
+    )
+
+    injections = build_skill_context_injections(
+        [named_skill, alias_skill],
+        explicit_skill_ids=["cv parser", "Candidate summary"],
+    )
+
+    assert [item.skill_id for item in injections] == ["resume-parser", "candidate-summary"]
+
+
+def test_build_skill_context_injections_applies_token_budget_and_truncation() -> None:
+    large = Skill(
+        skill_id="large-skill",
+        name="Large Skill",
+        status="active",
+        body={"instructions": "A" * 5000},
+        input_schema={"type": "object", "description": "B" * 5000},
+    )
+    small = Skill(
+        skill_id="small-skill",
+        name="Small Skill",
+        status="active",
+        body={"instructions": "small"},
+    )
+
+    injections = build_skill_context_injections(
+        [large, small],
+        token_budget=80,
+        max_instruction_chars=100,
+        max_schema_chars=100,
+    )
+
+    assert injections
+    assert injections[0].skill_id == "large-skill"
+    payload = injections[0].to_prompt_payload()
+    assert "[truncated]" in payload["instructions"]
+    assert payload["input_schema"]["_truncated"] is True

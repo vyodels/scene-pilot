@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from recruit_agent.runtime.circuit_breaker import CircuitBreaker
+from recruit_agent.core.circuit_breaker import CircuitBreaker
 
 
 def test_circuit_breaker_opens_after_threshold_and_recovers_after_timeout() -> None:

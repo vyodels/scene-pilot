@@ -778,6 +778,25 @@ function normalizeAgentToolSummary(raw: unknown): AgentToolSummary {
     serverName: String(record.serverName ?? record.server_name ?? "MCP"),
     name: String(record.name ?? "tool"),
     riskLevel: String(record.riskLevel ?? record.risk_level ?? "medium"),
+    businessTool: record.businessTool != null ? Boolean(record.businessTool) : Boolean(record.business_tool ?? false),
+    businessDomain:
+      record.businessDomain != null
+        ? String(record.businessDomain)
+        : record.business_domain != null
+          ? String(record.business_domain)
+          : null,
+    resourceTargetKind:
+      record.resourceTargetKind != null
+        ? String(record.resourceTargetKind)
+        : record.resource_target_kind != null
+          ? String(record.resource_target_kind)
+          : null,
+    permissionScope:
+      record.permissionScope != null
+        ? String(record.permissionScope)
+        : record.permission_scope != null
+          ? String(record.permission_scope)
+          : null,
     enabled: Boolean(record.enabled ?? true),
     endpoint: record.endpoint ? String(record.endpoint) : null,
   };

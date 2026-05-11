@@ -7,18 +7,19 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from recruit_agent.models.domain import CandidateAutonomousLock
 from recruit_agent.plugins.recruit.toolkit import _active_lock, _serialize_lock
-from recruit_agent.runtime.models import Observation
 
 
-def build_observation_enricher(
+def build_context_enricher(
     session_factory: sessionmaker[Session],
-) -> Callable[[Observation], Awaitable[dict[str, object]]]:
-    async def _enricher(observation: Observation) -> dict[str, object]:
-        if observation.scope_kind != "application" or not observation.scope_ref:
+) -> Callable[[dict[str, object]], Awaitable[dict[str, object]]]:
+    async def _enricher(context: dict[str, object]) -> dict[str, object]:
+        scope_kind = str(context.get("scope_kind") or "")
+        scope_ref = str(context.get("scope_ref") or "")
+        if scope_kind != "application" or not scope_ref:
             return {"human_locked": False, "lock_meta": None, "recent_handover": None}
         with session_factory() as session:
-            lock = _active_lock(session, observation.scope_ref)
-            recent_handover = _recent_handover(session, observation.scope_ref)
+            lock = _active_lock(session, scope_ref)
+            recent_handover = _recent_handover(session, scope_ref)
             return {
                 "human_locked": lock is not None,
                 "lock_meta": None if lock is None else _serialize_lock(lock),

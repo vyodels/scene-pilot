@@ -18,7 +18,6 @@ from recruit_agent.repositories import (
     SettingsRepository,
     SkillRepository,
 )
-from recruit_agent.runtime.business_state_projection import project_runtime_business_state
 from recruit_agent.schemas.domain import AgentStatusRead, DashboardRead
 from recruit_agent.services.application_subjects import application_payload_from_application
 from recruit_agent.services.events import EventStreamService
@@ -90,9 +89,7 @@ def _learning_detail(content: str) -> str:
     if not text:
         return "学习草案待补充内容。"
     if _looks_like_jsonish(text):
-        summary = str(project_runtime_business_state(final_content=text).get("summary") or "").strip()
-        if summary:
-            return summary[:120]
+        return "学习草案包含结构化内容，待查看。"
     return text[:120]
 
 

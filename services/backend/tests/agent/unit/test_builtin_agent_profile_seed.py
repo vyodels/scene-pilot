@@ -21,7 +21,7 @@ def test_seed_builtin_profiles_normalizes_autonomous_memory_policy(tmp_path: Pat
         session.add(
             RecruitAgentProfile(
                 agent_key="autonomous",
-                name="Autonomous Agent",
+                name="Autonomous",
                 is_primary=True,
                 prompt_config={},
                 memory_policy={
@@ -81,7 +81,7 @@ def test_seed_builtin_profiles_backfills_autonomous_goal_template(tmp_path: Path
         session.add(
             RecruitAgentProfile(
                 agent_key="autonomous",
-                name="Autonomous Agent",
+                name="Autonomous",
                 is_primary=True,
                 prompt_config={},
                 memory_policy={},

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from recruit_agent.agents.autonomous import _resolve_turn_limits
 from recruit_agent.models.domain import GoalSpec
-from recruit_agent.runtime.limits import TurnLimits
+from recruit_agent.product_adapters.limits import TurnLimits
 
 
 def test_autonomous_turn_limits_default_invocation_wall_clock_and_token_budgets_are_unlimited() -> None:

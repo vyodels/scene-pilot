@@ -7,17 +7,18 @@ from sqlalchemy.orm import Session
 from recruit_agent.core.settings import AppSettings
 from recruit_agent.db.session import create_engine_from_settings, create_session_factory, initialize_database
 from recruit_agent.memory.service import MemoryService
+from recruit_agent.memory.writeback import MemoryWritebackPolicy, apply_stable_memory_facts, should_start_memory_writeback_job
 from recruit_agent.models.domain import (
     AgentTurnRecord,
     AgentRun,
     AgentRuntimeEvent,
     AgentSession,
+    ApprovalItem,
     Candidate,
     ConversationSession,
     JobDescription,
     RecruitAgentProfile,
 )
-from recruit_agent.agents.autonomous import _write_turn_memory
 
 
 def _make_session(tmp_path: Path) -> Session:
@@ -95,8 +96,8 @@ def test_memory_service_isolates_scope_indexes_and_fetches_context(tmp_path: Pat
                 session_id=agent_session.id,
                 run_id=run.id,
                 source="agent_runtime",
-                event_type="turn.completed",
-                message="turn finished",
+                event_type="turn_completed",
+                message="turn_completed",
                 turn_id="turn-1",
                 seq=1,
             )
@@ -215,14 +216,16 @@ def test_autonomous_turn_memory_writeback_accepts_explicit_stable_facts(tmp_path
         session.add(turn)
         session.commit()
 
-        _write_turn_memory(
+        apply_stable_memory_facts(
             MemoryService(session),
             scope_kind="candidate",
             scope_ref=candidate.id,
             agent_profile_id=profile.id,
-            run=run,
-            turn=turn,
-            final_output='{"memory_patch":[{"summary":"Alice prefers remote roles.","content":{"preference":"remote"},"confidence":0.8}]}',
+            facts=[{"summary": "Alice prefers remote roles.", "content": {"preference": "remote"}, "confidence": 0.8}],
+            run_id=str(run.run_id),
+            run_pk=run.id,
+            turn_id=turn.turn_id,
+            policy=MemoryWritebackPolicy(),
         )
 
         entries = MemoryService(session).read(
@@ -234,9 +237,38 @@ def test_autonomous_turn_memory_writeback_accepts_explicit_stable_facts(tmp_path
 
         summaries = {item["summary"] for item in entries}
         assert "Alice prefers remote roles." in summaries
-        assert any(item["kind"] == "turn_summary" for item in entries)
+        assert not any(item["kind"] == "turn_summary" for item in entries)
     finally:
         session.close()
+
+
+def test_memory_writeback_job_gate_does_not_call_llm_every_completed_turn() -> None:
+    policy = MemoryWritebackPolicy(
+        min_completed_turns_between_jobs=3,
+        min_evidence_chars_between_jobs=1500,
+    )
+
+    assert not should_start_memory_writeback_job(
+        policy,
+        completed_turns_since_last_job=1,
+        evidence_text="short completed turn",
+    )
+    assert should_start_memory_writeback_job(
+        policy,
+        completed_turns_since_last_job=3,
+        evidence_text="short completed turn",
+    )
+    assert should_start_memory_writeback_job(
+        policy,
+        completed_turns_since_last_job=1,
+        evidence_text="x" * 1500,
+    )
+    assert should_start_memory_writeback_job(
+        policy,
+        completed_turns_since_last_job=0,
+        evidence_text="",
+        force=True,
+    )
 
 
 def test_autonomous_turn_memory_writeback_clamps_patch_confidence(tmp_path: Path) -> None:
@@ -258,14 +290,19 @@ def test_autonomous_turn_memory_writeback_clamps_patch_confidence(tmp_path: Path
         session.add(turn)
         session.commit()
 
-        _write_turn_memory(
+        apply_stable_memory_facts(
             MemoryService(session),
             scope_kind="candidate",
             scope_ref=candidate.id,
             agent_profile_id=profile.id,
-            run=run,
-            turn=turn,
-            final_output='{"stable_facts":[{"summary":"Alice is open to remote roles.","confidence":2.5},{"summary":"Alice can start in June.","confidence":"high"}]}',
+            facts=[
+                {"summary": "Alice is open to remote roles.", "confidence": 2.5},
+                {"summary": "Alice can start in June.", "confidence": "high"},
+            ],
+            run_id=str(run.run_id),
+            run_pk=run.id,
+            turn_id=turn.turn_id,
+            policy=MemoryWritebackPolicy(),
         )
 
         entries = MemoryService(session).read(
@@ -278,5 +315,95 @@ def test_autonomous_turn_memory_writeback_clamps_patch_confidence(tmp_path: Path
         by_summary = {item["summary"]: item for item in entries}
         assert by_summary["Alice is open to remote roles."]["confidence"] == 1.0
         assert by_summary["Alice can start in June."]["confidence"] == 0.6
+        assert session.query(ApprovalItem).filter_by(target_type="memory_writeback").count() == 0
+    finally:
+        session.close()
+
+
+def test_memory_writeback_review_is_optional(tmp_path: Path) -> None:
+    session = _make_session(tmp_path)
+    try:
+        profile = RecruitAgentProfile(agent_key="primary", name="Primary", is_primary=True)
+        candidate = Candidate(name="Alice")
+        session.add_all([profile, candidate])
+        session.flush()
+
+        agent_session = AgentSession(agent_profile_id=profile.id)
+        session.add(agent_session)
+        session.flush()
+
+        run = AgentRun(session_id=agent_session.id, run_id="run-memory-review", agent_kind="autonomous")
+        session.add(run)
+        session.flush()
+        turn = AgentTurnRecord(run_pk=run.id, seq=1, turn_id="turn-memory-review")
+        session.add(turn)
+        session.commit()
+
+        apply_stable_memory_facts(
+            MemoryService(session),
+            scope_kind="candidate",
+            scope_ref=candidate.id,
+            agent_profile_id=profile.id,
+            facts=[{"summary": "Alice may prefer remote roles.", "confidence": 0.5}],
+            run_id=str(run.run_id),
+            run_pk=run.id,
+            turn_id=turn.turn_id,
+            policy=MemoryWritebackPolicy(review_enabled=True),
+        )
+
+        entries = MemoryService(session).read(
+            scope_kind="candidate",
+            scope_ref=candidate.id,
+            agent_profile_id=profile.id,
+            limit=10,
+        )
+
+        assert entries == []
+        approval = session.query(ApprovalItem).filter_by(target_type="memory_writeback").one()
+        assert approval.status == "pending"
+        assert approval.payload["summary"] == "Alice may prefer remote roles."
+    finally:
+        session.close()
+
+
+def test_autonomous_turn_memory_writeback_ignores_plain_final_output(tmp_path: Path) -> None:
+    session = _make_session(tmp_path)
+    try:
+        profile = RecruitAgentProfile(agent_key="primary", name="Primary", is_primary=True)
+        candidate = Candidate(name="Alice")
+        session.add_all([profile, candidate])
+        session.flush()
+
+        agent_session = AgentSession(agent_profile_id=profile.id)
+        session.add(agent_session)
+        session.flush()
+
+        run = AgentRun(session_id=agent_session.id, run_id="run-memory-plain", agent_kind="autonomous")
+        session.add(run)
+        session.flush()
+        turn = AgentTurnRecord(run_pk=run.id, seq=1, turn_id="turn-memory-plain")
+        session.add(turn)
+        session.commit()
+
+        apply_stable_memory_facts(
+            MemoryService(session),
+            scope_kind="candidate",
+            scope_ref=candidate.id,
+            agent_profile_id=profile.id,
+            facts=[],
+            run_id=str(run.run_id),
+            run_pk=run.id,
+            turn_id=turn.turn_id,
+            policy=MemoryWritebackPolicy(),
+        )
+
+        entries = MemoryService(session).read(
+            scope_kind="candidate",
+            scope_ref=candidate.id,
+            agent_profile_id=profile.id,
+            limit=10,
+        )
+
+        assert entries == []
     finally:
         session.close()

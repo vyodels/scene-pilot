@@ -11,6 +11,7 @@ Implementation plans live here. Plans are not long-term truth; long-term rules l
 ## Current Active Plan
 
 - [`active/2026-04-24-recruit-agent-browser-computer-runtime-follow-up-plan.md`](./active/2026-04-24-recruit-agent-browser-computer-runtime-follow-up-plan.md)
+- [`active/2026-05-11-agent-type-product-adapter-completion-plan.md`](./active/2026-05-11-agent-type-product-adapter-completion-plan.md)
 
 ## Recent Completed Handoff
 

@@ -28,8 +28,8 @@ def test_build_skill_distill_review_payload_only_contains_run_evidence() -> None
         goal_kind="sync_jd_incremental",
         engine_output_count=2,
         final_output='{"status":"completed","created":1}',
-        tool_activity=[{"tool_name": "list_job_descriptions", "event_type": "tool.result"}],
-        event_outline=[{"event_type": "provider.completed", "message": "done"}],
+        tool_activity=[{"tool_name": "list_job_descriptions", "event_type": "tool_event", "kind": "tool_result_ready"}],
+        event_outline=[{"event_type": "llm_invocation_completed", "message": "done"}],
     )
 
     assert payload["run_id"] == "run-1"

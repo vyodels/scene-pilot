@@ -5,7 +5,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session, sessionmaker
 
-from recruit_agent.agents.autonomous import AutonomousAgent
+from recruit_agent.agents.autonomous import AutonomousAdapter
 from recruit_agent.models.domain import AgentGlobalState
 from recruit_agent.repositories.domain import TaskQueueRepository
 
@@ -13,7 +13,7 @@ from recruit_agent.repositories.domain import TaskQueueRepository
 @dataclass(slots=True)
 class Heartbeat:
     session_factory: sessionmaker[Session]
-    autonomous_agent: AutonomousAgent
+    autonomous_adapter: AutonomousAdapter
     worker_id: str = "heartbeat"
 
     def run_once(self) -> dict[str, Any]:
@@ -28,7 +28,7 @@ class Heartbeat:
                 return {"status": "idle"}
 
             try:
-                self.autonomous_agent.run_turn_from_envelope(dict(task.payload or {}))
+                self.autonomous_adapter.run_turn_from_envelope(dict(task.payload or {}))
             except Exception as exc:
                 queue.mark_failed(task.id, error=str(exc))
                 raise

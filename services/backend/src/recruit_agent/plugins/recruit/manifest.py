@@ -5,8 +5,8 @@ from dataclasses import dataclass
 from sqlalchemy.orm import Session, sessionmaker
 
 from recruit_agent.plugins.host import PluginHost
+from recruit_agent.plugins.recruit.context import build_context_enricher
 from recruit_agent.plugins.recruit.guard import build_guard_check
-from recruit_agent.plugins.recruit.observation import build_observation_enricher
 from recruit_agent.plugins.recruit.persona import RECRUIT_PERSONA_FRAGMENT
 from recruit_agent.plugins.recruit.router import build_router
 from recruit_agent.plugins.recruit.toolkit import (
@@ -32,7 +32,7 @@ from recruit_agent.plugins.recruit.toolkit import (
     upsert_candidate,
     upsert_job_description,
 )
-from recruit_agent.runtime.tools import ToolDefinition
+from recruit_agent.capabilities.tools import ToolDefinition
 
 
 @dataclass(slots=True)
@@ -50,15 +50,34 @@ class RecruitPluginManifest:
             resource_target_kind: str,
             metadata: dict | None = None,
         ) -> ToolDefinition:
+            tool_metadata = dict(metadata or {})
+            capabilities = {
+                str(item).strip().lower()
+                for item in list(tool_metadata.get("capabilities") or [])
+                if str(item).strip()
+            }
+            tool_metadata.setdefault("business_tool", True)
+            tool_metadata.setdefault("business_domain", "recruit")
+            if "approval" in capabilities:
+                default_permission_scope = "approval"
+                default_risk_level = "medium"
+            elif "recruit_write" in capabilities:
+                default_permission_scope = "business_write"
+                default_risk_level = "medium"
+            else:
+                default_permission_scope = "business_read"
+                default_risk_level = "low"
+            tool_metadata.setdefault("permission_scope", default_permission_scope)
+            tool_metadata.setdefault("risk_level", default_risk_level)
             return ToolDefinition(
                 name=name,
                 description=description,
                 parameters=parameters,
                 handler=handler,
-                category="plugin",
+                category="business",
                 external_target=False,
                 resource_target_kind=resource_target_kind,
-                metadata=metadata or {},
+                metadata=tool_metadata,
             )
 
         tools = [
@@ -78,6 +97,7 @@ class RecruitPluginManifest:
                 },
                 handler=lambda arguments: take_over_candidate(self.session_factory, **arguments),
                 resource_target_kind="application",
+                metadata={"capabilities": ["candidate", "lock", "recruit_write"]},
             ),
             _tool(
                 name="release_candidate",
@@ -95,6 +115,7 @@ class RecruitPluginManifest:
                 },
                 handler=lambda arguments: release_candidate(self.session_factory, **arguments),
                 resource_target_kind="application",
+                metadata={"capabilities": ["candidate", "lock", "recruit_write"]},
             ),
             _tool(
                 name="list_locked_candidates",
@@ -102,6 +123,7 @@ class RecruitPluginManifest:
                 parameters={"type": "object", "properties": {}, "additionalProperties": False},
                 handler=lambda _arguments: list_locked_candidates(self.session_factory),
                 resource_target_kind="application",
+                metadata={"capabilities": ["candidate", "lock", "recruit_read"]},
             ),
             _tool(
                 name="list_job_descriptions",
@@ -229,7 +251,7 @@ class RecruitPluginManifest:
                 },
                 handler=lambda arguments: delete_candidate(self.session_factory, **arguments),
                 resource_target_kind="candidate",
-                metadata={"capabilities": ["candidate", "recruit_write"]},
+                metadata={"capabilities": ["candidate", "recruit_write"], "requires_confirmation": True, "risk_level": "high"},
             ),
             _tool(
                 name="archive_candidate",
@@ -246,7 +268,11 @@ class RecruitPluginManifest:
                 },
                 handler=lambda arguments: archive_candidate(self.session_factory, **arguments),
                 resource_target_kind="candidate",
-                metadata={"capabilities": ["candidate", "recruit_write"]},
+                metadata={
+                    "capabilities": ["candidate", "state_transition", "recruit_write"],
+                    "requires_confirmation": True,
+                    "risk_level": "high",
+                },
             ),
             _tool(
                 name="list_candidate_threads",
@@ -422,7 +448,11 @@ class RecruitPluginManifest:
                 },
                 handler=lambda arguments: delete_resume_artifact(self.session_factory, **arguments),
                 resource_target_kind="candidate",
-                metadata={"capabilities": ["candidate", "resume", "recruit_write"]},
+                metadata={
+                    "capabilities": ["candidate", "resume", "recruit_write"],
+                    "requires_confirmation": True,
+                    "risk_level": "high",
+                },
             ),
             _tool(
                 name="transition_application",
@@ -456,7 +486,11 @@ class RecruitPluginManifest:
                 },
                 handler=lambda arguments: transition_application(self.session_factory, **arguments),
                 resource_target_kind="candidate",
-                metadata={"capabilities": ["candidate", "state_transition", "recruit_write"]},
+                metadata={
+                    "capabilities": ["candidate", "state_transition", "recruit_write"],
+                    "requires_confirmation": True,
+                    "risk_level": "high",
+                },
             ),
             _tool(
                 name="create_candidate_sync_record",
@@ -520,7 +554,7 @@ class RecruitPluginManifest:
         ]
 
         plugin_host.register_tools(self.namespace, tools)
-        plugin_host.register_observation_enricher(self.namespace, build_observation_enricher(self.session_factory))
+        plugin_host.register_context_enricher(self.namespace, build_context_enricher(self.session_factory))
         plugin_host.register_guard_check(self.namespace, build_guard_check(self.session_factory))
         plugin_host.register_persona_fragment(self.namespace, "handover", RECRUIT_PERSONA_FRAGMENT)
         plugin_host.register_router(self.namespace, build_router(self.session_factory))

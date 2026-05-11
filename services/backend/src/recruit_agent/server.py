@@ -26,7 +26,7 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
-        container.autonomous_agent.recover_stale()
+        container.autonomous_adapter.recover_stale()
         await autonomy_loop.start()
         try:
             yield

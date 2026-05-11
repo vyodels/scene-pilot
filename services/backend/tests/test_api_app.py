@@ -109,7 +109,7 @@ class ApiAppTests(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertEqual(response.status_code, 200, path)
 
-    def test_dashboard_learning_alerts_use_business_summary(self) -> None:
+    def test_dashboard_learning_alerts_do_not_parse_jsonish_content_as_business_protocol(self) -> None:
         from recruit_agent.models.domain import AgentLearning
 
         with self.client.app.state.session_factory() as session:
@@ -132,7 +132,7 @@ class ApiAppTests(unittest.TestCase):
         learning_alert = next(item for item in dashboard.json()["alerts"] if item["label"] == "可用学习草案")
         self.assertNotIn("标签页", learning_alert["detail"])
         self.assertNotIn("http://", learning_alert["detail"])
-        self.assertEqual(learning_alert["detail"], "同步 JD（增量）：当前受阻，等待继续执行条件满足。")
+        self.assertEqual(learning_alert["detail"], "学习草案包含结构化内容，待查看。")
 
     def test_approval_update_and_blocked_task_approve_surfaces(self) -> None:
         created = self.client.post(

@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
+import json
 from typing import Any
 
 from recruit_agent.models.domain import Skill
@@ -52,6 +53,9 @@ def build_skill_context_injections(
     skills: list[Skill],
     *,
     limit: int = 12,
+    token_budget: int | None = None,
+    max_instruction_chars: int = 1200,
+    max_schema_chars: int = 1200,
     query: str | None = None,
     task_text: str | None = None,
     category: str | None = None,
@@ -69,7 +73,12 @@ def build_skill_context_injections(
         explicit_skill_ids=explicit_skill_ids,
     ):
         selected = sorted(active_skills, key=_stable_skill_key)
-        return [_skill_context_injection(skill) for skill in selected[: max(limit, 0)]]
+        return _budgeted_injections(
+            selected[: max(limit, 0)],
+            token_budget=token_budget,
+            max_instruction_chars=max_instruction_chars,
+            max_schema_chars=max_schema_chars,
+        )
 
     relevance = _SkillRelevanceInput.from_values(
         query=query,
@@ -81,10 +90,20 @@ def build_skill_context_injections(
         active_skills,
         key=lambda skill: _relevant_skill_key(skill, relevance),
     )
-    return [_skill_context_injection(skill) for skill in selected[: max(limit, 0)]]
+    return _budgeted_injections(
+        selected[: max(limit, 0)],
+        token_budget=token_budget,
+        max_instruction_chars=max_instruction_chars,
+        max_schema_chars=max_schema_chars,
+    )
 
 
-def _skill_context_injection(skill: Skill) -> SkillContextInjection:
+def _skill_context_injection(
+    skill: Skill,
+    *,
+    max_instruction_chars: int = 1200,
+    max_schema_chars: int = 1200,
+) -> SkillContextInjection:
     body = dict(skill.body or {})
     return SkillContextInjection(
         skill_id=str(skill.skill_id or ""),
@@ -94,11 +113,51 @@ def _skill_context_injection(skill: Skill) -> SkillContextInjection:
         category=str(skill.category or "general"),
         platform=str(skill.platform or "site"),
         version=int(skill.version or 1),
-        input_schema=dict(skill.input_schema or {}),
-        output_schema=dict(skill.output_schema or {}),
-        instructions=_skill_instructions(body),
+        input_schema=_truncate_mapping(dict(skill.input_schema or {}), max_chars=max_schema_chars),
+        output_schema=_truncate_mapping(dict(skill.output_schema or {}), max_chars=max_schema_chars),
+        instructions=_truncate_text(_skill_instructions(body), max_chars=max_instruction_chars),
         metadata=_context_metadata(skill),
     )
+
+
+def _budgeted_injections(
+    skills: list[Skill],
+    *,
+    token_budget: int | None,
+    max_instruction_chars: int,
+    max_schema_chars: int,
+) -> list[SkillContextInjection]:
+    budget = int(token_budget or 0)
+    if budget <= 0:
+        return [
+            _skill_context_injection(
+                skill,
+                max_instruction_chars=max_instruction_chars,
+                max_schema_chars=max_schema_chars,
+            )
+            for skill in skills
+        ]
+    selected: list[SkillContextInjection] = []
+    spent = 0
+    for skill in skills:
+        injection = _skill_context_injection(
+            skill,
+            max_instruction_chars=max_instruction_chars,
+            max_schema_chars=max_schema_chars,
+        )
+        estimate = _token_estimate(injection.to_prompt_payload())
+        if selected and spent + estimate > budget:
+            continue
+        if not selected and estimate > budget:
+            injection = _skill_context_injection(
+                skill,
+                max_instruction_chars=max(160, min(max_instruction_chars, budget * 2)),
+                max_schema_chars=max(160, min(max_schema_chars, budget * 2)),
+            )
+            estimate = _token_estimate(injection.to_prompt_payload())
+        selected.append(injection)
+        spent += estimate
+    return selected
 
 
 def _skill_instructions(body: dict[str, Any]) -> str | None:
@@ -175,8 +234,7 @@ def _relevant_skill_key(
     skill: Skill,
     relevance: _SkillRelevanceInput,
 ) -> tuple[int, int, int, str, str]:
-    skill_id = _normalize_text(str(skill.skill_id or ""))
-    explicit_rank = relevance.explicit_skill_order.get(skill_id)
+    explicit_rank = _explicit_rank(skill, relevance)
     explicit_sort = (
         explicit_rank if explicit_rank is not None else len(relevance.explicit_skill_order)
     )
@@ -205,6 +263,7 @@ def _skill_relevance_score(skill: Skill, relevance: _SkillRelevanceInput) -> int
         score += 30
 
     metadata = dict(skill.skill_metadata or {})
+    score += _text_relevance_score(metadata.get("aliases"), relevance, weight=8)
     score += _text_relevance_score(metadata.get("trigger_examples"), relevance, weight=10)
 
     body = dict(skill.body or {})
@@ -244,6 +303,43 @@ def _string_values(value: Any) -> list[str]:
 
 def _stable_skill_key(skill: Skill) -> tuple[str, str]:
     return (str(skill.name or "").lower(), str(skill.skill_id or ""))
+
+
+def _explicit_rank(skill: Skill, relevance: _SkillRelevanceInput) -> int | None:
+    refs = [
+        str(skill.skill_id or ""),
+        str(skill.name or ""),
+    ]
+    metadata = dict(skill.skill_metadata or {})
+    refs.extend(_string_values(metadata.get("aliases")))
+    ranks = [
+        relevance.explicit_skill_order.get(_normalize_text(ref))
+        for ref in refs
+        if _normalize_text(ref) in relevance.explicit_skill_order
+    ]
+    return min(ranks) if ranks else None
+
+
+def _truncate_text(value: str | None, *, max_chars: int) -> str | None:
+    if value is None:
+        return None
+    text = value.strip()
+    if len(text) <= max_chars:
+        return text
+    return text[: max(max_chars - 24, 0)].rstrip() + "\n[truncated]"
+
+
+def _truncate_mapping(value: dict[str, Any], *, max_chars: int) -> dict[str, Any]:
+    if not value:
+        return {}
+    text = json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+    if len(text) <= max_chars:
+        return value
+    return {"_truncated_json": text[: max(max_chars - 24, 0)], "_truncated": True}
+
+
+def _token_estimate(value: Any) -> int:
+    return max(1, len(json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)) // 4)
 
 
 def _normalize_text(value: Any) -> str:

@@ -12,7 +12,6 @@ from recruit_agent.models.domain import Candidate, CandidateApplication, JobDesc
 from recruit_agent.plugins.host import PluginHost
 from recruit_agent.plugins.loader import install_manifest
 from recruit_agent.plugins.recruit.manifest import RecruitPluginManifest
-from recruit_agent.runtime.models import Observation
 from recruit_agent.services.application_window import make_application_window
 
 
@@ -67,20 +66,20 @@ def test_recruit_pack_takeover_flow_exposes_tools_observation_and_router(tmp_pat
         )
         assert tool_result.is_error is False
 
-        observation = Observation(
-            world_snapshot={},
-            scope_kind="application",
-            scope_ref=primary_application.candidate_application_id,
-            recent_events=[],
-            available_tools=[],
-            available_mcps=[],
-            hash="obs-1",
-        )
-        enriched = host.run_observation_enrichers_sync(observation)
+        context = {
+            "world_snapshot": {},
+            "scope_kind": "application",
+            "scope_ref": primary_application.candidate_application_id,
+            "recent_events": [],
+            "available_tools": [],
+            "available_mcps": [],
+            "hash": "ctx-1",
+        }
+        enriched = host.run_context_enrichers_sync(context)
         verdicts = host.run_guard_checks_sync(
             "transition_application",
             {"application_id": primary_application.candidate_application_id, "actor_kind": "autonomous", "to_status": "outreach_pending"},
-            observation,
+            context,
         )
         second_application_verdicts = host.run_guard_checks_sync(
             "transition_application",
@@ -90,22 +89,22 @@ def test_recruit_pack_takeover_flow_exposes_tools_observation_and_router(tmp_pat
                 "actor_kind": "autonomous",
                 "to_status": "outreach_pending",
             },
-            Observation(
-                world_snapshot={},
-                scope_kind="application",
-                scope_ref=secondary_application.candidate_application_id,
-                recent_events=[],
-                available_tools=[],
-                available_mcps=[],
-                hash="obs-2",
-            ),
+            {
+                "world_snapshot": {},
+                "scope_kind": "application",
+                "scope_ref": secondary_application.candidate_application_id,
+                "recent_events": [],
+                "available_tools": [],
+                "available_mcps": [],
+                "hash": "ctx-2",
+            },
         )
 
         assert enriched["world_snapshot"]["plugin_recruit"]["human_locked"] is True
         assert enriched["world_snapshot"]["plugin_recruit"]["lock_meta"]["application_id"] == primary_application.candidate_application_id
-        assert verdicts[0].allowed is False
-        assert verdicts[0].metadata["application_id"] == primary_application.candidate_application_id
-        assert second_application_verdicts[0].allowed is True
+        assert verdicts[0]["allowed"] is False
+        assert verdicts[0]["metadata"]["application_id"] == primary_application.candidate_application_id
+        assert second_application_verdicts[0]["allowed"] is True
         assert "人工接管" in host.collect_persona_fragments()[0]
 
         app = FastAPI()

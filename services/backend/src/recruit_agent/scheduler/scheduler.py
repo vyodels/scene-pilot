@@ -4,12 +4,11 @@ from dataclasses import dataclass, field
 from threading import Lock
 from typing import Any, Callable, Iterable
 
-from recruit_agent.runtime.models import AgentResult
 from .queue import InMemoryQueue, TaskEnvelope, TaskQueue
 
 
-TaskRunner = Callable[[TaskEnvelope], AgentResult]
-FollowUpFactory = Callable[[TaskEnvelope, AgentResult], Iterable[TaskEnvelope]]
+TaskRunner = Callable[[TaskEnvelope], dict[str, Any]]
+FollowUpFactory = Callable[[TaskEnvelope, dict[str, Any]], Iterable[TaskEnvelope]]
 
 
 class TaskDeferred(RuntimeError):
@@ -19,7 +18,7 @@ class TaskDeferred(RuntimeError):
 @dataclass(slots=True)
 class ScheduledOutcome:
     task: TaskEnvelope
-    result: AgentResult
+    result: dict[str, Any]
     enqueued_follow_ups: int = 0
     error: str | None = None
 
@@ -67,12 +66,12 @@ class SerialScheduler:
 
         try:
             if self.runner is None:
-                result = AgentResult(success=False, status="no_runner")
+                result = {"success": False, "status": "no_runner", "content": ""}
             else:
                 result = self.runner(task)
 
             enqueued_follow_ups = 0
-            if self.follow_up_factory is not None and result.success:
+            if self.follow_up_factory is not None and bool(result.get("success")):
                 for follow_up in self.follow_up_factory(task, result):
                     self.queue.put(follow_up)
                     enqueued_follow_ups += 1
@@ -85,7 +84,7 @@ class SerialScheduler:
             self._mark_pending(task, error=str(exc))
             outcome = ScheduledOutcome(
                 task=task,
-                result=AgentResult(success=False, status="deferred", content=str(exc)),
+                result={"success": False, "status": "deferred", "content": str(exc)},
                 error=str(exc),
             )
             self.history.append(outcome)
@@ -98,7 +97,7 @@ class SerialScheduler:
                 self._mark_failed(task.task_id, error=str(exc))
             outcome = ScheduledOutcome(
                 task=task,
-                result=AgentResult(success=False, status="failed", content=str(exc)),
+                result={"success": False, "status": "failed", "content": str(exc)},
                 error=str(exc),
             )
             self.history.append(outcome)

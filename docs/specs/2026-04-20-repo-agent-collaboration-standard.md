@@ -89,7 +89,7 @@
 ### 外部开发代理
 
 - 外部开发代理可以用 UI 工具触发 goal、配置参数和查看状态。
-- 外部开发代理不得用 Playwright、Chrome DevTools、页面 JS 或 `browser-mcp` 直接替内部 Autonomous Agent 操作招聘网站。
+- 外部开发代理不得用 Playwright、Chrome DevTools、页面 JS 或 `browser-mcp` 直接替内部 Autonomous type 操作招聘网站。
 - `browser-mcp` 只保留给主程序内部 Agent 驱动外部 / mock 招聘网站。
 
 ## 开发命令基线

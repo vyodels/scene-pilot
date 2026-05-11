@@ -4,9 +4,9 @@ import threading
 import time
 from pathlib import Path
 
-from recruit_agent.runtime.models import LLMResponse, ToolCall
+from agent_runtime.fixtures import LLMResponse, ToolCall
 from agent_runtime.fixtures import ScriptedProvider
-from recruit_agent.runtime.tools import ToolDefinition, ToolRegistry, register_core_tools
+from recruit_agent.capabilities.tools import ToolDefinition, ToolRegistry, register_core_tools
 
 from ._helpers import build_assistant_client
 
@@ -25,10 +25,8 @@ def test_assistant_cancel_interrupts_active_turn(tmp_path: Path) -> None:
     tools = ToolRegistry()
     register_core_tools(tools)
 
-    def _slow_wait(arguments: dict[str, object], *, cancel_token=None) -> dict[str, object]:
-        for _ in range(100):
-            if cancel_token is not None and cancel_token.cancelled:
-                return {"cancelled": True}
+    def _slow_wait(arguments: dict[str, object]) -> dict[str, object]:
+        for _ in range(5):
             time.sleep(0.02)
         return {"done": True, "seconds": arguments["seconds"]}
 
@@ -65,6 +63,5 @@ def test_assistant_cancel_interrupts_active_turn(tmp_path: Path) -> None:
         worker.join(timeout=5)
 
         assert cancelled["cancelled"] is True
-        assert "event: turn.cancelling" in response_box["body"]
-        assert "event: turn.cancelled" in response_box["body"]
+        assert "event: turn_interrupted" in response_box["body"]
         assert conversation_id not in agent.active_turns

@@ -13,13 +13,39 @@
 - `.recruit-agent/prompts/**`
 - `.recruit-agent/skills/**`
 - `.recruit-agent/plugins/**`
-- backend thin plugin shell
+- backend thin plugin mount code
 - tool schema / tool result
 - MCP capability
 - product adapter context
 - business service / repository / projection
 
 不允许通过 Agent runtime 分支接入。
+
+## 业务 Tool Catalog
+
+Recruit 业务方法需要包装为业务 tool，作为 Agent 和招聘业务系统之间的唯一可执行边界。现有业务 tool 至少覆盖：
+
+- `list_job_descriptions` / `upsert_job_description`
+- `list_candidates` / `upsert_candidate` / `delete_candidate`
+- `list_candidate_threads` / `get_candidate_thread`
+- `score_candidate` / `create_candidate_scorecard` / `create_candidate_review_decision`
+- `record_outbound_message`
+- `attach_resume_artifact` / `delete_resume_artifact`
+- `transition_application` / `archive_candidate`
+- `create_candidate_sync_record`
+- `get_goal_progress`
+- `take_over_candidate` / `release_candidate` / `list_locked_candidates`
+- `request_human_approval`
+
+业务 tool 的约束：
+
+- tool handler 可以调用业务 service、repository、API helper 或 projection。
+- tool schema 必须描述业务输入，不暴露 runtime 内部结构。
+- tool result 必须返回业务对象、动作结果或可验证错误，不返回 provider payload。
+- 写入、流转、删除、发送、外部副作用等高风险动作必须能被 permission / approval policy 治理。
+- tool metadata 必须能标记 `business_tool`、`business_domain`、`resource_target_kind`、`capabilities` 与权限要求。
+
+Assistant 和 Autonomous 使用同一套业务 tool。二者差异只在产品 adapter 的触发、状态、审批和用户体验，不在业务 tool 能力本身。
 
 ## Skill 沉淀
 

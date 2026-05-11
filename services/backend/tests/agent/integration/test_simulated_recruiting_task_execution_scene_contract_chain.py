@@ -11,9 +11,9 @@ from recruit_agent.db.session import create_engine_from_settings, create_session
 from recruit_agent.models.domain import ExecutionEpisode
 from recruit_agent.plugins.host import PluginHost
 from recruit_agent.plugins.recruit.toolkit import attach_resume_artifact, upsert_candidate, upsert_job_description
-from recruit_agent.runtime.models import LLMResponse, ToolCall
+from agent_runtime.fixtures import LLMResponse, ToolCall
 from agent_runtime.fixtures import ScriptedProvider
-from recruit_agent.runtime.tools import ToolDefinition, ToolRegistry
+from recruit_agent.capabilities.tools import ToolDefinition, ToolRegistry
 from recruit_agent.server import create_app
 from recruit_agent.services.scene_context import SceneContextService
 

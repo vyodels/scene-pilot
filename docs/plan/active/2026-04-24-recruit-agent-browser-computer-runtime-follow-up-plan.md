@@ -24,7 +24,7 @@
 - [x] `delegate_scene_context` / `SceneContextService` 支持 `browser_target`、`computer_target`、`target_regions`、`action_plan`、`artifact_expectations`。
 - [x] scene execution contract 明确 `coordinate_policy = delegate_to_hid`，不再让主 Agent 自算最终屏幕绝对坐标。
 - [x] prompt、guide、API 测试、runtime-bridge 测试已对齐当前 browser / VirtualHID 契约。
-- [x] 已新增 `resume_collection` scene template，并用 Autonomous Agent 模拟环境招聘任务执行 fixture 证明 `JD sync -> candidate_discovery -> resume_collection -> artifact attach` 这条本地 contract 闭环可跑通。
+- [x] 已新增 `resume_collection` scene template，并用 Autonomous type 模拟环境招聘任务执行 fixture 证明 `JD sync -> candidate_discovery -> resume_collection -> artifact attach` 这条本地 contract 闭环可跑通。
 
 ### 2.1 已完成的模拟闭环证明
 

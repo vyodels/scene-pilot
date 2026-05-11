@@ -1,1 +1,1 @@
-"""Assistant agent runtime package."""
+"""Assistant support package."""

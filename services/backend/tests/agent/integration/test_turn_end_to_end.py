@@ -5,14 +5,14 @@ from pathlib import Path
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from recruit_agent.agents.autonomous import AutonomousAgent
+from recruit_agent.agents.autonomous import AutonomousAdapter
 from recruit_agent.core.settings import AppSettings
 from recruit_agent.db.session import create_engine_from_settings, create_session_factory, initialize_database
 from recruit_agent.models.domain import AgentRun, AgentSession, AgentTurnRecord, Candidate, RecruitAgentProfile
 from recruit_agent.plugins.host import PluginHost
-from recruit_agent.runtime.models import LLMResponse
+from agent_runtime.fixtures import LLMResponse
 from agent_runtime.fixtures import ScriptedProvider
-from recruit_agent.runtime.tools import ToolRegistry, register_core_tools
+from recruit_agent.capabilities.tools import ToolRegistry, register_core_tools
 
 
 def _make_session(tmp_path: Path) -> Session:
@@ -50,7 +50,7 @@ def test_autonomous_turn_persists_run_turn_records(tmp_path: Path) -> None:
         provider = ScriptedProvider(provider_name="scripted", responses=[LLMResponse(content="completed")])
         tools = ToolRegistry()
         register_core_tools(tools)
-        agent = AutonomousAgent(
+        agent = AutonomousAdapter(
             session_factory=session.bind and create_session_factory(session.get_bind()),
             provider=provider,
             tool_registry=tools,

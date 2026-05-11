@@ -7,9 +7,9 @@ from recruit_agent.core.settings import AppSettings
 from recruit_agent.db.session import create_engine_from_settings, create_session_factory, initialize_database
 from recruit_agent.models.domain import AgentLearning, EnvironmentSnapshot, ExecutionEpisode, ExecutionPlan, TaskSpec
 from recruit_agent.plugins.host import PluginHost
-from recruit_agent.runtime.models import LLMResponse, ToolCall
+from agent_runtime.fixtures import LLMResponse, ToolCall
 from agent_runtime.fixtures import ScriptedProvider
-from recruit_agent.runtime.tools import ToolDefinition, ToolRegistry
+from recruit_agent.capabilities.tools import ToolDefinition, ToolRegistry
 from recruit_agent.services.scene_context import SceneContextService
 
 
@@ -158,7 +158,10 @@ def test_scene_context_rejects_browser_tab_from_different_target_origin(tmp_path
                 ],
                 finish_reason="tool_calls",
             ),
-            LLMResponse(content='{"status":"blocked","reason":"target mismatch"}'),
+            LLMResponse(
+                content="target mismatch",
+                result_data={"status": "blocked", "reason": "target mismatch"},
+            ),
         ],
     )
     select_calls: list[dict[str, object]] = []
@@ -215,9 +218,10 @@ def test_scene_context_rejects_browser_tab_from_different_target_origin(tmp_path
         mismatch_results = [
             item
             for item in episode.observations
-            if item["type"] == "tool_result"
+            if item["type"] == "tool_event"
+            and item["payload"]["kind"] == "tool_result_ready"
             and item["payload"]["tool_name"] == "browser_select_tab"
-            and item["payload"]["output"].get("error") == "scene_browser_target_mismatch"
+            and item["payload"]["content"].get("error") == "scene_browser_target_mismatch"
         ]
         assert mismatch_results
 
@@ -238,7 +242,10 @@ def test_scene_context_derives_browser_target_from_instruction_url(tmp_path: Pat
                 ],
                 finish_reason="tool_calls",
             ),
-            LLMResponse(content='{"status":"blocked","summary":"stale target"}'),
+            LLMResponse(
+                content="stale target",
+                result_data={"status": "blocked", "summary": "stale target"},
+            ),
         ],
     )
     tools = ToolRegistry()
@@ -278,23 +285,25 @@ def test_scene_context_derives_browser_target_from_instruction_url(tmp_path: Pat
         blocked_results = [
             item
             for item in episode.observations
-            if item["type"] == "tool_result"
+            if item["type"] == "tool_event"
+            and item["payload"]["kind"] == "tool_result_ready"
             and item["payload"]["tool_name"] == "browser_open_tab"
-            and item["payload"]["output"].get("error") == "scene_browser_target_mismatch"
+            and item["payload"]["content"].get("error") == "scene_browser_target_mismatch"
         ]
         assert blocked_results
 
 
-def test_scene_context_does_not_mark_failed_structured_final_as_completed(tmp_path: Path) -> None:
+def test_scene_context_does_not_mark_failed_provider_result_data_as_completed(tmp_path: Path) -> None:
     session_factory = _session_factory(tmp_path)
     provider = ScriptedProvider(
         provider_name="scene-scripted",
         responses=[
             LLMResponse(
-                content=(
-                    '{"status":"failed_no_verified_local_artifact",'
-                    '"failure_reason":"download record did not produce a verified local path"}'
-                )
+                content="下载记录未产生可验证的本地路径。",
+                result_data={
+                    "status": "failed_no_verified_local_artifact",
+                    "failure_reason": "download record did not produce a verified local path",
+                },
             )
         ],
     )
@@ -315,11 +324,44 @@ def test_scene_context_does_not_mark_failed_structured_final_as_completed(tmp_pa
     )
 
     assert result["status"] == "error"
-    assert "failed_no_verified_local_artifact" in result["summary"]
+    assert result["summary"] == "下载记录未产生可验证的本地路径。"
+    assert result["result_data"]["status"] == "failed_no_verified_local_artifact"
 
     with session_factory() as session:
         episode = session.query(ExecutionEpisode).one()
         assert episode.status == "failed"
+
+
+def test_scene_context_does_not_parse_final_text_json_as_result_data_or_writeback(tmp_path: Path) -> None:
+    session_factory = _session_factory(tmp_path)
+    final_text = json.dumps(
+        {
+            "status": "completed",
+            "summary": "hidden machine payload",
+            "business_writeback": {
+                "tool": "attach_resume_artifact",
+                "arguments": {"file_path": "/tmp/from-final-text.pdf"},
+            },
+        },
+        ensure_ascii=False,
+    )
+    provider = ScriptedProvider(
+        provider_name="scene-scripted",
+        responses=[LLMResponse(content=final_text, finish_reason="stop")],
+    )
+    service = SceneContextService(
+        session_factory=session_factory,
+        provider=provider,
+        tool_registry=ToolRegistry(),
+        plugin_host=PluginHost(),
+    )
+
+    result = service.delegate({"instruction": "Return a plain final answer that happens to look like JSON."})
+
+    assert result["status"] == "completed"
+    assert result["summary"] == final_text
+    assert result["result_data"] == {}
+    assert [item for item in result["artifacts"] if item.get("kind") == "local_artifact"] == []
 
 
 def test_scene_context_returns_structured_result_and_browser_computer_contract(tmp_path: Path) -> None:
@@ -466,7 +508,7 @@ def test_scene_context_returns_structured_result_and_browser_computer_contract(t
         assert environment_context["artifact_expectations"]["allowed_extensions"] == ["pdf"]
 
 
-def test_scene_context_promotes_structured_final_json_to_result_data_and_artifacts(tmp_path: Path) -> None:
+def test_scene_context_uses_provider_result_data_for_artifacts_and_writeback(tmp_path: Path) -> None:
     session_factory = _session_factory(tmp_path)
     final_payload = {
         "status": "completed",
@@ -509,7 +551,13 @@ def test_scene_context_promotes_structured_final_json_to_result_data_and_artifac
     }
     provider = ScriptedProvider(
         provider_name="scene-scripted",
-        responses=[LLMResponse(content=json.dumps(final_payload, ensure_ascii=False), finish_reason="stop")],
+        responses=[
+            LLMResponse(
+                content="已定位并验证本地简历 artifact。",
+                result_data=final_payload,
+                finish_reason="stop",
+            )
+        ],
     )
     service = SceneContextService(
         session_factory=session_factory,
@@ -560,18 +608,17 @@ def test_scene_context_does_not_treat_plain_filename_as_local_artifact(tmp_path:
         provider_name="scene-scripted",
         responses=[
             LLMResponse(
-                content=json.dumps(
-                    {
-                        "status": "blocked",
-                        "browser_download": {
-                            "located": True,
-                            "state": "complete",
-                            "filename": "candidate-resume.pdf",
-                            "fileName": "candidate-resume.pdf",
-                            "sourceUrl": "https://recruiting.example.test/downloads/candidate-resume.pdf",
-                        },
-                    }
-                ),
+                content="下载记录已定位，但尚未得到本地路径。",
+                result_data={
+                    "status": "blocked",
+                    "browser_download": {
+                        "located": True,
+                        "state": "complete",
+                        "filename": "candidate-resume.pdf",
+                        "fileName": "candidate-resume.pdf",
+                        "sourceUrl": "https://recruiting.example.test/downloads/candidate-resume.pdf",
+                    },
+                },
                 finish_reason="stop",
             )
         ],
@@ -596,20 +643,19 @@ def test_scene_context_promotes_browser_download_path_without_duplicate_artifact
         provider_name="scene-scripted",
         responses=[
             LLMResponse(
-                content=json.dumps(
-                    {
-                        "status": "completed",
-                        "browser_download": {
-                            "located": True,
-                            "state": "complete",
-                            "exists": True,
-                            "filename": "/tmp/candidate-resume.pdf",
-                            "fileName": "candidate-resume.pdf",
-                            "sourceUrl": "https://recruiting.example.test/downloads/candidate-resume.pdf",
-                            "finalUrl": "https://recruiting.example.test/downloads/candidate-resume.pdf",
-                        },
-                    }
-                ),
+                content="已定位浏览器下载记录和本地路径。",
+                result_data={
+                    "status": "completed",
+                    "browser_download": {
+                        "located": True,
+                        "state": "complete",
+                        "exists": True,
+                        "filename": "/tmp/candidate-resume.pdf",
+                        "fileName": "candidate-resume.pdf",
+                        "sourceUrl": "https://recruiting.example.test/downloads/candidate-resume.pdf",
+                        "finalUrl": "https://recruiting.example.test/downloads/candidate-resume.pdf",
+                    },
+                },
                 finish_reason="stop",
             )
         ],
@@ -842,7 +888,10 @@ def test_scene_context_blocks_browser_open_tab_for_in_site_navigation(tmp_path: 
                 ],
                 finish_reason="tool_calls",
             ),
-            LLMResponse(content='{"status":"blocked","summary":"browser navigation requires HID"}'),
+            LLMResponse(
+                content="browser navigation requires HID",
+                result_data={"status": "blocked", "summary": "browser navigation requires HID"},
+            ),
         ],
     )
     tools = ToolRegistry()
@@ -879,9 +928,10 @@ def test_scene_context_blocks_browser_open_tab_for_in_site_navigation(tmp_path: 
         blocked_results = [
             item
             for item in episode.observations
-            if item["type"] == "tool_result"
+            if item["type"] == "tool_event"
+            and item["payload"]["kind"] == "tool_result_ready"
             and item["payload"]["tool_name"] == "browser_open_tab"
-            and item["payload"]["output"].get("error") == "scene_browser_navigation_requires_hid"
+            and item["payload"]["content"].get("error") == "scene_browser_navigation_requires_hid"
         ]
         assert blocked_results
 
@@ -902,7 +952,10 @@ def test_scene_context_blocks_browser_reload_extension(tmp_path: Path) -> None:
                 ],
                 finish_reason="tool_calls",
             ),
-            LLMResponse(content='{"status":"blocked","summary":"browser reload is maintenance only"}'),
+            LLMResponse(
+                content="browser reload is maintenance only",
+                result_data={"status": "blocked", "summary": "browser reload is maintenance only"},
+            ),
         ],
     )
     tools = ToolRegistry()
@@ -939,8 +992,9 @@ def test_scene_context_blocks_browser_reload_extension(tmp_path: Path) -> None:
         blocked_results = [
             item
             for item in episode.observations
-            if item["type"] == "tool_result"
+            if item["type"] == "tool_event"
+            and item["payload"]["kind"] == "tool_result_ready"
             and item["payload"]["tool_name"] == "browser_reload_extension"
-            and item["payload"]["output"].get("error") == "scene_browser_reload_not_allowed"
+            and item["payload"]["content"].get("error") == "scene_browser_reload_not_allowed"
         ]
         assert blocked_results

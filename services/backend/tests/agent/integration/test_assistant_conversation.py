@@ -41,11 +41,10 @@ def test_assistant_conversation_flow_and_cancel_endpoint(tmp_path: Path) -> None
         )
         body = stream_response.text
         assert stream_response.status_code == 200
-        assert "event: turn.started" in body
-        assert "event: llm_delta" in body
-        assert "event: llm_final" in body
-        assert "event: provider_completed" in body
-        assert "event: turn.completed" in body
+        assert "event: turn_started" in body
+        assert "event: assistant_message_completed" in body
+        assert "event: llm_invocation_completed" in body
+        assert "event: turn_completed" in body
 
         listed = client.get("/api/assistant/conversations", params={"user_id": "user-1"}).json()
         assert listed[0]["conversation_id"] == conversation_id

@@ -83,6 +83,59 @@ def test_tool_loop_uses_injected_business_tool_without_bash() -> None:
     assert "cand-1" in str(second_request.messages[-1].content)
 
 
+def test_permission_resolution_continues_same_runtime_turn() -> None:
+    tool_use = ToolUse(id="call-approval", name="send_message", input={"text": "hello"})
+    provider = FixtureLLMProvider(
+        responses=[
+            LLMResponse(
+                id="resp-1",
+                request_id="",
+                invocation_id="",
+                assistant_message=LLMMessage(role="assistant", content="", tool_uses=[tool_use]),
+                tool_uses=[tool_use],
+                stop_reason="tool_calls",
+            ),
+            LLMResponse(
+                id="resp-2",
+                request_id="",
+                invocation_id="",
+                assistant_message=LLMMessage(role="assistant", content="sent"),
+            ),
+        ]
+    )
+    tool = ToolDefinition(
+        name="send_message",
+        description="Send a message.",
+        schema=ToolSchema(
+            name="send_message",
+            description="Send a message.",
+            input_schema={"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]},
+        ),
+        handler=FunctionToolHandler(lambda args: {"sent": args["text"]}),
+        metadata={"requires_confirmation": True},
+    )
+    engine = InteractionEngine(InteractionEngineConfig(conversation_id="conv-approval", provider=provider, tools=[tool]))
+
+    first_outputs = list(engine.submitMessage("send hello"))
+
+    permission = next(item for item in first_outputs if item.type == "permission_requested")
+    assert engine.pending_permission is not None
+    assert permission.turn_id is not None
+
+    continued_outputs = list(engine.resolvePermission(approved=True))
+
+    assert engine.pending_permission is None
+    assert any(item.type == "tool_event" and item.data["kind"] == "tool_result_ready" for item in continued_outputs)
+    assert any(item.type == "assistant_message_completed" and item.data["message"] == "sent" for item in continued_outputs)
+    assert any(item.type == "turn_completed" and item.turn_id == permission.turn_id for item in continued_outputs)
+    second_request = provider.captured_requests[1]
+    assert second_request.turn_id == permission.turn_id
+    assert second_request.messages[-2].role == "assistant"
+    assert second_request.messages[-2].tool_uses[0].id == "call-approval"
+    assert second_request.messages[-1].role == "tool"
+    assert "hello" in str(second_request.messages[-1].content)
+
+
 def test_engine_passes_llm_request_options_to_provider() -> None:
     provider = FixtureLLMProvider(
         responses=[

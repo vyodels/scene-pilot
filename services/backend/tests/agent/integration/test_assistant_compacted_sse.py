@@ -2,14 +2,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from recruit_agent.runtime.models import LLMResponse
+from agent_runtime.fixtures import LLMResponse
 from agent_runtime.fixtures import ScriptedProvider
-from recruit_agent.runtime.tools import ToolRegistry, register_core_tools
+from recruit_agent.capabilities.tools import ToolRegistry, register_core_tools
 
 from ._helpers import build_assistant_client
 
 
-def test_assistant_stream_emits_compacted_event_when_history_is_compacted(tmp_path: Path) -> None:
+def test_assistant_stream_uses_runtime_output_events_when_history_is_compacted(tmp_path: Path) -> None:
     provider = ScriptedProvider(
         provider_name="scripted",
         responses=[
@@ -28,8 +28,8 @@ def test_assistant_stream_emits_compacted_event_when_history_is_compacted(tmp_pa
         client.post(f"/api/assistant/conversations/{conversation_id}/turn", json={"message": "hello two"})
         third = client.post(f"/api/assistant/conversations/{conversation_id}/turn", json={"message": "hello three"})
 
-    assert "event: compacted" in third.text
-    assert "event: turn.completed" in third.text
+    assert "event: compacted" not in third.text
+    assert "event: turn_completed" in third.text
 
 
 def test_assistant_compacts_model_visible_history(tmp_path: Path) -> None:

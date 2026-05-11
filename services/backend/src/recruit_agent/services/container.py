@@ -6,8 +6,8 @@ from typing import Any
 
 from sqlalchemy.orm import Session, sessionmaker
 
-from recruit_agent.agents.assistant import AssistantAgent
-from recruit_agent.agents.autonomous import AutonomousAgent
+from recruit_agent.agents.assistant import AssistantAdapter
+from recruit_agent.agents.autonomous import AutonomousAdapter
 from recruit_agent.agents.heartbeat import Heartbeat
 from recruit_agent.agent_runtime.providers import (
     AnthropicProvider,
@@ -21,13 +21,13 @@ from recruit_agent.assistant.session_store import AssistantSessionStore
 from recruit_agent.core.settings import AppSettings, load_settings
 from recruit_agent.db.session import create_engine_from_settings, create_session_factory, initialize_database
 from recruit_agent.evolution.learning_writer import LearningWriter
-from recruit_agent.memory.service import MemoryService
+from recruit_agent.memory.filesystem import MemoryFileStore
 from recruit_agent.evolution.promotion import PromotionService
 from recruit_agent.evolution.queue import EvolutionQueue
 from recruit_agent.plugins.host import PluginHost
 from recruit_agent.plugins.loader import install_manifest
 from recruit_agent.plugins.recruit.manifest import RecruitPluginManifest
-from recruit_agent.runtime.tools import (
+from recruit_agent.capabilities.tools import (
     ToolRegistry,
     build_delegate_scene_context_tool,
     is_approval_tool,
@@ -62,10 +62,10 @@ class AppContainer:
     scene_context_tool_registry: ToolRegistry
     plugin_host: PluginHost
     scene_context_service: SceneContextService
-    autonomous_agent: AutonomousAgent
+    autonomous_adapter: AutonomousAdapter
     heartbeat: Heartbeat
     session_store: AssistantSessionStore
-    assistant_agent: AssistantAgent
+    assistant_adapter: AssistantAdapter
     learning_writer: LearningWriter
     evolution_queue: EvolutionQueue
     promotion: PromotionService
@@ -91,9 +91,11 @@ class AppContainer:
         plugin_host = PluginHost()
         install_manifest(plugin_host, RecruitPluginManifest(session_factory))
         mcp_registry = McpRegistryService(session_factory)
+        memory_file_store = _build_memory_file_store(resolved_settings)
 
         providers, provider = _build_provider_bundle(resolved_settings)
         tool_registry, scene_context_tool_registry = _build_runtime_tool_registries(
+            settings=resolved_settings,
             session_factory=session_factory,
             plugin_host=plugin_host,
             mcp_registry=mcp_registry,
@@ -107,19 +109,21 @@ class AppContainer:
             plugin_host=plugin_host,
         )
         _register_delegate_scene_context_tool(tool_registry, scene_context_service=scene_context_service)
-        autonomous_agent = AutonomousAgent(
+        autonomous_adapter = AutonomousAdapter(
             session_factory=session_factory,
             provider=provider,
             tool_registry=tool_registry,
             plugin_host=plugin_host,
             learning_writer=learning_writer,
+            mcp_registry=mcp_registry,
+            memory_file_store=memory_file_store,
         )
-        heartbeat = Heartbeat(session_factory=session_factory, autonomous_agent=autonomous_agent)
+        heartbeat = Heartbeat(session_factory=session_factory, autonomous_adapter=autonomous_adapter)
 
         data_dir = resolved_settings.resolved_data_dir()
         data_dir.mkdir(parents=True, exist_ok=True)
         session_store = AssistantSessionStore(session_factory=session_factory, base_dir=Path(data_dir) / "assistant-jsonl")
-        assistant_agent = AssistantAgent(
+        assistant_adapter = AssistantAdapter(
             provider=provider,
             tool_registry=tool_registry,
             plugin_host=plugin_host,
@@ -150,10 +154,10 @@ class AppContainer:
             scene_context_tool_registry=scene_context_tool_registry,
             plugin_host=plugin_host,
             scene_context_service=scene_context_service,
-            autonomous_agent=autonomous_agent,
+            autonomous_adapter=autonomous_adapter,
             heartbeat=heartbeat,
             session_store=session_store,
-            assistant_agent=assistant_agent,
+            assistant_adapter=assistant_adapter,
             learning_writer=learning_writer,
             evolution_queue=evolution_queue,
             promotion=promotion,
@@ -170,6 +174,7 @@ class AppContainer:
         self.settings = settings
         self.providers, self.provider = _build_provider_bundle(settings)
         self.tool_registry, self.scene_context_tool_registry = _build_runtime_tool_registries(
+            settings=settings,
             session_factory=self.session_factory,
             plugin_host=self.plugin_host,
             mcp_registry=self.mcp_registry,
@@ -181,11 +186,12 @@ class AppContainer:
             plugin_host=self.plugin_host,
         )
         _register_delegate_scene_context_tool(self.tool_registry, scene_context_service=self.scene_context_service)
-        self.autonomous_agent.provider = self.provider
-        self.autonomous_agent.tool_registry = self.tool_registry
-        self.assistant_agent.provider = self.provider
-        self.assistant_agent.tool_registry = self.tool_registry
-        self.assistant_agent.max_history_messages = settings.assistant_max_history_messages
+        self.autonomous_adapter.provider = self.provider
+        self.autonomous_adapter.tool_registry = self.tool_registry
+        self.autonomous_adapter.memory_file_store = _build_memory_file_store(settings)
+        self.assistant_adapter.provider = self.provider
+        self.assistant_adapter.tool_registry = self.tool_registry
+        self.assistant_adapter.max_history_messages = settings.assistant_max_history_messages
         self.dashboard.settings = settings
 
         self.flags.flags.clear()
@@ -263,35 +269,98 @@ def _build_sync_service(settings: AppSettings, session_factory: sessionmaker[Ses
     )
 
 
-def _build_read_memory_handler(session_factory: sessionmaker[Session]):
+def _build_read_memory_handler(store: MemoryFileStore):
     def _handler(arguments: dict[str, Any]) -> dict[str, Any]:
-        scope_kind = str(arguments.get("scope_kind") or arguments.get("scopeKind") or "").strip()
-        scope_ref = str(arguments.get("scope_ref") or arguments.get("scopeRef") or "").strip()
-        if not scope_kind or not scope_ref:
-            raise ValueError("read_memory requires scope_kind and scope_ref")
-        agent_profile_id = arguments.get("agent_profile_id") or arguments.get("agentProfileId")
+        scope_kind, scope_ref, agent_profile_id = _memory_file_scope(arguments)
         limit = _bounded_int(arguments.get("limit"), default=50, minimum=1, maximum=100)
         query = str(arguments.get("query") or "").strip()
-        with session_factory() as session:
-            service = MemoryService(session)
-            if query:
-                entries = service.search_semantic(
-                    query,
-                    scope_kind=scope_kind,
-                    scope_ref=scope_ref,
-                    agent_profile_id=str(agent_profile_id) if agent_profile_id else None,
-                    limit=limit,
-                )
-            else:
-                entries = service.read(
-                    scope_kind=scope_kind,
-                    scope_ref=scope_ref,
-                    agent_profile_id=str(agent_profile_id) if agent_profile_id else None,
-                    limit=limit,
-                )
+        entries = []
+        for item in store.list_files(scope_kind=scope_kind, scope_ref=scope_ref, agent_profile_id=agent_profile_id):
+            content = store.read_file(
+                scope_kind=scope_kind,
+                scope_ref=scope_ref,
+                agent_profile_id=agent_profile_id,
+                path=str(item["path"]),
+            ).get("content", "")
+            if query and query.lower() not in f"{item['path']}\n{content}".lower():
+                continue
+            entries.append(
+                {
+                    "memory_item_id": item["path"],
+                    "kind": "memory_file",
+                    "summary": _first_non_empty_line(str(content or "")) or item["path"],
+                    "content": {"path": item["path"], "text": content},
+                    "updated_at": item.get("updated_at"),
+                }
+            )
+            if len(entries) >= limit:
+                break
         return {"entries": entries, "count": len(entries), "scope_kind": scope_kind, "scope_ref": scope_ref}
 
     return _handler
+
+
+def _build_memory_file_store(settings: AppSettings) -> MemoryFileStore:
+    return MemoryFileStore(settings.resolved_data_dir() / "memory-files")
+
+
+def _build_list_memory_files_handler(store: MemoryFileStore):
+    def _handler(arguments: dict[str, Any]) -> dict[str, Any]:
+        scope_kind, scope_ref, agent_profile_id = _memory_file_scope(arguments)
+        files = store.list_files(scope_kind=scope_kind, scope_ref=scope_ref, agent_profile_id=agent_profile_id)
+        return {"files": files, "count": len(files), "scope_kind": scope_kind, "scope_ref": scope_ref}
+
+    return _handler
+
+
+def _build_read_memory_file_handler(store: MemoryFileStore):
+    def _handler(arguments: dict[str, Any]) -> dict[str, Any]:
+        scope_kind, scope_ref, agent_profile_id = _memory_file_scope(arguments)
+        return store.read_file(
+            scope_kind=scope_kind,
+            scope_ref=scope_ref,
+            agent_profile_id=agent_profile_id,
+            path=str(arguments.get("path") or "MEMORY.md"),
+        )
+
+    return _handler
+
+
+def _build_write_memory_file_handler(store: MemoryFileStore):
+    def _handler(arguments: dict[str, Any]) -> dict[str, Any]:
+        scope_kind, scope_ref, agent_profile_id = _memory_file_scope(arguments)
+        return store.write_file(
+            scope_kind=scope_kind,
+            scope_ref=scope_ref,
+            agent_profile_id=agent_profile_id,
+            path=str(arguments.get("path") or "MEMORY.md"),
+            content=str(arguments.get("content") or ""),
+            mode=str(arguments.get("mode") or "overwrite"),
+        )
+
+    return _handler
+
+
+def _build_delete_memory_file_handler(store: MemoryFileStore):
+    def _handler(arguments: dict[str, Any]) -> dict[str, Any]:
+        scope_kind, scope_ref, agent_profile_id = _memory_file_scope(arguments)
+        return store.delete_file(
+            scope_kind=scope_kind,
+            scope_ref=scope_ref,
+            agent_profile_id=agent_profile_id,
+            path=str(arguments.get("path") or ""),
+        )
+
+    return _handler
+
+
+def _memory_file_scope(arguments: dict[str, Any]) -> tuple[str, str, str | None]:
+    scope_kind = str(arguments.get("scope_kind") or arguments.get("scopeKind") or "").strip()
+    scope_ref = str(arguments.get("scope_ref") or arguments.get("scopeRef") or "").strip()
+    if not scope_kind or not scope_ref:
+        raise ValueError("memory file tools require scope_kind and scope_ref")
+    agent_profile_id = arguments.get("agent_profile_id") or arguments.get("agentProfileId")
+    return scope_kind, scope_ref, str(agent_profile_id) if agent_profile_id else None
 
 
 def _build_record_learning_handler(session_factory: sessionmaker[Session]):
@@ -339,18 +408,32 @@ def _optional_string(value: Any) -> str | None:
     return text or None
 
 
+def _first_non_empty_line(text: str) -> str | None:
+    for line in str(text or "").splitlines():
+        stripped = line.strip(" #-\t")
+        if stripped:
+            return stripped[:240]
+    return None
+
+
 def _build_runtime_tool_registries(
     *,
+    settings: AppSettings,
     session_factory: sessionmaker[Session],
     plugin_host: PluginHost,
     mcp_registry: McpRegistryService,
 ) -> tuple[ToolRegistry, ToolRegistry]:
     parent_registry = ToolRegistry()
     scene_registry = ToolRegistry()
+    memory_file_store = _build_memory_file_store(settings)
 
     register_core_tools(
         parent_registry,
-        read_memory_handler=_build_read_memory_handler(session_factory),
+        read_memory_handler=_build_read_memory_handler(memory_file_store),
+        list_memory_files_handler=_build_list_memory_files_handler(memory_file_store),
+        read_memory_file_handler=_build_read_memory_file_handler(memory_file_store),
+        write_memory_file_handler=_build_write_memory_file_handler(memory_file_store),
+        delete_memory_file_handler=_build_delete_memory_file_handler(memory_file_store),
         record_learning_handler=_build_record_learning_handler(session_factory),
     )
 
@@ -396,7 +479,7 @@ def _seed_builtin_agent_profiles(session_factory: sessionmaker[Session]) -> None
                 {
                     "agent_key": "autonomous",
                     "is_primary": True,
-                    "name": legacy.name or "Autonomous Agent",
+                    "name": legacy.name or "Autonomous",
                     "status": legacy.status or "active",
                     "agent_metadata": _merge_agent_metadata(legacy.agent_metadata, kind="autonomous"),
                 },
@@ -445,7 +528,7 @@ def _seed_builtin_agent_profiles(session_factory: sessionmaker[Session]) -> None
 def _default_autonomous_profile() -> dict[str, Any]:
     payload = default_recruit_agent_profile()
     payload["agent_key"] = "autonomous"
-    payload["name"] = "Autonomous Agent"
+    payload["name"] = "Autonomous"
     payload["agent_metadata"] = _merge_agent_metadata(payload.get("agent_metadata"), kind="autonomous")
     return payload
 
@@ -453,7 +536,7 @@ def _default_autonomous_profile() -> dict[str, Any]:
 def _default_assistant_profile() -> dict[str, Any]:
     return {
         "agent_key": "assistant",
-        "name": "Assistant Agent",
+        "name": "Assistant",
         "status": "active",
         "description": "面向聊天界面的协作助手，负责解释状态、回答问题，并在需要时等待人工确认。",
         "is_primary": False,
@@ -482,7 +565,7 @@ def _default_assistant_profile() -> dict[str, Any]:
             ],
         },
         "prompt_config": {
-            "system_prompt": "你是 Assistant Agent。你的职责是在聊天界面中与用户协作，清晰解释状态、回答问题，并在高风险动作前等待确认。",
+            "system_prompt": "你是 Assistant 类型的 Recruit Agent。你的职责是在聊天界面中与用户协作，清晰解释状态、回答问题，并在高风险动作前等待确认。",
             "context_policy": {
                 "memory_scope": "conversation",
                 "share_global_context": True,

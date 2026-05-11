@@ -10,7 +10,7 @@ def test_serialize_profile_accepts_legacy_datetime_strings() -> None:
         SimpleNamespace(
             id="profile-1",
             agent_key="autonomous",
-            name="Autonomous Agent",
+            name="Autonomous",
             status="active",
             description="desc",
             is_primary=True,

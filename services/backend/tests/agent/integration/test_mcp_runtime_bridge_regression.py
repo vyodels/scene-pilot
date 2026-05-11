@@ -71,14 +71,14 @@ def test_container_build_and_reload_register_enabled_dynamic_mcp_tools(tmp_path,
             }
         )
         assert [tool["name"] for tool in created["tools"]] == ["dynamic_echo"]
-        assert "dynamic_echo" not in container.autonomous_agent.tool_registry.tools
+        assert "dynamic_echo" not in container.autonomous_adapter.tool_registry.tools
         assert "dynamic_echo" not in container.scene_context_tool_registry.tools
 
         container.reload_settings(container.settings)
 
-        assert container.autonomous_agent.tool_registry is container.tool_registry
+        assert container.autonomous_adapter.tool_registry is container.tool_registry
         assert "dynamic_echo" in container.tool_registry.tools
-        assert "dynamic_echo" in container.autonomous_agent.tool_registry.tools
+        assert "dynamic_echo" in container.autonomous_adapter.tool_registry.tools
         assert "dynamic_echo" not in container.scene_context_tool_registry.tools
 
         executed = container.tool_registry.execute("dynamic_echo", {"text": "reload path"})
@@ -90,9 +90,9 @@ def test_container_build_and_reload_register_enabled_dynamic_mcp_tools(tmp_path,
         }
 
         rebuilt = AppContainer.build(settings)
-        assert rebuilt.autonomous_agent.tool_registry is rebuilt.tool_registry
+        assert rebuilt.autonomous_adapter.tool_registry is rebuilt.tool_registry
         assert "dynamic_echo" in rebuilt.tool_registry.tools
-        assert "dynamic_echo" in rebuilt.autonomous_agent.tool_registry.tools
+        assert "dynamic_echo" in rebuilt.autonomous_adapter.tool_registry.tools
         assert "dynamic_echo" not in rebuilt.scene_context_tool_registry.tools
 
         rebuilt_result = rebuilt.tool_registry.execute("dynamic_echo", {"text": "build path"})

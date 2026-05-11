@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from recruit_agent.runtime.models import LLMResponse, ToolCall
+from agent_runtime.fixtures import LLMResponse, ToolCall
 from agent_runtime.fixtures import ScriptedProvider
-from recruit_agent.runtime.tools import ToolDefinition, ToolRegistry, register_core_tools
+from recruit_agent.capabilities.tools import ToolDefinition, ToolRegistry, register_core_tools
 
 from ._helpers import build_assistant_client
 
@@ -41,7 +41,7 @@ def test_assistant_confirm_continues_pending_turn(tmp_path: Path) -> None:
             json={"message": "Send a greeting"},
         )
         assert initial.status_code == 200
-        assert "event: turn.waiting_human" in initial.text
+        assert "event: permission_requested" in initial.text
 
         confirmed = client.post(f"/api/assistant/conversations/{conversation_id}/confirm").json()
         assert confirmed["confirmed"] is True

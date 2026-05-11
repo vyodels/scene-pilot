@@ -4,12 +4,12 @@ from pathlib import Path
 
 from sqlalchemy.orm import Session
 
-from recruit_agent.agents.autonomous import AutonomousAgent
+from recruit_agent.agents.autonomous import AutonomousAdapter
 from recruit_agent.core.settings import AppSettings
 from recruit_agent.db.session import create_engine_from_settings, create_session_factory, initialize_database
 from recruit_agent.models.domain import AgentRun, AgentSession, Candidate, RecruitAgentProfile
 from recruit_agent.plugins.host import PluginHost
-from recruit_agent.runtime.tools import ToolRegistry, register_core_tools
+from recruit_agent.capabilities.tools import ToolRegistry, register_core_tools
 
 from .test_memory_backed_continuity import ContinuityProvider
 
@@ -40,7 +40,7 @@ def test_functional_closure_memory_service_is_in_autonomous_loop(tmp_path: Path)
 
         tools = ToolRegistry()
         register_core_tools(tools)
-        agent = AutonomousAgent(
+        agent = AutonomousAdapter(
             session_factory=create_session_factory(session.get_bind()),
             provider=ContinuityProvider(),
             tool_registry=tools,

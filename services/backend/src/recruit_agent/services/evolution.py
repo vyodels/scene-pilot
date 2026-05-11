@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from recruit_agent.db.base import utcnow
 from recruit_agent.repositories import SkillRepository
-from recruit_agent.agent_runtime.types import LLMMessage, LLMRequest, LLMResponse
+from recruit_agent.agent_runtime.types import LLMMessage, LLMRequest
 from recruit_agent.agent_runtime.providers import LLMProvider
 
 
@@ -91,7 +91,7 @@ def distill_skill_contract_from_run(
     provider: LLMProvider,
     review_payload: dict[str, Any],
     max_tokens: int = 2600,
-) -> tuple[dict[str, Any], LLMResponse]:
+) -> dict[str, Any]:
     prompt = _load_prompt("tasks/skill_distill_from_run")
     if not prompt:
         raise ValueError("skill distill prompt is missing")
@@ -108,15 +108,13 @@ def distill_skill_contract_from_run(
             temperature=0.2,
         )
     )
-    response = result.response
-    contract = _extract_skill_contract(response)
-    return contract, response
-
-
-def _extract_skill_contract(response: LLMResponse) -> dict[str, Any]:
     content = ""
-    if response.assistant_message is not None and isinstance(response.assistant_message.content, str):
-        content = response.assistant_message.content
+    if result.response.assistant_message is not None and isinstance(result.response.assistant_message.content, str):
+        content = result.response.assistant_message.content
+    return _extract_skill_contract(content)
+
+
+def _extract_skill_contract(content: str) -> dict[str, Any]:
     parsed = _parse_json_object(content)
     if not isinstance(parsed, dict):
         raise ValueError("skill distill response did not return a JSON object")

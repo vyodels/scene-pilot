@@ -7,6 +7,30 @@ from recruit_agent.agent_runtime.types import LLMInvocationResult, LLMMessage, L
 
 
 @dataclass(slots=True)
+class ToolCall:
+    id: str
+    name: str
+    arguments: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class LLMUsage:
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+
+
+@dataclass(slots=True)
+class LLMResponse:
+    content: str = ""
+    tool_calls: list[ToolCall] = field(default_factory=list)
+    finish_reason: str = "stop"
+    usage: LLMUsage = field(default_factory=LLMUsage)
+    result_data: dict[str, Any] | None = None
+    raw: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
 class ScriptedProvider:
     provider_name: str
     responses: list[Any]

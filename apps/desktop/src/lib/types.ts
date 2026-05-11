@@ -705,6 +705,10 @@ export interface AgentToolSummary {
   serverName: string;
   name: string;
   riskLevel: string;
+  businessTool?: boolean;
+  businessDomain?: string | null;
+  resourceTargetKind?: string | null;
+  permissionScope?: string | null;
   enabled: boolean;
   endpoint?: string | null;
 }

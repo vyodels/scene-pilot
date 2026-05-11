@@ -226,6 +226,18 @@ def default_context_policy() -> dict[str, Any]:
 
 def default_memory_policy() -> dict[str, Any]:
     return {
+        "writeback": {
+            "enabled": True,
+            "auto_write_min_confidence": 0.35,
+            "review_enabled": False,
+            "review_below_confidence": 0.65,
+            "max_stable_facts": 8,
+            "trust_level": "agent_observed",
+            "review_trust_level": "needs_review",
+            "min_completed_turns_between_jobs": 3,
+            "min_evidence_chars_between_jobs": 1500,
+            "force_on_explicit_request": True,
+        },
         "candidate_memory": {
             "isolation": "strict_by_candidate",
             "auto_compact": True,
@@ -359,7 +371,50 @@ def resolve_memory_policy(memory_policy: dict[str, Any] | None) -> dict[str, Any
     configured = dict(memory_policy or {})
     resolved: dict[str, Any] = {}
 
+    writeback_defaults = dict(defaults["writeback"])
+    writeback_config = dict(configured.get("writeback") or {})
+    resolved["writeback"] = {
+        "enabled": bool(writeback_config.get("enabled", writeback_defaults["enabled"])),
+        "auto_write_min_confidence": _bounded_float(
+            writeback_config.get("auto_write_min_confidence"),
+            default=float(writeback_defaults["auto_write_min_confidence"]),
+        ),
+        "review_enabled": bool(writeback_config.get("review_enabled", writeback_defaults["review_enabled"])),
+        "review_below_confidence": _bounded_float(
+            writeback_config.get("review_below_confidence"),
+            default=float(writeback_defaults["review_below_confidence"]),
+        ),
+        "max_stable_facts": _bounded_int(
+            writeback_config.get("max_stable_facts"),
+            default=int(writeback_defaults["max_stable_facts"]),
+            minimum=0,
+            maximum=32,
+        ),
+        "trust_level": str(writeback_config.get("trust_level") or writeback_defaults["trust_level"]),
+        "review_trust_level": str(writeback_config.get("review_trust_level") or writeback_defaults["review_trust_level"]),
+        "min_completed_turns_between_jobs": _bounded_int(
+            writeback_config.get("min_completed_turns_between_jobs"),
+            default=int(writeback_defaults["min_completed_turns_between_jobs"]),
+            minimum=0,
+            maximum=100,
+        ),
+        "min_evidence_chars_between_jobs": _bounded_int(
+            writeback_config.get("min_evidence_chars_between_jobs"),
+            default=int(writeback_defaults["min_evidence_chars_between_jobs"]),
+            minimum=0,
+            maximum=200000,
+        ),
+        "force_on_explicit_request": bool(
+            writeback_config.get(
+                "force_on_explicit_request",
+                writeback_defaults["force_on_explicit_request"],
+            )
+        ),
+    }
+
     for scope_key, default_scope in defaults.items():
+        if scope_key == "writeback":
+            continue
         scope_config = dict(configured.get(scope_key) or {})
         resolved_scope = dict(default_scope)
         for key in ("isolation", "scope"):
@@ -385,6 +440,22 @@ def resolve_memory_policy(memory_policy: dict[str, Any] | None) -> dict[str, Any
         resolved[scope_key] = resolved_scope
 
     return resolved
+
+
+def _bounded_float(value: Any, *, default: float) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        parsed = default
+    return max(0.0, min(parsed, 1.0))
+
+
+def _bounded_int(value: Any, *, default: int, minimum: int, maximum: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = default
+    return max(minimum, min(parsed, maximum))
 
 
 def default_candidate_state_snapshot(

@@ -7,7 +7,7 @@ from urllib.parse import urlparse
 from sqlalchemy.orm import Session, sessionmaker
 
 from recruit_agent.agent_runtime.engine import InteractionEngine, InteractionEngineConfig
-from recruit_agent.agent_runtime.types import InteractionOutput, LLMMessage
+from recruit_agent.agent_runtime.types import InteractionOutput
 from recruit_agent.db.base import utcnow
 from recruit_agent.plugins.host import PluginHost
 from recruit_agent.repositories.domain import (
@@ -16,16 +16,15 @@ from recruit_agent.repositories.domain import (
     ExecutionPlanRepository,
     TaskSpecRepository,
 )
-from recruit_agent.runtime.limits import SceneExecutionLimits
+from recruit_agent.product_adapters.limits import SceneExecutionLimits
+from recruit_agent.product_adapters.context_builder import build_scene_turn_context
 from recruit_agent.agents.outcome import AgentTurnOutcome
 from recruit_agent.agent_runtime.providers import LLMProvider
-from recruit_agent.runtime.result_semantics import (
-    extract_execution_status,
-    extract_structured_result_payload,
+from recruit_agent.product_adapters.result_semantics import (
     normalize_result_payload,
 )
-from recruit_agent.runtime.target_contracts import derive_browser_target
-from recruit_agent.runtime.tools import ToolRegistry
+from recruit_agent.product_adapters.target_contracts import derive_browser_target
+from recruit_agent.capabilities.tools import ToolRegistry
 
 
 @dataclass(slots=True)
@@ -196,31 +195,28 @@ class SceneContextService:
         )
         max_llm_invocations = int(request["max_llm_invocations"] or self.limits.max_llm_invocations or 8)
         engine_events: list[dict[str, Any]] = []
+        adapter_context = build_scene_turn_context(
+            request=request,
+            episode_id=episode.id,
+            task_spec_id=task_spec.id,
+            max_llm_invocations=max_llm_invocations,
+            recent_events=list(episode.observations or [])[-8:],
+            available_tools=sorted(scene_tool_registry.tools.keys()),
+            available_mcps=_available_mcp_names(scene_tool_registry),
+            goal_text=_build_scene_goal_text(request),
+        )
         engine = InteractionEngine(
             InteractionEngineConfig(
                 conversation_id=episode.id,
                 provider=self.provider,
                 tools=scene_tool_registry.to_agent_runtime_tools(),
-                initial_messages=[
-                    LLMMessage(
-                        role="system",
-                        content=_scene_system_prompt(
-                            request=request,
-                            episode_id=episode.id,
-                            task_spec_id=task_spec.id,
-                            max_llm_invocations=max_llm_invocations,
-                            recent_events=list(episode.observations or [])[-8:],
-                            available_tools=sorted(scene_tool_registry.tools.keys()),
-                            available_mcps=_available_mcp_names(scene_tool_registry),
-                        ),
-                    )
-                ],
+                initial_messages=adapter_context.initial_messages,
                 max_llm_invocations=max_llm_invocations,
             )
         )
         last_outcome = _scene_outcome_from_engine(
             engine=engine,
-            instruction=_build_scene_goal_text(request),
+            instruction=adapter_context.turn_input,
             engine_events=engine_events,
             browser_semantics=browser_semantics,
         )
@@ -493,7 +489,7 @@ def _build_scene_goal_text(request: dict[str, Any]) -> str:
             "（可能是 in_progress、interrupted 或 complete），不要用页面 JS、mock DOM 标记或下载入口本身冒充本地文件。"
             "对 browser-managed 下载，若 browser_locate_download 返回 located=true、state=complete、exists=true、"
             "本地 path/fileName、extension 或 mime，并带有 sourceUrl/finalUrl/referrer 关联证据，可把这些只读下载记录字段"
-            "作为本地路径与格式证据；不要因为 scene 内没有 shell/file 工具而丢弃已定位的 Chrome 下载记录。"
+            "作为本地路径与格式证据；不要因为 scene 内没有本地文件工具而丢弃已定位的 Chrome 下载记录。"
             "如果 action_plan 或 artifact_expectations 已保存下载入口的 browser-derived href/source_url、download 文件名、"
             "finalUrl/referrer 线索或点击前 started_after/observed_at 时间戳，必须把这些字段传给 browser_locate_download 做来源关联，"
             "避免多次下载时误配本地文件。"
@@ -501,7 +497,7 @@ def _build_scene_goal_text(request: dict[str, Any]) -> str:
         )
     if request["output_contract"] or request["artifact_expectations"]:
         parts.append(
-            "若 scene 已拿到可写回业务层的本地 artifact，最终 JSON 必须在 result_data 中保留 artifact/browser_download "
+            "若 scene 已拿到可写回业务层的本地 artifact，结构化 result_data 必须保留 artifact/browser_download "
             "和 business_writeback 字段；business_writeback.arguments 应直接适配后续业务写入工具（例如 resume artifact "
             "写回时的 attach_resume_artifact），但 scene 内不要绕过合同自行编造 artifact proof。"
         )
@@ -534,13 +530,14 @@ def _append_episode_engine_events(
     for event in events:
         event_type = str(event.get("type") or "")
         payload = _as_dict(event.get("payload"))
+        kind = str(payload.get("kind") or "")
         entry = {
             "engine_output_seq": event.get("engine_output_seq"),
             "type": event_type,
             "recorded_at": event.get("recorded_at"),
             "payload": payload,
         }
-        if event_type == "tool_call":
+        if event_type == "tool_event" and kind in {"tool_call_started", "tool_use_completed"}:
             action_entries.append(entry)
         else:
             observation_entries.append(entry)
@@ -552,7 +549,11 @@ def _append_episode_engine_events(
     episode.metrics = {
         "engine_output_count": max(engine_output_count, int((episode.metrics or {}).get("engine_output_count") or 0)),
         "tool_call_count": len(action_entries),
-        "tool_result_count": sum(1 for item in observation_entries if item.get("type") == "tool_result"),
+        "tool_result_count": sum(
+            1
+            for item in observation_entries
+            if item.get("type") == "tool_event" and _as_dict(item.get("payload")).get("kind") == "tool_result_ready"
+        ),
         "environment_snapshot_count": snapshot_count,
         "blocker_count": len(blockers),
         "last_gate_signal": outcome.gate_signal,
@@ -572,11 +573,13 @@ def _append_environment_snapshots(
     snapshot_repo = EnvironmentSnapshotRepository(session)
     snapshot_ids: list[str] = []
     for event in events:
-        if str(event.get("type") or "") != "tool_result":
+        if str(event.get("type") or "") != "tool_event":
             continue
         payload = _as_dict(event.get("payload"))
+        if payload.get("kind") != "tool_result_ready":
+            continue
         tool_name = str(payload.get("tool_name") or "")
-        output = payload.get("output")
+        output = payload.get("content")
         for candidate in _snapshot_candidates(tool_name=tool_name, output=output):
             snapshot = snapshot_repo.create(
                 {
@@ -613,42 +616,6 @@ def _append_environment_snapshots(
     return snapshot_ids
 
 
-def _scene_system_prompt(
-    *,
-    request: dict[str, Any],
-    episode_id: str,
-    task_spec_id: str,
-    max_llm_invocations: int,
-    recent_events: list[dict[str, Any]],
-    available_tools: list[str],
-    available_mcps: list[str],
-) -> str:
-    context = {
-        "scene_request": {
-            "instruction": request["instruction"],
-            "input": _compact_value(request["input"]),
-            "context": _compact_value(request["context"]),
-            "output_contract": _compact_value(request["output_contract"]),
-            "environment_requirements": _compact_value(request["environment_requirements"]),
-        },
-        "scene_execution": {
-            "episode_id": episode_id,
-            "task_spec_id": task_spec_id,
-            "max_llm_invocations": max_llm_invocations,
-            "recent_events": recent_events,
-            "available_tools": available_tools,
-            "available_mcps": available_mcps,
-        },
-    }
-    return "\n".join(
-        [
-            "You are executing an isolated scene context for Recruit Agent.",
-            "Use only scene tools and return a business-level summary. Avoid DOM, tab, click path, or raw environment details unless they are required blocker evidence.",
-            f"Context: {_compact_value(context)}",
-        ]
-    )
-
-
 def _scene_outcome_from_engine(
     *,
     engine: InteractionEngine,
@@ -663,21 +630,15 @@ def _scene_outcome_from_engine(
     engine_output_count = 0
     for output in engine.submitMessage(instruction):
         engine_output_count += 1
-        event = _scene_event_from_output(output)
-        if event is not None:
-            if event["type"] == "tool_result":
-                payload = _as_dict(event.get("payload"))
-                _remember_browser_semantics(
-                    browser_semantics,
-                    tool_name=str(payload.get("tool_name") or ""),
-                    output=payload.get("output"),
-                )
-            engine_events.append(event)
+        engine_events.append(_runtime_output_event(output))
+        if output.type == "tool_event" and output.data.get("kind") == "tool_result_ready":
+            _remember_browser_semantics(
+                browser_semantics,
+                tool_name=str(output.data.get("tool_name") or ""),
+                output=output.data.get("content"),
+            )
         if output.type == "assistant_message_completed":
             final_output = str(output.data.get("message") or "")
-            structured = extract_structured_result_payload(final_output)
-            if structured:
-                result_data, _skill_draft = normalize_result_payload(structured)
         elif output.type == "llm_invocation_completed":
             provider_result_data = _as_dict(output.data.get("result_data"))
             if provider_result_data:
@@ -703,50 +664,13 @@ def _scene_outcome_from_engine(
     )
 
 
-def _scene_event_from_output(output: InteractionOutput) -> dict[str, Any] | None:
-    data = dict(output.data or {})
-    event_type = output.type
-    if event_type == "tool_event" and data.get("kind") in {"tool_call_started", "tool_use_completed"}:
-        return {
-            "type": "tool_call",
-            "engine_output_seq": output.seq,
-            "payload": _compact_value(
-                {
-                    "tool_name": data.get("tool_name") or data.get("name"),
-                    "arguments": dict(data.get("input") or {}),
-                    "tool_call_id": data.get("tool_call_id"),
-                    "tool_use_id": data.get("tool_use_id") or data.get("id"),
-                }
-            ),
-            "recorded_at": utcnow().isoformat(),
-        }
-    if event_type == "tool_event" and data.get("kind") == "tool_result_ready":
-        return {
-            "type": "tool_result",
-            "engine_output_seq": output.seq,
-            "payload": _compact_value(
-                {
-                    "tool_name": data.get("tool_name"),
-                    "is_error": bool(data.get("is_error")),
-                    "output": data.get("content"),
-                }
-            ),
-            "recorded_at": utcnow().isoformat(),
-        }
-    if event_type == "permission_requested":
-        return {
-            "type": "tool_blocked",
-            "engine_output_seq": output.seq,
-            "payload": _compact_value(
-                {
-                    "tool_name": data.get("tool_name"),
-                    "reason": data.get("reason") or "pending_confirmation",
-                    "severity": "waiting_human",
-                }
-            ),
-            "recorded_at": utcnow().isoformat(),
-        }
-    return None
+def _runtime_output_event(output: InteractionOutput) -> dict[str, Any]:
+    return {
+        "type": output.type,
+        "engine_output_seq": output.seq,
+        "payload": _compact_value(dict(output.data or {})),
+        "recorded_at": utcnow().isoformat(),
+    }
 
 
 def _scene_tool_registry(
@@ -1244,7 +1168,7 @@ def _collect_blockers(outcome: AgentTurnOutcome, events: list[dict[str, Any]]) -
     for event in events:
         event_type = str(event.get("type") or "")
         payload = _as_dict(event.get("payload"))
-        if event_type == "tool_blocked":
+        if event_type == "permission_requested":
             blockers.append(
                 {
                     "kind": "tool_blocked",
@@ -1253,12 +1177,12 @@ def _collect_blockers(outcome: AgentTurnOutcome, events: list[dict[str, Any]]) -
                     "severity": payload.get("severity"),
                 }
             )
-        if event_type == "tool_result" and bool(payload.get("is_error")):
+        if event_type == "tool_event" and payload.get("kind") == "tool_result_ready" and bool(payload.get("is_error")):
             blockers.append(
                 {
                     "kind": "tool_error",
                     "tool_name": payload.get("tool_name"),
-                    "message": str(payload.get("output") or "tool execution failed"),
+                    "message": str(payload.get("content") or "tool execution failed"),
                 }
             )
     if outcome.gate_signal == "budget_exhausted":
@@ -1293,8 +1217,7 @@ def _scene_result_status(outcome: AgentTurnOutcome) -> str:
     result_status = str((outcome.result_data or {}).get("status") or "").strip().lower()
     if result_status:
         return result_status
-    structured = extract_structured_result_payload(outcome.final_output)
-    return str(extract_execution_status(structured) or "").strip().lower()
+    return ""
 
 
 def _stored_status(public_status: str) -> str:
@@ -1323,11 +1246,7 @@ def _public_summary(outcome: AgentTurnOutcome, blockers: list[dict[str, Any]]) -
 def _scene_result_data(outcome: AgentTurnOutcome) -> dict[str, Any]:
     if isinstance(outcome.result_data, dict) and outcome.result_data:
         return dict(outcome.result_data)
-    structured = extract_structured_result_payload(outcome.final_output)
-    if not structured:
-        return {}
-    result_data, _skill_draft = normalize_result_payload(structured)
-    return result_data
+    return {}
 
 
 def _scene_result_artifacts(result_data: dict[str, Any]) -> list[dict[str, Any]]:

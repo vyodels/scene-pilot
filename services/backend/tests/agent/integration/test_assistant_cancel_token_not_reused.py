@@ -4,14 +4,14 @@ import threading
 import time
 from pathlib import Path
 
-from recruit_agent.runtime.models import LLMResponse, ToolCall
+from agent_runtime.fixtures import LLMResponse, ToolCall
 from agent_runtime.fixtures import ScriptedProvider
-from recruit_agent.runtime.tools import ToolDefinition, ToolRegistry, register_core_tools
+from recruit_agent.capabilities.tools import ToolDefinition, ToolRegistry, register_core_tools
 
 from ._helpers import build_assistant_client
 
 
-def test_assistant_cancel_token_is_not_reused_by_later_turns(tmp_path: Path) -> None:
+def test_assistant_cancel_state_is_not_reused_by_later_turns(tmp_path: Path) -> None:
     provider = ScriptedProvider(
         provider_name="scripted",
         responses=[
@@ -25,10 +25,8 @@ def test_assistant_cancel_token_is_not_reused_by_later_turns(tmp_path: Path) -> 
     tools = ToolRegistry()
     register_core_tools(tools)
 
-    def _slow_wait(arguments: dict[str, object], *, cancel_token=None) -> dict[str, object]:
-        for _ in range(100):
-            if cancel_token is not None and cancel_token.cancelled:
-                return {"cancelled": True}
+    def _slow_wait(arguments: dict[str, object]) -> dict[str, object]:
+        for _ in range(5):
             time.sleep(0.02)
         return {"done": True}
 
@@ -64,6 +62,6 @@ def test_assistant_cancel_token_is_not_reused_by_later_turns(tmp_path: Path) -> 
             f"/api/assistant/conversations/{conversation_id}/turn",
             json={"message": "new turn"},
         )
-        assert "event: llm_final" in second.text
-        assert "event: turn.cancelled" not in second.text
+        assert "event: assistant_message_completed" in second.text
+        assert "event: turn_interrupted" not in second.text
         assert conversation_id not in agent.active_turns

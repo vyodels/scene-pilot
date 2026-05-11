@@ -5,14 +5,15 @@ from pathlib import Path
 
 from sqlalchemy.orm import Session
 
-from recruit_agent.agents.autonomous import AutonomousAgent
+from recruit_agent.agents.autonomous import AutonomousAdapter
 from recruit_agent.agent_runtime.types import LLMInvocationResult, LLMMessage, LLMRequest, LLMResponse as RuntimeLLMResponse
 from recruit_agent.core.settings import AppSettings
 from recruit_agent.db.session import create_engine_from_settings, create_session_factory, initialize_database
+from recruit_agent.memory.service import MemoryService
 from recruit_agent.models.domain import AgentRun, AgentSession, Candidate, RecruitAgentProfile
 from recruit_agent.plugins.host import PluginHost
 from recruit_agent.agent_runtime.providers import LLMProvider
-from recruit_agent.runtime.tools import ToolRegistry, register_core_tools
+from recruit_agent.capabilities.tools import ToolRegistry, register_core_tools
 
 
 class ContinuityProvider:
@@ -27,11 +28,32 @@ class ContinuityProvider:
     ) -> LLMInvocationResult:
         self.calls += 1
         if self.calls == 1:
-            content = "Candidate already replied and asked for a resume review."
-        else:
+            content = json.dumps(
+                {
+                    "status": "completed",
+                    "summary": "Candidate already replied and asked for a resume review.",
+                },
+                ensure_ascii=False,
+            )
+        elif self.calls == 2:
+            content = json.dumps(
+                {
+                    "stable_facts": [
+                        {
+                            "summary": "Candidate already replied and asked for a resume review.",
+                            "content": {"fact": "Candidate already replied and asked for a resume review."},
+                            "confidence": 0.8,
+                        }
+                    ],
+                },
+                ensure_ascii=False,
+            )
+        elif self.calls == 3:
             payload = json.loads(str(request.messages[-1].content))
             serialized = json.dumps(payload, ensure_ascii=False)
             content = "continued" if "resume review" in serialized else "lost"
+        else:
+            content = '{"stable_facts":[]}'
         return LLMInvocationResult(
             events=[],
             response=RuntimeLLMResponse(
@@ -78,7 +100,63 @@ def test_autonomous_memory_backed_continuity_across_turns(tmp_path: Path) -> Non
         tools = ToolRegistry()
         register_core_tools(tools)
         provider = ContinuityProvider()
-        agent = AutonomousAgent(
+        agent = AutonomousAdapter(
+            session_factory=create_session_factory(session.get_bind()),
+            provider=provider,
+            tool_registry=tools,
+            plugin_host=PluginHost(),
+        )
+
+        first = agent.run_turn_from_envelope(
+            {
+                "run_pk": run.id,
+                "scope_kind": "candidate",
+                "scope_ref": candidate.candidate_person_id,
+                "world_snapshot": {"candidate_stage": "replied"},
+                "memory_writeback": {"force": True},
+            }
+        )
+        second = agent.run_turn_from_envelope(
+            {
+                "run_pk": run.id,
+                "scope_kind": "candidate",
+                "scope_ref": candidate.candidate_person_id,
+                "world_snapshot": {"candidate_stage": "follow_up"},
+            }
+        )
+
+        assert "Candidate already replied" in first.final_output
+        assert second.final_output == "continued"
+    finally:
+        session.close()
+
+
+def test_autonomous_memory_writeback_does_not_call_llm_on_every_completed_turn(tmp_path: Path) -> None:
+    session = _make_session(tmp_path)
+    try:
+        profile = RecruitAgentProfile(agent_key="primary", name="Primary", is_primary=True)
+        candidate = Candidate(name="Alice")
+        session.add_all([profile, candidate])
+        session.flush()
+
+        agent_session = AgentSession(agent_profile_id=profile.id)
+        session.add(agent_session)
+        session.flush()
+
+        run = AgentRun(
+            session_id=agent_session.id,
+            run_id="run-memory-gated",
+            agent_kind="autonomous",
+            status="queued",
+            person_id=candidate.candidate_person_id,
+        )
+        session.add(run)
+        session.commit()
+
+        tools = ToolRegistry()
+        register_core_tools(tools)
+        provider = ContinuityProvider()
+        agent = AutonomousAdapter(
             session_factory=create_session_factory(session.get_bind()),
             provider=provider,
             tool_registry=tools,
@@ -93,16 +171,14 @@ def test_autonomous_memory_backed_continuity_across_turns(tmp_path: Path) -> Non
                 "world_snapshot": {"candidate_stage": "replied"},
             }
         )
-        second = agent.run_turn_from_envelope(
-            {
-                "run_pk": run.id,
-                "scope_kind": "candidate",
-                "scope_ref": candidate.candidate_person_id,
-                "world_snapshot": {"candidate_stage": "follow_up"},
-            }
-        )
 
-        assert first.final_output.startswith("Candidate already replied")
-        assert second.final_output == "continued"
+        assert "Candidate already replied" in first.final_output
+        assert provider.calls == 1
+        assert MemoryService(session).read(
+            scope_kind="candidate",
+            scope_ref=candidate.candidate_person_id,
+            agent_profile_id=profile.id,
+            limit=10,
+        ) == []
     finally:
         session.close()

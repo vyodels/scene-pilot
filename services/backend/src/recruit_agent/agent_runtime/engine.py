@@ -51,11 +51,20 @@ class InteractionEngineConfig:
 
 
 @dataclass(slots=True)
+class PendingPermissionState:
+    turn_id: str
+    tool_call: ToolCall
+    context: TurnContext
+    next_invocation_index: int
+
+
+@dataclass(slots=True)
 class InteractionEngine:
     config: InteractionEngineConfig
     history: ConversationHistory = field(init=False)
     transcript: Transcript = field(init=False)
     active_turn_id: str | None = field(default=None, init=False)
+    pending_permission: PendingPermissionState | None = field(default=None, init=False)
     _seq: count = field(default_factory=lambda: count(1), init=False)
     _interrupted: bool = field(default=False, init=False)
 
@@ -72,6 +81,8 @@ class InteractionEngine:
     def submitMessage(self, input: str | list[dict[str, object]]) -> Iterator[InteractionOutput]:
         if self.active_turn_id is not None:
             raise RuntimeError("A turn is already active for this conversation")
+        if self.pending_permission is not None:
+            raise RuntimeError("The active turn is waiting for a permission decision")
         self._interrupted = False
         turn_id = f"turn_{uuid4().hex}"
         self.active_turn_id = turn_id
@@ -87,17 +98,58 @@ class InteractionEngine:
         finally:
             self.active_turn_id = None
 
+    def resolvePermission(self, *, approved: bool) -> Iterator[InteractionOutput]:
+        if self.active_turn_id is not None:
+            raise RuntimeError("A turn is already active for this conversation")
+        pending = self.pending_permission
+        if pending is None:
+            raise RuntimeError("No pending permission for this conversation")
+        self.pending_permission = None
+        self._interrupted = False
+        self.active_turn_id = pending.turn_id
+        try:
+            yield self._output(
+                "runtime_event",
+                pending.turn_id,
+                {
+                    "kind": "permission_resolved",
+                    "tool_name": pending.tool_call.name,
+                    "tool_use_id": pending.tool_call.tool_use_id,
+                    "tool_call_id": pending.tool_call.id,
+                    "approved": approved,
+                },
+            )
+            registry = ToolRegistry.from_tools(self.config.tools)
+            if approved:
+                yield from self._run_tool_call(registry, pending.tool_call, pending.context)
+            else:
+                result = ToolResult(
+                    tool_call_id=pending.tool_call.id,
+                    tool_use_id=pending.tool_call.tool_use_id,
+                    name=pending.tool_call.name,
+                    content="Permission denied by operator.",
+                    is_error=True,
+                    metadata={"permission_denied": True},
+                )
+                yield from self._record_tool_result(result, pending.turn_id)
+            yield from self._run_turn(pending.turn_id, start_invocation_index=pending.next_invocation_index)
+        except Exception as exc:
+            yield self._output("turn_failed", pending.turn_id, {"error": str(exc)})
+            raise
+        finally:
+            self.active_turn_id = None
+
     def interrupt(self) -> None:
         self._interrupted = True
 
-    def _run_turn(self, turn_id: str) -> Iterator[InteractionOutput]:
+    def _run_turn(self, turn_id: str, *, start_invocation_index: int = 0) -> Iterator[InteractionOutput]:
         registry = ToolRegistry.from_tools(self.config.tools)
         context = TurnContext(
             turn_id=turn_id,
             conversation_id=self.config.conversation_id,
             tools=self.config.tools,
         )
-        for invocation_index in range(self.config.max_llm_invocations):
+        for invocation_index in range(start_invocation_index, self.config.max_llm_invocations):
             if self._interrupted:
                 yield self._output("turn_interrupted", turn_id, {"reason": "interrupted"})
                 return
@@ -186,6 +238,12 @@ class InteractionEngine:
                     },
                 )
                 if self._requires_permission(registry, tool_call):
+                    self.pending_permission = PendingPermissionState(
+                        turn_id=turn_id,
+                        tool_call=tool_call,
+                        context=context,
+                        next_invocation_index=invocation_index + 1,
+                    )
                     yield self._output(
                         "permission_requested",
                         turn_id,
@@ -198,29 +256,7 @@ class InteractionEngine:
                         },
                     )
                     return
-                result = self._run_tool(registry, tool_call, context)
-                self.transcript.record_tool_result(self.config.conversation_id, result)
-                tool_message = LLMMessage(
-                    role="tool",
-                    name=result.name,
-                    tool_use_id=result.tool_use_id,
-                    content=_tool_result_content(result),
-                    metadata={"is_error": result.is_error, "tool_call_id": result.tool_call_id},
-                )
-                self.history.append([tool_message])
-                self.transcript.record_messages(self.config.conversation_id, [tool_message])
-                yield self._output(
-                    "tool_event",
-                    turn_id,
-                    {
-                        "kind": "tool_result_ready",
-                        "tool_name": result.name,
-                        "tool_use_id": result.tool_use_id,
-                        "tool_call_id": result.tool_call_id,
-                        "is_error": result.is_error,
-                        "content": result.content,
-                    },
-                )
+                yield from self._run_tool_call(registry, tool_call, context)
         yield self._output("turn_failed", turn_id, {"error": "max_llm_invocations_exhausted"})
 
     def _compact_history_if_needed(self) -> dict[str, object] | None:
@@ -273,6 +309,34 @@ class InteractionEngine:
                 is_error=True,
             )
         return tool.handler.handle(call, context)
+
+    def _run_tool_call(self, registry: ToolRegistry, call: ToolCall, context: TurnContext) -> Iterator[InteractionOutput]:
+        result = self._run_tool(registry, call, context)
+        yield from self._record_tool_result(result, call.turn_id)
+
+    def _record_tool_result(self, result: ToolResult, turn_id: str) -> Iterator[InteractionOutput]:
+        self.transcript.record_tool_result(self.config.conversation_id, result)
+        tool_message = LLMMessage(
+            role="tool",
+            name=result.name,
+            tool_use_id=result.tool_use_id,
+            content=_tool_result_content(result),
+            metadata={"is_error": result.is_error, "tool_call_id": result.tool_call_id},
+        )
+        self.history.append([tool_message])
+        self.transcript.record_messages(self.config.conversation_id, [tool_message])
+        yield self._output(
+            "tool_event",
+            turn_id,
+            {
+                "kind": "tool_result_ready",
+                "tool_name": result.name,
+                "tool_use_id": result.tool_use_id,
+                "tool_call_id": result.tool_call_id,
+                "is_error": result.is_error,
+                "content": result.content,
+            },
+        )
 
     def _map_llm_event(self, turn_id: str, invocation_id: str, event_type: str, data: dict[str, object]) -> Iterator[InteractionOutput]:
         if event_type == "assistant_delta":

@@ -10,7 +10,6 @@ from recruit_agent.models.domain import AgentGlobalState, Candidate
 from recruit_agent.plugins.host import PluginHost
 from recruit_agent.plugins.loader import install_manifest
 from recruit_agent.plugins.recruit.manifest import RecruitPluginManifest
-from recruit_agent.runtime.models import InputEnvelope, Observation
 
 
 def _make_session(tmp_path: Path) -> Session:
@@ -33,15 +32,15 @@ def test_recruit_pack_requires_global_pause_before_assistant_external_action(tmp
         session_factory = create_session_factory(session.get_bind())
         host = PluginHost()
         install_manifest(host, RecruitPluginManifest(session_factory))
-        observation = Observation(
-            world_snapshot={},
-            scope_kind="candidate",
-            scope_ref=candidate.candidate_person_id,
-            recent_events=[],
-            available_tools=[],
-            available_mcps=[],
-            hash="obs-1",
-        )
+        context = {
+            "world_snapshot": {},
+            "scope_kind": "candidate",
+            "scope_ref": candidate.candidate_person_id,
+            "recent_events": [],
+            "available_tools": [],
+            "available_mcps": [],
+            "hash": "ctx-1",
+        }
 
         blocked = host.run_guard_checks_sync(
             "send_external_message",
@@ -50,9 +49,9 @@ def test_recruit_pack_requires_global_pause_before_assistant_external_action(tmp
                 "actor_kind": "assistant",
                 "external_target": True,
             },
-            observation,
+            context,
         )
-        assert blocked[0].allowed is False
+        assert blocked[0]["allowed"] is False
 
         session.add(AgentGlobalState(id="singleton", autonomous_paused=True, pause_reason="manual"))
         session.commit()
@@ -64,9 +63,9 @@ def test_recruit_pack_requires_global_pause_before_assistant_external_action(tmp
                 "actor_kind": "assistant",
                 "external_target": True,
             },
-            observation,
+            context,
         )
-        assert allowed[0].allowed is True
+        assert allowed[0]["allowed"] is True
     finally:
         session.close()
 
@@ -78,40 +77,40 @@ def test_recruit_pack_requests_human_approval_once_then_allows_seeded_resume(tmp
         host = PluginHost()
         install_manifest(host, RecruitPluginManifest(session_factory))
 
-        blocked_observation = Observation(
-            world_snapshot={},
-            scope_kind="global",
-            scope_ref="workspace:shared",
-            recent_events=[],
-            available_tools=[],
-            available_mcps=[],
-            hash="obs-approval",
-            input=InputEnvelope(),
-        )
+        blocked_context = {
+            "world_snapshot": {},
+            "scope_kind": "global",
+            "scope_ref": "workspace:shared",
+            "recent_events": [],
+            "available_tools": [],
+            "available_mcps": [],
+            "hash": "ctx-approval",
+            "input": {},
+        }
 
         blocked = host.run_guard_checks_sync(
             "request_human_approval",
             {"title": "联系候选人索要联系方式", "application_id": "app-1"},
-            blocked_observation,
+            blocked_context,
         )
-        assert blocked[0].allowed is False
-        assert blocked[0].severity == "waiting_human"
+        assert blocked[0]["allowed"] is False
+        assert blocked[0]["severity"] == "waiting_human"
 
-        resumed_observation = Observation(
-            world_snapshot={},
-            scope_kind="global",
-            scope_ref="workspace:shared",
-            recent_events=[],
-            available_tools=[],
-            available_mcps=[],
-            hash="obs-approval-resume",
-            input=InputEnvelope(),
-        )
+        resumed_context = {
+            "world_snapshot": {},
+            "scope_kind": "global",
+            "scope_ref": "workspace:shared",
+            "recent_events": [],
+            "available_tools": [],
+            "available_mcps": [],
+            "hash": "ctx-approval-resume",
+            "input": {},
+        }
         allowed = host.run_guard_checks_sync(
             "request_human_approval",
             {"title": "联系候选人索要联系方式", "application_id": "app-1", "approved_by_operator": True},
-            resumed_observation,
+            resumed_context,
         )
-        assert allowed[0].allowed is True
+        assert allowed[0]["allowed"] is True
     finally:
         session.close()

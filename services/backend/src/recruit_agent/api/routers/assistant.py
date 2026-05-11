@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from recruit_agent.agents.assistant import AssistantAgent
+from recruit_agent.agents.assistant import AssistantAdapter
 from recruit_agent.assistant.stream import format_sse_event
 
 
@@ -19,7 +19,7 @@ class TurnRequest(BaseModel):
     message: str
 
 
-def build_router(agent: AssistantAgent) -> APIRouter:
+def build_router(agent: AssistantAdapter) -> APIRouter:
     router = APIRouter(prefix="/api/assistant", tags=["assistant"])
 
     @router.post("/conversations")

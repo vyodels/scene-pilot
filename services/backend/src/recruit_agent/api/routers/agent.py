@@ -35,8 +35,8 @@ from recruit_agent.repositories.domain import (
     SkillRepository,
     TaskQueueRepository,
 )
-from recruit_agent.runtime.business_state_projection import project_runtime_business_state
-from recruit_agent.runtime.target_contracts import derive_browser_target
+from recruit_agent.product_adapters.business_state_projection import project_runtime_business_state
+from recruit_agent.product_adapters.target_contracts import derive_browser_target
 from recruit_agent.schemas.domain import (
     AgentGlobalMemoryRead,
     ApprovalRead,
@@ -430,7 +430,7 @@ def build_router(container: AppContainer) -> APIRouter:
 
     @router.post("/assistant/conversations", status_code=201)
     def create_assistant_conversation(payload: AssistantConversationCreateRequest) -> dict[str, Any]:
-        conversation = container.assistant_agent.create_conversation(user_id=payload.user_id, title=payload.title)
+        conversation = container.assistant_adapter.create_conversation(user_id=payload.user_id, title=payload.title)
         return _serialize_assistant_conversation_summary(
             container=container,
             conversation=conversation,
@@ -440,7 +440,7 @@ def build_router(container: AppContainer) -> APIRouter:
     def send_assistant_message(conversation_id: str, payload: AssistantMessageCreateRequest) -> dict[str, Any]:
         with container.session_factory() as session:
             _resolve_profile(session, "assistant")
-            active_turn = container.assistant_agent.active_turns.get(conversation_id)
+            active_turn = container.assistant_adapter.active_turns.get(conversation_id)
             if active_turn is not None and active_turn.worker.is_alive():
                 raise HTTPException(status_code=409, detail="Assistant conversation already has an active turn.")
             conversation = _ensure_assistant_conversation(
@@ -1400,7 +1400,7 @@ def _autonomous_primary_conversation_summary(
         "conversationId": AUTONOMOUS_PRIMARY_CONVERSATION_ID,
         "agent_kind": "autonomous",
         "agentKind": "autonomous",
-        "title": str(profile.name or "Autonomous Agent").strip() or "Autonomous Agent",
+        "title": str(profile.name or "Autonomous").strip() or "Autonomous",
         "preview": preview,
         "status": status,
         "unread_count": 0,
@@ -1534,18 +1534,17 @@ def _autonomous_turn_text(turn: AgentTurnRecord) -> str:
 def _event_message_status(event_type: str) -> str:
     normalized = event_type.strip().lower()
     if normalized in {
-        "turn.started",
-        "provider.started",
-        "provider.completed",
-        "tool.call",
-        "tool.result",
+        "turn_started",
+        "llm_invocation_started",
+        "llm_invocation_completed",
+        "tool_event",
     }:
         return "active"
-    if normalized == "turn.completed":
+    if normalized == "turn_completed":
         return "completed"
-    if normalized in {"turn.waiting_human", "tool.blocked"}:
+    if normalized == "permission_requested":
         return "waiting_human"
-    if normalized in {"provider.failed", "turn.failed", "turn.cancelled"}:
+    if normalized in {"turn_failed", "turn_interrupted"}:
         return "failed"
     return _workspace_status(normalized)
 
@@ -1750,18 +1749,57 @@ def _list_workspace_tools(container: AppContainer) -> list[dict[str, Any]]:
     seen_names: set[str] = set()
 
     for tool in container.plugin_host.tool_registry.tools.values():
-        if str(tool.category or "").strip().lower() != "plugin":
+        if str(tool.category or "").strip().lower() != "business":
             continue
+        metadata = dict(tool.metadata or {})
         tools.append(
             {
-                "id": f"plugin:{tool.name}",
-                "server_id": f"plugin:{tool.category}",
-                "serverId": f"plugin:{tool.category}",
-                "server_name": "Recruit Plugin",
-                "serverName": "Recruit Plugin",
+                "id": f"business:{tool.name}",
+                "server_id": f"business:{tool.category}",
+                "serverId": f"business:{tool.category}",
+                "server_name": "Recruit Business Tools",
+                "serverName": "Recruit Business Tools",
                 "name": tool.name,
-                "risk_level": "medium",
-                "riskLevel": "medium",
+                "risk_level": str(metadata.get("risk_level") or "medium"),
+                "riskLevel": str(metadata.get("risk_level") or "medium"),
+                "business_tool": bool(metadata.get("business_tool")),
+                "businessTool": bool(metadata.get("business_tool")),
+                "business_domain": metadata.get("business_domain"),
+                "businessDomain": metadata.get("business_domain"),
+                "resource_target_kind": tool.resource_target_kind,
+                "resourceTargetKind": tool.resource_target_kind,
+                "permission_scope": metadata.get("permission_scope"),
+                "permissionScope": metadata.get("permission_scope"),
+                "enabled": True,
+                "endpoint": None,
+            }
+        )
+        seen_names.add(tool.name)
+
+    for tool in container.tool_registry.tools.values():
+        if tool.name in seen_names:
+            continue
+        if str(tool.category or "").strip().lower() != "memory":
+            continue
+        metadata = dict(tool.metadata or {})
+        tools.append(
+            {
+                "id": f"memory:{tool.name}",
+                "server_id": "memory:files",
+                "serverId": "memory:files",
+                "server_name": "Memory Files",
+                "serverName": "Memory Files",
+                "name": tool.name,
+                "risk_level": str(metadata.get("risk_level") or "low"),
+                "riskLevel": str(metadata.get("risk_level") or "low"),
+                "business_tool": False,
+                "businessTool": False,
+                "business_domain": None,
+                "businessDomain": None,
+                "resource_target_kind": tool.resource_target_kind,
+                "resourceTargetKind": tool.resource_target_kind,
+                "permission_scope": metadata.get("permission_scope"),
+                "permissionScope": metadata.get("permission_scope"),
                 "enabled": True,
                 "endpoint": None,
             }
@@ -1887,7 +1925,7 @@ def _trim_title(text: str, limit: int = 72) -> str:
 
 def _drain_assistant_turn_stream(*, container: AppContainer, conversation_id: str, message: str) -> None:
     try:
-        for _event, _payload in container.assistant_agent.run_turn_stream(conversation_id, message):
+        for _event, _payload in container.assistant_adapter.run_turn_stream(conversation_id, message):
             pass
     except Exception:
         return

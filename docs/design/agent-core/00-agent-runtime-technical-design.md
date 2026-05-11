@@ -863,7 +863,9 @@ skill
 
 memory
   -> adapter 在 Turn 前构造 context/messages
-  -> adapter 或普通工具在 Turn 后按产品策略选择性写回
+  -> read/list/search memory 可通过 memory file tools 暴露给模型
+  -> 用户显式要求记住/忘记时，主 Turn 内使用受限 memory file tools 写入 markdown memory
+  -> 自动提炼、压缩 memory 由 Turn 外产品 pipeline 按配置化 gate 选择性启动
 
 MCP
   -> tool 进入 ToolDefinition / ToolCall / ToolResult
@@ -891,10 +893,11 @@ product adapter context
   GoalSpec / AgentRun / UI state / allowed tools / skill injections / business memory refs / MCP resources
   -> system_prompt、append_system_prompt、initial_messages 或本轮 UserMessage
 
-business memory writeback, optional product policy
+memory file update / extraction, optional product policy
   InteractionOutput / ToolResult / final assistant message / product run result
-  -> adapter 或普通工具按产品策略提取候选人/JD/全局 memory patch
-  -> human review、去重后写回，或完全不写回
+  -> adapter / business service / memory pipeline 先按配置化 gate 判断是否启动后台 memory job
+  -> 后台 memory job 判断候选人/JD/全局 stable facts
+  -> 可选 human review、去重后写回 memory files，或完全不写回
 
 ```
 
@@ -902,9 +905,9 @@ runtime 只提供 history compaction：把当前模型上下文压缩为新的 `
 
 product adapter 负责 Turn 前 context construction：读取产品 run 状态、skill metadata/content、业务 memory、MCP resource、UI 选择和权限策略，形成模型可见的 system/user context 与可用 `ToolDefinition[]`。这些输入进入 runtime 后都只是 messages、tools、permission context 或 metadata。
 
-business memory writeback 是 Turn 后产品策略，不是 Agent runtime 能力：adapter 或普通工具可以从 `InteractionOutput`、`ToolResult`、最终 assistant message 和业务服务结果中提取 memory patch，执行去重、冲突检测、置信度判断、审批或写回。runtime 可以把相关事件完整产出和落 transcript，但不定义 memory patch schema、不选择业务 memory store、不决定是否自动写回。
+memory file update / extraction 是产品层策略，不是 Agent runtime 能力：用户显式要求记住或忘记时，模型可以在主 Turn 内调用受限 memory file tools 更新当前 memory scope 下的 markdown 文件；自动提炼和压缩则由 adapter、业务服务或后台 memory pipeline 从 `InteractionOutput`、`ToolResult`、最终 assistant message 和业务服务结果中判断是否存在 stable facts。是否启动后台 memory job 必须先经过配置化资源 gate，不能每个 completed Turn 默认调用一次 memory LLM。runtime 可以把相关事件完整产出和落 transcript，但不定义 memory patch schema、不选择 memory store、不决定是否自动写回。
 
-MCP、skill、memory、context 都不能扩展成 runtime primitive，也不能引入新的 capability source abstraction。MCP tool 是 `ToolDefinition`，MCP resource 通过 context 或 list/read 工具进入模型；skill 是 adapter 构造的 context injection；memory 是 adapter 构造 context 和 Turn 后选择性写回的产品职责；业务 context 是 adapter 输入，不是 runtime type。
+MCP、skill、memory、context 都不能扩展成 runtime primitive，也不能引入新的 capability source abstraction。MCP tool 是 `ToolDefinition`，MCP resource 通过 context 或 list/read 工具进入模型；skill 是 adapter 构造的 context injection；memory file tools 是普通 `ToolDefinition`，但分类属于 memory subsystem，不属于业务工具；业务 context 是 adapter 输入，不是 runtime type。
 
 禁止把 skill 扩展成 Turn 内特殊分支。
 

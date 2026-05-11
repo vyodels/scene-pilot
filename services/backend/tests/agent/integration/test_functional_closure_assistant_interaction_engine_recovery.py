@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from recruit_agent.runtime.models import LLMResponse, ToolCall
+from agent_runtime.fixtures import LLMResponse, ToolCall
 from agent_runtime.fixtures import ScriptedProvider
-from recruit_agent.runtime.tools import ToolDefinition, ToolRegistry, register_core_tools
+from recruit_agent.capabilities.tools import ToolDefinition, ToolRegistry, register_core_tools
 
 from ._helpers import build_assistant_client
 
@@ -34,7 +34,7 @@ def test_functional_closure_assistant_uses_interaction_engine_recovery(tmp_path:
     with client:
         conversation_id = client.post("/api/assistant/conversations", json={"user_id": "user-1"}).json()["conversation_id"]
         initial = client.post(f"/api/assistant/conversations/{conversation_id}/turn", json={"message": "send"}).text
-        assert "event: turn.waiting_human" in initial
+        assert "event: permission_requested" in initial
         confirmed = client.post(f"/api/assistant/conversations/{conversation_id}/confirm").json()
         assert confirmed["confirmed"] is True
         assert confirmed["status"] == "completed"

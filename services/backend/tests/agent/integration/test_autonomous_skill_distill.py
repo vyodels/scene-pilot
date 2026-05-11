@@ -5,13 +5,13 @@ from pathlib import Path
 
 from sqlalchemy import select
 
-from recruit_agent.agents.autonomous import AutonomousAgent
+from recruit_agent.agents.autonomous import AutonomousAdapter
 from recruit_agent.evolution.learning_writer import LearningWriter
 from recruit_agent.models.domain import AgentRun, AgentRuntimeEvent, AgentSession, EvolutionArtifact, GoalSpec, RecruitAgentProfile, Skill
 from recruit_agent.plugins.host import PluginHost
-from recruit_agent.runtime.models import LLMResponse, ToolCall
+from agent_runtime.fixtures import LLMResponse, ToolCall
 from agent_runtime.fixtures import ScriptedProvider
-from recruit_agent.runtime.tools import ToolRegistry, register_core_tools
+from recruit_agent.capabilities.tools import ToolRegistry, register_core_tools
 
 from ._helpers import make_session_factory
 
@@ -54,7 +54,7 @@ def _setup_run(tmp_path: Path):
 def _build_agent(provider: ScriptedProvider, session_factory):
     tools = ToolRegistry()
     register_core_tools(tools)
-    return AutonomousAgent(
+    return AutonomousAdapter(
         session_factory=session_factory,
         provider=provider,
         tool_registry=tools,
@@ -162,7 +162,7 @@ def test_autonomous_skill_distill_failure_does_not_fail_run(tmp_path: Path) -> N
         assert any(event.event_type == "skill_distill.failed" for event in events)
 
 
-def test_autonomous_blocked_final_payload_marks_run_blocked(tmp_path: Path) -> None:
+def test_autonomous_final_json_text_does_not_mark_run_blocked(tmp_path: Path) -> None:
     session_factory, _, run_pk = _setup_run(tmp_path)
     provider = ScriptedProvider(
         provider_name="scripted",
@@ -172,8 +172,34 @@ def test_autonomous_blocked_final_payload_marks_run_blocked(tmp_path: Path) -> N
 
     outcome = agent.run_turn_from_envelope({"run_pk": run_pk, "scope_kind": "global", "scope_ref": "workspace:shared"})
 
+    assert outcome.status == "complete"
+    assert outcome.gate_signal == "goal_done"
+    assert outcome.final_output == '{"status":"blocked","next_step":"等待可继续执行条件满足。"}'
+    with session_factory() as session:
+        run = session.get(AgentRun, run_pk)
+        assert run is not None
+        assert run.status == "completed"
+        assert run.finished_at is not None
+
+
+def test_autonomous_structured_result_data_marks_run_blocked(tmp_path: Path) -> None:
+    session_factory, _, run_pk = _setup_run(tmp_path)
+    provider = ScriptedProvider(
+        provider_name="scripted",
+        responses=[
+            LLMResponse(
+                content="等待可继续执行条件满足。",
+                result_data={"status": "blocked", "next_step": "等待可继续执行条件满足。"},
+            )
+        ],
+    )
+    agent = _build_agent(provider, session_factory)
+
+    outcome = agent.run_turn_from_envelope({"run_pk": run_pk, "scope_kind": "global", "scope_ref": "workspace:shared"})
+
     assert outcome.status == "escalate"
     assert outcome.gate_signal == "escalate"
+    assert outcome.final_output == "等待可继续执行条件满足。"
     with session_factory() as session:
         run = session.get(AgentRun, run_pk)
         assert run is not None

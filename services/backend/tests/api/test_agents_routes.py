@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import json
 import time
 
 from fastapi.testclient import TestClient
@@ -28,9 +29,9 @@ from recruit_agent.models.domain import (
     RecruitAgentProfile,
     Skill,
 )
-from recruit_agent.runtime.models import LLMResponse, ToolCall
+from agent_runtime.fixtures import LLMResponse, ToolCall
 from agent_runtime.fixtures import ScriptedProvider
-from recruit_agent.runtime.tools import ToolDefinition
+from recruit_agent.capabilities.tools import ToolDefinition
 from recruit_agent.server import create_app
 
 
@@ -53,9 +54,9 @@ def test_agents_routes_expose_builtin_profiles_and_runtime_collections(tmp_path:
             '"活动页 URL: http://127.0.0.1:8317/management.html#/auth-files"],'
             '"next_step":"Agent 应先复用现有页面或自行打开招聘平台页面，再继续同步。"}'
         )
-        assistant_agent = app.state.container.assistant_agent
-        conversation = assistant_agent.create_conversation(user_id="desktop-user", title="Desk chat")
-        assistant_agent.session_store.append_turn(
+        assistant_adapter = app.state.container.assistant_adapter
+        conversation = assistant_adapter.create_conversation(user_id="desktop-user", title="Desk chat")
+        assistant_adapter.session_store.append_turn(
             conversation.conversation_id,
             role="assistant",
             content={"text": "Workspace ready."},
@@ -157,8 +158,8 @@ def test_agents_routes_expose_builtin_profiles_and_runtime_collections(tmp_path:
                     session_id=agent_session.id,
                     run_id=run.id,
                     source="autonomous",
-                    event_type="turn.waiting_human",
-                    message="waiting for approval",
+                    event_type="permission_requested",
+                    message="permission_requested",
                     turn_id="turn-1",
                     seq=1,
                 )
@@ -250,7 +251,17 @@ def test_agents_routes_expose_builtin_profiles_and_runtime_collections(tmp_path:
         assert "upsert_candidate" in tool_names
         assert "request_human_approval" in tool_names
         recruit_tool = next(item for item in autonomous_workspace.json()["tools"] if item["name"] == "list_candidates")
-        assert recruit_tool["serverName"] == "Recruit Plugin"
+        assert recruit_tool["serverName"] == "Recruit Business Tools"
+        assert recruit_tool["businessTool"] is True
+        assert recruit_tool["businessDomain"] == "recruit"
+        assert recruit_tool["permissionScope"] == "business_read"
+        assert recruit_tool["resourceTargetKind"] == "candidate"
+        assert recruit_tool["riskLevel"] == "low"
+        transition_tool = next(item for item in autonomous_workspace.json()["tools"] if item["name"] == "transition_application")
+        assert transition_tool["businessTool"] is True
+        assert transition_tool["permissionScope"] == "business_write"
+        assert transition_tool["resourceTargetKind"] == "candidate"
+        assert transition_tool["riskLevel"] == "high"
         assert autonomous_workspace.json()["agent"]["memory_policy"]["agent_global_memory"]["schema"] == [
             "facts",
             "decisions",
@@ -305,7 +316,7 @@ def test_agents_routes_expose_builtin_profiles_and_runtime_collections(tmp_path:
         assert run_detail.status_code == 200
         assert run_detail.json()["run"]["status"] == "waiting_human"
         assert run_detail.json()["turns"][0]["seq"] == 1
-        assert run_detail.json()["events"][0]["event_type"] == "turn.waiting_human"
+        assert run_detail.json()["events"][0]["event_type"] == "permission_requested"
 
         approvals = client.get("/api/agents/autonomous/approvals")
         assert approvals.status_code == 200
@@ -368,8 +379,8 @@ def test_autonomous_goal_materializes_run_and_closes_wait_human_loop(tmp_path: P
             ],
         )
         container.provider = provider
-        container.autonomous_agent.provider = provider
-        container.assistant_agent.provider = provider
+        container.autonomous_adapter.provider = provider
+        container.assistant_adapter.provider = provider
         container.tool_registry.register(
             ToolDefinition(
                 name="needs.approval",
@@ -457,8 +468,8 @@ def test_autonomy_loop_processes_goal_without_manual_run_once(tmp_path: Path) ->
             responses=[LLMResponse(content="Autonomy loop completed the goal.")],
         )
         container.provider = provider
-        container.autonomous_agent.provider = provider
-        container.assistant_agent.provider = provider
+        container.autonomous_adapter.provider = provider
+        container.assistant_adapter.provider = provider
 
         created = client.post(
             "/api/agents/autonomous/goals",
@@ -499,16 +510,21 @@ def test_autonomous_goal_with_structured_blocked_result_stays_blocked(tmp_path: 
             provider_name="scripted",
             responses=[
                 LLMResponse(
-                    content=(
-                        '{"status":"blocked","created":0,"updated":0,"skipped":0,"blocked":1,'
-                        '"unfinished_reason":"当前浏览器读取链路异常，无法安全写入 JD 库。"}'
-                    )
+                    content="当前浏览器读取链路异常，无法安全写入 JD 库。",
+                    result_data={
+                        "status": "blocked",
+                        "created": 0,
+                        "updated": 0,
+                        "skipped": 0,
+                        "blocked": 1,
+                        "unfinished_reason": "当前浏览器读取链路异常，无法安全写入 JD 库。",
+                    },
                 )
             ],
         )
         container.provider = provider
-        container.autonomous_agent.provider = provider
-        container.assistant_agent.provider = provider
+        container.autonomous_adapter.provider = provider
+        container.assistant_adapter.provider = provider
 
         created = client.post(
             "/api/agents/autonomous/goals",
@@ -542,8 +558,8 @@ def test_autonomous_goal_with_structured_blocked_result_stays_blocked(tmp_path: 
             assert goal.status == "blocked"
             assert turn.status == "failed"
             assert turn.outcome_kind == "escalate"
-            assert any(event.event_type == "turn.failed" for event in runtime_events)
-            assert all(event.event_type != "turn.completed" for event in runtime_events if event.turn_id == turn.turn_id)
+            assert not any(event.event_type == "turn_failed" for event in runtime_events)
+            assert any(event.event_type == "turn_completed" for event in runtime_events if event.turn_id == turn.turn_id)
     finally:
         client.__exit__(None, None, None)
         os.environ.pop("RECRUIT_AGENT_DATA_DIR", None)
@@ -917,11 +933,27 @@ def test_autonomous_goal_execution_honors_persisted_memory_scope_constraints(tmp
         container = app.state.container
         provider = ScriptedProvider(
             provider_name="scripted",
-            responses=[LLMResponse(content="Remember this candidate-scoped summary.")],
+            responses=[
+                LLMResponse(content='{"status":"completed","summary":"Candidate-scoped work completed."}'),
+                LLMResponse(
+                    content=json.dumps(
+                        {
+                            "stable_facts": [
+                                {
+                                    "summary": "Remember this candidate-scoped summary.",
+                                    "content": {"fact": "Remember this candidate-scoped summary."},
+                                    "confidence": 0.8,
+                                }
+                            ],
+                        },
+                        ensure_ascii=False,
+                    )
+                ),
+            ],
         )
         container.provider = provider
-        container.autonomous_agent.provider = provider
-        container.assistant_agent.provider = provider
+        container.autonomous_adapter.provider = provider
+        container.assistant_adapter.provider = provider
 
         session_factory = app.state.session_factory
         with session_factory() as session:
@@ -939,6 +971,7 @@ def test_autonomous_goal_execution_honors_persisted_memory_scope_constraints(tmp
                 "constraints": {
                     "memory_scope_kind": "candidate",
                     "memory_scope_ref": candidate_id,
+                    "memory_writeback": {"force": True},
                 },
             },
         )
@@ -955,6 +988,87 @@ def test_autonomous_goal_execution_honors_persisted_memory_scope_constraints(tmp
             assert len(candidate_memories) == 1
             assert candidate_memories[0].summary == "Remember this candidate-scoped summary."
             assert global_memories == []
+    finally:
+        client.__exit__(None, None, None)
+        os.environ.pop("RECRUIT_AGENT_DATA_DIR", None)
+        load_settings.cache_clear()
+
+
+def test_memory_writeback_approval_applies_low_confidence_fact(tmp_path: Path) -> None:
+    client, app = _build_client(tmp_path)
+    client.__enter__()
+    try:
+        container = app.state.container
+        provider = ScriptedProvider(
+            provider_name="scripted",
+            responses=[
+                LLMResponse(content='{"status":"completed","summary":"Review completed."}'),
+                LLMResponse(
+                    content=json.dumps(
+                        {
+                            "stable_facts": [
+                                {
+                                    "summary": "Candidate may prefer remote roles.",
+                                    "content": {"fact": "Candidate may prefer remote roles."},
+                                    "confidence": 0.5,
+                                }
+                            ],
+                        },
+                        ensure_ascii=False,
+                    )
+                ),
+            ],
+        )
+        container.provider = provider
+        container.autonomous_adapter.provider = provider
+
+        session_factory = app.state.session_factory
+        with session_factory() as session:
+            autonomous = session.query(RecruitAgentProfile).filter_by(agent_key="autonomous").one()
+            memory_policy = dict(autonomous.memory_policy or {})
+            writeback = dict(memory_policy.get("writeback") or {})
+            writeback["review_enabled"] = True
+            memory_policy["writeback"] = writeback
+            autonomous.memory_policy = memory_policy
+            candidate = Candidate(name="Low confidence memory candidate")
+            session.add(candidate)
+            session.commit()
+            candidate_id = candidate.id
+
+        created = client.post(
+            "/api/agents/autonomous/goals",
+            json={
+                "title": "Review memory writeback",
+                "goal_text": "Review low confidence fact.",
+                "requested_by": "api-test",
+                "constraints": {
+                    "memory_scope_kind": "candidate",
+                    "memory_scope_ref": candidate_id,
+                    "memory_writeback": {"force": True},
+                },
+            },
+        )
+        assert created.status_code == 201
+
+        tick = client.post("/api/agents/run-once")
+        assert tick.status_code == 200
+
+        with session_factory() as session:
+            assert session.query(CandidatePersonMemory).filter_by(person_id=candidate_id).count() == 0
+            approval = session.query(ApprovalItem).filter_by(target_type="memory_writeback", status="pending").one()
+            approval_id = approval.id
+
+        approved = client.post(
+            f"/api/approvals/{approval_id}/approve",
+            json={"reviewer": "api-test", "reason": "confirmed"},
+        )
+        assert approved.status_code == 200
+
+        with session_factory() as session:
+            memories = session.query(CandidatePersonMemory).filter_by(person_id=candidate_id).all()
+            assert len(memories) == 1
+            assert memories[0].summary == "Candidate may prefer remote roles."
+            assert memories[0].trust_level == "human_reviewed"
     finally:
         client.__exit__(None, None, None)
         os.environ.pop("RECRUIT_AGENT_DATA_DIR", None)
@@ -1108,8 +1222,8 @@ def test_autonomous_conversation_keeps_blocked_status_and_runtime_events(tmp_pat
                     session_id=agent_session.id,
                     run_id=run.id,
                     source="autonomous",
-                    event_type="provider.started",
-                    message="calling model",
+                    event_type="llm_invocation_started",
+                    message="llm_invocation_started",
                     turn_id=turn.turn_id,
                     seq=1,
                     payload={"message_count": 2},
@@ -1120,8 +1234,8 @@ def test_autonomous_conversation_keeps_blocked_status_and_runtime_events(tmp_pat
                     session_id=agent_session.id,
                     run_id=run.id,
                     source="autonomous",
-                    event_type="turn.completed",
-                    message="turn completed",
+                    event_type="turn_completed",
+                    message="turn_completed",
                     turn_id=turn.turn_id,
                     seq=1,
                     payload={"status": "continue", "gate_signal": "budget_exhausted"},
@@ -1138,10 +1252,10 @@ def test_autonomous_conversation_keeps_blocked_status_and_runtime_events(tmp_pat
         run_detail = client.get("/api/agents/autonomous/runs/run-blocked-1")
         assert run_detail.status_code == 200
         runtime_events = run_detail.json()["events"]
-        provider_started = next(item for item in runtime_events if item["event_type"] == "provider.started")
-        turn_completed = next(item for item in runtime_events if item["event_type"] == "turn.completed")
-        assert provider_started["message"] == "calling model"
-        assert turn_completed["event_type"] == "turn.completed"
+        llm_started = next(item for item in runtime_events if item["event_type"] == "llm_invocation_started")
+        turn_completed = next(item for item in runtime_events if item["event_type"] == "turn_completed")
+        assert llm_started["message"] == "llm_invocation_started"
+        assert turn_completed["event_type"] == "turn_completed"
     finally:
         client.__exit__(None, None, None)
         os.environ.pop("RECRUIT_AGENT_DATA_DIR", None)
@@ -1158,8 +1272,8 @@ def test_assistant_overlay_message_wrapper_accepts_draft_conversation_ids(tmp_pa
             responses=[LLMResponse(content="Assistant wrapper reply")],
         )
         container.provider = provider
-        container.autonomous_agent.provider = provider
-        container.assistant_agent.provider = provider
+        container.autonomous_adapter.provider = provider
+        container.assistant_adapter.provider = provider
 
         conversation_id = "draft-assistant-overlay"
         posted = client.post(

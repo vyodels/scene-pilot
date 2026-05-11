@@ -6,9 +6,9 @@ from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 import inspect
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
+import json
 from typing import Any, Awaitable, Callable, Protocol, TypeVar
-
-from recruit_agent.runtime.models import CancellationToken, ToolExecutionResult
 
 _T = TypeVar("_T")
 
@@ -19,6 +19,21 @@ class ToolExecutionError(RuntimeError):
 
 class ToolHandler(Protocol):
     def __call__(self, arguments: dict[str, Any]) -> Any: ...
+
+
+@dataclass(slots=True)
+class ToolExecutionResult:
+    tool_name: str
+    output: Any
+    is_error: bool = False
+    arguments: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+    def to_message_content(self) -> str:
+        if isinstance(self.output, str):
+            return self.output
+        return json.dumps(self.output, ensure_ascii=False, sort_keys=True, default=str)
 
 
 @dataclass(slots=True)
@@ -105,7 +120,7 @@ class ToolRegistry:
             tool: ToolDefinition
 
             def handle(self, call: AgentRuntimeToolCall, context: TurnContext) -> AgentRuntimeToolResult:
-                result = registry.execute(self.tool.name, dict(call.input or {}), cancel_token=context.abort_signal)
+                result = registry.execute(self.tool.name, dict(call.input or {}))
                 return AgentRuntimeToolResult(
                     tool_call_id=call.id,
                     tool_use_id=call.tool_use_id,
@@ -152,24 +167,20 @@ class ToolRegistry:
         self,
         tool_name: str,
         arguments: dict[str, Any] | None = None,
-        *,
-        cancel_token: CancellationToken | None = None,
     ) -> ToolExecutionResult:
-        return run_awaitable_blocking(lambda: self.execute_async(tool_name, arguments, cancel_token=cancel_token))
+        return run_awaitable_blocking(lambda: self.execute_async(tool_name, arguments))
 
     async def execute_async(
         self,
         tool_name: str,
         arguments: dict[str, Any] | None = None,
-        *,
-        cancel_token: CancellationToken | None = None,
     ) -> ToolExecutionResult:
         if tool_name not in self.tools:
             raise ToolExecutionError(f"Unknown tool: {tool_name}")
         tool = self.tools[tool_name]
         payload = dict(arguments or {})
         try:
-            output = _invoke_handler(tool.handler, payload, cancel_token=cancel_token)
+            output = _invoke_handler(tool.handler, payload)
             if inspect.isawaitable(output):
                 output = await output
             return ToolExecutionResult(
@@ -260,6 +271,10 @@ def register_core_tools(
     registry: ToolRegistry,
     *,
     read_memory_handler: ToolHandler | None = None,
+    list_memory_files_handler: ToolHandler | None = None,
+    read_memory_file_handler: ToolHandler | None = None,
+    write_memory_file_handler: ToolHandler | None = None,
+    delete_memory_file_handler: ToolHandler | None = None,
     record_learning_handler: ToolHandler | None = None,
 ) -> None:
     registry.register(
@@ -272,9 +287,95 @@ def register_core_tools(
                 "additionalProperties": True,
             },
             handler=read_memory_handler or (lambda arguments: {"accepted": True, "action": "read_memory", "arguments": arguments}),
-            category="core",
+            category="memory",
             external_target=False,
             resource_target_kind="memory",
+            metadata={"capabilities": ["memory", "memory_read"], "permission_scope": "memory_read", "risk_level": "low"},
+        )
+    )
+    memory_file_scope_properties = {
+        "scope_kind": {"type": "string"},
+        "scope_ref": {"type": "string"},
+        "agent_profile_id": {"type": "string"},
+    }
+    registry.register(
+        ToolDefinition(
+            name="list_memory_files",
+            description="List markdown memory files available inside a memory scope.",
+            parameters={
+                "type": "object",
+                "properties": memory_file_scope_properties,
+                "required": ["scope_kind", "scope_ref"],
+                "additionalProperties": True,
+            },
+            handler=list_memory_files_handler
+            or (lambda arguments: {"accepted": True, "action": "list_memory_files", "arguments": arguments}),
+            category="memory",
+            external_target=False,
+            resource_target_kind="memory",
+            metadata={"capabilities": ["memory", "memory_read"], "permission_scope": "memory_read", "risk_level": "low"},
+        )
+    )
+    registry.register(
+        ToolDefinition(
+            name="read_memory_file",
+            description="Read a markdown memory file inside a memory scope.",
+            parameters={
+                "type": "object",
+                "properties": {**memory_file_scope_properties, "path": {"type": "string", "default": "MEMORY.md"}},
+                "required": ["scope_kind", "scope_ref"],
+                "additionalProperties": True,
+            },
+            handler=read_memory_file_handler
+            or (lambda arguments: {"accepted": True, "action": "read_memory_file", "arguments": arguments}),
+            category="memory",
+            external_target=False,
+            resource_target_kind="memory",
+            metadata={"capabilities": ["memory", "memory_read"], "permission_scope": "memory_read", "risk_level": "low"},
+        )
+    )
+    registry.register(
+        ToolDefinition(
+            name="write_memory_file",
+            description=(
+                "Write or append a markdown memory file inside a memory scope. "
+                "Use this only for durable user-requested memories or memory maintenance."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    **memory_file_scope_properties,
+                    "path": {"type": "string", "default": "MEMORY.md"},
+                    "content": {"type": "string"},
+                    "mode": {"type": "string", "enum": ["overwrite", "append"], "default": "overwrite"},
+                },
+                "required": ["scope_kind", "scope_ref", "content"],
+                "additionalProperties": True,
+            },
+            handler=write_memory_file_handler
+            or (lambda arguments: {"accepted": True, "action": "write_memory_file", "arguments": arguments}),
+            category="memory",
+            external_target=False,
+            resource_target_kind="memory",
+            metadata={"capabilities": ["memory", "memory_write"], "permission_scope": "memory_write", "risk_level": "medium"},
+        )
+    )
+    registry.register(
+        ToolDefinition(
+            name="delete_memory_file",
+            description="Delete a markdown memory file inside a memory scope when the user asks to forget it.",
+            parameters={
+                "type": "object",
+                "properties": {**memory_file_scope_properties, "path": {"type": "string"}},
+                "required": ["scope_kind", "scope_ref", "path"],
+                "additionalProperties": True,
+            },
+            handler=delete_memory_file_handler
+            or (lambda arguments: {"accepted": True, "action": "delete_memory_file", "arguments": arguments}),
+            category="memory",
+            external_target=False,
+            resource_target_kind="memory",
+            metadata={"capabilities": ["memory", "memory_write"], "permission_scope": "memory_write", "risk_level": "medium"},
         )
     )
     registry.register(
@@ -287,9 +388,9 @@ def register_core_tools(
                 "additionalProperties": True,
             },
             handler=record_learning_handler or (lambda arguments: {"accepted": True, "action": "record_learning", "arguments": arguments}),
-            category="core",
+            category="learning",
             external_target=False,
-            resource_target_kind="memory",
+            resource_target_kind="learning",
         )
     )
     registry.register(
@@ -433,12 +534,7 @@ def _tool_metadata(tool: ToolDefinition) -> dict[str, Any]:
 def _invoke_handler(
     handler: ToolHandler,
     arguments: dict[str, Any],
-    *,
-    cancel_token: CancellationToken | None = None,
 ) -> Any:
-    parameters = inspect.signature(handler).parameters
-    if "cancel_token" in parameters:
-        return handler(arguments, cancel_token=cancel_token)
     return handler(arguments)
 
 

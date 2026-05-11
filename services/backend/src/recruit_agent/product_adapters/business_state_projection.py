@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from typing import Any
 
 _BLOCKED_STATUSES = {"blocked", "waiting_human", "escalate", "error"}
@@ -12,13 +11,12 @@ _HUMAN_ONLY_BLOCKER_MARKERS = ("登录", "captcha", "验证码", "权限", "授�
 
 def project_runtime_business_state(
     *,
-    final_content: str | None = None,
     content: dict[str, Any] | None = None,
     goal_kind: str | None = None,
     goal_title: str | None = None,
     run_status: str | None = None,
 ) -> dict[str, Any]:
-    structured = _extract_structured_payload(final_content=final_content, content=content)
+    structured = dict(content or {})
     action_kind = _normalize_action_key(goal_kind or structured.get("goal_kind") or structured.get("run_type") or "")
     action_label = _resolve_action_label(structured=structured, goal_title=goal_title, action_kind=action_kind)
     status = _normalize_status(structured.get("status") or run_status or "unknown")
@@ -43,20 +41,6 @@ def project_runtime_business_state(
         "summary": summary,
         "blocker": blocker,
     }
-
-
-def _extract_structured_payload(*, final_content: str | None, content: dict[str, Any] | None) -> dict[str, Any]:
-    if isinstance(content, dict) and content:
-        return dict(content)
-    text = str(final_content or "").strip()
-    if not text:
-        return {}
-    try:
-        payload = json.loads(text)
-    except json.JSONDecodeError:
-        return {"text": text}
-    return dict(payload) if isinstance(payload, dict) else {"text": text}
-
 
 def _normalize_action_key(value: str) -> str:
     return str(value or "").strip().lower()
