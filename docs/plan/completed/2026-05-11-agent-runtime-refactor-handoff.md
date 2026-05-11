@@ -76,6 +76,16 @@ docs/design/agent-core/00-agent-runtime-technical-design.md
 
 Older split docs under `docs/design/agent-core/01-*` and `02-*` were removed to avoid design drift.
 
+## Plan Location
+
+This handoff is the completed implementation plan for the current cutover:
+
+```text
+docs/plan/completed/2026-05-11-agent-runtime-refactor-handoff.md
+```
+
+Use it together with the canonical design doc above when continuing the refactor on another machine.
+
 ## Validation
 
 Last verified commands:
