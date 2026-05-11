@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import pytest
 
-from recruit_agent.kernel.evaluate import evaluate
+from recruit_agent.agent_runtime.evaluate import evaluate
 from recruit_agent.runtime.limits import RoundLimits
-from recruit_agent.runtime.models import Deliberation, Effects, LLMUsage
+from recruit_agent.agent_runtime.models import Deliberation, Effects, LLMUsage
 
 
 @pytest.mark.parametrize(

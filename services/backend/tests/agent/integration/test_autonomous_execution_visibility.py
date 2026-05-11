@@ -8,9 +8,10 @@ from sqlalchemy.orm import Session
 
 from recruit_agent.agents.autonomous import AutonomousAgent
 from recruit_agent.agents.heartbeat import Heartbeat
+from recruit_agent.agent_runtime.types import LLMInvocationResult, LLMMessage, LLMRequest, LLMResponse as RuntimeLLMResponse
 from recruit_agent.core.settings import AppSettings
 from recruit_agent.db.session import create_engine_from_settings, create_session_factory, initialize_database
-from recruit_agent.kernel.kernel import AgentKernel
+from recruit_agent.agent_runtime.kernel import AgentKernel
 from recruit_agent.models.domain import (
     AgentRun,
     AgentRunCheckpoint,
@@ -26,9 +27,9 @@ from recruit_agent.models.domain import (
 )
 from recruit_agent.plugins.host import PluginHost
 from recruit_agent.repositories.domain import TaskQueueRepository
-from recruit_agent.runtime.models import GuardVerdict, LLMResponse, Message, ToolCall
+from recruit_agent.agent_runtime.models import GuardVerdict, LLMResponse, ToolCall
 from recruit_agent.runtime.tools import ToolRegistry, register_core_tools
-from recruit_agent.runtime.providers import ScriptedProvider
+from agent_runtime.fixtures import ScriptedProvider
 from recruit_agent.runtime.tools import ToolDefinition
 
 
@@ -39,19 +40,21 @@ class BlockingProvider:
         self.entered = Event()
         self.release = Event()
 
-    def generate(
+    def invoke(
         self,
-        messages: list[Message],
-        *,
-        tools: list[dict[str, object]] | None = None,
-        task: dict[str, object] | None = None,
-        max_tokens: int | None = None,
-        temperature: float | None = None,
-        cancel_token=None,
-    ) -> LLMResponse:
+        request: LLMRequest,
+    ) -> LLMInvocationResult:
         self.entered.set()
         assert self.release.wait(timeout=5.0), "provider release was not signalled in time"
-        return LLMResponse(content="completed")
+        return LLMInvocationResult(
+            events=[],
+            response=RuntimeLLMResponse(
+                id="resp-blocking",
+                request_id=request.id,
+                invocation_id=request.invocation_id,
+                assistant_message=LLMMessage(role="assistant", content="completed"),
+            ),
+        )
 
 
 def _make_session(tmp_path: Path) -> Session:

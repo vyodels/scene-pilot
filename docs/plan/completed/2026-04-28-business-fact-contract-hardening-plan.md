@@ -1,5 +1,10 @@
 # 2026-04-28 Business Fact Contract Hardening Plan
 
+> Status: completed
+> Distilled into: [`docs/specs/2026-04-29-business-fact-contract-governance.md`](../../specs/2026-04-29-business-fact-contract-governance.md)
+> Completed: 2026-04-29
+> Note: 本计划中的持续契约治理内容已迁移为长期规范；剩余产品口径确认项由新规范承载，不再作为 active implementation plan 跟踪。
+
 ## 背景
 
 当前 JD 管理、投递记录跟进与沟通页面正在从“前端展示可用”收敛到“所有业务字段来自后端事实或共享契约”。本计划只记录待收敛契约与可复用能力，不把缺失字段先写成前端 mock。

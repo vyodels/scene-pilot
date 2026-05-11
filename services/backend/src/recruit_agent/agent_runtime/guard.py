@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from recruit_agent.plugins.host import PluginHost
-from recruit_agent.runtime.models import GuardVerdict, Observation
+from recruit_agent.agent_runtime.models import GuardVerdict, Observation
 
 
 def run_preflight(

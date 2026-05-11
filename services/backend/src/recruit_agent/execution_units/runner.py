@@ -11,7 +11,7 @@ from uuid import uuid4
 
 from recruit_agent.execution_units.models import EXECUTION_UNIT_STATES, ExecutionUnit
 from recruit_agent.execution_units.store import ExecutionUnitStore
-from recruit_agent.runtime.models import CancellationToken, ExecutionUnitResult
+from recruit_agent.agent_runtime.models import CancellationToken, ExecutionUnitResult
 
 
 class ExecutionUnitRunner:

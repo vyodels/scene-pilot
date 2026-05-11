@@ -28,8 +28,8 @@ from recruit_agent.models.domain import (
     RecruitAgentProfile,
     Skill,
 )
-from recruit_agent.runtime.models import GuardVerdict, LLMResponse, ToolCall
-from recruit_agent.runtime.providers import ScriptedProvider
+from recruit_agent.agent_runtime.models import GuardVerdict, LLMResponse, ToolCall
+from agent_runtime.fixtures import ScriptedProvider
 from recruit_agent.runtime.tools import ToolDefinition
 from recruit_agent.server import create_app
 

@@ -5,7 +5,7 @@ from uuid import uuid4
 
 from typing import Any
 
-from recruit_agent.runtime.models import Deliberation
+from recruit_agent.agent_runtime.models import Deliberation
 
 
 def update_memory(

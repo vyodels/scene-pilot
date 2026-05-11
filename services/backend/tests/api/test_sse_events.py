@@ -2,13 +2,34 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from recruit_agent.runtime.models import LLMResponse
-from recruit_agent.runtime.providers import ScriptedProvider
-from services.backend.tests.agent.integration._helpers import build_assistant_client
+from dataclasses import dataclass, field
+
+from recruit_agent.agent_runtime.types import LLMInvocationResult, LLMMessage, LLMRequest, LLMResponse
+from agent.integration._helpers import build_assistant_client
+
+
+@dataclass(slots=True)
+class FixtureLLMProvider:
+    responses: list[LLMResponse]
+    provider_name: str = "test"
+    captured_requests: list[LLMRequest] = field(default_factory=list)
+
+    def invoke(self, request: LLMRequest) -> LLMInvocationResult:
+        self.captured_requests.append(request)
+        return LLMInvocationResult(events=[], response=self.responses.pop(0))
 
 
 def test_assistant_sse_events_use_turn_terminology(tmp_path: Path) -> None:
-    provider = ScriptedProvider(provider_name="scripted", responses=[LLMResponse(content="assistant reply")])
+    provider = FixtureLLMProvider(
+        responses=[
+            LLMResponse(
+                id="resp-1",
+                request_id="",
+                invocation_id="",
+                assistant_message=LLMMessage(role="assistant", content="assistant reply"),
+            )
+        ]
+    )
     client, _agent, _session_factory = build_assistant_client(tmp_path, provider=provider)
 
     with client:

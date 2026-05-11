@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from recruit_agent.kernel.kernel import AgentKernel
+from recruit_agent.agent_runtime.types import LLMInvocationResult, LLMRequest
+from recruit_agent.agent_runtime.kernel import AgentKernel
 from recruit_agent.plugins.host import PluginHost
 from recruit_agent.runtime.limits import RoundLimits
-from recruit_agent.runtime.models import GoalRef, GuardVerdict, InputEnvelope, LLMResponse, Observation, ToolCall
-from recruit_agent.runtime.providers import ScriptedProvider
+from recruit_agent.agent_runtime.models import GoalRef, GuardVerdict, InputEnvelope, LLMResponse, Observation, ToolCall
+from agent_runtime.fixtures import ScriptedProvider
 from recruit_agent.runtime.tools import ToolDefinition, ToolRegistry
 
 
@@ -51,7 +52,7 @@ def test_run_round_uses_seed_tool_calls_without_calling_provider() -> None:
     class NeverCalledProvider:
         provider_name = "never-called"
 
-        def generate(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        def invoke(self, request: LLMRequest) -> LLMInvocationResult:
             raise AssertionError("provider should not be called when seed_tool_calls are present")
 
     tools = ToolRegistry()

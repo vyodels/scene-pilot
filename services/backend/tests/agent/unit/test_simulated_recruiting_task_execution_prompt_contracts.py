@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from recruit_agent.asset_paths import prompt_path
-from recruit_agent.kernel.assemble import assemble_messages
-from recruit_agent.runtime.models import GoalRef, Observation
+from recruit_agent.agent_runtime.assemble import assemble_messages
+from recruit_agent.agent_runtime.models import GoalRef, Observation
 from recruit_agent.services.scene_templates import infer_source_surface, source_surface_markers
 
 

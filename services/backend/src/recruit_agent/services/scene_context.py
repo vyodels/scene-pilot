@@ -7,7 +7,7 @@ from urllib.parse import urlparse
 from sqlalchemy.orm import Session, sessionmaker
 
 from recruit_agent.db.base import utcnow
-from recruit_agent.kernel.kernel import AgentKernel
+from recruit_agent.agent_runtime.kernel import AgentKernel
 from recruit_agent.plugins.host import PluginHost
 from recruit_agent.repositories.domain import (
     EnvironmentSnapshotRepository,
@@ -16,8 +16,8 @@ from recruit_agent.repositories.domain import (
     TaskSpecRepository,
 )
 from recruit_agent.runtime.limits import RoundLimits
-from recruit_agent.runtime.models import GoalRef, InputEnvelope, Message, Observation, RoundOutcome
-from recruit_agent.runtime.providers import LLMProvider
+from recruit_agent.agent_runtime.models import GoalRef, InputEnvelope, Message, Observation, RoundOutcome
+from recruit_agent.agent_runtime.providers import LLMProvider
 from recruit_agent.runtime.result_semantics import (
     extract_execution_status,
     extract_structured_result_payload,

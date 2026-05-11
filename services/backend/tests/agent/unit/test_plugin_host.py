@@ -7,7 +7,7 @@ from fastapi import APIRouter
 from recruit_agent.plugins.host import PluginHost
 from recruit_agent.plugins.loader import install_manifest
 from recruit_agent.runtime.tools import ToolDefinition
-from recruit_agent.runtime.models import GuardVerdict, Observation
+from recruit_agent.agent_runtime.models import GuardVerdict, Observation
 
 
 def test_plugin_host_registers_and_runs_extensions() -> None:

@@ -18,7 +18,7 @@ from recruit_agent.models import SyncBacklogEntry, TaskQueueItem
 from recruit_agent.repositories.domain import TaskQueueRepository
 from recruit_agent.scheduler.queue import InMemoryQueue, SqlAlchemyQueue, TaskEnvelope
 from recruit_agent.scheduler.scheduler import SerialScheduler
-from recruit_agent.runtime.models import AgentResult
+from recruit_agent.agent_runtime.models import AgentResult
 from recruit_agent.services.agent_control import AgentControlService
 from recruit_agent.services.sync import SyncService
 

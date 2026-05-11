@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from recruit_agent.runtime.limits import RoundLimits
-from recruit_agent.runtime.models import Deliberation, Effects, RoundOutcome
+from recruit_agent.agent_runtime.models import Deliberation, Effects, RoundOutcome
 from recruit_agent.runtime.result_semantics import infer_non_success_round_outcome
 
 

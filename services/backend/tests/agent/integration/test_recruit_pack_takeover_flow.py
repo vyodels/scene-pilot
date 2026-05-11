@@ -12,7 +12,7 @@ from recruit_agent.models.domain import Candidate, CandidateApplication, JobDesc
 from recruit_agent.plugins.host import PluginHost
 from recruit_agent.plugins.loader import install_manifest
 from recruit_agent.plugins.recruit.manifest import RecruitPluginManifest
-from recruit_agent.runtime.models import Observation
+from recruit_agent.agent_runtime.models import Observation
 from recruit_agent.services.application_window import make_application_window
 
 

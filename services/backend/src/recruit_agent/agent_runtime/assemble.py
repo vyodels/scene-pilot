@@ -6,7 +6,7 @@ from typing import Any
 
 from recruit_agent.asset_paths import prompt_path
 from recruit_agent.plugins.host import PluginHost
-from recruit_agent.runtime.models import GoalRef, Message, Observation
+from recruit_agent.agent_runtime.models import GoalRef, Message, Observation
 from recruit_agent.runtime.tools import ToolRegistry
 
 

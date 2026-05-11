@@ -10,8 +10,8 @@ from sqlalchemy.orm import Session
 
 from recruit_agent.db.base import utcnow
 from recruit_agent.repositories import SkillRepository
-from recruit_agent.runtime.models import LLMResponse, Message
-from recruit_agent.runtime.providers import LLMProvider
+from recruit_agent.agent_runtime.types import LLMMessage, LLMRequest, LLMResponse
+from recruit_agent.agent_runtime.providers import LLMProvider
 
 
 def _slugify(value: str) -> str:
@@ -95,25 +95,29 @@ def distill_skill_contract_from_run(
     prompt = _load_prompt("tasks/skill_distill_from_run")
     if not prompt:
         raise ValueError("skill distill prompt is missing")
-    messages = [
-        Message(role="system", content=prompt),
-        Message(role="user", content=json.dumps(review_payload, ensure_ascii=False, default=str)),
-    ]
-    response = provider.generate(messages, max_tokens=max_tokens, temperature=0.2)
+    result = provider.invoke(
+        LLMRequest(
+            id="skill_distill",
+            turn_id="skill_distill",
+            invocation_id="skill_distill",
+            messages=[
+                LLMMessage(role="system", content=prompt),
+                LLMMessage(role="user", content=json.dumps(review_payload, ensure_ascii=False, default=str)),
+            ],
+            max_tokens=max_tokens,
+            temperature=0.2,
+        )
+    )
+    response = result.response
     contract = _extract_skill_contract(response)
     return contract, response
 
 
 def _extract_skill_contract(response: LLMResponse) -> dict[str, Any]:
-    if isinstance(response.skill_draft, dict):
-        return dict(response.skill_draft)
-    if isinstance(response.result_data, dict):
-        nested = response.result_data.get("skill_contract")
-        if isinstance(nested, dict):
-            return dict(nested)
-        return dict(response.result_data)
-
-    parsed = _parse_json_object(response.content)
+    content = ""
+    if response.assistant_message is not None and isinstance(response.assistant_message.content, str):
+        content = response.assistant_message.content
+    parsed = _parse_json_object(content)
     if not isinstance(parsed, dict):
         raise ValueError("skill distill response did not return a JSON object")
     nested = parsed.get("skill_contract")

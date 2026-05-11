@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from recruit_agent.plugins.host import PluginHost
-from recruit_agent.runtime.models import Observation
+from recruit_agent.agent_runtime.models import Observation
 
 
 def sense(observation: Observation, plugin_host: PluginHost | None = None) -> Observation:

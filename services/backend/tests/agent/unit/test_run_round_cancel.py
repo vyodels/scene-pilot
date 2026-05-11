@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from recruit_agent.kernel.kernel import AgentKernel
+from recruit_agent.agent_runtime.types import LLMInvocationResult, LLMMessage, LLMRequest, LLMResponse as RuntimeLLMResponse, ToolUse
+from recruit_agent.agent_runtime.kernel import AgentKernel
 from recruit_agent.plugins.host import PluginHost
 from recruit_agent.runtime.limits import RoundLimits
-from recruit_agent.runtime.models import CancellationToken, GoalRef, LLMResponse, Observation, ToolCall
+from recruit_agent.agent_runtime.models import CancellationToken, GoalRef, Observation
 from recruit_agent.runtime.tools import ToolDefinition, ToolRegistry
 
 
@@ -14,9 +15,17 @@ def test_run_round_returns_cancelled_before_provider_is_called() -> None:
         def __init__(self) -> None:
             self.calls = 0
 
-        def generate(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        def invoke(self, request: LLMRequest) -> LLMInvocationResult:
             self.calls += 1
-            return LLMResponse(content="should not happen")
+            return LLMInvocationResult(
+                events=[],
+                response=RuntimeLLMResponse(
+                    id="resp-counting",
+                    request_id=request.id,
+                    invocation_id=request.invocation_id,
+                    assistant_message=LLMMessage(role="assistant", content="should not happen"),
+                ),
+            )
 
     provider = CountingProvider()
     token = CancellationToken()
@@ -42,12 +51,18 @@ def test_run_round_stops_between_tool_calls_when_cancelled() -> None:
         (),
         {
             "provider_name": "two-tools",
-            "generate": lambda self, *args, **kwargs: LLMResponse(
-                tool_calls=[
-                    ToolCall(id="tool-1", name="tool.first", arguments={}),
-                    ToolCall(id="tool-2", name="tool.second", arguments={}),
-                ],
-                finish_reason="tool_calls",
+            "invoke": lambda self, request: LLMInvocationResult(
+                events=[],
+                response=RuntimeLLMResponse(
+                    id="resp-two-tools",
+                    request_id=request.id,
+                    invocation_id=request.invocation_id,
+                    tool_uses=[
+                        ToolUse(id="tool-1", name="tool.first", input={}),
+                        ToolUse(id="tool-2", name="tool.second", input={}),
+                    ],
+                    stop_reason="tool_calls",
+                ),
             ),
         },
     )()

@@ -15,6 +15,7 @@ Canonical shared collaboration rules live in [`docs/specs/2026-04-20-repo-agent-
 - Intelligence boundary / capability evolution work: [`docs/specs/2026-04-20-agent-intelligence-boundary-and-capability-evolution.md`](./docs/specs/2026-04-20-agent-intelligence-boundary-and-capability-evolution.md)
 - Assistant / Autonomous product architecture work: [`docs/specs/2026-04-20-dual-agent-product-architecture.md`](./docs/specs/2026-04-20-dual-agent-product-architecture.md)
 - Product-level design principles: [`docs/specs/2026-04-20-agent-product-design-principles.md`](./docs/specs/2026-04-20-agent-product-design-principles.md)
+- Business fact contracts / no frontend mock fields: [`docs/specs/2026-04-29-business-fact-contract-governance.md`](./docs/specs/2026-04-29-business-fact-contract-governance.md)
 
 ## Claude Code-specific note
 `CLAUDE_cn.md` is a Chinese reading aid for this file. It is not an independent source of project rules.

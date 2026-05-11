@@ -8,7 +8,7 @@ import inspect
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Protocol, TypeVar
 
-from .models import CancellationToken, ToolExecutionResult
+from recruit_agent.agent_runtime.models import CancellationToken, ToolExecutionResult
 
 _T = TypeVar("_T")
 

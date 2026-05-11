@@ -9,7 +9,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from recruit_agent.db.base import utcnow
-from recruit_agent.kernel.kernel import AgentKernel
+from recruit_agent.agent_runtime.kernel import AgentKernel
 from recruit_agent.memory.service import MemoryService
 from recruit_agent.models.domain import (
     AgentRun,
@@ -26,7 +26,7 @@ from recruit_agent.models.domain import (
     Skill,
 )
 from recruit_agent.runtime.limits import TurnLimits
-from recruit_agent.runtime.models import GoalRef, InputEnvelope, Message, Observation, RoundOutcome, ToolCall
+from recruit_agent.agent_runtime.models import GoalRef, InputEnvelope, Message, Observation, RoundOutcome, ToolCall
 from recruit_agent.runtime.target_contracts import derive_browser_target
 
 AUTONOMOUS_OPEN_RUN_STATUSES: tuple[str, ...] = (

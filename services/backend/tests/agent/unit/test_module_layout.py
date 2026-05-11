@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[3] / "src" / "recruit_agent"
 def test_agent_runtime_packages_exist() -> None:
     expected_dirs = [
         ROOT / "agents",
-        ROOT / "kernel",
+        ROOT / "agent_runtime",
         ROOT / "runtime",
         ROOT / "memory",
         ROOT / "assistant",

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from dataclasses import dataclass, field
+import json
 from queue import Queue
 from threading import Thread
 import time
@@ -9,12 +10,15 @@ from typing import Any, cast
 
 from sqlalchemy.orm import Session, sessionmaker
 
+from recruit_agent.agent_runtime.adapters import tools_from_legacy
+from recruit_agent.agent_runtime.engine import InteractionEngine, InteractionEngineConfig
+from recruit_agent.agent_runtime.types import InteractionOutput, LLMMessage
 from recruit_agent.assistant.conversation import ConversationService
 from recruit_agent.assistant.session_store import AssistantSessionStore
-from recruit_agent.kernel.kernel import AgentKernel
+from recruit_agent.agent_runtime.kernel import AgentKernel
 from recruit_agent.memory.service import MemoryService
 from recruit_agent.runtime.limits import TurnLimits
-from recruit_agent.runtime.models import CancellationToken, GoalRef, GuardVerdict, InputEnvelope, Message, Observation, RoundOutcome, ToolCall
+from recruit_agent.agent_runtime.models import CancellationToken, GoalRef, GuardVerdict, InputEnvelope, Message, Observation, RoundOutcome, ToolCall
 
 
 @dataclass(slots=True)
@@ -193,23 +197,49 @@ class AssistantAgent:
 
         _emit("turn.started", {"conversation_id": conversation_id, "turn_id": assistant_turn_id})
         try:
-            outcome = self._run_shared_kernel_turn_loop(
-                conversation_id=conversation_id,
-                conversation_pk=conversation_pk,
-                message=message,
-                cancel_token=token,
-                event_sink=_emit,
-                seed_tool_calls=seed_tool_calls,
-                exclude_turn_id=user_turn_id,
+            engine = InteractionEngine(
+                InteractionEngineConfig(
+                    conversation_id=conversation_id,
+                    provider=cast(Any, self.kernel.provider),
+                    tools=tools_from_legacy(self.kernel.tool_registry),
+                    initial_messages=self._runtime_history_messages(conversation_id, exclude_turn_id=user_turn_id),
+                    max_turns=self.turn_limits.max_rounds_per_turn or 12,
+                )
             )
-            tool_results = [_serialize_tool_result(item) for item in outcome.tool_results]
-            status = _assistant_status(outcome)
-            tool_calls = list(outcome.metadata.get("pending_tool_calls") or [])
-            if not tool_calls:
-                tool_calls = [call.to_provider_payload() for call in outcome.tool_calls]
+            final_output = ""
+            status = "completed"
+            tool_results: list[dict[str, Any]] = []
+            tool_calls: list[dict[str, Any]] = []
+            for output in engine.submitMessage(message or ""):
+                if token.is_cancelled():
+                    engine.interrupt()
+                for event, payload in _assistant_events_from_output(output):
+                    _emit(event, payload)
+                if output.type == "assistant_message_completed":
+                    final_output = str(output.data.get("message") or "")
+                elif output.type == "tool_event":
+                    data = dict(output.data)
+                    if data.get("kind") == "tool_result_ready":
+                        tool_results.append(
+                            {
+                                "tool_name": data.get("tool_name"),
+                                "output": data.get("content"),
+                                "is_error": data.get("is_error", False),
+                                "metadata": {},
+                            }
+                        )
+                    elif data.get("kind") in {"tool_use_completed", "tool_call_started"}:
+                        tool_calls.append(data)
+                elif output.type == "turn_interrupted":
+                    status = "cancelled"
+                elif output.type == "turn_failed":
+                    status = "failed"
+                elif output.type == "permission_requested":
+                    status = "waiting_human"
+                    tool_calls = [_permission_tool_call_payload(dict(output.data))]
             self.session_store.update_turn(
                 assistant_turn_id,
-                content={"text": outcome.final_output or ""},
+                content={"text": final_output},
                 tool_calls=tool_calls,
                 tool_results=tool_results,
                 status=status,
@@ -221,7 +251,7 @@ class AssistantAgent:
                     conversation,
                     {
                         "role": "assistant",
-                        "content": outcome.final_output,
+                        "content": final_output,
                         "turn_id": assistant_turn_id,
                         "status": status,
                         "tool_calls": tool_calls,
@@ -229,20 +259,14 @@ class AssistantAgent:
                 )
                 if compaction_event is not None:
                     _emit("compacted", compaction_event)
-            if status == "waiting_human":
-                _emit(
-                    "turn.waiting_human",
-                    {
-                        "turn_id": assistant_turn_id,
-                        "pending_tool_calls": tool_calls,
-                    },
-                )
-            elif status == "cancelled":
+            if status == "cancelled":
                 _emit("turn.cancelled", {"turn_id": assistant_turn_id, "reason": token.reason})
             elif status == "completed":
                 _emit("turn.completed", {"turn_id": assistant_turn_id, "status": status})
+            elif status == "waiting_human":
+                _emit("turn.waiting_human", {"turn_id": assistant_turn_id, "status": status})
             else:
-                _emit("turn.failed", {"turn_id": assistant_turn_id, "status": status, "reason": outcome.escalate_reason})
+                _emit("turn.failed", {"turn_id": assistant_turn_id, "status": status})
         except Exception as exc:
             self.session_store.update_turn(
                 assistant_turn_id,
@@ -372,6 +396,20 @@ class AssistantAgent:
             messages.append(Message(role=cast(Any, role), content=str(item.get("content") or "")))
         return messages
 
+    def _runtime_history_messages(self, conversation_id: str, *, exclude_turn_id: str | None) -> list[LLMMessage]:
+        conversation = self.session_store.get_session(conversation_id)
+        if conversation is None:
+            return []
+        messages: list[LLMMessage] = []
+        for item in self.session_store.load_history(conversation):
+            role = str(item.get("role") or "").strip()
+            if role not in {"system", "user", "assistant", "tool"}:
+                continue
+            if exclude_turn_id is not None and item.get("turn_id") == exclude_turn_id:
+                continue
+            messages.append(LLMMessage(role=cast(Any, role), content=str(item.get("content") or "")))
+        return messages
+
     def _register_assistant_guard(self) -> None:
         if self._assistant_guard_registered:
             return
@@ -413,4 +451,54 @@ def _serialize_tool_result(result: Any) -> dict[str, Any]:
         "is_error": result.is_error,
         "arguments": dict(result.arguments or {}),
         "metadata": dict(result.metadata or {}),
+    }
+
+
+def _assistant_events_from_output(output: InteractionOutput) -> list[tuple[str, dict[str, Any]]]:
+    base = {
+        "conversation_id": output.conversation_id,
+        "turn_id": output.turn_id,
+        "seq": output.seq,
+        **dict(output.data or {}),
+    }
+    if output.type == "turn_started":
+        return [("turn.started", base)]
+    if output.type == "assistant_message_delta":
+        return [("llm_delta", {"delta": base.get("delta", ""), "seq": output.seq})]
+    if output.type == "assistant_message_completed":
+        content = base.get("message", "")
+        return [
+            ("llm_delta", {"delta": content, "seq": output.seq}),
+            ("llm_final", {"content": content, "seq": output.seq}),
+        ]
+    if output.type == "llm_invocation_started":
+        return [("provider_started", base)]
+    if output.type == "llm_invocation_completed":
+        return [("provider_completed", base), ("round.completed", {"round_seq": base.get("index", output.seq), "status": "complete", "gate_signal": "goal_done"})]
+    if output.type == "tool_event":
+        kind = str(base.get("kind") or "tool_event")
+        if kind == "tool_call_started":
+            return [("tool_call", base)]
+        if kind == "tool_result_ready":
+            return [("tool_result", base)]
+        return [("tool_event", base)]
+    if output.type == "permission_requested":
+        return [("turn.waiting_human", base)]
+    if output.type == "turn_completed":
+        return [("turn.completed", base)]
+    if output.type == "turn_interrupted":
+        return [("turn.cancelled", base)]
+    if output.type == "turn_failed":
+        return [("turn.failed", base)]
+    return [(output.type, base)]
+
+
+def _permission_tool_call_payload(data: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": str(data.get("tool_use_id") or data.get("tool_call_id") or ""),
+        "type": "function",
+        "function": {
+            "name": str(data.get("tool_name") or ""),
+            "arguments": json.dumps(dict(data.get("input") or {}), ensure_ascii=False),
+        },
     }

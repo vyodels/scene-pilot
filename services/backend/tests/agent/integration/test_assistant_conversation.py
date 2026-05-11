@@ -1,15 +1,35 @@
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from pathlib import Path
 
-from recruit_agent.runtime.models import LLMResponse
-from recruit_agent.runtime.providers import ScriptedProvider
+from recruit_agent.agent_runtime.types import LLMInvocationResult, LLMMessage, LLMRequest, LLMResponse
 
 from ._helpers import build_assistant_client
 
 
+@dataclass(slots=True)
+class FixtureLLMProvider:
+    responses: list[LLMResponse]
+    provider_name: str = "test"
+    captured_requests: list[LLMRequest] = field(default_factory=list)
+
+    def invoke(self, request: LLMRequest) -> LLMInvocationResult:
+        self.captured_requests.append(request)
+        return LLMInvocationResult(events=[], response=self.responses.pop(0))
+
+
 def test_assistant_conversation_flow_and_cancel_endpoint(tmp_path: Path) -> None:
-    provider = ScriptedProvider(provider_name="scripted", responses=[LLMResponse(content="assistant reply")])
+    provider = FixtureLLMProvider(
+        responses=[
+            LLMResponse(
+                id="resp-1",
+                request_id="",
+                invocation_id="",
+                assistant_message=LLMMessage(role="assistant", content="assistant reply"),
+            )
+        ]
+    )
     client, agent, _session_factory = build_assistant_client(tmp_path, provider=provider)
     with client:
         created = client.post("/api/assistant/conversations", json={"user_id": "user-1", "title": "Hiring"}).json()

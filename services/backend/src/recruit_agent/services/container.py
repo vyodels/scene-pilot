@@ -9,6 +9,14 @@ from sqlalchemy.orm import Session, sessionmaker
 from recruit_agent.agents.assistant import AssistantAgent
 from recruit_agent.agents.autonomous import AutonomousAgent
 from recruit_agent.agents.heartbeat import Heartbeat
+from recruit_agent.agent_runtime.providers import (
+    AnthropicProvider,
+    LLMProvider,
+    OpenAIProvider,
+    ProviderConfig as AgentRuntimeProviderConfig,
+    ProviderRegistry,
+    UnavailableProvider,
+)
 from recruit_agent.assistant.session_store import AssistantSessionStore
 from recruit_agent.core.settings import AppSettings, load_settings
 from recruit_agent.db.session import create_engine_from_settings, create_session_factory, initialize_database
@@ -18,18 +26,10 @@ from recruit_agent.evolution.queue import EvolutionQueue
 from recruit_agent.execution_units.browser_worker import run_browser_worker
 from recruit_agent.execution_units.runner import ExecutionUnitRunner
 from recruit_agent.execution_units.store import ExecutionUnitStore
-from recruit_agent.kernel.kernel import AgentKernel
+from recruit_agent.agent_runtime.kernel import AgentKernel
 from recruit_agent.plugins.host import PluginHost
 from recruit_agent.plugins.loader import install_manifest
 from recruit_agent.plugins.recruit.manifest import RecruitPluginManifest
-from recruit_agent.runtime.providers import (
-    AnthropicProvider,
-    LLMProvider,
-    OpenAICompatibleProvider,
-    ProviderRegistry,
-    ProviderRegistryAdapter,
-    UnavailableProvider,
-)
 from recruit_agent.skills.executor import build_invoke_skill_handler
 from recruit_agent.runtime.tools import (
     ToolRegistry,
@@ -210,12 +210,32 @@ def _build_provider_bundle(settings: AppSettings) -> tuple[ProviderRegistry, LLM
     registry = ProviderRegistry()
     runtime_settings = settings.provider_runtime_settings()
     if runtime_settings.openai_api_key:
-        registry.register(OpenAICompatibleProvider(settings.build_provider_config("openai")))
+        registry.register(
+            OpenAIProvider(
+                AgentRuntimeProviderConfig(
+                    provider_name="openai",
+                    model=runtime_settings.openai_model,
+                    base_url=runtime_settings.openai_base_url,
+                    api_key=runtime_settings.openai_api_key,
+                    timeout_seconds=runtime_settings.openai_timeout_seconds,
+                )
+            )
+        )
     if runtime_settings.anthropic_api_key:
-        registry.register(AnthropicProvider(settings.build_provider_config("anthropic")))
+        registry.register(
+            AnthropicProvider(
+                AgentRuntimeProviderConfig(
+                    provider_name="anthropic",
+                    model=runtime_settings.anthropic_model,
+                    base_url=runtime_settings.anthropic_base_url,
+                    api_key=runtime_settings.anthropic_api_key,
+                    timeout_seconds=runtime_settings.anthropic_timeout_seconds,
+                )
+            )
+        )
     if registry.providers:
         preferred = registry.fallback_order[0]
-        return registry, ProviderRegistryAdapter(registry=registry, preferred_provider=preferred)
+        return registry, registry.get(preferred)
     return registry, UnavailableProvider(
         reason="provider unavailable: configure RECRUIT_AGENT_PROVIDER_CONFIG__OPENAI_API_KEY or RECRUIT_AGENT_PROVIDER_CONFIG__ANTHROPIC_API_KEY",
     )

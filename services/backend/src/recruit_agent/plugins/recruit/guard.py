@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from recruit_agent.models.domain import AgentGlobalState
 from recruit_agent.plugins.recruit.toolkit import _active_lock, _resolve_application
-from recruit_agent.runtime.models import GuardVerdict, Observation
+from recruit_agent.agent_runtime.models import GuardVerdict, Observation
 
 
 def build_guard_check(

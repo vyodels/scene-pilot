@@ -8,11 +8,11 @@ from sqlalchemy.orm import Session
 from recruit_agent.agents.autonomous import AutonomousAgent
 from recruit_agent.core.settings import AppSettings
 from recruit_agent.db.session import create_engine_from_settings, create_session_factory, initialize_database
-from recruit_agent.kernel.kernel import AgentKernel
+from recruit_agent.agent_runtime.kernel import AgentKernel
 from recruit_agent.models.domain import AgentRun, AgentSession, AgentTurnRecord, Candidate, RecruitAgentProfile
 from recruit_agent.plugins.host import PluginHost
-from recruit_agent.runtime.models import LLMResponse
-from recruit_agent.runtime.providers import ScriptedProvider
+from recruit_agent.agent_runtime.models import LLMResponse
+from agent_runtime.fixtures import ScriptedProvider
 from recruit_agent.runtime.tools import ToolRegistry, register_core_tools
 
 

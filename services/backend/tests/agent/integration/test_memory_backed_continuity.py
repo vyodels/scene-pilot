@@ -6,13 +6,13 @@ from pathlib import Path
 from sqlalchemy.orm import Session
 
 from recruit_agent.agents.autonomous import AutonomousAgent
+from recruit_agent.agent_runtime.types import LLMInvocationResult, LLMMessage, LLMRequest, LLMResponse as RuntimeLLMResponse
 from recruit_agent.core.settings import AppSettings
 from recruit_agent.db.session import create_engine_from_settings, create_session_factory, initialize_database
-from recruit_agent.kernel.kernel import AgentKernel
+from recruit_agent.agent_runtime.kernel import AgentKernel
 from recruit_agent.models.domain import AgentRun, AgentSession, Candidate, RecruitAgentProfile
 from recruit_agent.plugins.host import PluginHost
-from recruit_agent.runtime.models import LLMResponse, Message
-from recruit_agent.runtime.providers import LLMProvider
+from recruit_agent.agent_runtime.providers import LLMProvider
 from recruit_agent.runtime.tools import ToolRegistry, register_core_tools
 
 
@@ -22,24 +22,26 @@ class ContinuityProvider:
     def __init__(self) -> None:
         self.calls = 0
 
-    def generate(
+    def invoke(
         self,
-        messages: list[Message],
-        *,
-        tools: list[dict[str, object]] | None = None,
-        task: dict[str, object] | None = None,
-        max_tokens: int | None = None,
-        temperature: float | None = None,
-        cancel_token=None,
-    ) -> LLMResponse:
+        request: LLMRequest,
+    ) -> LLMInvocationResult:
         self.calls += 1
         if self.calls == 1:
-            return LLMResponse(content="Candidate already replied and asked for a resume review.")
-        payload = json.loads(messages[-1].content)
-        serialized = json.dumps(payload, ensure_ascii=False)
-        if "resume review" in serialized:
-            return LLMResponse(content="continued")
-        return LLMResponse(content="lost")
+            content = "Candidate already replied and asked for a resume review."
+        else:
+            payload = json.loads(str(request.messages[-1].content))
+            serialized = json.dumps(payload, ensure_ascii=False)
+            content = "continued" if "resume review" in serialized else "lost"
+        return LLMInvocationResult(
+            events=[],
+            response=RuntimeLLMResponse(
+                id=f"resp-{self.calls}",
+                request_id=request.id,
+                invocation_id=request.invocation_id,
+                assistant_message=LLMMessage(role="assistant", content=content),
+            ),
+        )
 
 
 def _make_session(tmp_path: Path) -> Session:

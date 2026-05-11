@@ -7,8 +7,8 @@ from recruit_agent.core.settings import AppSettings
 from recruit_agent.db.session import create_engine_from_settings, create_session_factory, initialize_database
 from recruit_agent.models.domain import AgentLearning, EnvironmentSnapshot, ExecutionEpisode, ExecutionPlan, TaskSpec
 from recruit_agent.plugins.host import PluginHost
-from recruit_agent.runtime.models import LLMResponse, ToolCall
-from recruit_agent.runtime.providers import ScriptedProvider
+from recruit_agent.agent_runtime.models import LLMResponse, ToolCall
+from agent_runtime.fixtures import ScriptedProvider
 from recruit_agent.runtime.tools import ToolDefinition, ToolRegistry
 from recruit_agent.services.scene_context import SceneContextService
 

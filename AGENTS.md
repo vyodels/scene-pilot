@@ -21,4 +21,6 @@
 
 涉及招聘业务 skill 蒸馏、业务语义 skill 设计、Python 代码级 skill 资产，或项目内 skill-creator 标准接入时，必须阅读 [`docs/specs/2026-04-20-recruiting-skill-distillation-standard.md`](./docs/specs/2026-04-20-recruiting-skill-distillation-standard.md)。
 
+涉及前后端业务字段契约、投递记录 / 投递人 / JD 字段、分页、筛选、搜索、统计、评分、简历结构化、话术模板、头像、时间线或“前端不得 mock / 硬编码业务字段”约束时，必须阅读 [`docs/specs/2026-04-29-business-fact-contract-governance.md`](./docs/specs/2026-04-29-business-fact-contract-governance.md)。
+
 本文件只提供阅读顺序与入口索引；长期规则以 `docs/specs/` 中对应规范为准，不在 `AGENTS.md` 重复展开正文。

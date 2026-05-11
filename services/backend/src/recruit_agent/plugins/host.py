@@ -7,7 +7,7 @@ from typing import Any, Callable, cast
 
 from fastapi import APIRouter
 
-from recruit_agent.runtime.models import GuardVerdict, Observation
+from recruit_agent.agent_runtime.models import GuardVerdict, Observation
 from recruit_agent.runtime.tools import ToolDefinition, ToolRegistry, run_awaitable_blocking
 
 

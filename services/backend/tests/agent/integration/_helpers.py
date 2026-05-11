@@ -10,9 +10,9 @@ from recruit_agent.agents.assistant import AssistantAgent
 from recruit_agent.api.routers.assistant import build_router as build_assistant_router
 from recruit_agent.core.settings import AppSettings
 from recruit_agent.db.session import create_engine_from_settings, create_session_factory, initialize_database
-from recruit_agent.kernel.kernel import AgentKernel
+from recruit_agent.agent_runtime.kernel import AgentKernel
 from recruit_agent.plugins.host import PluginHost
-from recruit_agent.runtime.providers import LLMProvider
+from recruit_agent.agent_runtime.providers import LLMProvider
 from recruit_agent.runtime.tools import ToolRegistry, register_core_tools
 from recruit_agent.assistant.session_store import AssistantSessionStore
 

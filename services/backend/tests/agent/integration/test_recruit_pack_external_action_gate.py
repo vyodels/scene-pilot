@@ -10,7 +10,7 @@ from recruit_agent.models.domain import AgentGlobalState, Candidate
 from recruit_agent.plugins.host import PluginHost
 from recruit_agent.plugins.loader import install_manifest
 from recruit_agent.plugins.recruit.manifest import RecruitPluginManifest
-from recruit_agent.runtime.models import InputEnvelope, Observation, ToolCall
+from recruit_agent.agent_runtime.models import InputEnvelope, Observation, ToolCall
 
 
 def _make_session(tmp_path: Path) -> Session:

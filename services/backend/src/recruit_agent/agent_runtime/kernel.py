@@ -4,17 +4,17 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from recruit_agent.kernel.act import act
-from recruit_agent.kernel.assemble import assemble_messages
-from recruit_agent.kernel.deliberate import deliberate
-from recruit_agent.kernel.evaluate import evaluate
-from recruit_agent.kernel.guard import run_final
-from recruit_agent.kernel.sense import sense
-from recruit_agent.kernel.update_memory import update_memory
+from recruit_agent.agent_runtime.act import act
+from recruit_agent.agent_runtime.assemble import assemble_messages
+from recruit_agent.agent_runtime.deliberate import deliberate
+from recruit_agent.agent_runtime.evaluate import evaluate
+from recruit_agent.agent_runtime.guard import run_final
+from recruit_agent.agent_runtime.sense import sense
+from recruit_agent.agent_runtime.types import LLMProvider
+from recruit_agent.agent_runtime.update_memory import update_memory
 from recruit_agent.plugins.host import PluginHost
 from recruit_agent.runtime.limits import RoundLimits
-from recruit_agent.runtime.models import CancellationToken, GoalRef, Message, Observation, RoundOutcome
-from recruit_agent.runtime.providers import LLMProvider
+from recruit_agent.agent_runtime.models import CancellationToken, GoalRef, Message, Observation, RoundOutcome
 from recruit_agent.runtime.tools import ToolRegistry
 
 

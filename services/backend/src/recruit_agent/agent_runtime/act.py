@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from recruit_agent.runtime.models import Deliberation, Effects, WakeupRequest
+from recruit_agent.agent_runtime.models import Deliberation, Effects, WakeupRequest
 
 
 def act(deliberation: Deliberation) -> Effects:

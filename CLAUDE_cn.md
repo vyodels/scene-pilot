@@ -15,6 +15,7 @@
 - 智能边界 / 能力演进相关工作：[`docs/specs/2026-04-20-agent-intelligence-boundary-and-capability-evolution.md`](./docs/specs/2026-04-20-agent-intelligence-boundary-and-capability-evolution.md)
 - Assistant / Autonomous 产品架构相关工作：[`docs/specs/2026-04-20-dual-agent-product-architecture.md`](./docs/specs/2026-04-20-dual-agent-product-architecture.md)
 - 产品层设计原则：[`docs/specs/2026-04-20-agent-product-design-principles.md`](./docs/specs/2026-04-20-agent-product-design-principles.md)
+- 业务事实契约 / 前端不得 mock 业务字段：[`docs/specs/2026-04-29-business-fact-contract-governance.md`](./docs/specs/2026-04-29-business-fact-contract-governance.md)
 
 ## 说明
 - `CLAUDE_cn.md` 只是中文阅读辅助，不是独立规则源

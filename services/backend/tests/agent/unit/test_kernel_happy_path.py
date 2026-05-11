@@ -3,11 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 
-from recruit_agent.kernel.kernel import AgentKernel
+from recruit_agent.agent_runtime.kernel import AgentKernel
 from recruit_agent.plugins.host import PluginHost
 from recruit_agent.runtime.limits import RoundLimits
-from recruit_agent.runtime.models import GoalRef, InputEnvelope, LLMResponse, Observation, ToolCall
-from recruit_agent.runtime.providers import ScriptedProvider
+from recruit_agent.agent_runtime.models import GoalRef, InputEnvelope, LLMResponse, Observation, ToolCall
+from agent_runtime.fixtures import ScriptedProvider
 from recruit_agent.runtime.tools import ToolDefinition, ToolRegistry
 
 

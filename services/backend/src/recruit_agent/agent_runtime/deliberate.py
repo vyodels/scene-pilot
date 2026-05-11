@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-import inspect
 from typing import Any
 
-from recruit_agent.kernel.guard import run_preflight
+from recruit_agent.agent_runtime.types import LLMMessage, LLMProvider, LLMRequest
+from recruit_agent.agent_runtime.guard import run_preflight
 from recruit_agent.plugins.host import PluginHost
 from recruit_agent.runtime.limits import RoundLimits
-from recruit_agent.runtime.models import CancellationToken, Deliberation, GoalRef, LLMResponse, LLMUsage, Message, Observation, ToolCall, ToolExecutionResult
-from recruit_agent.runtime.providers import LLMProvider
+from recruit_agent.agent_runtime.models import CancellationToken, Deliberation, GoalRef, LLMResponse, LLMUsage, Message, Observation, ToolCall, ToolExecutionResult
 from recruit_agent.runtime.target_contracts import merge_browser_target_into_scene_arguments
 from recruit_agent.runtime.tools import ToolRegistry
 
@@ -184,8 +183,28 @@ def _response_for_round(
     if seed_tool_calls:
         return LLMResponse(tool_calls=list(seed_tool_calls), finish_reason="tool_calls")
 
-    parameters = inspect.signature(provider.generate).parameters
-    kwargs: dict[str, Any] = {"tools": tool_registry.describe()}
-    if "cancel_token" in parameters:
-        kwargs["cancel_token"] = cancel_token
-    return provider.generate(history, **kwargs)
+    result = provider.invoke(
+        LLMRequest(
+            id="kernel_round",
+            turn_id="kernel_round",
+            invocation_id="kernel_round",
+            messages=[LLMMessage(role=message.role, content=message.content, name=message.name, tool_use_id=message.tool_call_id) for message in history],
+            tools=[],
+        )
+    )
+    response = result.response
+    content = ""
+    if response.assistant_message is not None and isinstance(response.assistant_message.content, str):
+        content = response.assistant_message.content
+    return LLMResponse(
+        content=content,
+        tool_calls=[ToolCall(id=tool_use.id, name=tool_use.name, arguments=dict(tool_use.input)) for tool_use in response.tool_uses],
+        finish_reason=response.stop_reason,
+        result_data=dict(response.result_data) if isinstance(response.result_data, dict) else None,
+        usage=LLMUsage(
+            prompt_tokens=response.usage.prompt_tokens,
+            completion_tokens=response.usage.completion_tokens,
+            total_tokens=response.usage.total_tokens,
+        ),
+        raw=response.raw,
+    )

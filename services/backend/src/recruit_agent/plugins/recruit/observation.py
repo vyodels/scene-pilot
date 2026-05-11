@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from recruit_agent.models.domain import CandidateAutonomousLock
 from recruit_agent.plugins.recruit.toolkit import _active_lock, _serialize_lock
-from recruit_agent.runtime.models import Observation
+from recruit_agent.agent_runtime.models import Observation
 
 
 def build_observation_enricher(

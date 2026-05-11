@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from recruit_agent.kernel.assemble import assemble_messages
-from recruit_agent.runtime.models import GoalRef, Observation
+from recruit_agent.agent_runtime.assemble import assemble_messages
+from recruit_agent.agent_runtime.models import GoalRef, Observation
 
 
 def test_assemble_messages_includes_job_description_sync_prompt() -> None:

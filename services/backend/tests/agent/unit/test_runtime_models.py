@@ -4,7 +4,7 @@ from dataclasses import asdict
 import json
 
 from recruit_agent.runtime.limits import RoundLimits, TurnLimits
-from recruit_agent.runtime.models import CancellationToken, FairnessState, InputEnvelope, Observation, ToolExecutionResult
+from recruit_agent.agent_runtime.models import CancellationToken, FairnessState, InputEnvelope, Observation, ToolExecutionResult
 
 
 def test_observation_stays_generic() -> None:

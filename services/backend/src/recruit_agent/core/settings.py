@@ -106,7 +106,7 @@ class AppSettings(BaseSettings):
         return ProviderRuntimeSettings.model_validate(self.provider_config)
 
     def build_provider_config(self, provider_name: str):
-        from recruit_agent.runtime.providers import ProviderConfig
+        from recruit_agent.agent_runtime.providers import ProviderConfig
 
         provider_name = provider_name.replace("-", "_").lower()
         runtime_settings = self.provider_runtime_settings()

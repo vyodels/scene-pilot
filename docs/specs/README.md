@@ -10,6 +10,7 @@ This directory contains the repository's long-term normative documents.
 5. `2026-04-20-agent-intelligence-boundary-and-capability-evolution.md` — intelligence boundary and capability evolution rules
 6. `2026-04-20-agent-system-and-recruiting-capability-architecture.md` — long-term skeleton for the overall Agent system and recruiting capability construction
 7. `2026-04-20-candidate-target-data-model-spec.md` — canonical target data model for candidate, application, and JD entities
+8. `2026-04-29-business-fact-contract-governance.md` — business fact contract governance across backend, shared contracts, and desktop UI
 
 ## Contract
 - `docs/specs/` holds long-term truth only

@@ -23,8 +23,8 @@ from recruit_agent.repositories import (
     JobDescriptionMemoryRepository,
     RecruitAgentProfileRepository,
 )
-from recruit_agent.runtime.models import Message
-from recruit_agent.runtime.providers import LLMProvider, ProviderError
+from recruit_agent.agent_runtime.types import LLMMessage, LLMRequest
+from recruit_agent.agent_runtime.providers import LLMProvider, ProviderError
 
 
 AUTO_COMPACT_THRESHOLD = 1_000_000
@@ -933,15 +933,23 @@ def compact_memory_payload(
         f"- 当前 compact reason: {reason}\n"
     )
     try:
-        response = provider.generate(
-            [
-                Message(role="system", content=prompt),
-                Message(role="user", content=json.dumps(content or {}, ensure_ascii=False)),
-            ],
-            max_tokens=1200,
-            temperature=0.1,
+        result = provider.invoke(
+            LLMRequest(
+                id="memory_compaction",
+                turn_id="memory_compaction",
+                invocation_id="memory_compaction",
+                messages=[
+                    LLMMessage(role="system", content=prompt),
+                    LLMMessage(role="user", content=json.dumps(content or {}, ensure_ascii=False)),
+                ],
+                max_tokens=1200,
+                temperature=0.1,
+            )
         )
-        payload = json.loads(response.content or "{}")
+        content_text = ""
+        if result.response.assistant_message is not None and isinstance(result.response.assistant_message.content, str):
+            content_text = result.response.assistant_message.content
+        payload = json.loads(content_text or "{}")
         if isinstance(payload, dict) and isinstance(payload.get("content"), dict):
             payload.setdefault("summary", f"{scope} memory compacted.")
             return payload

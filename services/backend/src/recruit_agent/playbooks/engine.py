@@ -5,7 +5,7 @@ from typing import Callable, Iterable
 
 from sqlalchemy.orm import Session, sessionmaker
 
-from recruit_agent.runtime.models import AgentResult
+from recruit_agent.agent_runtime.models import AgentResult
 from recruit_agent.runtime.result_semantics import extract_business_status
 from recruit_agent.scheduler.queue import TaskEnvelope
 
