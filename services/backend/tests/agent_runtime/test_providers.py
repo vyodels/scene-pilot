@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from recruit_agent.agent_runtime.providers import AnthropicProvider, OpenAIProvider, ProviderConfig
-from recruit_agent.agent_runtime.types import LLMMessage, LLMRequest, ToolSchema
+from recruit_agent.agent_runtime.types import LLMMessage, LLMRequest, ToolSchema, ToolUse
 
 
 def test_openai_responses_stream_maps_text_tool_and_usage() -> None:
@@ -161,6 +161,52 @@ def test_provider_options_are_mapped_only_when_supported() -> None:
     assert "previous_response_id" not in anthropic_payload
     assert "store" not in anthropic_payload
     assert "truncation" not in anthropic_payload
+
+
+def test_openai_responses_history_flattens_assistant_tool_calls() -> None:
+    captured: dict[str, object] = {}
+
+    def transport(url, payload, headers, timeout):
+        captured.update(payload)
+        return {"id": "resp-openai", "output": []}
+
+    provider = OpenAIProvider(
+        ProviderConfig(provider_name="openai", model="gpt", base_url="https://api.openai.com/v1", api_key="key"),
+        transport=transport,
+    )
+    provider.invoke(
+        LLMRequest(
+            id="req-1",
+            turn_id="turn-1",
+            invocation_id="llm-1",
+            messages=[
+                LLMMessage(role="user", content="create candidate"),
+                LLMMessage(
+                    role="assistant",
+                    content="",
+                    tool_uses=[
+                        ToolUse(
+                            id="call-1",
+                            name="upsert_candidate",
+                            input={"name": "Ada"},
+                        )
+                    ],
+                ),
+                LLMMessage(role="tool", name="upsert_candidate", tool_use_id="call-1", content={"ok": True}),
+            ],
+        )
+    )
+
+    input_payload = captured["input"]
+    assert input_payload[0] == {"role": "user", "content": "create candidate"}
+    assert input_payload[1] == {
+        "type": "function_call",
+        "call_id": "call-1",
+        "name": "upsert_candidate",
+        "arguments": '{"name": "Ada"}',
+    }
+    assert input_payload[2] == {"type": "function_call_output", "call_id": "call-1", "output": '{"ok": true}'}
+    assert "tool_calls" not in input_payload[1]
 
 
 def _request() -> LLMRequest:

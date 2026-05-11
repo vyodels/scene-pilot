@@ -97,7 +97,7 @@ class OpenAIProvider:
     def _build_payload(self, request: LLMRequest) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "model": request.model or self.config.model,
-            "input": [_openai_message_payload(message) for message in request.messages],
+            "input": _openai_input_payload(request.messages),
             "stream": True,
         }
         instructions = _join_nonempty(
@@ -625,17 +625,25 @@ def _tool_use_from_openai_state(state: dict[str, Any]) -> ToolUse:
 def _openai_message_payload(message: LLMMessage) -> dict[str, Any]:
     if message.role == "tool":
         return {"type": "function_call_output", "call_id": message.tool_use_id or message.name or "", "output": _content_text(message.content)}
-    payload: dict[str, Any] = {"role": message.role, "content": message.content}
-    if message.tool_uses:
-        payload["tool_calls"] = [
-            {
-                "type": "function_call",
-                "call_id": tool.id,
-                "name": tool.name,
-                "arguments": json.dumps(tool.input, ensure_ascii=False, sort_keys=True),
-            }
-            for tool in message.tool_uses
-        ]
+    return {"role": message.role, "content": message.content}
+
+
+def _openai_input_payload(messages: list[LLMMessage]) -> list[dict[str, Any]]:
+    payload: list[dict[str, Any]] = []
+    for message in messages:
+        text = _message_text(message)
+        if message.role != "assistant" or text or not message.tool_uses:
+            payload.append(_openai_message_payload(message))
+        if message.role == "assistant":
+            payload.extend(
+                {
+                    "type": "function_call",
+                    "call_id": tool.id,
+                    "name": tool.name,
+                    "arguments": json.dumps(tool.input, ensure_ascii=False, sort_keys=True),
+                }
+                for tool in message.tool_uses
+            )
     return payload
 
 

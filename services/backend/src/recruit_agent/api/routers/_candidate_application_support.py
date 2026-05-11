@@ -318,6 +318,17 @@ def create_application_entry(
 ) -> CandidateConversationEntryRead:
     application, _person = _get_application_with_person_or_404(session, application_id)
     timestamp = payload.timestamp or _now()
+    metadata = dict(payload.metadata or {})
+    if str(payload.direction or "").strip().lower() == "outbound":
+        metadata.setdefault(
+            "outbound_sync",
+            {
+                "status": "pending",
+                "source": "recruit_agent_thread",
+                "created_at": _now().isoformat(),
+                "destinations": {},
+            },
+        )
     entry = ApplicationCommunicationLogRepository(session).create(
         {
             "application_id": application.id,
@@ -325,7 +336,7 @@ def create_application_entry(
             "content": payload.content,
             "message_type": payload.message_type,
             "platform": payload.platform,
-            "message_metadata": payload.metadata,
+            "message_metadata": metadata,
             "timestamp": timestamp,
         }
     )
@@ -338,7 +349,7 @@ def create_application_entry(
         direction=payload.direction,
         content=payload.content,
         message_type=payload.message_type,
-        metadata={"source": "recruit_agent_thread", **dict(payload.metadata or {})},
+        metadata={"source": "recruit_agent_thread", **metadata},
     )
     return CandidateConversationEntryRead(
         id=entry.id,

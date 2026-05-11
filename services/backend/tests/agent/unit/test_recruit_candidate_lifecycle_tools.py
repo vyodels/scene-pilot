@@ -11,6 +11,9 @@ from recruit_agent.plugins.recruit.toolkit import (
     get_candidate_thread,
     get_goal_progress,
     list_candidates,
+    list_pending_candidate_message_syncs,
+    record_candidate_message,
+    record_candidate_message_sync_ack,
     record_outbound_message,
     score_candidate,
     transition_application,
@@ -36,6 +39,9 @@ def test_candidate_lifecycle_tools_cover_writeback_scoring_thread_and_progress(t
         "upsert_candidate",
         "score_candidate",
         "record_outbound_message",
+        "record_candidate_message",
+        "list_pending_candidate_message_syncs",
+        "record_candidate_message_sync_ack",
         "attach_resume_artifact",
         "create_candidate_review_decision",
         "create_candidate_sync_record",
@@ -97,6 +103,56 @@ def test_candidate_lifecycle_tools_cover_writeback_scoring_thread_and_progress(t
         channel_hint="boss_chat",
         status="draft",
     )
+    record_candidate_message(
+        container.session_factory,
+        application_id=application["application_id"],
+        direction="outbound",
+        content="平台侧已存在的一条招聘方消息，不应再次进入本地待同步队列。",
+        channel_hint="boss_chat",
+        status="sent",
+        observed_at="2026-05-11T10:00:30+00:00",
+        metadata={"source_event_id": "im-002"},
+    )
+    record_candidate_message(
+        container.session_factory,
+        application_id=application["application_id"],
+        direction="inbound",
+        content="可以，我稍后发 PDF 简历，也可以加微信沟通。",
+        channel_hint="boss_chat",
+        status="received",
+        observed_at="2026-05-11T10:01:00+00:00",
+        metadata={"source_event_id": "im-001"},
+    )
+    pending_syncs = list_pending_candidate_message_syncs(
+        container.session_factory,
+        application_id=application["application_id"],
+        destination="boss_mock_chat",
+    )
+    assert len(pending_syncs) == 1
+    assert pending_syncs[0]["metadata"]["outbound_sync"]["status"] == "pending"
+    acked_message = record_candidate_message_sync_ack(
+        container.session_factory,
+        message_id=pending_syncs[0]["message_id"],
+        destination="boss_mock_chat",
+        status="synced",
+        external_message_id="boss-msg-001",
+        external_event_id="boss-event-001",
+        observed_at="2026-05-11T10:01:00+00:00",
+        metadata={"source_feed": "mock_recruiting_site"},
+    )
+    assert acked_message["metadata"]["outbound_sync"]["status"] == "synced"
+    assert (
+        acked_message["metadata"]["outbound_sync"]["destinations"]["boss_mock_chat"]["external_message_id"]
+        == "boss-msg-001"
+    )
+    assert (
+        list_pending_candidate_message_syncs(
+            container.session_factory,
+            application_id=application["application_id"],
+            destination="boss_mock_chat",
+        )
+        == []
+    )
 
     attach_resume_artifact(
         container.session_factory,
@@ -128,7 +184,9 @@ def test_candidate_lifecycle_tools_cover_writeback_scoring_thread_and_progress(t
         container.session_factory,
         application_id=application["application_id"],
     )
-    assert len(thread["communicationLogs"]) == 1
+    assert len(thread["communicationLogs"]) == 3
+    assert any(item["direction"] == "inbound" for item in thread["communicationLogs"])
+    assert thread["stateSnapshot"]["contact_status"] == "replied"
     assert len(thread["assessments"]) == 1
     assert len(thread["resumeArtifacts"]) == 1
     assert len(thread["reviewDecisions"]) == 2

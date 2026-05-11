@@ -23,6 +23,9 @@ from recruit_agent.plugins.recruit.toolkit import (
     list_candidate_threads,
     list_job_descriptions,
     list_locked_candidates,
+    list_pending_candidate_message_syncs,
+    record_candidate_message,
+    record_candidate_message_sync_ack,
     record_outbound_message,
     release_candidate,
     request_human_approval,
@@ -409,6 +412,77 @@ class RecruitPluginManifest:
                 handler=lambda arguments: record_outbound_message(self.session_factory, **arguments),
                 resource_target_kind="candidate",
                 metadata={"capabilities": ["candidate", "communication", "recruit_write"]},
+            ),
+            _tool(
+                name="record_candidate_message",
+                description=(
+                    "Write one platform-observed IM message into an application's isolated follow-up thread. "
+                    "Use direction=inbound for candidate replies, outbound for recruiter/agent messages already visible in the source platform, "
+                    "or system for platform status events."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "content": {"type": "string"},
+                        "direction": {"type": "string", "enum": ["inbound", "outbound", "system"]},
+                        "application_id": {"type": "string"},
+                        "candidate_person_id": {"type": "string"},
+                        "job_description_id": {"type": "string"},
+                        "channel_hint": {"type": "string"},
+                        "status": {"type": "string"},
+                        "message_type": {"type": "string"},
+                        "observed_at": {"type": "string", "description": "Optional ISO-8601 timestamp from the source platform."},
+                        "metadata": {"type": "object"},
+                    },
+                    "required": ["content"],
+                    "additionalProperties": False,
+                },
+                handler=lambda arguments: record_candidate_message(self.session_factory, **arguments),
+                resource_target_kind="candidate",
+                metadata={"capabilities": ["candidate", "communication", "recruit_write"]},
+            ),
+            _tool(
+                name="list_pending_candidate_message_syncs",
+                description=(
+                    "List local outbound candidate messages waiting for prompt-selected external synchronization. "
+                    "The destination is an arbitrary prompt-provided sync target; this tool does not encode any recruiting site connector."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "application_id": {"type": "string"},
+                        "destination": {"type": "string"},
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 500},
+                    },
+                    "additionalProperties": False,
+                },
+                handler=lambda arguments: list_pending_candidate_message_syncs(self.session_factory, **arguments),
+                resource_target_kind="candidate",
+                metadata={"capabilities": ["candidate", "communication", "sync", "recruit_read"]},
+            ),
+            _tool(
+                name="record_candidate_message_sync_ack",
+                description=(
+                    "Record that a local outbound candidate message was synchronized to a prompt-selected external destination. "
+                    "Use the external message/event ids and status observed from the source data flow; no connector is hardcoded here."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "message_id": {"type": "string"},
+                        "destination": {"type": "string"},
+                        "status": {"type": "string"},
+                        "external_message_id": {"type": "string"},
+                        "external_event_id": {"type": "string"},
+                        "observed_at": {"type": "string", "description": "Optional ISO-8601 timestamp from the external destination."},
+                        "metadata": {"type": "object"},
+                    },
+                    "required": ["message_id", "destination"],
+                    "additionalProperties": False,
+                },
+                handler=lambda arguments: record_candidate_message_sync_ack(self.session_factory, **arguments),
+                resource_target_kind="candidate",
+                metadata={"capabilities": ["candidate", "communication", "sync", "recruit_write"]},
             ),
             _tool(
                 name="attach_resume_artifact",

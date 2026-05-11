@@ -7,8 +7,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from recruit_agent.db.base import utcnow
-from recruit_agent.models.domain import CandidateAutonomousLock, CandidatePlatformIdx, JobDescription
+from recruit_agent.models.domain import ApplicationCommunicationLog, CandidateAutonomousLock, CandidatePlatformIdx, JobDescription
 from recruit_agent.repositories.domain import (
+    ApplicationCommunicationLogRepository,
     CandidateApplicationRepository,
     CandidatePlatformIdxRepository,
     CandidateRepository,
@@ -527,9 +528,50 @@ def record_outbound_message(
     message_type: str = "text",
     metadata: Any = _UNSET,
 ) -> dict[str, Any]:
+    entry_metadata = _normalize_mapping(metadata, field_name="metadata") if metadata is not _UNSET else {}
+    entry_metadata.setdefault(
+        "outbound_sync",
+        {
+            "status": "pending",
+            "source": "record_outbound_message",
+            "created_at": utcnow().isoformat(),
+            "destinations": {},
+        },
+    )
+    return record_candidate_message(
+        session_factory,
+        content=content,
+        direction="outbound",
+        application_id=application_id,
+        candidate_person_id=candidate_person_id,
+        job_description_id=job_description_id,
+        channel_hint=channel_hint,
+        status=status,
+        message_type=message_type,
+        metadata=entry_metadata,
+    )
+
+
+def record_candidate_message(
+    session_factory: sessionmaker[Session],
+    *,
+    content: str,
+    direction: str = "inbound",
+    application_id: str | None = None,
+    candidate_person_id: str | None = None,
+    job_description_id: str | None = None,
+    channel_hint: str | None = None,
+    status: str = "received",
+    message_type: str = "text",
+    observed_at: Any = _UNSET,
+    metadata: Any = _UNSET,
+) -> dict[str, Any]:
     from recruit_agent.api.routers._candidate_application_support import create_application_entry
 
     normalized_content = _normalize_required_text(content, field_name="content")
+    normalized_direction = (_normalize_optional_text(direction) or "inbound").lower()
+    if normalized_direction not in {"inbound", "outbound", "system"}:
+        raise ValueError("direction must be inbound, outbound, or system")
     normalized_status = _normalize_optional_text(status) or "draft"
     with session_factory() as session:
         application = _resolve_application(
@@ -542,19 +584,31 @@ def record_outbound_message(
         if channel_hint is not None:
             entry_metadata["channel_hint"] = _normalize_optional_text(channel_hint)
         entry_metadata["status"] = normalized_status
+        if normalized_direction == "outbound" and "outbound_sync" not in entry_metadata:
+            observed_timestamp = _normalize_datetime(observed_at, field_name="observed_at") if observed_at is not _UNSET else None
+            entry_metadata["outbound_sync"] = {
+                "status": "observed",
+                "source": "record_candidate_message",
+                "observed_at": observed_timestamp.isoformat() if observed_timestamp is not None else utcnow().isoformat(),
+                "destinations": {},
+            }
         entry = create_application_entry(
             session,
             application.candidate_application_id,
             CandidateConversationEntryCreate(
-                direction="outbound",
+                direction=normalized_direction,
                 content=normalized_content,
                 message_type=_normalize_optional_text(message_type) or "text",
                 platform=str(application.source_platform or application.platform or "site"),
                 metadata=entry_metadata,
+                timestamp=_normalize_datetime(observed_at, field_name="observed_at") if observed_at is not _UNSET else None,
             ),
         )
         snapshot = dict(application.state_snapshot or {}) or default_candidate_state_snapshot(status=application.current_status)
-        snapshot["contact_status"] = "sent" if normalized_status == "sent" else "drafted"
+        if normalized_direction == "outbound":
+            snapshot["contact_status"] = "sent" if normalized_status == "sent" else "drafted"
+        elif normalized_direction == "inbound":
+            snapshot["contact_status"] = "replied"
         snapshot["latest_note"] = normalized_content[:240]
         channel = _normalize_optional_text(channel_hint)
         if channel:
@@ -573,6 +627,87 @@ def record_outbound_message(
             "entry": entry.model_dump(by_alias=True),
             "application": _serialize_candidate_application(session, refreshed),
         }
+
+
+def list_pending_candidate_message_syncs(
+    session_factory: sessionmaker[Session],
+    *,
+    application_id: str | None = None,
+    destination: str | None = None,
+    limit: int = 100,
+) -> list[dict[str, Any]]:
+    normalized_destination = _normalize_optional_text(destination)
+    normalized_limit = max(1, min(int(limit or 100), 500))
+    with session_factory() as session:
+        stmt = (
+            select(ApplicationCommunicationLog)
+            .where(ApplicationCommunicationLog.direction == "outbound")
+            .order_by(ApplicationCommunicationLog.timestamp.asc(), ApplicationCommunicationLog.id.asc())
+            .limit(normalized_limit)
+        )
+        if application_id:
+            application = _resolve_application(session, application_id=application_id)
+            stmt = stmt.where(ApplicationCommunicationLog.application_id == application.id)
+        pending: list[dict[str, Any]] = []
+        for message in session.scalars(stmt).all():
+            metadata = dict(message.message_metadata or {})
+            sync_state = _message_outbound_sync_state(metadata)
+            if not sync_state:
+                continue
+            if not _message_sync_is_pending(sync_state, destination=normalized_destination):
+                continue
+            pending.append(_serialize_application_message(session, message))
+        return pending
+
+
+def record_candidate_message_sync_ack(
+    session_factory: sessionmaker[Session],
+    *,
+    message_id: str,
+    destination: str,
+    status: str = "synced",
+    external_message_id: str | None = None,
+    external_event_id: str | None = None,
+    observed_at: Any = _UNSET,
+    metadata: Any = _UNSET,
+) -> dict[str, Any]:
+    normalized_message_id = _normalize_required_text(message_id, field_name="message_id")
+    normalized_destination = _normalize_required_text(destination, field_name="destination")
+    normalized_status = _normalize_optional_text(status) or "synced"
+    with session_factory() as session:
+        message = _resolve_application_message(session, normalized_message_id)
+        message_metadata = dict(message.message_metadata or {})
+        sync_state = _message_outbound_sync_state(message_metadata)
+        if not sync_state:
+            sync_state = {
+                "status": "pending",
+                "source": "external_sync_ack",
+                "created_at": utcnow().isoformat(),
+                "destinations": {},
+            }
+        destinations = dict(sync_state.get("destinations") or {})
+        destination_state = dict(destinations.get(normalized_destination) or {})
+        destination_state["status"] = normalized_status
+        destination_state["acknowledged_at"] = utcnow().isoformat()
+        if external_message_id is not None:
+            destination_state["external_message_id"] = _normalize_optional_text(external_message_id)
+        if external_event_id is not None:
+            destination_state["external_event_id"] = _normalize_optional_text(external_event_id)
+        normalized_observed_at = _normalize_datetime(observed_at, field_name="observed_at") if observed_at is not _UNSET else None
+        if normalized_observed_at is not None:
+            destination_state["observed_at"] = normalized_observed_at.isoformat()
+        if metadata is not _UNSET:
+            destination_state["metadata"] = _normalize_mapping(metadata, field_name="metadata")
+        destinations[normalized_destination] = destination_state
+        sync_state["destinations"] = destinations
+        sync_state["status"] = normalized_status
+        sync_state["last_destination"] = normalized_destination
+        sync_state["updated_at"] = utcnow().isoformat()
+        message_metadata["outbound_sync"] = sync_state
+        message.message_metadata = message_metadata
+        session.commit()
+        session.refresh(message)
+        return _serialize_application_message(session, message)
 
 
 def attach_resume_artifact(
@@ -1109,6 +1244,54 @@ def _serialize_candidate_application(session: Session, item) -> dict[str, Any]:
         "created_at": item.created_at,
         "updated_at": item.updated_at,
     }
+
+
+def _serialize_application_message(session: Session, item: ApplicationCommunicationLog) -> dict[str, Any]:
+    application = CandidateApplicationRepository(session).get_by_storage_id(item.application_id)
+    return {
+        "message_id": item.candidate_application_message_id,
+        "storage_id": item.id,
+        "application_id": application.candidate_application_id if application is not None else item.application_id,
+        "direction": item.direction,
+        "content": item.content,
+        "message_type": item.message_type,
+        "platform": item.platform,
+        "metadata": dict(item.message_metadata or {}),
+        "timestamp": item.timestamp,
+    }
+
+
+def _message_outbound_sync_state(metadata: dict[str, Any]) -> dict[str, Any]:
+    sync_state = metadata.get("outbound_sync")
+    return dict(sync_state or {}) if isinstance(sync_state, dict) else {}
+
+
+def _message_sync_is_pending(sync_state: dict[str, Any], *, destination: str | None = None) -> bool:
+    local_sources = {"record_outbound_message", "recruit_agent_thread"}
+    if _normalize_optional_text(sync_state.get("source")) not in local_sources:
+        return False
+    final_statuses = {"synced", "sent", "acknowledged", "observed"}
+    if destination:
+        destination_state = dict(dict(sync_state.get("destinations") or {}).get(destination) or {})
+        destination_status = _normalize_optional_text(destination_state.get("status"))
+        if destination_status in final_statuses:
+            return False
+        return True
+    return (_normalize_optional_text(sync_state.get("status")) or "pending") not in final_statuses
+
+
+def _resolve_application_message(session: Session, message_id: str) -> ApplicationCommunicationLog:
+    normalized_message_id = _normalize_required_text(message_id, field_name="message_id")
+    repo = ApplicationCommunicationLogRepository(session)
+    message = repo.get(normalized_message_id)
+    if message is None:
+        stmt = select(ApplicationCommunicationLog).where(
+            ApplicationCommunicationLog.candidate_application_message_id == normalized_message_id
+        )
+        message = session.scalars(stmt).first()
+    if message is None:
+        raise KeyError(f"candidate application message {message_id} not found")
+    return message
 
 
 def _application_job_description_id(session: Session, application) -> str | None:
