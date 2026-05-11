@@ -27,7 +27,7 @@ Agent runtime 只接收现有执行输入并产出现有 output protocol：
 - `ToolUse` / `ToolCall` / `ToolResult`
 - `InteractionOutput`
 
-Runtime 不感知 `assistant`、`autonomous`、招聘业务、MCP registry、skill catalog 或 memory store。MCP、skill、memory、业务数据都必须在产品 adapter 层转换成现有的 messages、tools、tool results 或 metadata。memory follow Claude Code 的文件型口径：显式记住/忘记可以通过受限 memory file tools 在主 Turn 内更新 markdown memory；自动提炼、压缩由 Turn 外产品 pipeline 选择性启动。
+Runtime 不感知 `assistant`、`autonomous`、招聘业务、MCP registry、skill catalog 或 memory store。MCP、skill、memory、业务数据都必须在产品 adapter 层转换成现有的 messages、tools、tool results 或 metadata。memory follow Claude Code 的文件型口径：显式记住/忘记可以通过受限 memory tools 在主 Turn 内更新 markdown memory；自动提炼、压缩由 Turn 外产品 pipeline 选择性启动。
 
 不要新增独立的执行层、能力来源 provider、skill runtime 类型、MCP runtime 类型、memory runtime 类型，或第二套 tool-result continuation API。tool result 已经属于 runtime 的 output protocol。LLM provider 是模型调用协议，不属于这里禁止的能力来源抽象。
 

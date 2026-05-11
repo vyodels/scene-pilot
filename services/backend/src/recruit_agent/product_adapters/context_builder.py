@@ -28,7 +28,7 @@ def build_assistant_turn_context(
         payload["memory_layers"] = {
             "short_term": "recent conversation transcript is provided as history messages",
             "medium_term": "conversation summaries are provided by the assistant session store when compaction runs",
-            "long_term": "file-backed memory entries are listed below; read full markdown files only when needed",
+            "long_term": "memory entries are stored as markdown files; read full files only when needed",
         }
         payload["memory_scope"] = {
             "agent_profile_id": agent_profile_id,
@@ -78,7 +78,7 @@ def build_autonomous_turn_context(
         "memory_layers": {
             "short_term": "recent run events and current turn transcript",
             "medium_term": "run context, checkpoints, and compacted summaries",
-            "long_term": "file-backed memory index with previews; use read_memory_file for full content",
+            "long_term": "memory index with previews; use read_memory_file for full markdown content",
         },
         "available_tools": available_tools,
         "skill_contexts": skill_contexts,
@@ -89,7 +89,7 @@ def build_autonomous_turn_context(
         [
             "You are the Autonomous agent for Recruit Agent.",
             "Use the available tools to advance the goal. Keep externally visible history business-level.",
-            "Memory is file-based. If the user explicitly asks you to remember or forget something, use the memory file tools for the relevant scope. Do not encode memory updates in final text.",
+            "Memory is file-based. If the user explicitly asks you to remember or forget something, use the memory tools for the relevant scope. Do not encode memory updates in final text.",
             f"Goal: {goal_text}",
             f"Context: {json.dumps(payload, ensure_ascii=False, default=str)}",
         ]

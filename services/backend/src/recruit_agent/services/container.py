@@ -276,7 +276,7 @@ def _build_sync_service(settings: AppSettings, session_factory: sessionmaker[Ses
 
 def _build_read_memory_handler(store: MemoryFileStore):
     def _handler(arguments: dict[str, Any]) -> dict[str, Any]:
-        scope_kind, scope_ref, agent_profile_id = _memory_file_scope(arguments)
+        scope_kind, scope_ref, agent_profile_id = _memory_tool_scope(arguments)
         limit = _bounded_int(arguments.get("limit"), default=50, minimum=1, maximum=100)
         query = str(arguments.get("query") or "").strip()
         entries = []
@@ -312,7 +312,7 @@ def _build_memory_file_store(settings: AppSettings) -> MemoryFileStore:
 
 def _build_list_memory_files_handler(store: MemoryFileStore):
     def _handler(arguments: dict[str, Any]) -> dict[str, Any]:
-        scope_kind, scope_ref, agent_profile_id = _memory_file_scope(arguments)
+        scope_kind, scope_ref, agent_profile_id = _memory_tool_scope(arguments)
         files = store.list_files(scope_kind=scope_kind, scope_ref=scope_ref, agent_profile_id=agent_profile_id)
         return {"files": files, "count": len(files), "scope_kind": scope_kind, "scope_ref": scope_ref}
 
@@ -321,7 +321,7 @@ def _build_list_memory_files_handler(store: MemoryFileStore):
 
 def _build_read_memory_file_handler(store: MemoryFileStore):
     def _handler(arguments: dict[str, Any]) -> dict[str, Any]:
-        scope_kind, scope_ref, agent_profile_id = _memory_file_scope(arguments)
+        scope_kind, scope_ref, agent_profile_id = _memory_tool_scope(arguments)
         return store.read_file(
             scope_kind=scope_kind,
             scope_ref=scope_ref,
@@ -334,7 +334,7 @@ def _build_read_memory_file_handler(store: MemoryFileStore):
 
 def _build_write_memory_file_handler(store: MemoryFileStore):
     def _handler(arguments: dict[str, Any]) -> dict[str, Any]:
-        scope_kind, scope_ref, agent_profile_id = _memory_file_scope(arguments)
+        scope_kind, scope_ref, agent_profile_id = _memory_tool_scope(arguments)
         return store.write_file(
             scope_kind=scope_kind,
             scope_ref=scope_ref,
@@ -349,7 +349,7 @@ def _build_write_memory_file_handler(store: MemoryFileStore):
 
 def _build_delete_memory_file_handler(store: MemoryFileStore):
     def _handler(arguments: dict[str, Any]) -> dict[str, Any]:
-        scope_kind, scope_ref, agent_profile_id = _memory_file_scope(arguments)
+        scope_kind, scope_ref, agent_profile_id = _memory_tool_scope(arguments)
         return store.delete_file(
             scope_kind=scope_kind,
             scope_ref=scope_ref,
@@ -360,11 +360,11 @@ def _build_delete_memory_file_handler(store: MemoryFileStore):
     return _handler
 
 
-def _memory_file_scope(arguments: dict[str, Any]) -> tuple[str, str, str | None]:
+def _memory_tool_scope(arguments: dict[str, Any]) -> tuple[str, str, str | None]:
     scope_kind = str(arguments.get("scope_kind") or arguments.get("scopeKind") or "").strip()
     scope_ref = str(arguments.get("scope_ref") or arguments.get("scopeRef") or "").strip()
     if not scope_kind or not scope_ref:
-        raise ValueError("memory file tools require scope_kind and scope_ref")
+        raise ValueError("memory tools require scope_kind and scope_ref")
     agent_profile_id = arguments.get("agent_profile_id") or arguments.get("agentProfileId")
     return scope_kind, scope_ref, str(agent_profile_id) if agent_profile_id else None
 

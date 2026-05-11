@@ -79,7 +79,7 @@ Agent runtime 不为 MCP、skill、memory、业务 context 定义新的 runtime 
 - MCP tool：发现后注册为普通 `ToolDefinition`，执行时走 `ToolCall` / `ToolResult`。
 - MCP resource：通过 context 构造或 `list/read resource` 普通工具访问，不把每个 resource 展开成工具。
 - skill：由 adapter 选择并渲染进 context / structured input；需要 fork 执行时由产品 adapter 或 command layer 启动 isolated engine，但不向模型暴露通用 skill execution 工具，runtime 不认识 `skill` 类型。
-- memory：follow Claude Code 的文件型 memory 口径。读 memory 可以通过 memory context、`read_memory` 或受限 memory file tools 暴露给模型；用户显式要求记住/忘记时，模型可在主 Turn 内使用受限 memory file tools 更新 memory 文件；自动提炼、压缩由 Turn 外 memory pipeline 负责。runtime 只维护 history/transcript，不认识 memory store。
+- memory：follow Claude Code 的文件型 memory 口径。读 memory 可以通过 memory context、`read_memory` 或受限 memory tools 暴露给模型；用户显式要求记住/忘记时，模型可在主 Turn 内使用受限 memory tools 更新 memory 文件；自动提炼、压缩由 Turn 外 memory pipeline 负责。runtime 只维护 history/transcript，不认识 memory store。
 - business context：由 adapter 读取业务状态、UI state、run state 后构造为 messages/context，runtime 不定义业务 context 类型。
 
 ### Context / memory 管理边界
@@ -88,7 +88,7 @@ runtime、adapter、Agent file memory、业务 context/knowledge 的职责必须
 
 - runtime history：`ConversationHistory` 是模型上下文的 materialized history。compact / rollback / context replacement 只能替换 `ConversationHistory` 并同步 `Transcript`，不得读写候选人、JD、投递、沟通、评分或全局业务 context/knowledge。
 - product adapter context construction：adapter 在 Turn 前读取 `GoalSpec`、`AgentRun`、UI state、skill metadata/content、business context/knowledge references、MCP resource、allowed tools 和权限策略，构造 `UserInput`、system context、run context 与 `ToolDefinition[]`。
-- memory file update：用户显式要求记住/忘记时，模型在主 Turn 内通过受限 memory file tools 写入 memory scope；工具事件由 adapter/UI 投影为“记忆已更新”。这不是业务 tool，也不是 runtime primitive。
+- memory update：用户显式要求记住/忘记时，模型在主 Turn 内通过受限 memory tools 写入 memory scope；工具事件由 adapter/UI 投影为“记忆已更新”。这不是业务 tool，也不是 runtime primitive。
 - memory extraction / compaction：后台 memory pipeline 可在 Turn 后从 `InteractionOutput`、`ToolResult`、最终 assistant message 和业务服务结果中抽取稳定事实，按产品策略做去重、冲突检测、审批或写回 memory 文件；这不是 runtime 能力，也不是 final answer 隐式 JSON 协议。
 - skill context injection：adapter 选择 relevant skills，并把 skill name、description、trigger hint、instructions、schemas 等压缩成模型可见 context；runtime 只看到普通 message/input。
 
@@ -106,7 +106,7 @@ Memory 是产品状态和业务策略，不是 runtime state。
 
 - 读取 / 加载：按 agent、scope、scope ref 读取候选人、JD、全局或会话摘要；可按语义检索筛选。
 - 上下文投射：adapter 按 context policy、memory policy、token 预算和 disclosure 策略，把必要 memory 投射成 system/user context 或 structured payload。
-- 显式更新 / 删除：当用户要求记住或忘记时，主 Turn 内可使用受限 memory file tools 直接更新 memory scope 下的 markdown 文件，UI 按 memory tool event 展示。
+- 显式更新 / 删除：当用户要求记住或忘记时，主 Turn 内可使用受限 memory tools 直接更新 memory scope 下的 markdown 文件，UI 按 memory tool event 展示。
 - 自动提炼 / 写回：Turn 后由后台 memory pipeline 先用配置化资源 gate 判断是否需要启动 memory job，再由独立 LLM/策略判断是否存在稳定事实，最后写入 memory 文件。不能每个 completed Turn 默认调用一次 memory LLM。
 - 压缩：长期 memory 超过策略阈值后由产品 memory compactor 生成 summary、facts、decisions、open questions、next actions、risk flags、evidence refs 等结构化内容；压缩结果仍写回 memory 文件。
 - 治理：长期 memory 只保存跨 run 可复用的稳定事实；临时页面状态、当前 blocker、一次性 tool payload 或 UI 状态不得进入长期 memory。
@@ -114,7 +114,7 @@ Memory 是产品状态和业务策略，不是 runtime state。
 当前实现状态：
 
 - `MemoryFileStore` 以 markdown 文件保存 Agent file memory，并按 agent profile、scope、scope ref 隔离。
-- `read_memory`、`list_memory_files`、`read_memory_file`、`write_memory_file`、`delete_memory_file` 是 memory subsystem tools，不是业务工具，也不是 runtime primitive；runtime 只看到普通 ToolDefinition / ToolCall / ToolResult。
+- `read_memory`、`list_memory_files`、`read_memory_file`、`write_memory_file`、`delete_memory_file` 是 memory tools，不是业务工具，也不是 runtime primitive；runtime 只看到普通 ToolDefinition / ToolCall / ToolResult。
 - Assistant 与 Autonomous adapter 使用同一套 file-memory 读写模型；差异只来自 agent profile、conversation/session 和 adapter 配置隔离。
 - Autonomous adapter 可在 Turn 后按配置化 gate 选择性触发 memory extraction/compaction pipeline；该 pipeline 独立判断是否产生 stable facts，不能把 final answer 当作隐藏 `memory_patch` 协议。
 

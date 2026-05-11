@@ -126,7 +126,7 @@ def test_core_read_memory_tool_uses_memory_files(tmp_path: Path) -> None:
     assert output["entries"][0]["content"] == {"path": "status.md", "preview": "# Alice replied\n\nCandidate replied to outreach."}
 
 
-def test_memory_file_tools_are_scoped_to_memory_root(tmp_path: Path) -> None:
+def test_memory_tools_are_scoped_to_memory_root(tmp_path: Path) -> None:
     store = MemoryFileStore(tmp_path / "memory-files")
 
     write_output = _build_write_memory_file_handler(store)(
@@ -166,7 +166,7 @@ def test_memory_file_tools_are_scoped_to_memory_root(tmp_path: Path) -> None:
     except ValueError as exc:
         assert "relative path inside the memory scope" in str(exc)
     else:
-        raise AssertionError("memory file tools must reject path traversal")
+        raise AssertionError("memory tools must reject path traversal")
 
 
 def test_core_record_learning_tool_queues_learning(tmp_path: Path) -> None:

@@ -293,7 +293,7 @@ def register_core_tools(
             metadata={"capabilities": ["memory", "memory_read"], "permission_scope": "memory_read", "risk_level": "low"},
         )
     )
-    memory_file_scope_properties = {
+    memory_scope_properties = {
         "scope_kind": {"type": "string"},
         "scope_ref": {"type": "string"},
         "agent_profile_id": {"type": "string"},
@@ -304,7 +304,7 @@ def register_core_tools(
             description="List markdown memory files available inside a memory scope without reading full content.",
             parameters={
                 "type": "object",
-                "properties": memory_file_scope_properties,
+                "properties": memory_scope_properties,
                 "required": ["scope_kind", "scope_ref"],
                 "additionalProperties": True,
             },
@@ -322,7 +322,7 @@ def register_core_tools(
             description="Read a markdown memory file inside a memory scope.",
             parameters={
                 "type": "object",
-                "properties": {**memory_file_scope_properties, "path": {"type": "string", "default": "MEMORY.md"}},
+                "properties": {**memory_scope_properties, "path": {"type": "string", "default": "MEMORY.md"}},
                 "required": ["scope_kind", "scope_ref"],
                 "additionalProperties": True,
             },
@@ -344,7 +344,7 @@ def register_core_tools(
             parameters={
                 "type": "object",
                 "properties": {
-                    **memory_file_scope_properties,
+                    **memory_scope_properties,
                     "path": {"type": "string", "default": "MEMORY.md"},
                     "content": {"type": "string"},
                     "mode": {"type": "string", "enum": ["overwrite", "append"], "default": "overwrite"},
@@ -366,7 +366,7 @@ def register_core_tools(
             description="Delete a markdown memory file inside a memory scope when the user asks to forget it.",
             parameters={
                 "type": "object",
-                "properties": {**memory_file_scope_properties, "path": {"type": "string"}},
+                "properties": {**memory_scope_properties, "path": {"type": "string"}},
                 "required": ["scope_kind", "scope_ref", "path"],
                 "additionalProperties": True,
             },
