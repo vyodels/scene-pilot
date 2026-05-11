@@ -20,6 +20,26 @@ def test_assistant_context_preserves_history_and_turn_input() -> None:
     assert context.context_payload == {}
 
 
+def test_assistant_context_uses_progressive_memory_disclosure() -> None:
+    context = build_assistant_turn_context(
+        history_messages=[],
+        user_message="hello",
+        agent_profile_id="assistant-profile",
+        memory_entries=[
+            {
+                "memory_item_id": "MEMORY.md",
+                "kind": "memory_file",
+                "summary": "Use concise replies",
+                "content": {"path": "MEMORY.md", "preview": "Use concise replies"},
+            }
+        ],
+    )
+
+    assert context.context_payload["memory_layers"]["long_term"].startswith("file-backed memory")
+    assert context.context_payload["memory_scope"]["agent_profile_id"] == "assistant-profile"
+    assert "read full markdown files only when needed" in str(context.initial_messages[0].content)
+
+
 def test_autonomous_context_renders_payload_and_json_turn_input() -> None:
     context = build_autonomous_turn_context(
         title="Follow up",
@@ -41,6 +61,7 @@ def test_autonomous_context_renders_payload_and_json_turn_input() -> None:
     assert payload["mcp_resource_contexts"][0]["uri"] == "memo://candidate"
     assert "skill_contexts" in str(context.initial_messages[0].content)
     assert context.context_payload["scope"] == {"kind": "candidate", "ref": "cand-1"}
+    assert context.context_payload["memory_layers"]["long_term"].startswith("file-backed memory")
 
 
 def test_scene_context_renders_scene_payload_without_memory_or_skills() -> None:

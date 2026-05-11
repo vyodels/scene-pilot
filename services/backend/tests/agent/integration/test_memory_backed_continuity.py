@@ -9,7 +9,7 @@ from recruit_agent.agents.autonomous import AutonomousAdapter
 from recruit_agent.agent_runtime.types import LLMInvocationResult, LLMMessage, LLMRequest, LLMResponse as RuntimeLLMResponse
 from recruit_agent.core.settings import AppSettings
 from recruit_agent.db.session import create_engine_from_settings, create_session_factory, initialize_database
-from recruit_agent.memory.service import MemoryService
+from recruit_agent.memory.filesystem import MemoryFileStore
 from recruit_agent.models.domain import AgentRun, AgentSession, Candidate, RecruitAgentProfile
 from recruit_agent.plugins.host import PluginHost
 from recruit_agent.agent_runtime.providers import LLMProvider
@@ -100,11 +100,13 @@ def test_autonomous_memory_backed_continuity_across_turns(tmp_path: Path) -> Non
         tools = ToolRegistry()
         register_core_tools(tools)
         provider = ContinuityProvider()
+        memory_store = MemoryFileStore(tmp_path / "memory-files")
         agent = AutonomousAdapter(
             session_factory=create_session_factory(session.get_bind()),
             provider=provider,
             tool_registry=tools,
             plugin_host=PluginHost(),
+            memory_file_store=memory_store,
         )
 
         first = agent.run_turn_from_envelope(
@@ -156,11 +158,13 @@ def test_autonomous_memory_writeback_does_not_call_llm_on_every_completed_turn(t
         tools = ToolRegistry()
         register_core_tools(tools)
         provider = ContinuityProvider()
+        memory_store = MemoryFileStore(tmp_path / "memory-files")
         agent = AutonomousAdapter(
             session_factory=create_session_factory(session.get_bind()),
             provider=provider,
             tool_registry=tools,
             plugin_host=PluginHost(),
+            memory_file_store=memory_store,
         )
 
         first = agent.run_turn_from_envelope(
@@ -174,11 +178,10 @@ def test_autonomous_memory_writeback_does_not_call_llm_on_every_completed_turn(t
 
         assert "Candidate already replied" in first.final_output
         assert provider.calls == 1
-        assert MemoryService(session).read(
+        assert memory_store.list_files(
             scope_kind="candidate",
             scope_ref=candidate.candidate_person_id,
             agent_profile_id=profile.id,
-            limit=10,
         ) == []
     finally:
         session.close()

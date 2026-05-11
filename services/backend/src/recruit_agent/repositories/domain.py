@@ -11,7 +11,6 @@ from recruit_agent.core.settings import AppSettings
 from recruit_agent.db.base import utcnow
 from recruit_agent.models import (
     AgentLearning,
-    AgentGlobalMemory,
     ApplicationAssessment,
     ApplicationAssignment,
     ApplicationCommunicationLog,
@@ -35,7 +34,6 @@ from recruit_agent.models import (
     CandidateApplication,
     CandidateAssessment,
     CandidateAssignment,
-    CandidatePersonMemory,
     CandidatePlatformIdx,
     CandidateReviewDecision,
     CandidateScorecard,
@@ -48,7 +46,6 @@ from recruit_agent.models import (
     ExecutionEpisode,
     ExecutionPlan,
     JobDescription,
-    JobDescriptionMemory,
     JobDescriptionPlatformIdx,
     McpServer,
     McpTool,
@@ -877,60 +874,6 @@ class RecruitAgentProfileRepository(BaseRepository[RecruitAgentProfile]):
             select(RecruitAgentProfile)
             .where(RecruitAgentProfile.is_primary.is_(True))
             .order_by(RecruitAgentProfile.updated_at.desc(), RecruitAgentProfile.id.asc())
-        )
-        return self.session.scalars(stmt).first()
-
-
-class CandidatePersonMemoryRepository(BaseRepository[CandidatePersonMemory]):
-    model = CandidatePersonMemory
-
-    def by_agent_and_person(self, *, agent_profile_id: str, person_id: str) -> CandidatePersonMemory | None:
-        stmt = select(CandidatePersonMemory).where(
-            CandidatePersonMemory.agent_profile_id == agent_profile_id,
-            CandidatePersonMemory.person_id == person_id,
-        )
-        return self.session.scalars(stmt).first()
-
-    def list_for_agent(self, agent_profile_id: str, limit: int = 100, offset: int = 0) -> list[CandidatePersonMemory]:
-        stmt = (
-            select(CandidatePersonMemory)
-            .where(CandidatePersonMemory.agent_profile_id == agent_profile_id)
-            .order_by(CandidatePersonMemory.updated_at.desc(), CandidatePersonMemory.id.asc())
-            .offset(offset)
-            .limit(limit)
-        )
-        return list(self.session.scalars(stmt).all())
-
-
-class JobDescriptionMemoryRepository(BaseRepository[JobDescriptionMemory]):
-    model = JobDescriptionMemory
-
-    def by_agent_and_job_description(self, *, agent_profile_id: str, job_description_id: str) -> JobDescriptionMemory | None:
-        stmt = select(JobDescriptionMemory).where(
-            JobDescriptionMemory.agent_profile_id == agent_profile_id,
-            JobDescriptionMemory.job_description_id == job_description_id,
-        )
-        return self.session.scalars(stmt).first()
-
-    def list_for_agent(self, agent_profile_id: str, limit: int = 100, offset: int = 0) -> list[JobDescriptionMemory]:
-        stmt = (
-            select(JobDescriptionMemory)
-            .where(JobDescriptionMemory.agent_profile_id == agent_profile_id)
-            .order_by(JobDescriptionMemory.updated_at.desc(), JobDescriptionMemory.id.asc())
-            .offset(offset)
-            .limit(limit)
-        )
-        return list(self.session.scalars(stmt).all())
-
-
-class AgentGlobalMemoryRepository(BaseRepository[AgentGlobalMemory]):
-    model = AgentGlobalMemory
-
-    def by_agent(self, agent_profile_id: str) -> AgentGlobalMemory | None:
-        stmt = (
-            select(AgentGlobalMemory)
-            .where(AgentGlobalMemory.agent_profile_id == agent_profile_id)
-            .order_by(AgentGlobalMemory.updated_at.desc(), AgentGlobalMemory.id.desc())
         )
         return self.session.scalars(stmt).first()
 

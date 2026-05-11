@@ -38,6 +38,38 @@ class MemoryFileStore:
             )
         return files
 
+    def list_scope_files(
+        self,
+        *,
+        scope_kind: str,
+        agent_profile_id: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        agent = _safe_segment(agent_profile_id or "default")
+        kind = _safe_segment(scope_kind or "global")
+        scope_root = self.root_dir / agent / kind
+        if not scope_root.exists():
+            return []
+        files: list[dict[str, Any]] = []
+        for path in sorted(scope_root.glob("*/*.md")):
+            if not path.is_file():
+                continue
+            stat = path.stat()
+            preview = _markdown_preview(path)
+            scope_ref = path.parent.name
+            files.append(
+                {
+                    "scope_kind": scope_kind,
+                    "scope_ref": scope_ref,
+                    "path": path.relative_to(path.parent).as_posix(),
+                    "preview": preview,
+                    "size": stat.st_size,
+                    "updated_at": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
+                }
+            )
+        return files[offset : offset + limit]
+
     def read_file(
         self,
         *,
@@ -136,3 +168,15 @@ def _safe_relative_markdown_path(path: str) -> Path:
     if candidate.suffix.lower() != ".md":
         raise ValueError("memory file path must end with .md")
     return candidate
+
+
+def _markdown_preview(path: Path, *, limit: int = 160) -> str:
+    try:
+        content = path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    for line in content.splitlines():
+        text = line.strip()
+        if text:
+            return text[:limit]
+    return ""

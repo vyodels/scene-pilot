@@ -12,6 +12,8 @@ from recruit_agent.agent_runtime.engine import InteractionEngine, InteractionEng
 from recruit_agent.agent_runtime.types import InteractionOutput, LLMMessage, LLMProvider
 from recruit_agent.assistant.conversation import ConversationService
 from recruit_agent.assistant.session_store import AssistantSessionStore
+from recruit_agent.memory.filesystem import MemoryFileStore
+from recruit_agent.models.domain import RecruitAgentProfile
 from recruit_agent.product_adapters.limits import TurnLimits
 from recruit_agent.product_adapters.context_builder import build_assistant_turn_context
 from recruit_agent.plugins.host import PluginHost
@@ -35,6 +37,7 @@ class AssistantAdapter:
     plugin_host: PluginHost
     session_factory: sessionmaker[Session]
     session_store: AssistantSessionStore
+    memory_file_store: MemoryFileStore | None = None
     turn_limits: TurnLimits = field(default_factory=TurnLimits)
     max_history_messages: int | None = None
     active_turns: dict[str, ActiveTurn] = field(default_factory=dict)
@@ -177,15 +180,26 @@ class AssistantAdapter:
             event_queue.put((output.type, _runtime_output_payload(output)))
 
         try:
+            agent_profile_id = self._agent_profile_id()
+            memory_entries = []
+            if self.memory_file_store is not None:
+                memory_entries = _read_memory_file_index_entries(
+                    self.memory_file_store,
+                    scope_kind="conversation",
+                    scope_ref=conversation_id,
+                    agent_profile_id=agent_profile_id,
+                )
             adapter_context = build_assistant_turn_context(
                 history_messages=self._runtime_history_messages(conversation_id, exclude_turn_id=user_turn_id),
                 user_message=message or "",
+                agent_profile_id=agent_profile_id,
+                memory_entries=memory_entries,
             )
             engine = InteractionEngine(
                 InteractionEngineConfig(
                     conversation_id=conversation_id,
                     provider=cast(Any, self.provider),
-                    tools=self.tool_registry.to_agent_runtime_tools(),
+                    tools=_scoped_tool_registry(self.tool_registry, agent_profile_id).to_agent_runtime_tools(),
                     initial_messages=adapter_context.initial_messages,
                     max_llm_invocations=self.turn_limits.max_llm_invocations or 12,
                     max_history_messages=self.max_history_messages,
@@ -263,6 +277,11 @@ class AssistantAdapter:
             self.active_turns.pop(conversation_id, None)
             event_queue.put(None)
 
+    def _agent_profile_id(self) -> str | None:
+        with self.session_factory() as session:
+            profile = session.query(RecruitAgentProfile).filter(RecruitAgentProfile.agent_key == "assistant").first()
+            return None if profile is None else str(profile.id)
+
     def _resolve_confirmed_permission(
         self,
         *,
@@ -332,3 +351,61 @@ def _permission_payload(data: dict[str, Any]) -> dict[str, Any]:
         "input": dict(data.get("input") or {}),
         "reason": str(data.get("reason") or "pending_confirmation"),
     }
+
+
+def _read_memory_file_index_entries(
+    memory_file_store: MemoryFileStore,
+    *,
+    scope_kind: str,
+    scope_ref: str,
+    agent_profile_id: str | None,
+) -> list[dict[str, Any]]:
+    try:
+        entries: list[dict[str, Any]] = []
+        for item in memory_file_store.list_files(scope_kind=scope_kind, scope_ref=scope_ref, agent_profile_id=agent_profile_id)[:12]:
+            content = memory_file_store.read_file(
+                scope_kind=scope_kind,
+                scope_ref=scope_ref,
+                agent_profile_id=agent_profile_id,
+                path=str(item["path"]),
+            ).get("content", "")
+            entries.append(
+                {
+                    "memory_item_id": item["path"],
+                    "kind": "memory_file",
+                    "summary": _first_non_empty_memory_line(str(content or "")) or item["path"],
+                    "content": {"path": item["path"], "preview": str(content or "").strip()[:500]},
+                    "size": item.get("size"),
+                    "updated_at": item.get("updated_at"),
+                }
+            )
+        return entries
+    except Exception:
+        return []
+
+
+def _first_non_empty_memory_line(text: str) -> str | None:
+    for line in str(text or "").splitlines():
+        stripped = line.strip(" #-\t")
+        if stripped:
+            return stripped[:240]
+    return None
+
+
+def _scoped_tool_registry(registry: ToolRegistry, agent_profile_id: str | None) -> ToolRegistry:
+    if not agent_profile_id:
+        return registry
+    scoped = ToolRegistry()
+    for tool in registry.tools.values():
+        cloned = tool.clone()
+        if cloned.category == "memory":
+            original_handler = cloned.handler
+
+            def _handler(arguments: dict[str, Any], *, handler=original_handler) -> Any:
+                scoped_arguments = dict(arguments or {})
+                scoped_arguments["agent_profile_id"] = agent_profile_id
+                return handler(scoped_arguments)
+
+            cloned.handler = _handler
+        scoped.register(cloned)
+    return scoped

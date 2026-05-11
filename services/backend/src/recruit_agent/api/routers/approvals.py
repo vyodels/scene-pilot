@@ -5,7 +5,6 @@ from sqlalchemy.orm import Session
 
 from recruit_agent.api.deps import get_session
 from recruit_agent.db.base import utcnow
-from recruit_agent.memory.service import MemoryService
 from recruit_agent.repositories import AgentLearningRepository, ApprovalRepository, OperatorInteractionRepository
 from recruit_agent.schemas import (
     ApprovalCreate,
@@ -147,11 +146,6 @@ def approve_approval(
             payload_snapshot = dict(item.payload or {})
             payload_snapshot.setdefault("command_resolution", _build_system_command_resolution(container, payload_snapshot))
             resolution = dict(payload_snapshot.get("resolution") or resolution)
-        elif item.target_type == "memory_writeback":
-            applied_memory = _apply_memory_writeback_approval(session, payload_snapshot)
-            payload_snapshot["applied_memory"] = applied_memory
-            resolution["applied_memory_item_id"] = applied_memory.get("memory_item_id")
-
         payload_snapshot["resolution"] = resolution
         if resumed_task is not None:
             payload_snapshot["resumed_task_id"] = resumed_task.get("task_id")
@@ -184,45 +178,6 @@ def approve_approval(
         effect_summary="已按操作员确认恢复或接受这项请求。",
     )
     return ApprovalRead.model_validate(updated)
-
-
-def _apply_memory_writeback_approval(session: Session, payload: dict[str, object]) -> dict[str, object]:
-    required = {
-        "scope_kind": payload.get("scope_kind"),
-        "scope_ref": payload.get("scope_ref"),
-        "agent_profile_id": payload.get("agent_profile_id"),
-        "memory_item_id": payload.get("memory_item_id"),
-        "summary": payload.get("summary"),
-    }
-    missing = [key for key, value in required.items() if not str(value or "").strip()]
-    if missing:
-        raise HTTPException(status_code=400, detail=f"Memory writeback approval missing fields: {', '.join(missing)}")
-    patch = dict(payload.get("patch") or {}) if isinstance(payload.get("patch"), dict) else {}
-    content = patch.get("content")
-    if not isinstance(content, dict):
-        content = {"fact": payload["summary"]}
-    content = {**dict(content), "writeback": {"source": "memory_writeback_approval", "status": "approved"}}
-    written = MemoryService(session).write(
-        scope_kind=str(payload["scope_kind"]),
-        scope_ref=str(payload["scope_ref"]),
-        agent_profile_id=str(payload["agent_profile_id"]),
-        memory_item_id=str(payload["memory_item_id"]),
-        kind=str(patch.get("kind") or "stable_fact"),
-        index_name=str(patch.get("index_name") or patch.get("name") or "stable_fact"),
-        index_description=str(patch.get("index_description") or patch.get("description") or payload["summary"]),
-        summary=str(payload["summary"]),
-        content=content,
-        confidence=float(payload.get("confidence") or 0.6),
-        trust_level="human_reviewed",
-        evidence_refs=list(payload.get("evidence_refs") or []),
-    )
-    return {
-        "memory_item_id": written.get("memory_item_id"),
-        "scope_kind": written.get("scope_kind"),
-        "scope_ref": written.get("scope_ref"),
-        "trust_level": written.get("trust_level"),
-    }
-
 
 @router.post("/{approval_id}/reject", response_model=ApprovalRead)
 def reject_approval(

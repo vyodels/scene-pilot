@@ -331,7 +331,7 @@ InteractionEngine
   └─ Transcript?           // persistence / resume / replay
 ```
 
-`ConversationHistory` 不是业务 memory。它只保存模型可见的 materialized conversation state，并负责为下一次 `LLMRequest` 提供 messages。候选人、JD、投递、沟通摘要、评分偏好等业务 memory 由 product adapter 或业务服务管理，只能通过 context/message、tool result、skill context 或 MCP resource/tool 的结果进入 runtime。
+`ConversationHistory` 不是 Agent file memory，也不是业务 context/knowledge。它只保存模型可见的 materialized conversation state，并负责为下一次 `LLMRequest` 提供 messages。候选人、JD、投递、沟通摘要、评分偏好等业务 context/knowledge 由 product adapter 或业务服务管理，只能通过 context/message、tool result、skill context 或 MCP resource/tool 的结果进入 runtime。
 
 ### 7.2 ConversationHistory
 
@@ -890,7 +890,7 @@ runtime history
   -> compact/rollback/resume 只改 ConversationHistory + Transcript
 
 product adapter context
-  GoalSpec / AgentRun / UI state / allowed tools / skill injections / business memory refs / MCP resources
+  GoalSpec / AgentRun / UI state / allowed tools / skill injections / business context/knowledge refs / memory file refs / MCP resources
   -> system_prompt、append_system_prompt、initial_messages 或本轮 UserMessage
 
 memory file update / extraction, optional product policy
@@ -901,9 +901,9 @@ memory file update / extraction, optional product policy
 
 ```
 
-runtime 只提供 history compaction：把当前模型上下文压缩为新的 `LLMMessage[]`，替换 `ConversationHistory` 并同步 `Transcript`。它不判断哪些招聘事实值得长期保存，也不直接写 candidate/JD/global memory。
+runtime 只提供 history compaction：把当前模型上下文压缩为新的 `LLMMessage[]`，替换 `ConversationHistory` 并同步 `Transcript`。它不判断哪些招聘事实值得长期保存，也不直接写 candidate/JD/global scoped file memory。
 
-product adapter 负责 Turn 前 context construction：读取产品 run 状态、skill metadata/content、业务 memory、MCP resource、UI 选择和权限策略，形成模型可见的 system/user context 与可用 `ToolDefinition[]`。这些输入进入 runtime 后都只是 messages、tools、permission context 或 metadata。
+product adapter 负责 Turn 前 context construction：读取产品 run 状态、skill metadata/content、业务 context/knowledge、Agent file memory refs、MCP resource、UI 选择和权限策略，形成模型可见的 system/user context 与可用 `ToolDefinition[]`。这些输入进入 runtime 后都只是 messages、tools、permission context 或 metadata。
 
 memory file update / extraction 是产品层策略，不是 Agent runtime 能力：用户显式要求记住或忘记时，模型可以在主 Turn 内调用受限 memory file tools 更新当前 memory scope 下的 markdown 文件；自动提炼和压缩则由 adapter、业务服务或后台 memory pipeline 从 `InteractionOutput`、`ToolResult`、最终 assistant message 和业务服务结果中判断是否存在 stable facts。是否启动后台 memory job 必须先经过配置化资源 gate，不能每个 completed Turn 默认调用一次 memory LLM。runtime 可以把相关事件完整产出和落 transcript，但不定义 memory patch schema、不选择 memory store、不决定是否自动写回。
 

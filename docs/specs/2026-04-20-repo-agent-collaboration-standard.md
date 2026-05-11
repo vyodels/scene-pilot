@@ -38,7 +38,7 @@
 
 - 两个内置 Agent 产品形态：`Assistant` 与 `Autonomous`
 - 候选人进度管理
-- 候选人 / JD / 全局 memory
+- 候选人 / JD / 全局上下文与可复用业务知识；Agent file memory 是机制层能力，不是业务对象名
 - 投递记录沟通审核与人工确认
 - playbook 演进与 skill 治理
 - `home / candidates / settings` 加 `Agents` overlay 的用户入口

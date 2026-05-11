@@ -1,6 +1,5 @@
 from .domain import (
     AgentLearningRepository,
-    AgentGlobalMemoryRepository,
     ApplicationAssessmentRepository,
     ApplicationAssignmentRepository,
     ApplicationCommunicationLogRepository,
@@ -24,7 +23,6 @@ from .domain import (
     CandidateRepository,
     CandidateAssessmentRepository,
     CandidateAssignmentRepository,
-    CandidatePersonMemoryRepository,
     CandidatePlatformIdxRepository,
     CandidateReviewDecisionRepository,
     CandidateScorecardRepository,
@@ -38,7 +36,6 @@ from .domain import (
     ExecutionPlanRepository,
     JobDescriptionPlatformIdxRepository,
     JobDescriptionRepository,
-    JobDescriptionMemoryRepository,
     McpServerRepository,
     McpToolRepository,
     MetricsRepository,

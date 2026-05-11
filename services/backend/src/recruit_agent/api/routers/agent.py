@@ -13,7 +13,6 @@ from sqlalchemy.orm import Session
 
 from recruit_agent.db.base import utcnow
 from recruit_agent.models.domain import (
-    AgentGlobalMemory,
     AgentRun,
     AgentRunCheckpoint,
     AgentRuntimeEvent,
@@ -29,8 +28,6 @@ from recruit_agent.models.domain import (
     TaskQueueItem,
 )
 from recruit_agent.repositories.domain import (
-    CandidatePersonMemoryRepository,
-    JobDescriptionMemoryRepository,
     RecruitAgentProfileRepository,
     SkillRepository,
     TaskQueueRepository,
@@ -38,11 +35,8 @@ from recruit_agent.repositories.domain import (
 from recruit_agent.product_adapters.business_state_projection import project_runtime_business_state
 from recruit_agent.product_adapters.target_contracts import derive_browser_target
 from recruit_agent.schemas.domain import (
-    AgentGlobalMemoryRead,
     ApprovalRead,
-    CandidateMemoryRead,
     GoalSpecRead,
-    JobMemoryRead,
     McpServerRead,
     RecruitAgentProfileRead,
     RecruitAgentProfileUpdate,
@@ -52,7 +46,7 @@ from recruit_agent.schemas.domain import (
     SkillRead,
 )
 from recruit_agent.services.container import AppContainer
-from recruit_agent.services.recruit_agent import ensure_global_memory, resolve_context_policy, resolve_memory_policy
+from recruit_agent.services.recruit_agent import resolve_context_policy, resolve_memory_policy
 from recruit_agent.services.scene_templates import (
     SHARED_WORKSPACE_SCOPE_REF,
     serialize_scene_template,
@@ -619,24 +613,15 @@ def build_router(container: AppContainer) -> APIRouter:
     ) -> list[dict[str, Any]]:
         with container.session_factory() as session:
             profile = _resolve_profile(session, kind)
-            if scope == "candidate":
-                candidate_items = CandidatePersonMemoryRepository(session).list_for_agent(profile.id, limit=limit, offset=offset)
-                return [CandidateMemoryRead.model_validate(item).model_dump(by_alias=True) for item in candidate_items]
-            if scope == "job":
-                job_items = JobDescriptionMemoryRepository(session).list_for_agent(profile.id, limit=limit, offset=offset)
-                return [JobMemoryRead.model_validate(item).model_dump(by_alias=True) for item in job_items]
-
-            stmt = (
-                select(AgentGlobalMemory)
-                .where(AgentGlobalMemory.agent_profile_id == profile.id)
-                .order_by(AgentGlobalMemory.updated_at.desc(), AgentGlobalMemory.id.asc())
-                .offset(offset)
-                .limit(limit)
-            )
-            if kind == "autonomous":
-                ensure_global_memory(session, agent_profile_id=profile.id)
-            global_items = session.scalars(stmt).all()
-            return [AgentGlobalMemoryRead.model_validate(item).model_dump(by_alias=True) for item in global_items]
+            return [
+                _serialize_memory_file_summary(item)
+                for item in container.memory_file_store.list_scope_files(
+                    scope_kind=scope,
+                    agent_profile_id=profile.id,
+                    limit=limit,
+                    offset=offset,
+                )
+            ]
 
     @router.get("/{kind}/skills")
     def list_agent_skills(kind: AgentKind) -> list[dict[str, Any]]:
@@ -1009,7 +994,7 @@ def _serialize_workspace(
 ) -> dict[str, Any]:
     provider_label, model_label = _overlay_provider_labels(container)
     approvals = _list_pending_approvals(session, kind)
-    memories = _list_memory_summaries(session, profile)
+    memories = _list_memory_summaries(container, profile)
     if kind == "assistant":
         conversations = session.scalars(
             select(ConversationSession)
@@ -1684,54 +1669,33 @@ def _list_pending_approvals(session: Session, kind: AgentKind) -> list[dict[str,
     return [_serialize_approval(item) for item in items[:20]]
 
 
-def _list_memory_summaries(session: Session, profile: RecruitAgentProfile) -> list[dict[str, Any]]:
+def _list_memory_summaries(container: AppContainer, profile: RecruitAgentProfile) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
-    if profile.agent_key == "autonomous":
-        global_memories = [ensure_global_memory(session, agent_profile_id=profile.id)]
-    else:
-        global_memories = session.scalars(
-            select(AgentGlobalMemory)
-            .where(AgentGlobalMemory.agent_profile_id == profile.id)
-            .order_by(AgentGlobalMemory.updated_at.desc(), AgentGlobalMemory.id.asc())
-            .limit(1)
-        ).all()
-    items.extend(
-        {
-            "id": memory.id,
-            "scope": "global",
-            "title": "Global memory",
-            "summary": memory.summary or "",
-            "status": memory.status,
-            "updated_at": _serialize_timestamp(memory.updated_at),
-            "updatedAt": _serialize_timestamp(memory.updated_at),
-        }
-        for memory in global_memories
-    )
-    items.extend(
-        {
-            "id": memory.id,
-            "scope": "candidate",
-            "title": memory.person_id,
-            "summary": memory.summary or "",
-            "status": memory.status,
-            "updated_at": _serialize_timestamp(memory.updated_at),
-            "updatedAt": _serialize_timestamp(memory.updated_at),
-        }
-        for memory in CandidatePersonMemoryRepository(session).list_for_agent(profile.id, limit=3, offset=0)
-    )
-    items.extend(
-        {
-            "id": memory.id,
-            "scope": "job",
-            "title": memory.job_description_id,
-            "summary": memory.summary or "",
-            "status": memory.status,
-            "updated_at": _serialize_timestamp(memory.updated_at),
-            "updatedAt": _serialize_timestamp(memory.updated_at),
-        }
-        for memory in JobDescriptionMemoryRepository(session).list_for_agent(profile.id, limit=3, offset=0)
-    )
+    for scope in ("global", "conversation", "candidate", "job"):
+        for item in container.memory_file_store.list_scope_files(scope_kind=scope, agent_profile_id=profile.id, limit=3, offset=0):
+            items.append(_serialize_memory_file_summary(item))
     return items
+
+
+def _serialize_memory_file_summary(item: dict[str, Any]) -> dict[str, Any]:
+    updated_at = str(item.get("updated_at") or "")
+    scope = str(item.get("scope_kind") or "")
+    scope_ref = str(item.get("scope_ref") or "")
+    path = str(item.get("path") or "")
+    preview = str(item.get("preview") or "").strip()
+    return {
+        "id": f"{scope}:{scope_ref}:{path}",
+        "scope": scope,
+        "scope_kind": scope,
+        "scope_ref": scope_ref,
+        "title": path or scope_ref,
+        "summary": preview or path or scope_ref,
+        "status": "active",
+        "path": path,
+        "size": item.get("size"),
+        "updated_at": updated_at,
+        "updatedAt": updated_at,
+    }
 
 
 def _list_workspace_skills(session: Session) -> list[dict[str, Any]]:

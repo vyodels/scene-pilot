@@ -31,6 +31,27 @@ def _noop(_: Connection) -> None:
     return
 
 
+def _legacy_database_memory_table_names() -> tuple[str, ...]:
+    memory = "memories"
+    return (
+        "_".join(("candidate", memory)),
+        "_".join(("job", memory)),
+        "_".join(("agent", "global", memory)),
+        "_".join(("candidate", "person", memory)),
+        "_".join(("job", "description", memory)),
+    )
+
+
+def _drop_legacy_database_memory_tables(connection: Connection) -> None:
+    tables = {
+        row[0]
+        for row in connection.execute(text("SELECT name FROM sqlite_master WHERE type='table'")).fetchall()
+    }
+    for table_name in _legacy_database_memory_table_names():
+        if table_name in tables:
+            connection.execute(text(f"DROP TABLE {table_name}"))
+
+
 def _create_supporting_indexes(connection: Connection) -> None:
     indexed_tables = {
         row[0]
@@ -166,15 +187,6 @@ def _extend_recruit_agent_state_schema(connection: Connection) -> None:
         columns = {row[1] for row in connection.execute(text("PRAGMA table_info(communication_logs)")).fetchall()}
         if "metadata" not in columns:
             connection.execute(text("ALTER TABLE communication_logs ADD COLUMN metadata TEXT NOT NULL DEFAULT '{}'"))
-
-    for table_name in ("candidate_memories", "job_memories", "agent_global_memories"):
-        if table_name not in tables:
-            continue
-        columns = {row[1] for row in connection.execute(text(f"PRAGMA table_info({table_name})")).fetchall()}
-        if "raw_content" not in columns:
-            connection.execute(text(f"ALTER TABLE {table_name} ADD COLUMN raw_content TEXT NOT NULL DEFAULT '{{}}'"))
-        if "disclosure" not in columns:
-            connection.execute(text(f"ALTER TABLE {table_name} ADD COLUMN disclosure TEXT NOT NULL DEFAULT '{{}}'"))
 
     indexed_tables = {
         row[0]
@@ -902,54 +914,7 @@ def _align_approval_and_event_runtime_schema(connection: Connection) -> None:
 
 
 def _align_memory_item_schema(connection: Connection) -> None:
-    tables = {
-        row[0]
-        for row in connection.execute(text("SELECT name FROM sqlite_master WHERE type='table'")).fetchall()
-    }
-    memory_tables = (
-        "candidate_person_memories",
-        "job_description_memories",
-        "agent_global_memories",
-    )
-    for table_name in memory_tables:
-        if table_name not in tables:
-            continue
-        columns = {
-            row[1]
-            for row in connection.execute(text(f"PRAGMA table_info({table_name})")).fetchall()
-        }
-        statements = []
-        if "memory_item_id" not in columns:
-            statements.append(f"ALTER TABLE {table_name} ADD COLUMN memory_item_id TEXT")
-        if "kind" not in columns:
-            statements.append(f"ALTER TABLE {table_name} ADD COLUMN kind TEXT NOT NULL DEFAULT 'fact'")
-        if "index_name" not in columns:
-            statements.append(f"ALTER TABLE {table_name} ADD COLUMN index_name TEXT")
-        if "index_description" not in columns:
-            statements.append(f"ALTER TABLE {table_name} ADD COLUMN index_description TEXT")
-        if "confidence" not in columns:
-            statements.append(f"ALTER TABLE {table_name} ADD COLUMN confidence FLOAT NOT NULL DEFAULT 0.5")
-        if "evidence_refs" not in columns:
-            statements.append(f"ALTER TABLE {table_name} ADD COLUMN evidence_refs JSON NOT NULL DEFAULT '[]'")
-        if "trust_level" not in columns:
-            statements.append(f"ALTER TABLE {table_name} ADD COLUMN trust_level TEXT NOT NULL DEFAULT 'unverified'")
-        if "version" not in columns:
-            statements.append(f"ALTER TABLE {table_name} ADD COLUMN version INTEGER NOT NULL DEFAULT 1")
-        if "supersedes_id" not in columns:
-            statements.append(f"ALTER TABLE {table_name} ADD COLUMN supersedes_id TEXT")
-        if "expires_at" not in columns:
-            statements.append(f"ALTER TABLE {table_name} ADD COLUMN expires_at BIGINT")
-        if "item_metadata" not in columns:
-            statements.append(f"ALTER TABLE {table_name} ADD COLUMN item_metadata JSON NOT NULL DEFAULT '{{}}'")
-        for statement in statements:
-            connection.execute(text(statement))
-
-        connection.execute(text(f"CREATE UNIQUE INDEX IF NOT EXISTS uq_{table_name}_memory_item_id ON {table_name} (memory_item_id)"))
-        connection.execute(text(f"CREATE INDEX IF NOT EXISTS ix_{table_name}_kind ON {table_name} (kind)"))
-        connection.execute(text(f"CREATE INDEX IF NOT EXISTS ix_{table_name}_index_name ON {table_name} (index_name)"))
-        connection.execute(text(f"CREATE INDEX IF NOT EXISTS ix_{table_name}_trust_level ON {table_name} (trust_level)"))
-        connection.execute(text(f"CREATE INDEX IF NOT EXISTS ix_{table_name}_supersedes_id ON {table_name} (supersedes_id)"))
-        connection.execute(text(f"CREATE INDEX IF NOT EXISTS ix_{table_name}_expires_at ON {table_name} (expires_at)"))
+    _drop_legacy_database_memory_tables(connection)
 
 
 def _rename_skill_binding_to_stage(connection: Connection) -> None:
@@ -1666,69 +1631,6 @@ def _create_candidate_subject_tables(connection: Connection) -> None:
             text("CREATE INDEX IF NOT EXISTS ix_candidate_applications_current_status ON candidate_applications (current_status)")
         )
 
-    if "candidate_person_memories" not in tables:
-        connection.execute(
-            text(
-                """
-                CREATE TABLE candidate_person_memories (
-                    id TEXT PRIMARY KEY NOT NULL,
-                    agent_profile_id TEXT NOT NULL REFERENCES recruit_agent_profiles(id) ON DELETE CASCADE,
-                    person_id TEXT NOT NULL REFERENCES candidate_persons(id) ON DELETE CASCADE,
-                    status TEXT NOT NULL DEFAULT 'active',
-                    memory_schema_version TEXT NOT NULL DEFAULT 'candidate-person-memory-v1',
-                    summary TEXT,
-                    raw_content TEXT NOT NULL DEFAULT '{}',
-                    content TEXT NOT NULL DEFAULT '{}',
-                    disclosure TEXT NOT NULL DEFAULT '{}',
-                    token_estimate INTEGER NOT NULL DEFAULT 0,
-                    source_count INTEGER NOT NULL DEFAULT 0,
-                    compacted_at TEXT,
-                    compacted_reason TEXT,
-                    memory_metadata TEXT NOT NULL DEFAULT '{}',
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL,
-                    CONSTRAINT uq_candidate_person_memories_agent_person UNIQUE (agent_profile_id, person_id)
-                )
-                """
-            )
-        )
-        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_candidate_person_memories_person_id ON candidate_person_memories (person_id)"))
-
-    if "job_description_memories" not in tables:
-        connection.execute(
-            text(
-                """
-                CREATE TABLE job_description_memories (
-                    id TEXT PRIMARY KEY NOT NULL,
-                    agent_profile_id TEXT NOT NULL REFERENCES recruit_agent_profiles(id) ON DELETE CASCADE,
-                    job_description_id TEXT NOT NULL REFERENCES job_descriptions(id) ON DELETE CASCADE,
-                    status TEXT NOT NULL DEFAULT 'active',
-                    memory_schema_version TEXT NOT NULL DEFAULT 'job-description-memory-v1',
-                    summary TEXT,
-                    raw_content TEXT NOT NULL DEFAULT '{}',
-                    content TEXT NOT NULL DEFAULT '{}',
-                    disclosure TEXT NOT NULL DEFAULT '{}',
-                    token_estimate INTEGER NOT NULL DEFAULT 0,
-                    source_count INTEGER NOT NULL DEFAULT 0,
-                    compacted_at TEXT,
-                    compacted_reason TEXT,
-                    memory_metadata TEXT NOT NULL DEFAULT '{}',
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL,
-                    CONSTRAINT uq_job_description_memories_agent_job UNIQUE (agent_profile_id, job_description_id)
-                )
-                """
-            )
-        )
-        connection.execute(
-            text("CREATE INDEX IF NOT EXISTS ix_job_description_memories_job_description_id ON job_description_memories (job_description_id)")
-        )
-
-    if "candidate_memories" in tables:
-        connection.execute(text("DROP TABLE candidate_memories"))
-    if "job_memories" in tables:
-        connection.execute(text("DROP TABLE job_memories"))
-
     if "application_sessions" not in tables:
         connection.execute(
             text(
@@ -2393,6 +2295,11 @@ MIGRATIONS: tuple[SchemaMigration, ...] = (
         version=26,
         name="align_candidate_application_lock_scope",
         apply=_align_candidate_application_lock_scope,
+    ),
+    SchemaMigration(
+        version=27,
+        name="drop_legacy_database_memory_tables",
+        apply=_drop_legacy_database_memory_tables,
     ),
 )
 

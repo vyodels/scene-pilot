@@ -18,12 +18,26 @@ def build_assistant_turn_context(
     *,
     history_messages: list[LLMMessage],
     user_message: str,
+    agent_profile_id: str | None = None,
+    memory_entries: list[dict[str, Any]] | None = None,
     mcp_resource_contexts: list[dict[str, Any]] | None = None,
 ) -> RenderedAdapterInput:
     payload: dict[str, Any] = {}
     initial_messages = list(history_messages)
+    if memory_entries:
+        payload["memory_layers"] = {
+            "short_term": "recent conversation transcript is provided as history messages",
+            "medium_term": "conversation summaries are provided by the assistant session store when compaction runs",
+            "long_term": "file-backed memory entries are listed below; read full markdown files only when needed",
+        }
+        payload["memory_scope"] = {
+            "agent_profile_id": agent_profile_id,
+            "scope_kind": "conversation",
+        }
+        payload["memory_entries"] = list(memory_entries)
     if mcp_resource_contexts:
         payload["mcp_resource_contexts"] = list(mcp_resource_contexts)
+    if payload:
         initial_messages.insert(
             0,
             LLMMessage(
@@ -61,6 +75,11 @@ def build_autonomous_turn_context(
         "world_snapshot": world_snapshot,
         "recent_events": recent_events,
         "memory_entries": memory_entries,
+        "memory_layers": {
+            "short_term": "recent run events and current turn transcript",
+            "medium_term": "run context, checkpoints, and compacted summaries",
+            "long_term": "file-backed memory index with previews; use read_memory_file for full content",
+        },
         "available_tools": available_tools,
         "skill_contexts": skill_contexts,
         "available_mcps": available_mcps,

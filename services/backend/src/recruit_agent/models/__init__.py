@@ -1,7 +1,6 @@
 from .domain import (
     AgentLearning,
     AgentGlobalState,
-    AgentGlobalMemory,
     ApplicationAssessment,
     ApplicationAssignment,
     ApplicationCommunicationLog,
@@ -30,7 +29,6 @@ from .domain import (
     CandidateApplication,
     CandidateAssessment,
     CandidateAssignment,
-    CandidatePersonMemory,
     CandidatePlatformIdx,
     CandidateReviewDecision,
     CandidateScorecard,
@@ -44,7 +42,6 @@ from .domain import (
     ExecutionPlan,
     JobAssembly,
     JobDescription,
-    JobDescriptionMemory,
     JobDescriptionPlatformIdx,
     RecruitAgentProfile,
     McpServer,

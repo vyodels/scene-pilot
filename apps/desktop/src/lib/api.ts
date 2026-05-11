@@ -14,7 +14,6 @@ import type {
   ApplicationStageEventRecord,
   ApplicationStateSnapshotRecord,
   ApplicationThreadRecord,
-  AgentGlobalMemoryRecord,
   ApprovalItem,
   AgentEvent,
   AgentConversationMessage,
@@ -46,7 +45,6 @@ import type {
   EvolutionArtifactRecord,
   GoalSpecRecord,
   ApplicationAssignmentRecord,
-  JobMemoryRecord,
   McpPresetTemplateRecord,
   McpServerRecord,
   McpToolRecord,
@@ -86,11 +84,11 @@ import type {
   JobDescriptionPageRecord,
   JobDescriptionPageParams,
   JobDescriptionSummaryRecord,
-  PersonMemoryRecord,
   PersonSummaryRecord,
 } from "./types";
 
 const AUTONOMOUS_PRIMARY_CONVERSATION_ID = "autonomous-primary";
+const AGENT_MEMORY_OVERVIEW_SCOPES = ["global", "candidate", "job"] as const;
 
 export interface DesktopApiClient {
   checkHealth(): Promise<boolean>;
@@ -144,17 +142,6 @@ export interface DesktopApiClient {
     interactionId: string,
     payload: { action: string; comment?: string; operator?: string; scope?: string },
   ): Promise<OperatorInteractionRecord>;
-  listPersonMemories(): Promise<PersonMemoryRecord[]>;
-  getPersonMemory(personId: string): Promise<PersonMemoryRecord>;
-  updatePersonMemory(personId: string, payload: Partial<PersonMemoryRecord>): Promise<PersonMemoryRecord>;
-  compactPersonMemory(personId: string, reason?: string, force?: boolean): Promise<PersonMemoryRecord>;
-  listJobMemories(): Promise<JobMemoryRecord[]>;
-  getJobMemory(jobDescriptionId: string): Promise<JobMemoryRecord>;
-  updateJobMemory(jobDescriptionId: string, payload: Partial<JobMemoryRecord>): Promise<JobMemoryRecord>;
-  compactJobMemory(jobDescriptionId: string, reason?: string, force?: boolean): Promise<JobMemoryRecord>;
-  getAgentGlobalMemory(): Promise<AgentGlobalMemoryRecord>;
-  updateAgentGlobalMemory(payload: Partial<AgentGlobalMemoryRecord>): Promise<AgentGlobalMemoryRecord>;
-  compactAgentGlobalMemory(reason?: string, force?: boolean): Promise<AgentGlobalMemoryRecord>;
   listApplicationThreads(): Promise<ApplicationThreadRecord[]>;
   getApplicationThread(applicationId: string): Promise<ApplicationThreadRecord>;
   getStateMachine(): Promise<RecruitmentStateMachine>;
@@ -904,42 +891,6 @@ function extractBoundaries(profile: RecruitAgentProfileRecord | null): string[] 
       roleDefinition.forbidden_actions ??
       promptConfig.boundaries,
   );
-}
-
-function summarizeMemoryRecords(
-  personMemories: PersonMemoryRecord[],
-  jobMemories: JobMemoryRecord[],
-  globalMemory: AgentGlobalMemoryRecord | null,
-): AgentMemorySummary[] {
-  const candidate = personMemories.slice(0, 3).map((memory) => ({
-    id: memory.id,
-    scope: "candidate" as const,
-    title: memory.personId || "Candidate memory",
-    summary: memory.summary ?? "No summary yet.",
-    status: memory.status,
-    updatedAt: memory.updatedAt,
-  }));
-  const job = jobMemories.slice(0, 3).map((memory) => ({
-    id: memory.id,
-    scope: "job" as const,
-    title: memory.jobDescriptionId || "JD memory",
-    summary: memory.summary ?? "No summary yet.",
-    status: memory.status,
-    updatedAt: memory.updatedAt,
-  }));
-  const global = globalMemory
-    ? [
-        {
-          id: globalMemory.id,
-          scope: "global" as const,
-          title: "Global memory",
-          summary: globalMemory.summary ?? "No summary yet.",
-          status: globalMemory.status,
-          updatedAt: globalMemory.updatedAt,
-        },
-      ]
-    : [];
-  return [...global, ...candidate, ...job];
 }
 
 function buildAgentConfig(
@@ -1711,81 +1662,6 @@ function normalizeRecruitAgentProfile(raw: unknown): RecruitAgentProfileRecord {
     agentMetadata: asRecord(record.agentMetadata ?? record.agent_metadata),
     createdAt: String(record.createdAt ?? record.created_at ?? new Date().toISOString()),
     updatedAt: String(record.updatedAt ?? record.updated_at ?? new Date().toISOString()),
-  };
-}
-
-function normalizePersonMemory(raw: unknown): PersonMemoryRecord {
-  const record = asRecord(raw);
-  return {
-    id: String(record.id ?? ""),
-    agentProfileId: String(record.agentProfileId ?? record.agent_profile_id ?? ""),
-    personId: String(record.personId ?? record.person_id ?? ""),
-    status: String(record.status ?? "active"),
-    memorySchemaVersion: String(record.memorySchemaVersion ?? record.memory_schema_version ?? "candidate-person-memory-v1"),
-    summary: record.summary ? String(record.summary) : undefined,
-    rawContent: asRecord(record.rawContent ?? record.raw_content),
-    content: asRecord(record.content),
-    disclosure: normalizeMemoryDisclosure(record.disclosure),
-    tokenEstimate: Number(record.tokenEstimate ?? record.token_estimate ?? 0),
-    sourceCount: Number(record.sourceCount ?? record.source_count ?? 0),
-    compactedAt: record.compactedAt ? String(record.compactedAt) : record.compacted_at ? String(record.compacted_at) : null,
-    compactedReason: record.compactedReason ? String(record.compactedReason) : record.compacted_reason ? String(record.compacted_reason) : null,
-    memoryMetadata: asRecord(record.memoryMetadata ?? record.memory_metadata),
-    createdAt: String(record.createdAt ?? record.created_at ?? new Date().toISOString()),
-    updatedAt: String(record.updatedAt ?? record.updated_at ?? new Date().toISOString()),
-  };
-}
-
-function normalizeJobMemory(raw: unknown): JobMemoryRecord {
-  const record = asRecord(raw);
-  return {
-    id: String(record.id ?? ""),
-    agentProfileId: String(record.agentProfileId ?? record.agent_profile_id ?? ""),
-    jobDescriptionId: String(record.jobDescriptionId ?? record.job_description_id ?? ""),
-    status: String(record.status ?? "active"),
-    memorySchemaVersion: String(record.memorySchemaVersion ?? record.memory_schema_version ?? "job-description-memory-v1"),
-    summary: record.summary ? String(record.summary) : undefined,
-    rawContent: asRecord(record.rawContent ?? record.raw_content),
-    content: asRecord(record.content),
-    disclosure: normalizeMemoryDisclosure(record.disclosure),
-    tokenEstimate: Number(record.tokenEstimate ?? record.token_estimate ?? 0),
-    sourceCount: Number(record.sourceCount ?? record.source_count ?? 0),
-    compactedAt: record.compactedAt ? String(record.compactedAt) : record.compacted_at ? String(record.compacted_at) : null,
-    compactedReason: record.compactedReason ? String(record.compactedReason) : record.compacted_reason ? String(record.compacted_reason) : null,
-    memoryMetadata: asRecord(record.memoryMetadata ?? record.memory_metadata),
-    createdAt: String(record.createdAt ?? record.created_at ?? new Date().toISOString()),
-    updatedAt: String(record.updatedAt ?? record.updated_at ?? new Date().toISOString()),
-  };
-}
-
-function normalizeAgentGlobalMemory(raw: unknown): AgentGlobalMemoryRecord {
-  const record = asRecord(raw);
-  return {
-    id: String(record.id ?? ""),
-    agentProfileId: String(record.agentProfileId ?? record.agent_profile_id ?? ""),
-    status: String(record.status ?? "active"),
-    memorySchemaVersion: String(record.memorySchemaVersion ?? record.memory_schema_version ?? "agent-global-memory-v1"),
-    summary: record.summary ? String(record.summary) : undefined,
-    rawContent: asRecord(record.rawContent ?? record.raw_content),
-    content: asRecord(record.content),
-    disclosure: normalizeMemoryDisclosure(record.disclosure),
-    tokenEstimate: Number(record.tokenEstimate ?? record.token_estimate ?? 0),
-    sourceCount: Number(record.sourceCount ?? record.source_count ?? 0),
-    compactedAt: record.compactedAt ? String(record.compactedAt) : record.compacted_at ? String(record.compacted_at) : null,
-    compactedReason: record.compactedReason ? String(record.compactedReason) : record.compacted_reason ? String(record.compacted_reason) : null,
-    memoryMetadata: asRecord(record.memoryMetadata ?? record.memory_metadata),
-    createdAt: String(record.createdAt ?? record.created_at ?? new Date().toISOString()),
-    updatedAt: String(record.updatedAt ?? record.updated_at ?? new Date().toISOString()),
-  };
-}
-
-function normalizeMemoryDisclosure(raw: unknown): PersonMemoryRecord["disclosure"] {
-  const record = asRecord(raw);
-  return {
-    preview: record.preview ? String(record.preview) : undefined,
-    operatorSummary: record.operatorSummary ? String(record.operatorSummary) : record.operator_summary ? String(record.operator_summary) : undefined,
-    modelContext: record.modelContext ? String(record.modelContext) : record.model_context ? String(record.model_context) : undefined,
-    tiers: asArray<Record<string, unknown>>(record.tiers),
   };
 }
 
@@ -3164,88 +3040,6 @@ function createFetchClient(baseUrl: string): DesktopApiClient {
           }),
         }),
       ),
-    listPersonMemories: async () =>
-      asArray(await requestJson<unknown>(baseUrl, "/api/candidate-persons/memories")).map(normalizePersonMemory),
-    getPersonMemory: async (personId) =>
-      normalizePersonMemory(await requestJson<unknown>(baseUrl, `/api/candidate-persons/${personId}/memory`)),
-    updatePersonMemory: async (personId, payload) =>
-      normalizePersonMemory(
-        await requestJson<unknown>(baseUrl, `/api/candidate-persons/${personId}/memory`, {
-          method: "PATCH",
-          body: JSON.stringify({
-            status: payload.status,
-            memory_schema_version: payload.memorySchemaVersion,
-            summary: payload.summary,
-            raw_content: payload.rawContent,
-            content: payload.content,
-            disclosure: payload.disclosure,
-            token_estimate: payload.tokenEstimate,
-            source_count: payload.sourceCount,
-            memory_metadata: payload.memoryMetadata,
-          }),
-        }),
-      ),
-    compactPersonMemory: async (personId, reason, force = false) =>
-      normalizePersonMemory(
-        await requestJson<unknown>(baseUrl, `/api/candidate-persons/${personId}/memory/compact`, {
-          method: "POST",
-          body: JSON.stringify({ reason, force }),
-        }),
-      ),
-    listJobMemories: async () =>
-      asArray(await requestJson<unknown>(baseUrl, "/api/job-descriptions/memories")).map(normalizeJobMemory),
-    getJobMemory: async (jobDescriptionId) =>
-      normalizeJobMemory(await requestJson<unknown>(baseUrl, `/api/job-descriptions/${jobDescriptionId}/memory`)),
-    updateJobMemory: async (jobDescriptionId, payload) =>
-      normalizeJobMemory(
-        await requestJson<unknown>(baseUrl, `/api/job-descriptions/${jobDescriptionId}/memory`, {
-          method: "PATCH",
-          body: JSON.stringify({
-            status: payload.status,
-            memory_schema_version: payload.memorySchemaVersion,
-            summary: payload.summary,
-            raw_content: payload.rawContent,
-            content: payload.content,
-            disclosure: payload.disclosure,
-            token_estimate: payload.tokenEstimate,
-            source_count: payload.sourceCount,
-            memory_metadata: payload.memoryMetadata,
-          }),
-        }),
-      ),
-    compactJobMemory: async (jobDescriptionId, reason, force = false) =>
-      normalizeJobMemory(
-        await requestJson<unknown>(baseUrl, `/api/job-descriptions/${jobDescriptionId}/memory/compact`, {
-          method: "POST",
-          body: JSON.stringify({ reason, force }),
-        }),
-      ),
-    getAgentGlobalMemory: async () =>
-      normalizeAgentGlobalMemory(await requestJson<unknown>(baseUrl, "/api/recruit-agent/global-memory")),
-    updateAgentGlobalMemory: async (payload) =>
-      normalizeAgentGlobalMemory(
-        await requestJson<unknown>(baseUrl, "/api/recruit-agent/global-memory", {
-          method: "PATCH",
-          body: JSON.stringify({
-            status: payload.status,
-            memory_schema_version: payload.memorySchemaVersion,
-            summary: payload.summary,
-            raw_content: payload.rawContent,
-            content: payload.content,
-            disclosure: payload.disclosure,
-            token_estimate: payload.tokenEstimate,
-            source_count: payload.sourceCount,
-            memory_metadata: payload.memoryMetadata,
-          }),
-        }),
-      ),
-    compactAgentGlobalMemory: async (reason, force = false) =>
-      normalizeAgentGlobalMemory(
-        await requestJson<unknown>(baseUrl, "/api/recruit-agent/global-memory/compact", {
-          method: "POST",
-          body: JSON.stringify({ reason, force }),
-        }),
-      ),
     listApplicationThreads: async () =>
       asArray(await requestJson<unknown>(baseUrl, "/api/candidate-applications/threads")).map(normalizeApplicationThread),
     getApplicationThread: async (applicationId) =>
@@ -3577,7 +3371,7 @@ function createFetchClient(baseUrl: string): DesktopApiClient {
         return normalizeAgentWorkspace(payload, kind);
       }
 
-      const [snapshot, settings, profile, approvals, skills, servers, personMemories, jobMemories, globalMemory, goals, queueItems] =
+      const [snapshot, settings, profile, approvals, skills, servers, memoriesByScope, goals, queueItems] =
         await Promise.all([
           createFetchClient(baseUrl).getDashboardSummary().then(deriveSnapshotFromDashboard),
           requestJson<unknown>(baseUrl, "/api/settings").then(normalizeSettings),
@@ -3593,14 +3387,12 @@ function createFetchClient(baseUrl: string): DesktopApiClient {
           requestOptionalJson<unknown>(baseUrl, "/api/mcp/servers").then((value) =>
             value ? asArray(value).map(normalizeMcpServer) : [],
           ),
-          requestOptionalJson<unknown>(baseUrl, "/api/candidate-persons/memories").then((value) =>
-            value ? asArray(value).map(normalizePersonMemory) : [],
-          ),
-          requestOptionalJson<unknown>(baseUrl, "/api/job-descriptions/memories").then((value) =>
-            value ? asArray(value).map(normalizeJobMemory) : [],
-          ),
-          requestOptionalJson<unknown>(baseUrl, "/api/recruit-agent/global-memory").then((value) =>
-            value ? normalizeAgentGlobalMemory(value) : null,
+          Promise.all(
+            AGENT_MEMORY_OVERVIEW_SCOPES.map((scope) =>
+              requestOptionalJson<unknown>(baseUrl, `/api/agents/${kind}/memory/${scope}`).then((value) =>
+                value ? asArray(value).map(normalizeAgentMemorySummary) : [],
+              ),
+            ),
           ),
           requestOptionalJson<unknown>(baseUrl, "/api/recruit-agent/goals").then((value) =>
             value ? asArray(value).map(normalizeGoalSpec) : [],
@@ -3609,6 +3401,7 @@ function createFetchClient(baseUrl: string): DesktopApiClient {
             value ? asArray(value).map(normalizeAgentQueueItem) : [],
           ),
         ]);
+      const memories = memoriesByScope.flat();
 
       const conversations =
         kind === "autonomous"
@@ -3634,7 +3427,7 @@ function createFetchClient(baseUrl: string): DesktopApiClient {
         conversations,
         runs,
         approvals,
-        memories: summarizeMemoryRecords(personMemories, jobMemories, globalMemory),
+        memories,
         skills,
         tools,
         config: buildAgentConfig(profile, settings, kind),

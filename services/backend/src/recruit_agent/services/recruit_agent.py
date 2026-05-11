@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import json
-from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -10,24 +8,10 @@ from recruit_agent.asset_paths import prompt_path
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from recruit_agent.memory.global_memory_projection import (
-    GLOBAL_MEMORY_SCHEMA_VERSION,
-    empty_agent_global_memory_payload,
-    needs_agent_global_memory_projection,
-    project_agent_global_memory,
-)
-from recruit_agent.models import AgentGlobalMemory, AgentRun, CandidatePersonMemory, GoalSpec, JobDescriptionMemory, RecruitAgentProfile
-from recruit_agent.repositories import (
-    AgentGlobalMemoryRepository,
-    CandidatePersonMemoryRepository,
-    JobDescriptionMemoryRepository,
-    RecruitAgentProfileRepository,
-)
-from recruit_agent.agent_runtime.types import LLMMessage, LLMRequest
-from recruit_agent.agent_runtime.providers import LLMProvider, ProviderError
+from recruit_agent.models import RecruitAgentProfile
+from recruit_agent.repositories import RecruitAgentProfileRepository
 
 
-AUTO_COMPACT_THRESHOLD = 1_000_000
 EVOLUTION_ARTIFACT_KINDS = {
     "skill_draft",
     "prompt_patch",
@@ -56,9 +40,9 @@ CONTEXT_POLICY_WEIGHT_KEYS = {
     "session_context",
     "candidate_progress",
     "recent_messages",
-    "candidate_memory",
-    "job_memory",
-    "global_memory",
+    "candidate_context",
+    "job_context",
+    "global_context",
     "assessments",
     "scorecards",
     "review_decisions",
@@ -178,20 +162,20 @@ def default_context_policy() -> dict[str, Any]:
             "llm_rerank_enabled": False,
             "llm_rerank_top_k": 6,
             "llm_rerank_max_boost": 8,
-            "drop_order": ["global_memory", "job_memory", "platform_context", "session_context"],
+            "drop_order": ["global_context", "job_context", "platform_context", "session_context"],
         },
         "lanes": {
             "candidate": {
                 "must_include": ["task_brief", "candidate_progress"],
                 "default_weights": {
                     "recent_messages": 1.2,
-                    "candidate_memory": 1.1,
-                    "job_memory": 0.95,
+                    "candidate_context": 1.1,
+                    "job_context": 0.95,
                     "assessments": 1.0,
                     "scorecards": 1.0,
                     "review_decisions": 1.0,
                     "skill_summary": 0.75,
-                    "global_memory": 0.4,
+                    "global_context": 0.4,
                     "platform_context": 0.7,
                     "session_context": 0.85,
                 },
@@ -201,7 +185,7 @@ def default_context_policy() -> dict[str, Any]:
                 "default_weights": {
                     "approval_context": 1.25,
                     "skill_summary": 1.05,
-                    "global_memory": 0.55,
+                    "global_context": 0.55,
                     "platform_context": 0.6,
                     "session_context": 0.5,
                 },
@@ -209,16 +193,16 @@ def default_context_policy() -> dict[str, Any]:
         },
         "run_type_overrides": {
             "candidate_outreach": {
-                "prefer": ["recent_messages", "candidate_memory", "job_memory"],
-                "suppress": ["global_memory"],
+                "prefer": ["recent_messages", "candidate_context", "job_context"],
+                "suppress": ["global_context"],
             },
             "candidate_scoring": {
-                "prefer": ["assessments", "scorecards", "job_memory"],
-                "suppress": ["global_memory"],
+                "prefer": ["assessments", "scorecards", "job_context"],
+                "suppress": ["global_context"],
             },
             "resume_collection": {
-                "prefer": ["recent_messages", "candidate_progress", "candidate_memory"],
-                "suppress": ["global_memory"],
+                "prefer": ["recent_messages", "candidate_progress", "candidate_context"],
+                "suppress": ["global_context"],
             },
         },
     }
@@ -229,51 +213,11 @@ def default_memory_policy() -> dict[str, Any]:
         "writeback": {
             "enabled": True,
             "auto_write_min_confidence": 0.35,
-            "review_enabled": False,
-            "review_below_confidence": 0.65,
             "max_stable_facts": 8,
             "trust_level": "agent_observed",
-            "review_trust_level": "needs_review",
             "min_completed_turns_between_jobs": 3,
             "min_evidence_chars_between_jobs": 1500,
             "force_on_explicit_request": True,
-        },
-        "candidate_memory": {
-            "isolation": "strict_by_candidate",
-            "auto_compact": True,
-            "compact_threshold": AUTO_COMPACT_THRESHOLD,
-            "schema": [
-                "identity_summary",
-                "facts",
-                "interaction_summary",
-                "risk_flags",
-                "open_questions",
-                "recommended_next_actions",
-                "evidence_refs",
-                "confidence",
-            ],
-            "disclosure": ["preview", "operator_summary", "model_context"],
-        },
-        "job_memory": {
-            "isolation": "strict_by_jd",
-            "auto_compact": True,
-            "compact_threshold": AUTO_COMPACT_THRESHOLD,
-            "schema": [
-                "screening_preferences",
-                "strong_positive_signals",
-                "common_reject_reasons",
-                "communication_notes",
-                "quality_thresholds",
-                "historical_patterns",
-            ],
-            "disclosure": ["preview", "operator_summary", "model_context"],
-        },
-        "agent_global_memory": {
-            "scope": "agent_global",
-            "auto_compact": True,
-            "compact_threshold": AUTO_COMPACT_THRESHOLD,
-            "schema": ["facts", "decisions", "open_questions", "next_actions", "risk_flags", "evidence_refs", "confidence"],
-            "disclosure": ["preview", "operator_summary", "model_context"],
         },
     }
 
@@ -379,11 +323,6 @@ def resolve_memory_policy(memory_policy: dict[str, Any] | None) -> dict[str, Any
             writeback_config.get("auto_write_min_confidence"),
             default=float(writeback_defaults["auto_write_min_confidence"]),
         ),
-        "review_enabled": bool(writeback_config.get("review_enabled", writeback_defaults["review_enabled"])),
-        "review_below_confidence": _bounded_float(
-            writeback_config.get("review_below_confidence"),
-            default=float(writeback_defaults["review_below_confidence"]),
-        ),
         "max_stable_facts": _bounded_int(
             writeback_config.get("max_stable_facts"),
             default=int(writeback_defaults["max_stable_facts"]),
@@ -391,7 +330,6 @@ def resolve_memory_policy(memory_policy: dict[str, Any] | None) -> dict[str, Any
             maximum=32,
         ),
         "trust_level": str(writeback_config.get("trust_level") or writeback_defaults["trust_level"]),
-        "review_trust_level": str(writeback_config.get("review_trust_level") or writeback_defaults["review_trust_level"]),
         "min_completed_turns_between_jobs": _bounded_int(
             writeback_config.get("min_completed_turns_between_jobs"),
             default=int(writeback_defaults["min_completed_turns_between_jobs"]),
@@ -411,33 +349,6 @@ def resolve_memory_policy(memory_policy: dict[str, Any] | None) -> dict[str, Any
             )
         ),
     }
-
-    for scope_key, default_scope in defaults.items():
-        if scope_key == "writeback":
-            continue
-        scope_config = dict(configured.get(scope_key) or {})
-        resolved_scope = dict(default_scope)
-        for key in ("isolation", "scope"):
-            if scope_config.get(key) is not None:
-                resolved_scope[key] = str(scope_config.get(key)).strip() or default_scope[key]
-        if scope_config.get("auto_compact") is not None:
-            resolved_scope["auto_compact"] = bool(scope_config.get("auto_compact"))
-        if scope_config.get("compact_threshold") is not None:
-            try:
-                resolved_scope["compact_threshold"] = max(int(scope_config.get("compact_threshold") or 1), 1)
-            except (TypeError, ValueError):
-                resolved_scope["compact_threshold"] = default_scope["compact_threshold"]
-
-        if scope_key == "agent_global_memory":
-            resolved_scope["schema"] = list(default_scope["schema"])
-        elif isinstance(scope_config.get("schema"), list):
-            resolved_scope["schema"] = _sanitize_free_string_list(scope_config.get("schema")) or list(default_scope["schema"])
-
-        if isinstance(scope_config.get("disclosure"), list):
-            resolved_scope["disclosure"] = _sanitize_free_string_list(scope_config.get("disclosure")) or list(default_scope["disclosure"])
-        else:
-            resolved_scope["disclosure"] = list(default_scope["disclosure"])
-        resolved[scope_key] = resolved_scope
 
     return resolved
 
@@ -503,21 +414,6 @@ def default_candidate_state_snapshot(
         "latest_transition_at": None,
         "latest_transition_source": None,
         "snapshot_metadata": {"status_machine_version": "candidate-progress-v2"},
-    }
-
-
-def build_memory_disclosure(*, scope: str, summary: str | None, content: dict[str, Any], token_estimate: int) -> dict[str, Any]:
-    compact_summary = summary or f"{scope} memory ready."
-    model_excerpt = json.dumps(content or {}, ensure_ascii=False)[:1600]
-    return {
-        "preview": compact_summary[:180],
-        "operator_summary": compact_summary,
-        "model_context": model_excerpt,
-        "tiers": [
-            {"level": "preview", "label": "Preview", "token_estimate": min(token_estimate, 180)},
-            {"level": "operator", "label": "Operator Summary", "token_estimate": min(token_estimate, 900)},
-            {"level": "model", "label": "Model Context", "token_estimate": min(token_estimate, 1600)},
-        ],
     }
 
 
@@ -698,7 +594,7 @@ def default_recruit_agent_profile() -> dict[str, Any]:
         "prompt_config": {
             "system_prompt": "你是 Recruit Agent。你的核心职责是严格在招聘场景中维护候选人与投递记录事实，以投递记录为单位推进流程、记录证据，并把高风险动作交给人工确认。",
             "goal_template": goal_template,
-            "context_slots": ["candidate_memory", "job_memory", "agent_global_memory", "candidate_thread", "candidate_progress"],
+            "context_slots": ["candidate_context", "job_context", "global_context", "candidate_thread", "candidate_progress"],
             "context_policy": default_context_policy(),
             "response_policy": {
                 "prefer_structured_output": True,
@@ -773,292 +669,3 @@ def ensure_primary_recruit_agent_profile(session: Session) -> RecruitAgentProfil
         if patch:
             existing = repo.update(existing, patch)
         return existing
-
-
-def ensure_candidate_person_memory(
-    session: Session,
-    *,
-    agent_profile_id: str,
-    person_id: str,
-) -> CandidatePersonMemory:
-    repo = CandidatePersonMemoryRepository(session)
-    memory = repo.by_agent_and_person(agent_profile_id=agent_profile_id, person_id=person_id)
-    if memory is not None:
-        return memory
-    return repo.create(
-        {
-            "agent_profile_id": agent_profile_id,
-            "person_id": person_id,
-            "status": "active",
-            "memory_schema_version": "candidate-person-memory-v1",
-            "summary": "候选人长期记忆尚未整理。",
-            "raw_content": {
-                "identity_summary": "",
-                "facts": [],
-                "interaction_summary": [],
-                "risk_flags": [],
-                "open_questions": [],
-                "recommended_next_actions": [],
-                "evidence_refs": [],
-                "confidence": "unknown",
-            },
-            "content": {
-                "facts": [],
-                "decisions": [],
-                "open_questions": [],
-                "next_actions": [],
-                "risk_flags": [],
-                "evidence_refs": [],
-                "confidence": "unknown",
-            },
-            "disclosure": build_memory_disclosure(
-                scope="candidate",
-                summary="候选人长期记忆尚未整理。",
-                content={"facts": [], "decisions": [], "open_questions": [], "next_actions": [], "risk_flags": [], "evidence_refs": [], "confidence": "unknown"},
-                token_estimate=0,
-            ),
-            "token_estimate": 0,
-            "source_count": 0,
-            "memory_metadata": {"scope": "candidate_person", "isolation_key": person_id},
-        }
-    )
-
-
-def ensure_job_description_memory(
-    session: Session,
-    *,
-    agent_profile_id: str,
-    job_description_id: str,
-) -> JobDescriptionMemory:
-    repo = JobDescriptionMemoryRepository(session)
-    memory = repo.by_agent_and_job_description(agent_profile_id=agent_profile_id, job_description_id=job_description_id)
-    if memory is not None:
-        return memory
-    return repo.create(
-        {
-            "agent_profile_id": agent_profile_id,
-            "job_description_id": job_description_id,
-            "status": "active",
-            "memory_schema_version": "job-description-memory-v1",
-            "summary": "岗位长期记忆尚未整理。",
-            "raw_content": {
-                "screening_preferences": [],
-                "strong_positive_signals": [],
-                "common_reject_reasons": [],
-                "communication_notes": [],
-                "quality_thresholds": [],
-                "historical_patterns": [],
-            },
-            "content": {
-                "facts": [],
-                "decisions": [],
-                "open_questions": [],
-                "next_actions": [],
-                "risk_flags": [],
-                "evidence_refs": [],
-                "confidence": "unknown",
-            },
-            "disclosure": build_memory_disclosure(
-                scope="job",
-                summary="岗位长期记忆尚未整理。",
-                content={"facts": [], "decisions": [], "open_questions": [], "next_actions": [], "risk_flags": [], "evidence_refs": [], "confidence": "unknown"},
-                token_estimate=0,
-            ),
-            "token_estimate": 0,
-            "source_count": 0,
-            "memory_metadata": {"scope": "job_description", "isolation_key": job_description_id},
-        }
-    )
-
-
-def ensure_global_memory(
-    session: Session,
-    *,
-    agent_profile_id: str,
-) -> AgentGlobalMemory:
-    repo = AgentGlobalMemoryRepository(session)
-    memory = repo.by_agent(agent_profile_id)
-    if memory is not None:
-        if needs_agent_global_memory_projection(
-            memory_schema_version=memory.memory_schema_version,
-            summary=memory.summary,
-            content=dict(memory.content or {}),
-            raw_content=dict(memory.raw_content or {}),
-            memory_metadata=dict(memory.memory_metadata or {}),
-        ):
-            runtime_link = dict(memory.raw_content or {})
-            runtime_link_meta = dict(memory.memory_metadata or {})
-            run_pk = str(runtime_link.get("run_pk") or runtime_link_meta.get("run_pk") or "").strip() or None
-            conversation_pk = str(
-                runtime_link.get("conversation_pk") or runtime_link_meta.get("conversation_pk") or ""
-            ).strip() or None
-            goal_kind: str | None = None
-            goal_title: str | None = None
-            run_status: str | None = None
-            if run_pk:
-                run = session.get(AgentRun, run_pk)
-                if run is not None:
-                    run_status = str(run.status or "").strip() or None
-                    if conversation_pk is None:
-                        conversation_pk = str((run.runtime_metadata or {}).get("conversation_id") or "").strip() or None
-                    goal_spec = session.get(GoalSpec, run.goal_spec_id) if run.goal_spec_id else None
-                    if goal_spec is not None:
-                        goal_kind = str(goal_spec.goal_kind or "").strip() or None
-                        goal_title = str(goal_spec.title or "").strip() or None
-            projected = project_agent_global_memory(
-                summary=memory.summary,
-                content=dict(memory.content or {}),
-                raw_content=dict(memory.raw_content or {}),
-                goal_kind=goal_kind,
-                goal_title=goal_title,
-                run_status=run_status,
-                source_kind=str((memory.memory_metadata or {}).get("source_kind") or memory.kind or "autonomous"),
-                run_pk=run_pk,
-                conversation_pk=conversation_pk,
-            )
-            metadata = dict(memory.memory_metadata or {})
-            metadata.update(dict(projected.get("memory_metadata") or {}))
-            metadata["normalized_from"] = str(memory.memory_schema_version or "legacy")
-            memory = repo.update(
-                memory,
-                {
-                    "memory_schema_version": GLOBAL_MEMORY_SCHEMA_VERSION,
-                    "summary": projected["summary"],
-                    "raw_content": dict(projected["raw_content"] or {}),
-                    "content": dict(projected["content"] or {}),
-                    "disclosure": build_memory_disclosure(
-                        scope="agent_global",
-                        summary=str(projected["summary"]),
-                        content=dict(projected["content"] or {}),
-                        token_estimate=content_length(dict(projected["content"] or {})),
-                    ),
-                    "token_estimate": content_length(dict(projected["content"] or {})),
-                    "memory_metadata": metadata,
-                },
-            )
-        return memory
-    default_payload = empty_agent_global_memory_payload()
-    return repo.create(
-        {
-            "agent_profile_id": agent_profile_id,
-            "status": "active",
-            "memory_schema_version": GLOBAL_MEMORY_SCHEMA_VERSION,
-            "summary": default_payload["summary"],
-            "raw_content": dict(default_payload["raw_content"] or {}),
-            "content": dict(default_payload["content"] or {}),
-            "disclosure": build_memory_disclosure(
-                scope="agent_global",
-                summary=str(default_payload["summary"]),
-                content=dict(default_payload["content"] or {}),
-                token_estimate=content_length(dict(default_payload["content"] or {})),
-            ),
-            "token_estimate": content_length(dict(default_payload["content"] or {})),
-            "source_count": 0,
-            "memory_metadata": dict(default_payload["memory_metadata"] or {}),
-        }
-    )
-
-
-def content_length(content: dict[str, Any]) -> int:
-    return len(json.dumps(content or {}, ensure_ascii=False))
-
-
-def needs_compaction(content: dict[str, Any], *, threshold: int = AUTO_COMPACT_THRESHOLD) -> bool:
-    return content_length(content) > threshold
-
-
-def _fallback_compaction_payload(content: dict[str, Any], *, scope: str) -> dict[str, Any]:
-    serialized = json.dumps(content or {}, ensure_ascii=False)
-    excerpt = serialized[:1200]
-    return {
-        "summary": f"{scope} memory compacted with fallback summarization.",
-        "content": {
-            "facts": [],
-            "decisions": [],
-            "open_questions": [],
-            "next_actions": [],
-            "risk_flags": [],
-            "evidence_refs": [],
-            "confidence": "low",
-            "excerpt": excerpt,
-        },
-    }
-
-
-def compact_memory_payload(
-    *,
-    provider: LLMProvider,
-    scope: str,
-    content: dict[str, Any],
-    reason: str,
-) -> dict[str, Any]:
-    prompt = (
-        "你是 Recruit Agent 的 memory compactor。\n"
-        "请把输入的 memory 压缩成结构化 JSON。\n"
-        "要求：\n"
-        "- 保留事实，不要编造。\n"
-        "- 区分事实、决策、风险和待确认问题。\n"
-        "- 只返回 JSON，不要附加解释。\n"
-        "- 返回结构必须至少包含: summary, content.facts, content.decisions, content.open_questions, content.next_actions, content.risk_flags, content.evidence_refs, content.confidence\n"
-        f"- 当前 memory scope: {scope}\n"
-        f"- 当前 compact reason: {reason}\n"
-    )
-    try:
-        result = provider.invoke(
-            LLMRequest(
-                id="memory_compaction",
-                turn_id="memory_compaction",
-                invocation_id="memory_compaction",
-                messages=[
-                    LLMMessage(role="system", content=prompt),
-                    LLMMessage(role="user", content=json.dumps(content or {}, ensure_ascii=False)),
-                ],
-                max_tokens=1200,
-                temperature=0.1,
-            )
-        )
-        content_text = ""
-        if result.response.assistant_message is not None and isinstance(result.response.assistant_message.content, str):
-            content_text = result.response.assistant_message.content
-        payload = json.loads(content_text or "{}")
-        if isinstance(payload, dict) and isinstance(payload.get("content"), dict):
-            payload.setdefault("summary", f"{scope} memory compacted.")
-            return payload
-    except (ProviderError, json.JSONDecodeError, TypeError, ValueError):
-        pass
-    return _fallback_compaction_payload(content, scope=scope)
-
-
-def apply_memory_compaction(
-    record: CandidatePersonMemory | JobDescriptionMemory | AgentGlobalMemory,
-    *,
-    provider: LLMProvider,
-    scope: str,
-    reason: str,
-    compacted_at: datetime,
-) -> CandidatePersonMemory | JobDescriptionMemory | AgentGlobalMemory:
-    original_raw_content = dict(record.raw_content or {}) or dict(record.content or {})
-    compacted = compact_memory_payload(
-        provider=provider,
-        scope=scope,
-        content=original_raw_content,
-        reason=reason,
-    )
-    record.summary = str(compacted.get("summary") or record.summary or "")
-    record.raw_content = original_raw_content
-    record.content = dict(compacted.get("content") or {})
-    record.disclosure = build_memory_disclosure(
-        scope=scope,
-        summary=record.summary,
-        content=dict(record.content or {}),
-        token_estimate=content_length(dict(record.content or {})),
-    )
-    record.token_estimate = content_length(record.content)
-    record.compacted_at = compacted_at
-    record.compacted_reason = reason
-    metadata = dict(record.memory_metadata or {})
-    history = list(metadata.get("compaction_history") or [])
-    history.append({"at": compacted_at.isoformat(), "reason": reason, "token_estimate": record.token_estimate})
-    metadata["compaction_history"] = history[-20:]
-    record.memory_metadata = metadata
-    return record

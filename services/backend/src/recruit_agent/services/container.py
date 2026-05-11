@@ -70,6 +70,7 @@ class AppContainer:
     evolution_queue: EvolutionQueue
     promotion: PromotionService
     mcp_registry: McpRegistryService
+    memory_file_store: MemoryFileStore
     events: EventStreamService
     flags: FeatureFlagService
     system_commands: SystemCommandService
@@ -129,6 +130,7 @@ class AppContainer:
             plugin_host=plugin_host,
             session_factory=session_factory,
             session_store=session_store,
+            memory_file_store=memory_file_store,
             max_history_messages=resolved_settings.assistant_max_history_messages,
         )
 
@@ -162,6 +164,7 @@ class AppContainer:
             evolution_queue=evolution_queue,
             promotion=promotion,
             mcp_registry=mcp_registry,
+            memory_file_store=memory_file_store,
             events=events,
             flags=flags,
             system_commands=system_commands,
@@ -188,9 +191,11 @@ class AppContainer:
         _register_delegate_scene_context_tool(self.tool_registry, scene_context_service=self.scene_context_service)
         self.autonomous_adapter.provider = self.provider
         self.autonomous_adapter.tool_registry = self.tool_registry
-        self.autonomous_adapter.memory_file_store = _build_memory_file_store(settings)
+        self.memory_file_store = _build_memory_file_store(settings)
+        self.autonomous_adapter.memory_file_store = self.memory_file_store
         self.assistant_adapter.provider = self.provider
         self.assistant_adapter.tool_registry = self.tool_registry
+        self.assistant_adapter.memory_file_store = self.memory_file_store
         self.assistant_adapter.max_history_messages = settings.assistant_max_history_messages
         self.dashboard.settings = settings
 
@@ -289,7 +294,8 @@ def _build_read_memory_handler(store: MemoryFileStore):
                     "memory_item_id": item["path"],
                     "kind": "memory_file",
                     "summary": _first_non_empty_line(str(content or "")) or item["path"],
-                    "content": {"path": item["path"], "text": content},
+                    "content": {"path": item["path"], "preview": str(content or "").strip()[:500]},
+                    "size": item.get("size"),
                     "updated_at": item.get("updated_at"),
                 }
             )
@@ -577,14 +583,7 @@ def _default_assistant_profile() -> dict[str, Any]:
             },
         },
         "playbook_blueprint": {},
-        "memory_policy": {
-            "candidate_memory": {"isolation": "strict_by_candidate"},
-            "job_memory": {"isolation": "strict_by_jd"},
-            "agent_global_memory": {
-                "scope": "agent_global",
-                "share_read": True,
-            },
-        },
+        "memory_policy": resolve_memory_policy({}),
         "dashboard_config": {"layout": ["chat_sessions", "recent_activity"]},
         "channel_config": {"chat": {"enabled": True, "requires_confirmation": True}},
         "agent_metadata": _merge_agent_metadata({}, kind="assistant"),

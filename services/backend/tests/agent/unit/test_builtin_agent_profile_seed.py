@@ -8,7 +8,7 @@ from recruit_agent.models.domain import RecruitAgentProfile
 from recruit_agent.services.container import _seed_builtin_agent_profiles
 
 
-def test_seed_builtin_profiles_normalizes_autonomous_memory_policy(tmp_path: Path) -> None:
+def test_seed_builtin_profiles_normalizes_autonomous_memory_writeback_policy(tmp_path: Path) -> None:
     settings = AppSettings(
         data_dir=str(tmp_path / "data"),
         database_url=f"sqlite:///{tmp_path / 'builtin-agent-seed.db'}",
@@ -25,27 +25,10 @@ def test_seed_builtin_profiles_normalizes_autonomous_memory_policy(tmp_path: Pat
                 is_primary=True,
                 prompt_config={},
                 memory_policy={
-                    "candidate_memory": {
-                        "isolation": "strict_by_candidate",
-                        "auto_compact": True,
-                        "compact_threshold": 123,
-                        "schema": ["identity_summary"],
-                        "disclosure": ["preview"],
-                    },
-                    "job_memory": {
-                        "isolation": "strict_by_jd",
-                        "auto_compact": True,
-                        "compact_threshold": 456,
-                        "schema": ["screening_preferences"],
-                        "disclosure": ["preview"],
-                    },
-                    "agent_global_memory": {
-                        "scope": "agent_global",
-                        "auto_compact": True,
-                        "compact_threshold": 789,
-                        "schema": ["global_strategies", "common_failures", "effective_patterns"],
-                        "disclosure": ["preview"],
-                    },
+                    "legacy_candidate_context": {"schema": ["legacy_business_context"]},
+                    "legacy_job_context": {"schema": ["legacy_business_context"]},
+                    "legacy_global_context": {"schema": ["legacy_business_context"]},
+                    "writeback": {"auto_write_min_confidence": 0.9, "max_stable_facts": 3},
                 },
             )
         )
@@ -55,17 +38,9 @@ def test_seed_builtin_profiles_normalizes_autonomous_memory_policy(tmp_path: Pat
 
     with session_factory() as session:
         profile = session.query(RecruitAgentProfile).filter_by(agent_key="autonomous").one()
-        assert profile.memory_policy["agent_global_memory"]["scope"] == "agent_global"
-        assert profile.memory_policy["agent_global_memory"]["compact_threshold"] == 789
-        assert profile.memory_policy["agent_global_memory"]["schema"] == [
-            "facts",
-            "decisions",
-            "open_questions",
-            "next_actions",
-            "risk_flags",
-            "evidence_refs",
-            "confidence",
-        ]
+        assert set(profile.memory_policy) == {"writeback"}
+        assert profile.memory_policy["writeback"]["auto_write_min_confidence"] == 0.9
+        assert profile.memory_policy["writeback"]["max_stable_facts"] == 3
 
 
 def test_seed_builtin_profiles_backfills_autonomous_goal_template(tmp_path: Path) -> None:

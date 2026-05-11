@@ -84,10 +84,10 @@ Agent runtime 不为 MCP、skill、memory、业务 context 定义新的 runtime 
 
 ### Context / memory 管理边界
 
-runtime、adapter、业务 memory 的职责必须分开：
+runtime、adapter、Agent file memory、业务 context/knowledge 的职责必须分开：
 
-- runtime history：`ConversationHistory` 是模型上下文的 materialized history。compact / rollback / context replacement 只能替换 `ConversationHistory` 并同步 `Transcript`，不得读写候选人、JD、投递、沟通、评分或全局业务 memory。
-- product adapter context construction：adapter 在 Turn 前读取 `GoalSpec`、`AgentRun`、UI state、skill metadata/content、业务 memory references、MCP resource、allowed tools 和权限策略，构造 `UserInput`、system context、run context 与 `ToolDefinition[]`。
+- runtime history：`ConversationHistory` 是模型上下文的 materialized history。compact / rollback / context replacement 只能替换 `ConversationHistory` 并同步 `Transcript`，不得读写候选人、JD、投递、沟通、评分或全局业务 context/knowledge。
+- product adapter context construction：adapter 在 Turn 前读取 `GoalSpec`、`AgentRun`、UI state、skill metadata/content、business context/knowledge references、MCP resource、allowed tools 和权限策略，构造 `UserInput`、system context、run context 与 `ToolDefinition[]`。
 - memory file update：用户显式要求记住/忘记时，模型在主 Turn 内通过受限 memory file tools 写入 memory scope；工具事件由 adapter/UI 投影为“记忆已更新”。这不是业务 tool，也不是 runtime primitive。
 - memory extraction / compaction：后台 memory pipeline 可在 Turn 后从 `InteractionOutput`、`ToolResult`、最终 assistant message 和业务服务结果中抽取稳定事实，按产品策略做去重、冲突检测、审批或写回 memory 文件；这不是 runtime 能力，也不是 final answer 隐式 JSON 协议。
 - skill context injection：adapter 选择 relevant skills，并把 skill name、description、trigger hint、instructions、schemas 等压缩成模型可见 context；runtime 只看到普通 message/input。
@@ -113,15 +113,15 @@ Memory 是产品状态和业务策略，不是 runtime state。
 
 当前实现状态：
 
-- `MemoryService` 支持 scoped read/write/search、run context、session summary、recent events。
-- 候选人、JD、全局 memory 有 ensure/update/compact API 与 compaction history。
-- Autonomous adapter 会在 Turn 前读取 scoped memory，并在 Turn 后按配置化 gate 选择性触发 memory extraction/compaction pipeline；该 pipeline 独立判断是否产生 stable facts，不能把 final answer 当作隐藏 `memory_patch` 协议。
+- `MemoryFileStore` 以 markdown 文件保存 Agent file memory，并按 agent profile、scope、scope ref 隔离。
 - `read_memory`、`list_memory_files`、`read_memory_file`、`write_memory_file`、`delete_memory_file` 是 memory subsystem tools，不是业务工具，也不是 runtime primitive；runtime 只看到普通 ToolDefinition / ToolCall / ToolResult。
+- Assistant 与 Autonomous adapter 使用同一套 file-memory 读写模型；差异只来自 agent profile、conversation/session 和 adapter 配置隔离。
+- Autonomous adapter 可在 Turn 后按配置化 gate 选择性触发 memory extraction/compaction pipeline；该 pipeline 独立判断是否产生 stable facts，不能把 final answer 当作隐藏 `memory_patch` 协议。
 
 当前方案缺口：
 
 - 自动 memory 更新仍是产品层能力，默认不需要审批，review policy 可选开启；触发必须先经过配置化 gate，避免每个 completed Turn 默认调用 memory LLM。
-- Assistant 的会话摘要有轻量 compaction，但不是统一业务 memory 更新流水线。
+- Assistant 的会话摘要有轻量 compaction，但不是业务 context/knowledge 更新流水线。
 
 #### MCP
 
@@ -147,14 +147,14 @@ MCP 是工具和资源来源，不是 runtime 配置类型。
 
 #### Context
 
-Context 分为 runtime history、adapter context construction 和业务 memory context，三者不能互相替代。
+Context 分为 runtime history、adapter context construction、Agent file memory context 和业务 context/knowledge，四者不能互相替代。
 
 必须具备：
 
-- Turn 前加载：adapter 汇总 GoalSpec、AgentRun、UI state、allowed tools、skill injections、business memory refs、MCP resource、权限策略。
+- Turn 前加载：adapter 汇总 GoalSpec、AgentRun、UI state、allowed tools、skill injections、business context/knowledge refs、memory file refs、MCP resource、权限策略。
 - 历史管理：runtime 只管理 `ConversationHistory` / `Transcript` 的 materialized messages，可执行 history compaction、replace、resume。
 - 预算管理：adapter 和 runtime config 共同控制 token/message 预算；业务 context 超预算时按 context policy drop 或压缩。
-- 压缩事件：runtime history 压缩只产出 context_compacted runtime event；业务 memory 压缩由 memory 服务/API 处理。
+- 压缩事件：runtime history 压缩只产出 context_compacted runtime event；Agent file memory 压缩由 memory pipeline / file tools 处理；业务 context/knowledge 压缩不得冒充 runtime memory。
 
 当前实现状态：
 

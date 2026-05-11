@@ -13,13 +13,12 @@ from recruit_agent.agent_runtime.types import InteractionOutput, LLMProvider
 from recruit_agent.db.base import utcnow
 from recruit_agent.evolution.learning_writer import LearningWriter
 from recruit_agent.memory.filesystem import MemoryFileStore
-from recruit_agent.memory.service import MemoryService
 from recruit_agent.memory.writeback import (
     MemoryWritebackPolicy,
-    apply_stable_memory_facts,
     memory_writeback_policy_from_config,
     select_stable_memory_facts_with_llm,
     should_start_memory_writeback_job,
+    write_stable_memory_facts_to_files,
 )
 from recruit_agent.models.domain import (
     AgentRun,
@@ -77,7 +76,6 @@ class AutonomousAdapter:
             if run.started_at is None:
                 run.started_at = utcnow()
             next_seq = self._next_turn_seq(session, run.id)
-            memory_service = MemoryService(session)
             agent_session = session.get(AgentSession, run.session_id)
             agent_profile_id = None if agent_session is None else agent_session.agent_profile_id
             goal_spec = session.get(GoalSpec, run.goal_spec_id) if run.goal_spec_id else None
@@ -165,20 +163,13 @@ class AutonomousAdapter:
             memory_scope_ref = str(goal_constraints.get("memory_scope_ref") or scope_ref or agent_profile_id or run.id)
             if memory_scope_kind == "global" and agent_profile_id:
                 memory_scope_ref = str(goal_constraints.get("memory_scope_ref") or goal_constraints.get("global_scope_ref") or agent_profile_id)
-            memory_entries = _read_memory_entries(
-                memory_service,
-                scope_kind=memory_scope_kind,
-                scope_ref=memory_scope_ref,
-                agent_profile_id=agent_profile_id,
-            )
+            memory_entries = []
             if self.memory_file_store is not None:
-                memory_entries.extend(
-                    _read_memory_file_entries(
-                        self.memory_file_store,
-                        scope_kind=memory_scope_kind,
-                        scope_ref=memory_scope_ref,
-                        agent_profile_id=agent_profile_id,
-                    )
+                memory_entries = _read_memory_file_index_entries(
+                    self.memory_file_store,
+                    scope_kind=memory_scope_kind,
+                    scope_ref=memory_scope_ref,
+                    agent_profile_id=agent_profile_id,
                 )
             agent_profile = session.get(RecruitAgentProfile, agent_profile_id) if agent_profile_id else None
             memory_writeback_policy = _memory_writeback_policy(agent_profile)
@@ -211,7 +202,7 @@ class AutonomousAdapter:
                     scope_ref=scope_ref,
                     constraints=goal_constraints,
                     world_snapshot=world_snapshot,
-                    recent_events=memory_service.fetch_recent_events(run_id=run.id, limit=8),
+                    recent_events=_fetch_recent_events(session, run_id=run.id, limit=8),
                     memory_entries=memory_entries,
                     available_tools=sorted(self.tool_registry.tools.keys()),
                     skill_contexts=self._skill_contexts(
@@ -244,7 +235,7 @@ class AutonomousAdapter:
                         InteractionEngineConfig(
                             conversation_id=run.session_id or run.id,
                             provider=self.provider,
-                            tools=self.tool_registry.to_agent_runtime_tools(),
+                            tools=_scoped_tool_registry(self.tool_registry, agent_profile_id).to_agent_runtime_tools(),
                             initial_messages=adapter_context.initial_messages,
                             max_llm_invocations=active_turn_limits.max_llm_invocations or 12,
                             initial_seq=runtime_event_seq + 1,
@@ -373,7 +364,6 @@ class AutonomousAdapter:
             if run.status == "completed":
                 _maybe_write_turn_memory(
                     session,
-                    memory_service,
                     provider=self.provider,
                     scope_kind=memory_scope_kind,
                     scope_ref=memory_scope_ref,
@@ -671,25 +661,7 @@ def _resolve_turn_limits(defaults: TurnLimits, goal_spec: GoalSpec | None) -> Tu
     return replace(defaults, **resolved)
 
 
-def _read_memory_entries(
-    memory_service: MemoryService,
-    *,
-    scope_kind: str,
-    scope_ref: str,
-    agent_profile_id: str | None,
-) -> list[dict[str, Any]]:
-    try:
-        return memory_service.read(
-            scope_kind=scope_kind,
-            scope_ref=scope_ref,
-            agent_profile_id=agent_profile_id,
-            limit=12,
-        )
-    except Exception:
-        return []
-
-
-def _read_memory_file_entries(
+def _read_memory_file_index_entries(
     memory_file_store: MemoryFileStore,
     *,
     scope_kind: str,
@@ -710,7 +682,8 @@ def _read_memory_file_entries(
                     "memory_item_id": item["path"],
                     "kind": "memory_file",
                     "summary": _first_non_empty_memory_line(str(content or "")) or item["path"],
-                    "content": {"path": item["path"], "text": content},
+                    "content": {"path": item["path"], "preview": _memory_preview(str(content or ""))},
+                    "size": item.get("size"),
                     "updated_at": item.get("updated_at"),
                 }
             )
@@ -727,9 +700,54 @@ def _first_non_empty_memory_line(text: str) -> str | None:
     return None
 
 
+def _memory_preview(text: str, *, limit: int = 500) -> str:
+    return str(text or "").strip()[:limit]
+
+
+def _scoped_tool_registry(registry: ToolRegistry, agent_profile_id: str | None) -> ToolRegistry:
+    if not agent_profile_id:
+        return registry
+    scoped = ToolRegistry()
+    for tool in registry.tools.values():
+        cloned = tool.clone()
+        if cloned.category == "memory":
+            original_handler = cloned.handler
+
+            def _handler(arguments: dict[str, Any], *, handler=original_handler) -> Any:
+                scoped_arguments = dict(arguments or {})
+                scoped_arguments["agent_profile_id"] = agent_profile_id
+                return handler(scoped_arguments)
+
+            cloned.handler = _handler
+        scoped.register(cloned)
+    return scoped
+
+
+def _fetch_recent_events(session: Session, *, run_id: str | None = None, conversation_id: str | None = None, limit: int = 20) -> list[dict[str, Any]]:
+    stmt = select(AgentRuntimeEvent)
+    if run_id is not None:
+        stmt = stmt.where(AgentRuntimeEvent.run_id == run_id)
+    if conversation_id is not None:
+        stmt = stmt.where(AgentRuntimeEvent.conversation_id == conversation_id)
+    stmt = stmt.order_by(AgentRuntimeEvent.occurred_at.desc(), AgentRuntimeEvent.id.desc()).limit(limit)
+    events = list(session.scalars(stmt).all())
+    events.reverse()
+    return [
+        {
+            "event_type": event.event_type,
+            "source": event.source,
+            "message": event.message,
+            "turn_id": event.turn_id,
+            "conversation_id": event.conversation_id,
+            "payload": dict(event.payload or {}),
+            "seq": event.seq,
+        }
+        for event in events
+    ]
+
+
 def _maybe_write_turn_memory(
     session: Session,
-    memory_service: MemoryService,
     *,
     provider: LLMProvider,
     scope_kind: str,
@@ -759,7 +777,6 @@ def _maybe_write_turn_memory(
     ):
         return
     attempted = _write_turn_memory(
-        memory_service,
         provider=provider,
         scope_kind=scope_kind,
         scope_ref=scope_ref,
@@ -777,7 +794,6 @@ def _maybe_write_turn_memory(
 
 
 def _write_turn_memory(
-    memory_service: MemoryService,
     *,
     provider: LLMProvider,
     scope_kind: str,
@@ -791,6 +807,8 @@ def _write_turn_memory(
     policy: MemoryWritebackPolicy,
     memory_file_store: MemoryFileStore | None = None,
 ) -> bool:
+    if memory_file_store is None:
+        return False
     try:
         facts = select_stable_memory_facts_with_llm(
             provider,
@@ -801,8 +819,8 @@ def _write_turn_memory(
             memory_entries=memory_entries,
             max_stable_facts=policy.max_stable_facts,
         )
-        apply_stable_memory_facts(
-            memory_service,
+        write_stable_memory_facts_to_files(
+            memory_file_store,
             scope_kind=scope_kind,
             scope_ref=scope_ref,
             agent_profile_id=agent_profile_id,
@@ -813,16 +831,6 @@ def _write_turn_memory(
             source="memory_writeback_pipeline",
             policy=policy,
         )
-        if memory_file_store is not None:
-            _append_stable_memory_facts_to_file(
-                memory_file_store,
-                scope_kind=scope_kind,
-                scope_ref=scope_ref,
-                agent_profile_id=agent_profile_id,
-                facts=facts,
-                run=run,
-                turn=turn,
-            )
         return True
     except Exception:
         return False
@@ -831,34 +839,6 @@ def _write_turn_memory(
 def _memory_writeback_policy(profile: RecruitAgentProfile | None) -> MemoryWritebackPolicy:
     config = dict((profile.memory_policy if profile is not None else {}) or {}).get("writeback")
     return memory_writeback_policy_from_config(dict(config or {}))
-
-
-def _append_stable_memory_facts_to_file(
-    memory_file_store: MemoryFileStore,
-    *,
-    scope_kind: str,
-    scope_ref: str,
-    agent_profile_id: str | None,
-    facts: list[dict[str, Any]],
-    run: AgentRun,
-    turn: AgentTurnRecord,
-) -> None:
-    lines: list[str] = []
-    for fact in facts:
-        summary = _first_non_empty_memory_line(str(fact.get("summary") or fact.get("fact") or ""))
-        if not summary:
-            continue
-        lines.append(f"- {summary} (run={run.run_id or run.id}, turn={turn.turn_id})")
-    if not lines:
-        return
-    memory_file_store.write_file(
-        scope_kind=scope_kind,
-        scope_ref=scope_ref,
-        agent_profile_id=agent_profile_id,
-        path="stable_facts.md",
-        content="\n".join(lines) + "\n",
-        mode="append",
-    )
 
 
 def _memory_writeback_state(run: AgentRun) -> dict[str, Any]:

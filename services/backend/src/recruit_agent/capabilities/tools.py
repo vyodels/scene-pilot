@@ -280,7 +280,7 @@ def register_core_tools(
     registry.register(
         ToolDefinition(
             name="read_memory",
-            description="Read memory entries for a scope.",
+            description="Read a progressive-disclosure memory index for a scope. Use read_memory_file for full markdown content.",
             parameters={
                 "type": "object",
                 "properties": {"scope_kind": {"type": "string"}, "scope_ref": {"type": "string"}},
@@ -301,7 +301,7 @@ def register_core_tools(
     registry.register(
         ToolDefinition(
             name="list_memory_files",
-            description="List markdown memory files available inside a memory scope.",
+            description="List markdown memory files available inside a memory scope without reading full content.",
             parameters={
                 "type": "object",
                 "properties": memory_file_scope_properties,

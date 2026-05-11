@@ -123,6 +123,7 @@ def test_core_read_memory_tool_uses_memory_files(tmp_path: Path) -> None:
     assert output["count"] == 1
     assert output["entries"][0]["memory_item_id"] == "status.md"
     assert output["entries"][0]["summary"] == "Alice replied"
+    assert output["entries"][0]["content"] == {"path": "status.md", "preview": "# Alice replied\n\nCandidate replied to outreach."}
 
 
 def test_memory_file_tools_are_scoped_to_memory_root(tmp_path: Path) -> None:

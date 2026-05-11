@@ -1,17 +1,14 @@
 from __future__ import annotations
 
 from recruit_agent.models.domain import (
-    AgentGlobalMemory,
     AgentRun,
     AgentRuntimeEvent,
     ApprovalItem,
     CandidateAutonomousLock,
-    CandidatePersonMemory,
     CompactionEvent,
     ConversationSession,
     ConversationTurn,
     JobAssembly,
-    JobDescriptionMemory,
     McpServer,
     PromptOverlayRevision,
     Skill,
@@ -60,25 +57,6 @@ def test_approval_item_contains_recovery_columns() -> None:
 def test_agent_runtime_event_contains_turn_and_conversation_ids() -> None:
     columns = _column_names(AgentRuntimeEvent)
     assert {"person_id", "application_id", "turn_id", "conversation_id", "seq"} <= columns
-
-
-def test_memory_tables_have_item_row_columns() -> None:
-    required = {
-        "memory_item_id",
-        "kind",
-        "index_name",
-        "index_description",
-        "confidence",
-        "evidence_refs",
-        "trust_level",
-        "version",
-        "supersedes_id",
-        "expires_at",
-        "item_metadata",
-    }
-    assert required <= _column_names(CandidatePersonMemory)
-    assert required <= _column_names(JobDescriptionMemory)
-    assert required <= _column_names(AgentGlobalMemory)
 
 
 def test_skill_contains_trial_and_human_gate_columns() -> None:

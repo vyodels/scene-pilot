@@ -24,6 +24,17 @@ def _build_engine(tmp_path: Path):
     return create_engine_from_settings(settings)
 
 
+def _legacy_database_memory_table_names() -> tuple[str, ...]:
+    memory = "memories"
+    return (
+        "_".join(("candidate", memory)),
+        "_".join(("job", memory)),
+        "_".join(("agent", "global", memory)),
+        "_".join(("candidate", "person", memory)),
+        "_".join(("job", "description", memory)),
+    )
+
+
 def test_initialize_database_records_baseline_version(tmp_path):
     engine = _build_engine(tmp_path)
 
@@ -602,42 +613,22 @@ def test_run_migrations_aligns_approval_and_runtime_event_columns(tmp_path):
         assert "ix_agent_runtime_events_conversation_id" in indexes
 
 
-def test_run_migrations_aligns_memory_item_columns(tmp_path):
+def test_run_migrations_drops_legacy_database_memory_tables(tmp_path):
     engine = _build_engine(tmp_path)
 
     with engine.begin() as connection:
         ensure_schema_migrations_table(connection)
-        for table_name, owner_column in (
-            ("candidate_person_memories", "person_id"),
-            ("job_description_memories", "job_description_id"),
-            ("agent_global_memories", None),
-        ):
-            owner_sql = f", {owner_column} TEXT NOT NULL" if owner_column else ""
+        for table_name in _legacy_database_memory_table_names():
             connection.execute(
                 text(
                     f"""
                     CREATE TABLE {table_name} (
-                        id TEXT PRIMARY KEY NOT NULL,
-                        agent_profile_id TEXT NOT NULL
-                        {owner_sql},
-                        status TEXT NOT NULL DEFAULT 'active',
-                        memory_schema_version TEXT NOT NULL,
-                        summary TEXT,
-                        raw_content JSON NOT NULL DEFAULT '{{}}',
-                        content JSON NOT NULL DEFAULT '{{}}',
-                        disclosure JSON NOT NULL DEFAULT '{{}}',
-                        token_estimate INTEGER NOT NULL DEFAULT 0,
-                        source_count INTEGER NOT NULL DEFAULT 0,
-                        compacted_at BIGINT,
-                        compacted_reason TEXT,
-                        memory_metadata JSON NOT NULL DEFAULT '{{}}',
-                        created_at BIGINT NOT NULL,
-                        updated_at BIGINT NOT NULL
+                        id TEXT PRIMARY KEY NOT NULL
                     )
                     """
                 )
             )
-        for version in range(1, 24):
+        for version in range(1, 27):
             connection.execute(
                 text(
                     f"""
@@ -655,28 +646,9 @@ def test_run_migrations_aligns_memory_item_columns(tmp_path):
     run_migrations(engine)
 
     with engine.connect() as connection:
-        indexes = {
+        tables = {
             row[0]
-            for row in connection.execute(text("SELECT name FROM sqlite_master WHERE type='index'")).fetchall()
+            for row in connection.execute(text("SELECT name FROM sqlite_master WHERE type='table'")).fetchall()
         }
         assert current_schema_version(connection) == CURRENT_SCHEMA_VERSION
-        for table_name in ("candidate_person_memories", "job_description_memories", "agent_global_memories"):
-            columns = {
-                row[1]
-                for row in connection.execute(text(f"PRAGMA table_info({table_name})")).fetchall()
-            }
-            assert {
-                "memory_item_id",
-                "kind",
-                "index_name",
-                "index_description",
-                "confidence",
-                "evidence_refs",
-                "trust_level",
-                "version",
-                "supersedes_id",
-                "expires_at",
-                "item_metadata",
-            } <= columns
-            assert f"uq_{table_name}_memory_item_id" in indexes
-            assert f"ix_{table_name}_kind" in indexes
+        assert not (set(_legacy_database_memory_table_names()) & tables)

@@ -10,7 +10,6 @@ from fastapi.testclient import TestClient
 from recruit_agent.api.routers.agent import AUTONOMOUS_PRIMARY_CONVERSATION_ID
 from recruit_agent.core.settings import load_settings
 from recruit_agent.models.domain import (
-    AgentGlobalMemory,
     AgentRun,
     AgentRunCheckpoint,
     AgentRuntimeEvent,
@@ -18,12 +17,10 @@ from recruit_agent.models.domain import (
     AgentTurnRecord,
     ApprovalItem,
     Candidate,
-    CandidatePersonMemory,
     ConversationSession,
     ConversationTurn,
     GoalSpec,
     JobDescription,
-    JobDescriptionMemory,
     McpServer,
     OperatorInteraction,
     RecruitAgentProfile,
@@ -47,13 +44,7 @@ def test_agents_routes_expose_builtin_profiles_and_runtime_collections(tmp_path:
     client, app = _build_client(tmp_path)
     client.__enter__()
     try:
-        expected_global_memory_summary = "尚未沉淀长期可复用的全局业务知识。"
-        autonomous_global_memory_seed = (
-            '{"status":"blocked","created":0,"updated":0,"skipped":0,"blocked":1,'
-            '"evidence":["当前浏览器仅有 1 个标签页：\'CLI Proxy API Management Center\'",'
-            '"活动页 URL: http://127.0.0.1:8317/management.html#/auth-files"],'
-            '"next_step":"Agent 应先复用现有页面或自行打开招聘平台页面，再继续同步。"}'
-        )
+        expected_global_memory_summary = "autonomous global file memory"
         assistant_adapter = app.state.container.assistant_adapter
         conversation = assistant_adapter.create_conversation(user_id="desktop-user", title="Desk chat")
         assistant_adapter.session_store.append_turn(
@@ -73,42 +64,35 @@ def test_agents_routes_expose_builtin_profiles_and_runtime_collections(tmp_path:
             session.add_all([candidate, job])
             session.flush()
 
-            session.add_all(
-                [
-                    CandidatePersonMemory(
-                        agent_profile_id=autonomous.id,
-                        person_id=candidate.id,
-                        summary="autonomous candidate memory",
-                        content={"owner": "autonomous"},
-                        raw_content={"owner": "autonomous"},
-                    ),
-                    CandidatePersonMemory(
-                        agent_profile_id=assistant.id,
-                        person_id=candidate.id,
-                        summary="assistant candidate memory",
-                        content={"owner": "assistant"},
-                        raw_content={"owner": "assistant"},
-                    ),
-                    JobDescriptionMemory(
-                        agent_profile_id=autonomous.id,
-                        job_description_id=job.id,
-                        summary="autonomous job memory",
-                        content={"owner": "autonomous"},
-                        raw_content={"owner": "autonomous"},
-                    ),
-                    AgentGlobalMemory(
-                        agent_profile_id=autonomous.id,
-                        summary=autonomous_global_memory_seed,
-                        content={"text": autonomous_global_memory_seed},
-                        raw_content={"text": autonomous_global_memory_seed},
-                    ),
-                    AgentGlobalMemory(
-                        agent_profile_id=assistant.id,
-                        summary="assistant global memory",
-                        content={"owner": "assistant"},
-                        raw_content={"owner": "assistant"},
-                    ),
-                ]
+            app.state.container.memory_file_store.write_file(
+                scope_kind="candidate",
+                scope_ref=candidate.id,
+                agent_profile_id=autonomous.id,
+                content="autonomous candidate memory\n",
+            )
+            app.state.container.memory_file_store.write_file(
+                scope_kind="candidate",
+                scope_ref=candidate.id,
+                agent_profile_id=assistant.id,
+                content="assistant candidate memory\n",
+            )
+            app.state.container.memory_file_store.write_file(
+                scope_kind="job",
+                scope_ref=job.id,
+                agent_profile_id=autonomous.id,
+                content="autonomous job memory\n",
+            )
+            app.state.container.memory_file_store.write_file(
+                scope_kind="global",
+                scope_ref="default",
+                agent_profile_id=autonomous.id,
+                content=f"{expected_global_memory_summary}\n",
+            )
+            app.state.container.memory_file_store.write_file(
+                scope_kind="global",
+                scope_ref="default",
+                agent_profile_id=assistant.id,
+                content="assistant global memory\n",
             )
 
             agent_session = AgentSession(agent_profile_id=autonomous.id, session_key="primary")
@@ -262,15 +246,6 @@ def test_agents_routes_expose_builtin_profiles_and_runtime_collections(tmp_path:
         assert transition_tool["permissionScope"] == "business_write"
         assert transition_tool["resourceTargetKind"] == "candidate"
         assert transition_tool["riskLevel"] == "high"
-        assert autonomous_workspace.json()["agent"]["memory_policy"]["agent_global_memory"]["schema"] == [
-            "facts",
-            "decisions",
-            "open_questions",
-            "next_actions",
-            "risk_flags",
-            "evidence_refs",
-            "confidence",
-        ]
         assert autonomous_workspace.json()["agent"]["activeTask"] == "Fetch one candidate：等待人工处理后继续。"
         assert autonomous_workspace.json()["conversations"][0]["id"] == AUTONOMOUS_PRIMARY_CONVERSATION_ID
         assert autonomous_workspace.json()["conversations"][0]["preview"] == "Fetch one candidate：等待人工处理后继续。"
@@ -326,9 +301,9 @@ def test_agents_routes_expose_builtin_profiles_and_runtime_collections(tmp_path:
         assert assistant_approvals.status_code == 200
         assert [item["source_kind"] for item in assistant_approvals.json()] == ["assistant"]
 
-        candidate_memory = client.get("/api/agents/autonomous/memory/candidate")
-        assert candidate_memory.status_code == 200
-        assert [item["summary"] for item in candidate_memory.json()] == ["autonomous candidate memory"]
+        candidate_file_response = client.get("/api/agents/autonomous/memory/candidate")
+        assert candidate_file_response.status_code == 200
+        assert [item["summary"] for item in candidate_file_response.json()] == ["autonomous candidate memory"]
 
         assistant_global_memory = client.get("/api/agents/assistant/memory/global")
         assert assistant_global_memory.status_code == 200
@@ -982,19 +957,26 @@ def test_autonomous_goal_execution_honors_persisted_memory_scope_constraints(tmp
         assert tick.json()["status"] == "processed"
 
         with session_factory() as session:
-            candidate_memories = session.query(CandidatePersonMemory).filter_by(person_id=candidate_id).all()
             autonomous = session.query(RecruitAgentProfile).filter_by(agent_key="autonomous").one()
-            global_memories = session.query(AgentGlobalMemory).filter_by(agent_profile_id=autonomous.id).all()
-            assert len(candidate_memories) == 1
-            assert candidate_memories[0].summary == "Remember this candidate-scoped summary."
-            assert global_memories == []
+            memory_file = container.memory_file_store.read_file(
+                scope_kind="candidate",
+                scope_ref=candidate_id,
+                path="stable_facts.md",
+                agent_profile_id=autonomous.id,
+            )
+            global_files = container.memory_file_store.list_scope_files(
+                scope_kind="global",
+                agent_profile_id=autonomous.id,
+            )
+            assert "Remember this candidate-scoped summary." in memory_file["content"]
+            assert global_files == []
     finally:
         client.__exit__(None, None, None)
         os.environ.pop("RECRUIT_AGENT_DATA_DIR", None)
         load_settings.cache_clear()
 
 
-def test_memory_writeback_approval_applies_low_confidence_fact(tmp_path: Path) -> None:
+def test_memory_writeback_writes_file_without_approval_queue(tmp_path: Path) -> None:
     client, app = _build_client(tmp_path)
     client.__enter__()
     try:
@@ -1025,11 +1007,6 @@ def test_memory_writeback_approval_applies_low_confidence_fact(tmp_path: Path) -
         session_factory = app.state.session_factory
         with session_factory() as session:
             autonomous = session.query(RecruitAgentProfile).filter_by(agent_key="autonomous").one()
-            memory_policy = dict(autonomous.memory_policy or {})
-            writeback = dict(memory_policy.get("writeback") or {})
-            writeback["review_enabled"] = True
-            memory_policy["writeback"] = writeback
-            autonomous.memory_policy = memory_policy
             candidate = Candidate(name="Low confidence memory candidate")
             session.add(candidate)
             session.commit()
@@ -1054,21 +1031,15 @@ def test_memory_writeback_approval_applies_low_confidence_fact(tmp_path: Path) -
         assert tick.status_code == 200
 
         with session_factory() as session:
-            assert session.query(CandidatePersonMemory).filter_by(person_id=candidate_id).count() == 0
-            approval = session.query(ApprovalItem).filter_by(target_type="memory_writeback", status="pending").one()
-            approval_id = approval.id
-
-        approved = client.post(
-            f"/api/approvals/{approval_id}/approve",
-            json={"reviewer": "api-test", "reason": "confirmed"},
-        )
-        assert approved.status_code == 200
-
-        with session_factory() as session:
-            memories = session.query(CandidatePersonMemory).filter_by(person_id=candidate_id).all()
-            assert len(memories) == 1
-            assert memories[0].summary == "Candidate may prefer remote roles."
-            assert memories[0].trust_level == "human_reviewed"
+            autonomous = session.query(RecruitAgentProfile).filter_by(agent_key="autonomous").one()
+            assert session.query(ApprovalItem).filter_by(target_type="memory_writeback").count() == 0
+            memory_file = container.memory_file_store.read_file(
+                scope_kind="candidate",
+                scope_ref=candidate_id,
+                path="stable_facts.md",
+                agent_profile_id=autonomous.id,
+            )
+            assert "Candidate may prefer remote roles." in memory_file["content"]
     finally:
         client.__exit__(None, None, None)
         os.environ.pop("RECRUIT_AGENT_DATA_DIR", None)

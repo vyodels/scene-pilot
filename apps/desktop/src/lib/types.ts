@@ -294,13 +294,6 @@ export interface TalentPoolSyncRecord {
   updatedAt: string;
 }
 
-export interface MemoryDisclosureRecord {
-  preview?: string;
-  operatorSummary?: string;
-  modelContext?: string;
-  tiers: Array<Record<string, unknown>>;
-}
-
 export interface BlueprintNodeSummary {
   id: string;
   name: string;
@@ -492,62 +485,6 @@ export interface RecruitAgentProfileRecord {
   updatedAt: string;
 }
 
-export interface PersonMemoryRecord {
-  id: string;
-  agentProfileId: string;
-  personId: string;
-  status: string;
-  memorySchemaVersion: string;
-  summary?: string;
-  rawContent: Record<string, unknown>;
-  content: Record<string, unknown>;
-  disclosure: MemoryDisclosureRecord;
-  tokenEstimate: number;
-  sourceCount: number;
-  compactedAt?: string | null;
-  compactedReason?: string | null;
-  memoryMetadata: Record<string, unknown>;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface JobMemoryRecord {
-  id: string;
-  agentProfileId: string;
-  jobDescriptionId: string;
-  status: string;
-  memorySchemaVersion: string;
-  summary?: string;
-  rawContent: Record<string, unknown>;
-  content: Record<string, unknown>;
-  disclosure: MemoryDisclosureRecord;
-  tokenEstimate: number;
-  sourceCount: number;
-  compactedAt?: string | null;
-  compactedReason?: string | null;
-  memoryMetadata: Record<string, unknown>;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface AgentGlobalMemoryRecord {
-  id: string;
-  agentProfileId: string;
-  status: string;
-  memorySchemaVersion: string;
-  summary?: string;
-  rawContent: Record<string, unknown>;
-  content: Record<string, unknown>;
-  disclosure: MemoryDisclosureRecord;
-  tokenEstimate: number;
-  sourceCount: number;
-  compactedAt?: string | null;
-  compactedReason?: string | null;
-  memoryMetadata: Record<string, unknown>;
-  createdAt: string;
-  updatedAt: string;
-}
-
 export interface ApplicationConversationEntry {
   id: string;
   applicationId?: string | null;
@@ -692,7 +629,7 @@ export interface AgentRunRecord {
 
 export interface AgentMemorySummary {
   id: string;
-  scope: "candidate" | "job" | "global";
+  scope: "conversation" | "candidate" | "job" | "global";
   title: string;
   summary: string;
   status: string;

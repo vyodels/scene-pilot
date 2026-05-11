@@ -1,26 +1,19 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from hashlib import sha1
 import json
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import select
-
 from recruit_agent.agent_runtime.types import LLMMessage, LLMProvider, LLMRequest
-from recruit_agent.memory.service import MemoryService
-from recruit_agent.models.domain import ApprovalItem
+from recruit_agent.memory.filesystem import MemoryFileStore
 
 
 @dataclass(frozen=True, slots=True)
 class MemoryWritebackPolicy:
     min_confidence: float = 0.35
-    review_enabled: bool = False
-    review_below_confidence: float = 0.65
     max_stable_facts: int = 8
     trust_level: str = "agent_observed"
-    review_trust_level: str = "needs_review"
     min_completed_turns_between_jobs: int = 3
     min_evidence_chars_between_jobs: int = 1500
     force_on_explicit_request: bool = True
@@ -29,7 +22,6 @@ class MemoryWritebackPolicy:
 @dataclass(slots=True)
 class MemoryWritebackResult:
     stable_facts_written: int = 0
-    stable_facts_queued_for_review: int = 0
     skipped: list[dict[str, Any]] = field(default_factory=list)
 
 
@@ -107,8 +99,8 @@ def select_stable_memory_facts_with_llm(
     return _normalized_stable_memory_facts(payload.get("stable_facts") or [])
 
 
-def apply_stable_memory_facts(
-    memory_service: MemoryService,
+def write_stable_memory_facts_to_files(
+    memory_file_store: MemoryFileStore,
     *,
     scope_kind: str,
     scope_ref: str,
@@ -124,17 +116,14 @@ def apply_stable_memory_facts(
     if agent_profile_id is None:
         return result
     active_policy = policy or MemoryWritebackPolicy()
-    evidence_ref = {"run_id": run_pk or run_id, "turn_id": turn_id}
-
-    existing_entries = {
-        str(item.get("memory_item_id") or ""): item
-        for item in memory_service.read(
-            scope_kind=scope_kind,
-            scope_ref=scope_ref,
-            agent_profile_id=agent_profile_id,
-            limit=200,
-        )
-    }
+    existing_content = memory_file_store.read_file(
+        scope_kind=scope_kind,
+        scope_ref=scope_ref,
+        path="stable_facts.md",
+        agent_profile_id=agent_profile_id,
+    ).get("content", "")
+    existing_text = str(existing_content or "")
+    lines: list[str] = []
     for fact in _normalized_stable_memory_facts(facts)[: max(active_policy.max_stable_facts, 0)]:
         summary = _summary(fact)
         if not summary:
@@ -144,58 +133,27 @@ def apply_stable_memory_facts(
         if confidence < active_policy.min_confidence:
             result.skipped.append({"reason": "low_confidence", "summary": summary, "confidence": confidence})
             continue
-        memory_item_id = str(fact.get("memory_item_id") or "").strip() or _stable_memory_item_id(
-            scope_kind=scope_kind,
-            scope_ref=scope_ref,
-            fact=fact,
-            summary=summary,
-        )
-        existing = existing_entries.get(memory_item_id)
-        merged_content = _merged_content(existing, fact, summary=summary, source=source)
-        evidence_refs = _merged_evidence_refs(existing, fact, evidence_ref)
-        trust_level = str(fact.get("trust_level") or "").strip()
-        if not trust_level:
-            trust_level = active_policy.trust_level
-        if active_policy.review_enabled and (
-            confidence < active_policy.review_below_confidence or trust_level == active_policy.review_trust_level
-        ):
-            _queue_memory_writeback_review(
-                memory_service,
-                memory_item_id=memory_item_id,
-                scope_kind=scope_kind,
-                scope_ref=scope_ref,
-                agent_profile_id=agent_profile_id,
-                run_id=str(run_id or ""),
-                run_pk=str(run_pk or run_id or ""),
-                turn_id=str(turn_id or ""),
-                patch=fact,
-                summary=summary,
-                confidence=confidence,
-                evidence_refs=evidence_refs,
-            )
-            result.stable_facts_queued_for_review += 1
+        if summary in existing_text:
+            result.skipped.append({"reason": "duplicate_summary", "summary": summary})
             continue
-        memory_service.write(
+        metadata = {
+            "confidence": confidence,
+            "source": source,
+            "run_id": run_pk or run_id,
+            "turn_id": turn_id,
+        }
+        lines.append(f"- {summary} <!-- {json.dumps(metadata, ensure_ascii=False, sort_keys=True, default=str)} -->\n")
+        result.stable_facts_written += 1
+    if lines:
+        prefix = "\n" if existing_text and not existing_text.endswith("\n") else ""
+        memory_file_store.write_file(
             scope_kind=scope_kind,
             scope_ref=scope_ref,
+            path="stable_facts.md",
             agent_profile_id=agent_profile_id,
-            memory_item_id=memory_item_id,
-            kind=str(fact.get("kind") or (existing or {}).get("kind") or "stable_fact"),
-            index_name=str(fact.get("index_name") or fact.get("name") or (existing or {}).get("index_name") or "stable_fact"),
-            index_description=str(
-                fact.get("index_description")
-                or fact.get("description")
-                or (existing or {}).get("index_description")
-                or summary
-            ),
-            summary=summary,
-            content=merged_content,
-            confidence=max(confidence, float((existing or {}).get("confidence") or 0.0)),
-            trust_level=trust_level,
-            evidence_refs=evidence_refs,
-            expected_version=int(existing["version"]) if existing and existing.get("version") is not None else None,
+            content=prefix + "".join(lines),
+            mode="append",
         )
-        result.stable_facts_written += 1
     return result
 
 
@@ -243,102 +201,6 @@ def _summary(patch: dict[str, Any]) -> str:
     return ""
 
 
-def _stable_memory_item_id(*, scope_kind: str, scope_ref: str, fact: dict[str, Any], summary: str) -> str:
-    payload = {
-        "scope_kind": scope_kind,
-        "scope_ref": scope_ref,
-        "index_name": fact.get("index_name") or fact.get("name") or "stable_fact",
-        "summary": summary,
-    }
-    digest = sha1(json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")).hexdigest()[:20]
-    return f"stable:{digest}"
-
-
-def _merged_content(existing: dict[str, Any] | None, patch: dict[str, Any], *, summary: str, source: str) -> dict[str, Any]:
-    existing_content = dict((existing or {}).get("content") or {})
-    raw_content = patch.get("content")
-    patch_content = dict(raw_content) if isinstance(raw_content, dict) else {"fact": raw_content or summary}
-    writeback = dict(existing_content.get("writeback") or {})
-    writeback.update(
-        {
-            "source": source,
-            "status": "merged" if existing else "created",
-        }
-    )
-    return {**existing_content, **patch_content, "writeback": writeback}
-
-
-def _merged_evidence_refs(existing: dict[str, Any] | None, patch: dict[str, Any], fallback: dict[str, Any]) -> list[Any]:
-    refs = list((existing or {}).get("evidence_refs") or [])
-    refs.extend(list(patch.get("evidence_refs") or []))
-    refs.append(fallback)
-    seen: set[str] = set()
-    merged: list[Any] = []
-    for ref in refs:
-        key = json.dumps(ref, ensure_ascii=False, sort_keys=True, default=str)
-        if key in seen:
-            continue
-        seen.add(key)
-        merged.append(ref)
-    return merged[-20:]
-
-
-def _queue_memory_writeback_review(
-    memory_service: MemoryService,
-    *,
-    memory_item_id: str,
-    scope_kind: str,
-    scope_ref: str,
-    agent_profile_id: str,
-    run_id: str,
-    run_pk: str,
-    turn_id: str,
-    patch: dict[str, Any],
-    summary: str,
-    confidence: float,
-    evidence_refs: list[Any],
-) -> None:
-    idempotency_key = f"memory-writeback:{run_pk}:{turn_id}:{memory_item_id}"
-    existing = memory_service.session.scalars(
-        select(ApprovalItem).where(ApprovalItem.idempotency_key == idempotency_key)
-    ).first()
-    payload = {
-        "memory_item_id": memory_item_id,
-        "scope_kind": scope_kind,
-        "scope_ref": scope_ref,
-        "agent_profile_id": agent_profile_id,
-        "run_id": run_id,
-        "run_pk": run_pk,
-        "turn_id": turn_id,
-        "summary": summary,
-        "patch": patch,
-        "confidence": confidence,
-        "evidence_refs": evidence_refs,
-    }
-    if existing is not None:
-        existing.payload = payload
-        existing.notes = summary
-        existing.status = "pending"
-        memory_service.session.flush()
-        return
-    memory_service.session.add(
-        ApprovalItem(
-            target_type="memory_writeback",
-            target_id=memory_item_id,
-            title="Review memory writeback",
-            status="pending",
-            requested_by="autonomous",
-            payload=payload,
-            notes=summary,
-            run_pk=run_pk,
-            turn_pk=turn_id,
-            source_kind="autonomous",
-            idempotency_key=idempotency_key,
-        )
-    )
-    memory_service.session.flush()
-
-
 def _coerce_confidence(value: Any, *, default: float) -> float:
     try:
         parsed = float(value)
@@ -353,11 +215,8 @@ def memory_writeback_policy_from_config(config: dict[str, Any] | None) -> Memory
         return MemoryWritebackPolicy(max_stable_facts=0)
     return MemoryWritebackPolicy(
         min_confidence=_bounded_float(raw_config.get("auto_write_min_confidence"), default=0.35),
-        review_enabled=bool(raw_config.get("review_enabled", False)),
-        review_below_confidence=_bounded_float(raw_config.get("review_below_confidence"), default=0.65),
         max_stable_facts=_bounded_int(raw_config.get("max_stable_facts"), default=8, minimum=0, maximum=32),
         trust_level=str(raw_config.get("trust_level") or "agent_observed"),
-        review_trust_level=str(raw_config.get("review_trust_level") or "needs_review"),
         min_completed_turns_between_jobs=_bounded_int(
             raw_config.get("min_completed_turns_between_jobs"),
             default=3,

@@ -8,7 +8,6 @@ from sqlalchemy.orm import Session
 
 from recruit_agent.api.deps import get_container, get_session
 from recruit_agent.repositories import (
-    AgentGlobalMemoryRepository,
     ExecutionGraphProjectionRepository,
     ExecutionTraceRepository,
     GoalSpecRepository,
@@ -35,8 +34,6 @@ from recruit_agent.repositories import (
     TalentPoolSyncRecordRepository,
 )
 from recruit_agent.schemas import (
-    AgentGlobalMemoryRead,
-    AgentGlobalMemoryUpdate,
     ApprovalRead,
     ExecutionGraphProjectionRead,
     ExecutionTraceRead,
@@ -46,7 +43,6 @@ from recruit_agent.schemas import (
     GoalSpecCreate,
     GoalSpecRead,
     GoalSpecUpdate,
-    MemoryCompactRequest,
     OperatorInteractionRead,
     OperatorInteractionResolveRequest,
     RecruitAgentProfileRead,
@@ -62,13 +58,8 @@ from recruit_agent.services.agent_control import AgentControlService
 from recruit_agent.services.events import EventStreamService
 from recruit_agent.services.evolution import promote_skill_draft_contract, resolve_promoted_skill_snapshot
 from recruit_agent.services.recruit_agent import (
-    AUTO_COMPACT_THRESHOLD,
-    apply_memory_compaction,
-    content_length,
     default_candidate_state_snapshot,
-    ensure_global_memory,
     ensure_primary_recruit_agent_profile,
-    needs_compaction,
     resolve_context_policy,
     resolve_memory_policy,
     validate_evolution_artifact,
@@ -196,94 +187,6 @@ def update_recruit_agent_profile(
                 repo.update(item, {"is_primary": False})
     updated = repo.update(profile, patch)
     return RecruitAgentProfileRead.model_validate(updated)
-
-
-@router.get("/global-memory", response_model=AgentGlobalMemoryRead)
-def get_agent_global_memory(session: Session = Depends(get_session)) -> AgentGlobalMemoryRead:
-    profile = ensure_primary_recruit_agent_profile(session)
-    item = ensure_global_memory(session, agent_profile_id=profile.id)
-    return AgentGlobalMemoryRead.model_validate(item)
-
-
-@router.patch("/global-memory", response_model=AgentGlobalMemoryRead)
-def update_agent_global_memory(
-    payload: AgentGlobalMemoryUpdate,
-    container: AppContainer = Depends(get_container),
-    session: Session = Depends(get_session),
-) -> AgentGlobalMemoryRead:
-    profile = ensure_primary_recruit_agent_profile(session)
-    repo = AgentGlobalMemoryRepository(session)
-    item = ensure_global_memory(session, agent_profile_id=profile.id)
-    update_data = payload.model_dump(exclude_unset=True)
-    if "content" in update_data:
-        update_data.setdefault("raw_content", update_data["content"] or {})
-        update_data["token_estimate"] = content_length(update_data["content"] or {})
-        update_data["disclosure"] = {
-            "preview": str(update_data.get("summary") or item.summary or "")[:180],
-            "operator_summary": str(update_data.get("summary") or item.summary or ""),
-            "model_context": str(update_data["content"])[:1600],
-        }
-    updated = repo.update(item, update_data)
-    threshold = int(
-        (((profile.memory_policy or {}).get("agent_global_memory") or {}).get("compact_threshold") or AUTO_COMPACT_THRESHOLD)
-    )
-    auto_compact = bool((((profile.memory_policy or {}).get("agent_global_memory") or {}).get("auto_compact") or False))
-    if auto_compact and needs_compaction(dict(updated.content or {}), threshold=threshold):
-        apply_memory_compaction(
-            updated,
-            provider=container.provider,
-            scope="agent_global",
-            reason="auto_compact_threshold_exceeded",
-            compacted_at=_now(),
-        )
-        updated = repo.update(
-            updated,
-            {
-                "summary": updated.summary,
-                "raw_content": dict(updated.raw_content or {}),
-                "content": dict(updated.content or {}),
-                "disclosure": dict(updated.disclosure or {}),
-                "token_estimate": updated.token_estimate,
-                "compacted_at": updated.compacted_at,
-                "compacted_reason": updated.compacted_reason,
-                "memory_metadata": dict(updated.memory_metadata or {}),
-            },
-        )
-    return AgentGlobalMemoryRead.model_validate(updated)
-
-
-@router.post("/global-memory/compact", response_model=AgentGlobalMemoryRead)
-def compact_agent_global_memory(
-    payload: MemoryCompactRequest,
-    container: AppContainer = Depends(get_container),
-    session: Session = Depends(get_session),
-) -> AgentGlobalMemoryRead:
-    profile = ensure_primary_recruit_agent_profile(session)
-    repo = AgentGlobalMemoryRepository(session)
-    item = ensure_global_memory(session, agent_profile_id=profile.id)
-    if not payload.force and not needs_compaction(dict(item.content or {})):
-        return AgentGlobalMemoryRead.model_validate(item)
-    apply_memory_compaction(
-        item,
-        provider=container.provider,
-        scope="agent_global",
-        reason=payload.reason,
-        compacted_at=_now(),
-    )
-    updated = repo.update(
-        item,
-        {
-            "summary": item.summary,
-            "raw_content": dict(item.raw_content or {}),
-            "content": dict(item.content or {}),
-            "disclosure": dict(item.disclosure or {}),
-            "token_estimate": item.token_estimate,
-            "compacted_at": item.compacted_at,
-            "compacted_reason": item.compacted_reason,
-            "memory_metadata": dict(item.memory_metadata or {}),
-        },
-    )
-    return AgentGlobalMemoryRead.model_validate(updated)
 
 
 @router.get("/goals", response_model=list[GoalSpecRead])
