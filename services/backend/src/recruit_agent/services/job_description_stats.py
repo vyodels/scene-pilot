@@ -11,7 +11,7 @@ from recruit_agent.services.state_machine import ensure_latest_state_machine
 
 FUNNEL_STAGE_DEFINITIONS = (
     ("applications", "投递"),
-    ("communicating", "沟通中"),
+    ("communicating", "在线简历"),
     ("interviewing", "面试中"),
     ("offers", "Offer中"),
     ("hired", "入职"),
@@ -65,7 +65,7 @@ def build_job_description_funnel_stats(session: Session, job_description_id: str
             counts["interviewing"] += 1
         if depth >= PHASE_DEPTH["H"]:
             counts["offers"] += 1
-        if current_status == "offer_accepted" or str(getattr(application, "deepest_milestone", None) or "").strip() == "M14":
+        if current_status == "offer_accepted" or str(getattr(application, "deepest_milestone", None) or "").strip() == "M19":
             counts["hired"] += 1
         contact_snapshot = dict(getattr(application, "contact_snapshot", None) or {})
         resume_snapshot = dict(getattr(application, "resume_snapshot", None) or {})
@@ -106,7 +106,7 @@ def _milestone_depths(node_by_id: dict[str, dict[str, Any]]) -> dict[str, int]:
     for node in node_by_id.values():
         milestone_id = str(node.get("milestoneId") or node.get("milestone_id") or "").strip()
         phase = str(node.get("phase") or "").strip().upper()
-        if not milestone_id or phase == "Z":
+        if not milestone_id or phase == "I":
             continue
         phase_depth = PHASE_DEPTH.get(phase, -1)
         if phase_depth >= 0:
@@ -118,7 +118,7 @@ def _application_depth(application: Any, *, node_by_id: dict[str, dict[str, Any]
     current_status = str(getattr(application, "current_status", None) or "").strip()
     current_node = node_by_id.get(current_status) or {}
     current_phase = str(current_node.get("phase") or "").strip().upper()
-    current_depth = PHASE_DEPTH.get(current_phase, -1) if current_phase != "Z" else -1
+    current_depth = PHASE_DEPTH.get(current_phase, -1) if current_phase != "I" else -1
     deepest_milestone = str(getattr(application, "deepest_milestone", None) or "").strip()
     deepest_depth = milestone_depths.get(deepest_milestone, -1)
     return max(current_depth, deepest_depth)

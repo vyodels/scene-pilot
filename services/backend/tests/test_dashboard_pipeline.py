@@ -46,10 +46,10 @@ def test_dashboard_pipeline_uses_cumulative_funnel_counts(tmp_path: Path) -> Non
                 )
 
             create_application(index=1, status="discovered", milestone="M01")
-            create_application(index=2, status="outreach_pending", milestone="M03")
-            create_application(index=3, status="contact_acquired", milestone="M11")
-            create_application(index=4, status="archived", milestone="M11")
-            create_application(index=5, status="interview_scheduled", milestone="M12")
+            create_application(index=2, status="online_resume_passed", milestone="M04")
+            create_application(index=3, status="offline_resume_passed", milestone="M08")
+            create_application(index=4, status="profile_ready", milestone="M13")
+            create_application(index=5, status="interview_scheduled", milestone="M15")
             session.commit()
 
         response = client.get("/api/dashboard")
@@ -58,11 +58,11 @@ def test_dashboard_pipeline_uses_cumulative_funnel_counts(tmp_path: Path) -> Non
         assert {item["jobDescription"]["title"] for item in payload["applications"]} == {"Backend Engineer"}
         pipeline = {item["label"]: item["value"] for item in payload["pipeline"]}
         assert pipeline == {
-            "发现与 AI 在线评估": 5,
-            "发起沟通与建立对话": 4,
-            "获取简历与评估": 3,
-            "获取联系方式": 3,
-            "面试与结果": 1,
+            "发现与在线简历": 5,
+            "离线简历评估": 3,
+            "人工筛选与资料": 2,
+            "面试": 1,
+            "Offer": 0,
         }
     finally:
         client.__exit__(None, None, None)

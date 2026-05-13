@@ -69,6 +69,32 @@ AUTONOMOUS_OPEN_RUN_STATUSES: tuple[str, ...] = (
     "resumable",
 )
 
+DEFAULT_RECRUITING_POLICY: dict[str, Any] = {
+    "jdStandards": "拆解岗位目标、团队阶段、核心职责、硬性门槛、加分项、排除项和交付预期；所有候选人判断必须明确引用对应 JD 要求。",
+    "perJdEvaluation": "不同 JD 可以覆盖通用权重、硬性门槛和优先级。评估时先读取当前 JD 的专属标准，再应用通用招聘规则。",
+    "onlineResumeCriteria": "在线简历优先判断 JD 匹配度、最近岗位相关性、核心技能证据、项目深度、稳定性和明显风险；不足以判断时进入补充材料环节。",
+    "offlineResumeCriteria": "离线简历用于补齐在线资料缺失的信息，重点检查项目细节、影响指标、职责边界、联系方式和时间线一致性。",
+    "communicationEvidence": "沟通记录用于判断候选人意向、可联系性、薪资/城市/到岗约束、简历获取结果和风险信号；不得跨候选人或跨 JD 混用沟通事实。",
+    "compositeScoring": "AI 综合评分基于在线简历、离线简历、沟通记录和 JD 标准生成，必须输出维度分、证据引用、通过/淘汰建议和下一步动作。",
+    "screeningRules": "人工筛选阶段必须已具备在线简历评估、离线简历评估和 AI 综合评分。综合分达到阈值且无硬性排除项时建议通过，否则给出淘汰或补充材料建议。",
+    "interviewScheduling": "进入待预约面试前必须有可用联系方式、明确意向和可解释的通过理由。面试安排应记录时间、轮次、联系人和确认状态。",
+    "offerHandoff": "Offer 阶段只处理已通过面试的候选人；需要记录薪资期望、风险点、候选人反馈和交接备注。",
+    "scoreWeights": {
+        "jdMatch": 30,
+        "onlineResume": 20,
+        "offlineResume": 25,
+        "communication": 15,
+        "stability": 10,
+    },
+    "thresholds": {
+        "onlinePass": 70,
+        "offlinePass": 72,
+        "compositePass": 75,
+        "manualReviewMin": 60,
+        "interviewRecommend": 80,
+    },
+}
+
 
 class AgentTaskCreate(BaseModel):
     task_type: str
@@ -1226,12 +1252,34 @@ def _workspace_config(
             or prompt_config.get("rubric_text")
             or ""
         ),
+        "recruiting_policy": _workspace_recruiting_policy(prompt_config.get("recruitingPolicy") or prompt_config.get("recruiting_policy")),
+        "recruitingPolicy": _workspace_recruiting_policy(prompt_config.get("recruitingPolicy") or prompt_config.get("recruiting_policy")),
         "boundaries": [str(item) for item in list(boundaries or []) if str(item).strip()],
         "provider_label": provider_label,
         "providerLabel": provider_label,
         "model_label": model_label,
         "modelLabel": model_label,
     }
+
+
+def _workspace_recruiting_policy(value: Any) -> dict[str, Any]:
+    raw = value if isinstance(value, dict) else {}
+    policy = {**DEFAULT_RECRUITING_POLICY, **raw}
+    score_weights = raw.get("scoreWeights") or raw.get("score_weights")
+    thresholds = raw.get("thresholds")
+    if not isinstance(score_weights, dict):
+        score_weights = {}
+    if not isinstance(thresholds, dict):
+        thresholds = {}
+    policy["scoreWeights"] = {
+        **dict(DEFAULT_RECRUITING_POLICY["scoreWeights"]),
+        **score_weights,
+    }
+    policy["thresholds"] = {
+        **dict(DEFAULT_RECRUITING_POLICY["thresholds"]),
+        **thresholds,
+    }
+    return policy
 
 
 def _overlay_provider_labels(container: AppContainer) -> tuple[str | None, str | None]:

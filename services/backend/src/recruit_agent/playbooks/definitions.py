@@ -72,7 +72,6 @@ _KIND_TO_STAGE = {
     "score": "candidate_scoring",
     "review": "strategy_distill",
     "archive": "candidate_archive",
-    "cooldown": "strategy_distill",
     "talent_pool": "scale_execution",
 }
 
@@ -250,7 +249,7 @@ def build_default_recruiting_playbook_blueprint() -> PlaybookBlueprint:
             name="Candidate Outreach",
             task_type="candidate_outreach",
             transitions=[
-                BlueprintTransition(condition="resume_requested", target_node_id="resume_collection"),
+                BlueprintTransition(condition="offline_resume_fetching", target_node_id="resume_collection"),
                 BlueprintTransition(condition="default", target_node_id="resume_collection"),
             ],
         ),

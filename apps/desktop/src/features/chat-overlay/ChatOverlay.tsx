@@ -17,6 +17,7 @@ import type {
   AssistantTurnStreamEvent,
   ChatOverlayPanelKey,
   JobDescriptionSummaryRecord,
+  RecruitingPolicyConfig,
   SettingsSnapshot,
   SharedSceneTemplateRecord,
   SkillRecord,
@@ -59,6 +60,21 @@ interface AgentConfigDraft {
   systemPrompt: string;
   goalTemplate: string;
   scoringRubric: string;
+  recruitingPolicy: RecruitingPolicyDraft;
+}
+
+interface RecruitingPolicyDraft {
+  jdStandards: string;
+  perJdEvaluation: string;
+  onlineResumeCriteria: string;
+  offlineResumeCriteria: string;
+  communicationEvidence: string;
+  compositeScoring: string;
+  screeningRules: string;
+  interviewScheduling: string;
+  offerHandoff: string;
+  scoreWeights: Record<keyof RecruitingPolicyConfig["scoreWeights"], string>;
+  thresholds: Record<keyof RecruitingPolicyConfig["thresholds"], string>;
 }
 
 interface AutonomousGoalDraft {
@@ -94,7 +110,6 @@ const panelItems: Array<{ key: ChatOverlayPanelKey; label: string }> = [
   { key: "conversation", label: "运行台" },
   { key: "config", label: "配置" },
   { key: "runs", label: "任务" },
-  { key: "approvals", label: "确认" },
   { key: "memory", label: "Memory" },
   { key: "skills", label: "Skill" },
   { key: "tools", label: "工具" },
@@ -309,17 +324,80 @@ function configDraftFromSettings(settings: SettingsSnapshot): ConfigDraft {
   };
 }
 
+function recruitingPolicyDraftFromConfig(policy?: RecruitingPolicyConfig): RecruitingPolicyDraft {
+  return {
+    jdStandards: policy?.jdStandards ?? "",
+    perJdEvaluation: policy?.perJdEvaluation ?? "",
+    onlineResumeCriteria: policy?.onlineResumeCriteria ?? "",
+    offlineResumeCriteria: policy?.offlineResumeCriteria ?? "",
+    communicationEvidence: policy?.communicationEvidence ?? "",
+    compositeScoring: policy?.compositeScoring ?? "",
+    screeningRules: policy?.screeningRules ?? "",
+    interviewScheduling: policy?.interviewScheduling ?? "",
+    offerHandoff: policy?.offerHandoff ?? "",
+    scoreWeights: {
+      jdMatch: String(policy?.scoreWeights.jdMatch ?? 30),
+      onlineResume: String(policy?.scoreWeights.onlineResume ?? 20),
+      offlineResume: String(policy?.scoreWeights.offlineResume ?? 25),
+      communication: String(policy?.scoreWeights.communication ?? 15),
+      stability: String(policy?.scoreWeights.stability ?? 10),
+    },
+    thresholds: {
+      onlinePass: String(policy?.thresholds.onlinePass ?? 70),
+      offlinePass: String(policy?.thresholds.offlinePass ?? 72),
+      compositePass: String(policy?.thresholds.compositePass ?? 75),
+      manualReviewMin: String(policy?.thresholds.manualReviewMin ?? 60),
+      interviewRecommend: String(policy?.thresholds.interviewRecommend ?? 80),
+    },
+  };
+}
+
+function numberConfigValue(value: string, fallback: number): number {
+  const numeric = Number.parseFloat(value);
+  return Number.isFinite(numeric) ? numeric : fallback;
+}
+
+function recruitingPolicyPayloadFromDraft(draft: RecruitingPolicyDraft): RecruitingPolicyConfig {
+  return {
+    jdStandards: draft.jdStandards,
+    perJdEvaluation: draft.perJdEvaluation,
+    onlineResumeCriteria: draft.onlineResumeCriteria,
+    offlineResumeCriteria: draft.offlineResumeCriteria,
+    communicationEvidence: draft.communicationEvidence,
+    compositeScoring: draft.compositeScoring,
+    screeningRules: draft.screeningRules,
+    interviewScheduling: draft.interviewScheduling,
+    offerHandoff: draft.offerHandoff,
+    scoreWeights: {
+      jdMatch: numberConfigValue(draft.scoreWeights.jdMatch, 30),
+      onlineResume: numberConfigValue(draft.scoreWeights.onlineResume, 20),
+      offlineResume: numberConfigValue(draft.scoreWeights.offlineResume, 25),
+      communication: numberConfigValue(draft.scoreWeights.communication, 15),
+      stability: numberConfigValue(draft.scoreWeights.stability, 10),
+    },
+    thresholds: {
+      onlinePass: numberConfigValue(draft.thresholds.onlinePass, 70),
+      offlinePass: numberConfigValue(draft.thresholds.offlinePass, 72),
+      compositePass: numberConfigValue(draft.thresholds.compositePass, 75),
+      manualReviewMin: numberConfigValue(draft.thresholds.manualReviewMin, 60),
+      interviewRecommend: numberConfigValue(draft.thresholds.interviewRecommend, 80),
+    },
+  };
+}
+
 function agentConfigDraftTemplate(): Record<AgentKind, AgentConfigDraft> {
   return {
     assistant: {
       systemPrompt: "",
       goalTemplate: "",
       scoringRubric: "",
+      recruitingPolicy: recruitingPolicyDraftFromConfig(),
     },
     autonomous: {
       systemPrompt: "",
       goalTemplate: "",
       scoringRubric: "",
+      recruitingPolicy: recruitingPolicyDraftFromConfig(),
     },
   };
 }
@@ -329,6 +407,7 @@ function agentConfigDraftFromWorkspace(workspace: AgentWorkspaceRecord | null): 
     systemPrompt: workspace?.config.systemPrompt ?? "",
     goalTemplate: workspace?.config.goalTemplate ?? "",
     scoringRubric: workspace?.config.scoringRubric ?? "",
+    recruitingPolicy: recruitingPolicyDraftFromConfig(workspace?.config.recruitingPolicy),
   };
 }
 
@@ -340,13 +419,6 @@ function autonomousGoalDraftTemplate(defaultGoalText = ""): AutonomousGoalDraft 
     candidateCountTarget: "3",
     goalText: defaultGoalText,
   };
-}
-
-function summarizeApproval(approval: ApprovalItem): string {
-  const toolName = approval.payload?.tool_name ?? approval.payload?.toolName;
-  const executionStatus = approval.payload?.execution_status ?? approval.payload?.executionStatus;
-  const reason = approval.payload?.reason;
-  return [toolName, executionStatus, reason].filter((value): value is string => typeof value === "string" && value.length > 0).join(" · ");
 }
 
 function cleanApprovalTitle(approval: ApprovalItem): string {
@@ -460,6 +532,115 @@ function buildApprovalDecisionReason(
     return undefined;
   }
   return `${cleanApprovalTitle(approval)}\n${lines.join("\n")}`;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function stringField(record: Record<string, unknown> | undefined, ...keys: string[]): string | null {
+  if (!record) {
+    return null;
+  }
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return String(value);
+    }
+  }
+  return null;
+}
+
+function approvalAssociationValues(approval: ApprovalItem): Set<string> {
+  const payload = isRecord(approval.payload) ? approval.payload : {};
+  return new Set(
+    [
+      approval.targetId,
+      approval.runPk,
+      approval.turnPk,
+      stringField(payload, "run_id", "runId"),
+      stringField(payload, "turn_id", "turnId"),
+      stringField(payload, "run_pk", "runPk"),
+      stringField(payload, "turn_pk", "turnPk"),
+      stringField(payload, "approval_id", "approvalId"),
+      stringField(payload, "call_id", "callId"),
+    ].filter((value): value is string => Boolean(value)),
+  );
+}
+
+function messageAssociationValues(message: AgentConversationMessage): Set<string> {
+  const metadata = isRecord(message.metadata) ? message.metadata : {};
+  return new Set(
+    [
+      message.id,
+      stringField(metadata, "run_id", "runId"),
+      stringField(metadata, "turn_id", "turnId"),
+      stringField(metadata, "run_pk", "runPk"),
+      stringField(metadata, "turn_pk", "turnPk"),
+      stringField(metadata, "approval_id", "approvalId"),
+      stringField(metadata, "call_id", "callId"),
+    ].filter((value): value is string => Boolean(value)),
+  );
+}
+
+function isApprovalAnchorMessage(message: AgentConversationMessage): boolean {
+  const metadata = isRecord(message.metadata) ? message.metadata : {};
+  const tokens = [
+    message.kind,
+    message.status,
+    stringField(metadata, "eventKind", "event_kind"),
+    stringField(metadata, "itemType", "item_type"),
+    stringField(metadata, "traceKind", "trace_kind"),
+  ]
+    .filter((value): value is string => Boolean(value))
+    .map((value) => value.toLowerCase());
+  return tokens.some((value) =>
+    value.includes("approval") ||
+    value.includes("confirm") ||
+    value.includes("permission") ||
+    value.includes("waiting_human") ||
+    value.includes("tool_blocked") ||
+    value.includes("blocked"),
+  );
+}
+
+function approvalMatchesTimelineMessage(approval: ApprovalItem, message: AgentConversationMessage): boolean {
+  if (!isApprovalAnchorMessage(message)) {
+    return false;
+  }
+  const approvalValues = approvalAssociationValues(approval);
+  if (!approvalValues.size) {
+    return false;
+  }
+  for (const value of messageAssociationValues(message)) {
+    if (approvalValues.has(value)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function approvalStatusTone(status: ApprovalItem["status"]): "positive" | "neutral" | "warning" | "critical" {
+  if (status === "approved") {
+    return "positive";
+  }
+  if (status === "rejected") {
+    return "critical";
+  }
+  return "warning";
+}
+
+function approvalStatusLabel(status: ApprovalItem["status"], copy: ReturnType<typeof useI18n>["copy"]): string {
+  if (status === "approved") {
+    return copy("Approved", "已确认");
+  }
+  if (status === "rejected") {
+    return copy("Rejected", "已拒绝");
+  }
+  return copy("Waiting", "待确认");
 }
 
 function formatStreamMessage(event: AssistantTurnStreamEvent): string | null {
@@ -653,6 +834,8 @@ export function ChatOverlay({ transport, workspaceAgent, variant = "overlay" }: 
   } = useChatOverlay();
   const pageMode = variant === "page";
   const visible = pageMode || isOpen;
+  const workspacePollMs = pageMode ? 10000 : 1500;
+  const conversationPollMs = pageMode ? 5000 : 1500;
 
   const [workspaces, setWorkspaces] = useState<Record<AgentKind, AgentWorkspaceRecord | null>>(workspaceTemplate);
   const [localConversations, setLocalConversations] = useState<Record<AgentKind, AgentConversationSummary[]>>(
@@ -791,12 +974,12 @@ export function ChatOverlay({ transport, workspaceAgent, variant = "overlay" }: 
 
     const intervalId = window.setInterval(() => {
       void loadWorkspaces(false);
-    }, 1500);
+    }, workspacePollMs);
 
     return () => {
       window.clearInterval(intervalId);
     };
-  }, [visible, loadWorkspaces]);
+  }, [visible, loadWorkspaces, workspacePollMs]);
 
   useEffect(() => {
     setAgentConfigDrafts({
@@ -1092,7 +1275,6 @@ export function ChatOverlay({ transport, workspaceAgent, variant = "overlay" }: 
     );
     const latestOpenRun = sortedRuns.find((run) => isOpenRunStatus(run.status)) ?? null;
     const activeRun = sortedRuns.find((run) => isActivelyExecutingRunStatus(run.status)) ?? null;
-    const pendingApprovals = activeWorkspace.approvals.filter((approval) => approval.status === "pending").length;
     const openRuns = sortedRuns.filter((run) => isOpenRunStatus(run.status));
     const activeRuns = sortedRuns.filter((run) => isActivelyExecutingRunStatus(run.status));
 
@@ -1103,7 +1285,7 @@ export function ChatOverlay({ transport, workspaceAgent, variant = "overlay" }: 
         detail: copy("Create a new session from the composer to start.", "可以通过下方输入框新建会话后启动。"),
         metrics: [
           `${copy("Sessions", "会话")} · ${activeWorkspace.conversations.length}`,
-          `${copy("Pending approvals", "待审批")} · ${pendingApprovals}`,
+          `${copy("Runs", "运行总数")} · ${sortedRuns.length}`,
         ],
         tone: "neutral" as const,
       };
@@ -1126,7 +1308,6 @@ export function ChatOverlay({ transport, workspaceAgent, variant = "overlay" }: 
         metrics: [
           latestRun ? `${copy("Updated", "最近更新")} · ${formatDateTime(latestRun.updatedAt)}` : null,
           `${copy("Runs", "运行总数")} · ${sortedRuns.length}`,
-          `${copy("Pending approvals", "待审批")} · ${pendingApprovals}`,
         ].filter((value): value is string => Boolean(value)),
         tone: toneForRunStatus(latestRun?.status ?? activeWorkspace.agent.status),
       };
@@ -1159,13 +1340,12 @@ export function ChatOverlay({ transport, workspaceAgent, variant = "overlay" }: 
         highlightedRun.startedAt ? `${copy("Started", "开始时间")} · ${formatDateTime(highlightedRun.startedAt)}` : null,
         `${copy("Active runs", "活跃运行")} · ${activeRuns.length}`,
         `${copy("Open runs", "待处理运行")} · ${openRuns.length}`,
-        `${copy("Pending approvals", "待审批")} · ${pendingApprovals}`,
       ].filter((value): value is string => Boolean(value)),
       tone: toneForRunStatus(highlightedRun.status),
     };
   }, [activeWorkspace, copy, describeConversationStatus]);
 
-  const shouldShowRunStatusStrip = activePanel === "conversation" || activePanel === "runs" || activePanel === "approvals";
+  const shouldShowRunStatusStrip = activePanel === "conversation" || activePanel === "runs";
 
   const describeConversationPreview = useCallback(
     (conversation: AgentConversationSummary) => {
@@ -1309,13 +1489,13 @@ export function ChatOverlay({ transport, workspaceAgent, variant = "overlay" }: 
 
     const intervalId = window.setInterval(() => {
       void syncConversation(false);
-    }, 1500);
+    }, conversationPollMs);
 
     return () => {
       active = false;
       window.clearInterval(intervalId);
     };
-  }, [activeAgent, activeConversationCacheKey, activeConversationId, copy, visible]);
+  }, [activeAgent, activeConversationCacheKey, activeConversationId, conversationPollMs, copy, visible]);
 
   useEffect(() => {
     if (!visible || pageMode) {
@@ -1706,6 +1886,7 @@ export function ChatOverlay({ transport, workspaceAgent, variant = "overlay" }: 
             systemPrompt: activeAgentConfig.systemPrompt,
             goalTemplate: activeAgentConfig.goalTemplate,
             scoringRubric: activeAgentConfig.scoringRubric,
+            recruitingPolicy: recruitingPolicyPayloadFromDraft(activeAgentConfig.recruitingPolicy),
           },
         }),
       ]);
@@ -1726,6 +1907,39 @@ export function ChatOverlay({ transport, workspaceAgent, variant = "overlay" }: 
     } finally {
       setSavingConfig(false);
     }
+  };
+
+  const updateRecruitingPolicyText = (field: keyof Omit<RecruitingPolicyDraft, "scoreWeights" | "thresholds">, value: string) => {
+    setAgentConfigDrafts((current) => ({
+      ...current,
+      [activeAgent]: {
+        ...current[activeAgent],
+        recruitingPolicy: {
+          ...current[activeAgent].recruitingPolicy,
+          [field]: value,
+        },
+      },
+    }));
+  };
+
+  const updateRecruitingPolicyNumber = (
+    group: "scoreWeights" | "thresholds",
+    field: string,
+    value: string,
+  ) => {
+    setAgentConfigDrafts((current) => ({
+      ...current,
+      [activeAgent]: {
+        ...current[activeAgent],
+        recruitingPolicy: {
+          ...current[activeAgent].recruitingPolicy,
+          [group]: {
+            ...current[activeAgent].recruitingPolicy[group],
+            [field]: value,
+          },
+        },
+      },
+    }));
   };
 
   const handleApprovalAction = async (approval: ApprovalItem, action: "approve" | "reject") => {
@@ -1751,7 +1965,7 @@ export function ChatOverlay({ transport, workspaceAgent, variant = "overlay" }: 
         return next;
       });
       setPanelNotice({
-        panel: "approvals",
+        panel: "conversation",
         tone: "success",
         message:
           action === "approve"
@@ -1760,7 +1974,7 @@ export function ChatOverlay({ transport, workspaceAgent, variant = "overlay" }: 
       });
     } catch (error) {
       setPanelNotice({
-        panel: "approvals",
+        panel: "conversation",
         tone: "error",
         message: error instanceof Error ? error.message : copy("Approval action failed.", "审批动作失败。"),
       });
@@ -2380,73 +2594,6 @@ export function ChatOverlay({ transport, workspaceAgent, variant = "overlay" }: 
     );
   };
 
-  const renderApprovalsPanel = (approvals: ApprovalItem[]) => {
-    if (!approvals.length) {
-      return renderEmptyPanel(copy("No approvals", "当前没有审批项"), copy("When the agent requires review, pending approvals will appear here.", "当 Agent 需要人工确认时，审批项会出现在这里。"));
-    }
-    return (
-      <div className="chat-stream">
-        {approvals.map((approval) => {
-          const pending = approval.status === "pending";
-          return (
-            <section key={approval.id} className="chat-card">
-              <div className="chat-card__title-row">
-                <div>
-                  <div className="chat-list-item__title">{approval.title}</div>
-                  <div className="chat-list-item__meta">
-                    {approval.requester} · {formatDateTime(approval.createdAt)}
-                  </div>
-                </div>
-                <StatusBadge tone={approval.status === "approved" ? "positive" : approval.status === "rejected" ? "critical" : "warning"}>
-                  {approval.status}
-                </StatusBadge>
-              </div>
-              <div className="chat-list-item__summary">{approval.detail}</div>
-              {summarizeApproval(approval) ? <div className="chat-list-item__meta">{summarizeApproval(approval)}</div> : null}
-              {approval.notes ? <div className="chat-list-item__meta">{copy("Notes", "备注")} · {approval.notes}</div> : null}
-              {pending ? (
-                <div style={{ display: "grid", gap: "var(--space-2)" }}>
-                  <FormTextarea
-                    value={approvalNotes[approval.id] ?? ""}
-                    onChange={(event) =>
-                      setApprovalNotes((current) => ({
-                        ...current,
-                        [approval.id]: event.target.value,
-                      }))
-                    }
-                    placeholder={copy("Optional reviewer note for reject path…", "给拒绝动作填写可选备注…")}
-                  />
-                  <div style={{ display: "flex", gap: "var(--space-2)", flexWrap: "wrap" }}>
-                    <button
-                      type="button"
-                      className="chat-composer__submit"
-                      disabled={approvalActionId === approval.id}
-                      onClick={() => void handleApprovalAction(approval, "approve")}
-                    >
-                      {approvalActionId === approval.id ? copy("Working…", "处理中…") : copy("Approve", "通过")}
-                    </button>
-                    <button
-                      type="button"
-                      className="chat-overlay__header-button"
-                      disabled={approvalActionId === approval.id}
-                      onClick={() => void handleApprovalAction(approval, "reject")}
-                    >
-                      {copy("Reject", "拒绝")}
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div className="chat-list-item__meta">
-                  {copy("Reviewed", "已处理")} · {approval.reviewedBy || copy("system", "系统")} · {approval.reviewedAt ? formatDateTime(approval.reviewedAt) : "-"}
-                </div>
-              )}
-            </section>
-          );
-        })}
-      </div>
-    );
-  };
-
   const renderConfigPanel = () => {
     if (loadingSettings && !configDraft) {
       return renderEmptyPanel(copy("Loading settings…", "正在加载设置…"), copy("Preparing editable desktop settings.", "正在准备可编辑的桌面设置。"));
@@ -2456,241 +2603,274 @@ export function ChatOverlay({ transport, workspaceAgent, variant = "overlay" }: 
       return renderEmptyPanel(copy("Settings unavailable", "设置暂不可用"), copy("The current environment did not return `/api/settings`. Saving is disabled.", "当前环境没有返回 `/api/settings`，因此暂时无法保存配置。"));
     }
 
+    const activeAgentConfig = agentConfigDrafts[activeAgent];
+    const policy = activeAgentConfig.recruitingPolicy;
+    const weightItems: Array<{ key: keyof RecruitingPolicyConfig["scoreWeights"]; label: string; help: string }> = [
+      { key: "jdMatch", label: copy("JD match", "JD 匹配"), help: copy("Hard requirements and role relevance.", "硬性门槛与岗位相关性。") },
+      { key: "onlineResume", label: copy("Online resume", "在线简历"), help: copy("Public profile and platform resume evidence.", "平台资料与在线简历证据。") },
+      { key: "offlineResume", label: copy("Offline resume", "离线简历"), help: copy("Uploaded PDF or attachment depth.", "PDF 或附件简历深度。") },
+      { key: "communication", label: copy("Communication", "沟通记录"), help: copy("Intent, contactability, and constraints.", "意向、可联系性与约束。") },
+      { key: "stability", label: copy("Stability", "稳定性"), help: copy("Timeline consistency and job-hopping risk.", "时间线一致性与稳定性风险。") },
+    ];
+    const thresholdItems: Array<{ key: keyof RecruitingPolicyConfig["thresholds"]; label: string }> = [
+      { key: "onlinePass", label: copy("Online pass", "在线通过") },
+      { key: "offlinePass", label: copy("Offline pass", "离线通过") },
+      { key: "compositePass", label: copy("Composite pass", "综合通过") },
+      { key: "manualReviewMin", label: copy("Manual review", "人工复核") },
+      { key: "interviewRecommend", label: copy("Interview", "推荐面试") },
+    ];
+    const totalWeight = weightItems.reduce((sum, item) => sum + numberConfigValue(policy.scoreWeights[item.key], 0), 0);
+
     return (
-      <div className="chat-stream">
-        <section className="chat-card">
-          <div className="chat-card__eyebrow">{copy("Desktop controls", "桌面控制")}</div>
-          <div style={{ display: "grid", gap: "var(--space-3)" }}>
-            <div style={{ display: "grid", gap: "var(--space-1)" }}>
-              <span className="chat-list-item__title">{copy("Desktop approvals only", "仅桌面审批")}</span>
-              <label
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "var(--space-2)",
-                  fontSize: "var(--font-size-sm)",
-                  color: "var(--chat-text-secondary)",
-                }}
-              >
-                <FormCheckbox
-                  type="checkbox"
-                  checked={configDraft.desktopApprovalsOnly}
-                  onChange={(event) =>
-                    setConfigDraft((current) =>
-                      current
-                        ? {
-                            ...current,
-                            desktopApprovalsOnly: event.target.checked,
-                          }
-                        : current,
-                    )
-                  }
-                />
-                {copy("Require local operator confirmation before continuing", "继续执行前必须经过本地操作员确认")}
-              </label>
-            </div>
+      <div className="agent-config">
+        <section className="agent-config__header">
+          <div>
+            <span className="agent-config__eyebrow">{copy("Agent configuration", "Agent 配置")}</span>
+            <h3>{activeAgent === "autonomous" ? copy("Automation recruiting policy", "自动化招聘策略") : copy("Assistant recruiting policy", "普通 Agent 招聘策略")}</h3>
+            <p>{copy("Product-layer rules for JD standards, resume evaluation, scoring, and human checkpoints. Runtime stays generic.", "这里配置 JD 标准、简历评估、评分和人工节点，runtime 保持通用边界。")}</p>
+          </div>
+          <div className="agent-config__actions">
+            <button
+              type="button"
+              className="chat-overlay__header-button"
+              disabled={savingConfig}
+              onClick={() => {
+                setConfigDraft(configDraftFromSettings(settingsSnapshot));
+                setAgentConfigDrafts((current) => ({
+                  ...current,
+                  [activeAgent]: agentConfigDraftFromWorkspace(workspaces[activeAgent]),
+                }));
+              }}
+            >
+              {copy("Reset", "重置")}
+            </button>
+            <button type="button" className="chat-composer__submit" disabled={savingConfig} onClick={() => void handleSaveConfig()}>
+              {savingConfig ? copy("Saving…", "保存中…") : copy("Save", "保存")}
+            </button>
+          </div>
+        </section>
 
-            <div style={{ display: "grid", gap: "var(--space-1)" }}>
-              <span className="chat-list-item__title">{copy("Background execution", "后台执行")}</span>
-              <label
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "var(--space-2)",
-                  fontSize: "var(--font-size-sm)",
-                  color: "var(--chat-text-secondary)",
-                }}
-              >
-                <FormCheckbox
-                  type="checkbox"
-                  checked={configDraft.autonomyEnabled}
-                  onChange={(event) =>
-                    setConfigDraft((current) =>
-                      current
-                        ? {
-                            ...current,
-                            autonomyEnabled: event.target.checked,
-                          }
-                        : current,
-                    )
-                  }
-                />
-                {copy("Allow automation tasks to continue in the background", "允许自动化任务在后台继续执行")}
-              </label>
-            </div>
-
-            <div style={{ display: "grid", gap: "var(--space-1)" }}>
-              <span className="chat-list-item__title">{copy("Skill health autonomy", "技能健康巡检")}</span>
-              <label
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "var(--space-2)",
-                  fontSize: "var(--font-size-sm)",
-                  color: "var(--chat-text-secondary)",
-                }}
-              >
-                <FormCheckbox
-                  type="checkbox"
-                  checked={configDraft.skillHealthAutonomyEnabled}
-                  onChange={(event) =>
-                    setConfigDraft((current) =>
-                      current
-                        ? {
-                            ...current,
-                            skillHealthAutonomyEnabled: event.target.checked,
-                          }
-                        : current,
-                    )
-                  }
-                />
-                {copy("Run periodic skill health checks automatically", "自动执行周期性技能健康巡检")}
-              </label>
-            </div>
-
-            <div style={{ display: "grid", gap: "var(--space-1)" }}>
-              <span className="chat-list-item__title">{copy("Health check interval (seconds)", "巡检间隔（秒）")}</span>
+        <section className="agent-config-card">
+          <div className="agent-config-card__head">
+            <div><span>1</span><h4>{copy("Execution boundaries", "执行边界")}</h4></div>
+            <p>{copy("Controls when automation can continue and when human approval remains in the loop.", "控制自动化何时可继续，以及哪些场景保留人工确认。")}</p>
+          </div>
+          <div className="agent-config-grid agent-config-grid--four">
+            <label className="agent-config-check">
+              <FormCheckbox
+                type="checkbox"
+                checked={configDraft.desktopApprovalsOnly}
+                onChange={(event) =>
+                  setConfigDraft((current) => current ? { ...current, desktopApprovalsOnly: event.target.checked } : current)
+                }
+              />
+              <span>{copy("Desktop approvals only", "仅桌面审批")}</span>
+            </label>
+            <label className="agent-config-check">
+              <FormCheckbox
+                type="checkbox"
+                checked={configDraft.autonomyEnabled}
+                onChange={(event) =>
+                  setConfigDraft((current) => current ? { ...current, autonomyEnabled: event.target.checked } : current)
+                }
+              />
+              <span>{copy("Background execution", "后台执行")}</span>
+            </label>
+            <label className="agent-config-check">
+              <FormCheckbox
+                type="checkbox"
+                checked={configDraft.skillHealthAutonomyEnabled}
+                onChange={(event) =>
+                  setConfigDraft((current) => current ? { ...current, skillHealthAutonomyEnabled: event.target.checked } : current)
+                }
+              />
+              <span>{copy("Skill health checks", "技能巡检")}</span>
+            </label>
+            <label className="agent-config-field">
+              <span>{copy("Interval seconds", "巡检间隔")}</span>
               <FormInput
                 type="number"
                 min={1}
                 value={configDraft.skillHealthAutonomyIntervalSeconds}
                 onChange={(event) =>
-                  setConfigDraft((current) =>
-                    current
-                      ? {
-                          ...current,
-                          skillHealthAutonomyIntervalSeconds: event.target.value,
-                        }
-                      : current,
-                  )
+                  setConfigDraft((current) => current ? { ...current, skillHealthAutonomyIntervalSeconds: event.target.value } : current)
                 }
               />
-            </div>
-
-            <div style={{ display: "flex", gap: "var(--space-2)", flexWrap: "wrap" }}>
-              <button type="button" className="chat-composer__submit" disabled={savingConfig} onClick={() => void handleSaveConfig()}>
-                {savingConfig ? copy("Saving…", "保存中…") : copy("Save configuration", "保存配置")}
-              </button>
-              <button
-                type="button"
-                className="chat-overlay__header-button"
-                disabled={savingConfig}
-                onClick={() => {
-                  setConfigDraft(configDraftFromSettings(settingsSnapshot));
-                  setAgentConfigDrafts((current) => ({
-                    ...current,
-                    [activeAgent]: agentConfigDraftFromWorkspace(workspaces[activeAgent]),
-                  }));
-                }}
-              >
-                {copy("Reset", "重置")}
-              </button>
-            </div>
+            </label>
           </div>
         </section>
 
-        <section className="chat-card">
-          <div className="chat-card__eyebrow">
-            {copy("Agent instruction", "Agent 指令")}
+        <section className="agent-config-card">
+          <div className="agent-config-card__head">
+            <div><span>2</span><h4>{copy("Instruction source", "指令来源")}</h4></div>
+            <p>{copy("Assistant and automation share the same product instruction; automation only adds external triggers.", "Assistant 与自动化复用同一产品指令，自动化只增加外部触发。")}</p>
           </div>
-          <div style={{ display: "grid", gap: "var(--space-3)" }}>
-            <div style={{ display: "grid", gap: "var(--space-1)" }}>
-              <span className="chat-list-item__title">{copy("System prompt", "System Prompt")}</span>
+          <div className="agent-config-grid agent-config-grid--two">
+            <label className="agent-config-field">
+              <span>{copy("System prompt", "System Prompt")}</span>
               <FormTextarea
-                value={agentConfigDrafts[activeAgent].systemPrompt}
+                value={activeAgentConfig.systemPrompt}
                 onChange={(event) =>
                   setAgentConfigDrafts((current) => ({
                     ...current,
-                    [activeAgent]: {
-                      ...current[activeAgent],
-                      systemPrompt: event.target.value,
-                    },
+                    [activeAgent]: { ...current[activeAgent], systemPrompt: event.target.value },
                   }))
                 }
-                className="chat-overlay-form-textarea--large"
-              />
-            </div>
-
-            {activeAgent === "autonomous" ? (
-              <div style={{ display: "grid", gap: "var(--space-1)" }}>
-                <span className="chat-list-item__title">{copy("Automation task template", "自动化任务模板")}</span>
-                <FormTextarea
-                  value={agentConfigDrafts[activeAgent].goalTemplate}
-                  onChange={(event) =>
-                    setAgentConfigDrafts((current) => ({
-                      ...current,
-                      [activeAgent]: {
-                        ...current[activeAgent],
-                        goalTemplate: event.target.value,
-                      },
-                    }))
-                  }
-                  placeholder={copy(
-                    "Describe the reusable task objective for event or schedule triggered execution…",
-                    "填写事件或调度触发时复用的任务目标描述…",
-                  )}
-                  className="chat-overlay-form-textarea--xlarge"
-                />
-              </div>
-            ) : null}
-
-            <div style={{ display: "grid", gap: "var(--space-1)" }}>
-              <span className="chat-list-item__title">{copy("Scoring rubric", "评分 Rubric")}</span>
-              <FormTextarea
-                value={agentConfigDrafts[activeAgent].scoringRubric}
-                onChange={(event) =>
-                  setAgentConfigDrafts((current) => ({
-                    ...current,
-                    [activeAgent]: {
-                      ...current[activeAgent],
-                      scoringRubric: event.target.value,
-                    },
-                  }))
-                }
-                placeholder={copy("Paste the scoring rubric used by this agent…", "填写当前 Agent 使用的评分 Rubric…")}
                 className="chat-overlay-form-textarea--medium"
               />
-            </div>
+            </label>
+            <label className="agent-config-field">
+              <span>{copy("Automation task instruction", "自动化任务指令模板")}</span>
+              <FormTextarea
+                value={activeAgentConfig.goalTemplate}
+                onChange={(event) =>
+                  setAgentConfigDrafts((current) => ({
+                    ...current,
+                    [activeAgent]: { ...current[activeAgent], goalTemplate: event.target.value },
+                  }))
+                }
+                placeholder={copy("Reusable instructions for event, schedule, or manual automation runs…", "事件、调度或人工创建自动化任务时复用的指令…")}
+                className="chat-overlay-form-textarea--medium"
+              />
+            </label>
           </div>
         </section>
 
-        <section className="chat-card">
-          <div className="chat-card__eyebrow">{copy("Environment snapshot", "环境快照")}</div>
-          <div className="chat-card__meta-list">
-            <span>{copy("Locale", "语言")} · {settingsSnapshot.locale}</span>
-            <span>{copy("Timezone", "时区")} · {settingsSnapshot.timezone}</span>
-            <span>{copy("Intranet sync", "内网同步")} · {settingsSnapshot.intranetEnabled ? copy("enabled", "已启用") : copy("disabled", "已关闭")}</span>
-            <span>{copy("Active account", "当前账户")} · {settingsSnapshot.platform.account}</span>
+        <section className="agent-config-card">
+          <div className="agent-config-card__head">
+            <div><span>3</span><h4>{copy("JD standards", "JD 与岗位标准")}</h4></div>
+            <p>{copy("Role-specific standards are product configuration, not runtime mechanics.", "岗位标准属于产品配置，不进入 runtime 机制。")}</p>
+          </div>
+          <div className="agent-config-grid agent-config-grid--two">
+            <label className="agent-config-field">
+              <span>{copy("JD parsing standard", "JD 拆解标准")}</span>
+              <FormTextarea value={policy.jdStandards} onChange={(event) => updateRecruitingPolicyText("jdStandards", event.target.value)} />
+            </label>
+            <label className="agent-config-field">
+              <span>{copy("Per-JD override policy", "不同 JD 评估差异")}</span>
+              <FormTextarea value={policy.perJdEvaluation} onChange={(event) => updateRecruitingPolicyText("perJdEvaluation", event.target.value)} />
+            </label>
           </div>
         </section>
 
-        <section className="chat-card chat-card--code">
-          <div className="chat-card__eyebrow">{copy("Agent profile", "Agent 画像")}</div>
-          <div className="chat-card__meta-list">
-            <span>{copy("Provider", "Provider")} · {activeWorkspace?.config.providerLabel || "-"}</span>
-            <span>{copy("Model", "模型")} · {activeWorkspace?.config.modelLabel || activeWorkspace?.agent.defaultModel || "-"}</span>
+        <section className="agent-config-card">
+          <div className="agent-config-card__head">
+            <div><span>4</span><h4>{copy("Candidate evaluation", "候选人评估")}</h4></div>
+            <p>{copy("Online resume, offline resume, communication evidence, and composite score remain separate inputs.", "在线简历、离线简历、沟通证据和综合评分分别作为输入。")}</p>
+          </div>
+          <div className="agent-config-grid agent-config-grid--two">
+            <label className="agent-config-field">
+              <span>{copy("Online resume criteria", "在线简历标准")}</span>
+              <FormTextarea value={policy.onlineResumeCriteria} onChange={(event) => updateRecruitingPolicyText("onlineResumeCriteria", event.target.value)} />
+            </label>
+            <label className="agent-config-field">
+              <span>{copy("Offline resume criteria", "离线简历标准")}</span>
+              <FormTextarea value={policy.offlineResumeCriteria} onChange={(event) => updateRecruitingPolicyText("offlineResumeCriteria", event.target.value)} />
+            </label>
+            <label className="agent-config-field">
+              <span>{copy("Communication evidence", "沟通证据")}</span>
+              <FormTextarea value={policy.communicationEvidence} onChange={(event) => updateRecruitingPolicyText("communicationEvidence", event.target.value)} />
+            </label>
+            <label className="agent-config-field">
+              <span>{copy("Composite scoring", "AI 综合评分")}</span>
+              <FormTextarea value={policy.compositeScoring} onChange={(event) => updateRecruitingPolicyText("compositeScoring", event.target.value)} />
+            </label>
+          </div>
+        </section>
+
+        <section className="agent-config-card">
+          <div className="agent-config-card__head">
+            <div><span>5</span><h4>{copy("Scoring weights and gates", "评分权重与阈值")}</h4></div>
+            <p>{copy("Weights guide the rubric; thresholds decide pass, manual review, and interview recommendation.", "权重指导 rubric，阈值决定通过、人工复核和面试建议。")}</p>
+          </div>
+          <div className="agent-config-score-grid">
+            {weightItems.map((item) => (
+              <label key={item.key} className="agent-config-score">
+                <span>{item.label}</span>
+                <FormInput
+                  type="number"
+                  min={0}
+                  max={100}
+                  value={policy.scoreWeights[item.key]}
+                  onChange={(event) => updateRecruitingPolicyNumber("scoreWeights", item.key, event.target.value)}
+                />
+                <small>{item.help}</small>
+              </label>
+            ))}
+          </div>
+          <div className="agent-config-threshold-grid">
+            {thresholdItems.map((item) => (
+              <label key={item.key} className="agent-config-field">
+                <span>{item.label}</span>
+                <FormInput
+                  type="number"
+                  min={0}
+                  max={100}
+                  value={policy.thresholds[item.key]}
+                  onChange={(event) => updateRecruitingPolicyNumber("thresholds", item.key, event.target.value)}
+                />
+              </label>
+            ))}
+          </div>
+          <div className="agent-config-note" data-tone={totalWeight === 100 ? "positive" : "warning"}>
+            {copy("Weight total", "权重合计")} · {totalWeight}
+          </div>
+          <label className="agent-config-field">
+            <span>{copy("Detailed scoring rubric", "评分 Rubric")}</span>
+            <FormTextarea
+              value={activeAgentConfig.scoringRubric}
+              onChange={(event) =>
+                setAgentConfigDrafts((current) => ({
+                  ...current,
+                  [activeAgent]: { ...current[activeAgent], scoringRubric: event.target.value },
+                }))
+              }
+              placeholder={copy("Detailed rubric for dimensions, evidence refs, and verdict wording…", "填写维度、证据引用和结论表述规则…")}
+              className="chat-overlay-form-textarea--medium"
+            />
+          </label>
+        </section>
+
+        <section className="agent-config-card">
+          <div className="agent-config-card__head">
+            <div><span>6</span><h4>{copy("Human workflow", "人工节点与交接")}</h4></div>
+            <p>{copy("Connects AI scoring, manual screening, interview scheduling, and offer handoff.", "定义 AI 评分、人工筛选、面试安排与 Offer 交接如何衔接。")}</p>
+          </div>
+          <div className="agent-config-grid agent-config-grid--three">
+            <label className="agent-config-field">
+              <span>{copy("Manual screening", "人工筛选")}</span>
+              <FormTextarea value={policy.screeningRules} onChange={(event) => updateRecruitingPolicyText("screeningRules", event.target.value)} />
+            </label>
+            <label className="agent-config-field">
+              <span>{copy("Interview scheduling", "面试安排")}</span>
+              <FormTextarea value={policy.interviewScheduling} onChange={(event) => updateRecruitingPolicyText("interviewScheduling", event.target.value)} />
+            </label>
+            <label className="agent-config-field">
+              <span>{copy("Offer handoff", "Offer 交接")}</span>
+              <FormTextarea value={policy.offerHandoff} onChange={(event) => updateRecruitingPolicyText("offerHandoff", event.target.value)} />
+            </label>
+          </div>
+        </section>
+
+        <section className="agent-config-card agent-config-card--compact">
+          <div className="agent-config-card__head">
+            <div><span>7</span><h4>{copy("Runtime and environment snapshot", "运行与环境快照")}</h4></div>
+            <p>{copy("Read-only view of provider, model, account, and product boundaries.", "只读展示 provider、模型、账号与产品边界。")}</p>
+          </div>
+          <div className="agent-config-summary-grid">
+            <div><span>{copy("Provider", "Provider")}</span><strong>{activeWorkspace?.config.providerLabel || "-"}</strong></div>
+            <div><span>{copy("Model", "模型")}</span><strong>{activeWorkspace?.config.modelLabel || activeWorkspace?.agent.defaultModel || "-"}</strong></div>
+            <div><span>{copy("Locale", "语言")}</span><strong>{settingsSnapshot.locale}</strong></div>
+            <div><span>{copy("Timezone", "时区")}</span><strong>{settingsSnapshot.timezone}</strong></div>
+            <div><span>{copy("Active account", "当前账户")}</span><strong>{settingsSnapshot.platform.account}</strong></div>
+            <div><span>{copy("Intranet sync", "内网同步")}</span><strong>{settingsSnapshot.intranetEnabled ? copy("enabled", "已启用") : copy("disabled", "已关闭")}</strong></div>
           </div>
           {activeWorkspace?.config.boundaries?.length ? (
-            <div style={{ display: "flex", gap: "var(--space-2)", flexWrap: "wrap" }}>
+            <div className="agent-config-boundaries">
               {activeWorkspace.config.boundaries.map((boundary) => (
-                <span key={boundary} className="chat-chip">
-                  {boundary}
-                </span>
+                <span key={boundary}>{boundary}</span>
               ))}
             </div>
-          ) : null}
-          <pre>
-            <code>{activeWorkspace?.config.systemPrompt || copy("No prompt exposed yet.", "后端暂未暴露 prompt。")}</code>
-          </pre>
-          {activeWorkspace?.config.goalTemplate ? (
-            <pre>
-              <code>{activeWorkspace.config.goalTemplate}</code>
-            </pre>
-          ) : null}
-          {activeWorkspace?.config.scoringRubric ? (
-            <pre>
-              <code>{activeWorkspace.config.scoringRubric}</code>
-            </pre>
           ) : null}
         </section>
       </div>
@@ -2709,7 +2889,6 @@ export function ChatOverlay({ transport, workspaceAgent, variant = "overlay" }: 
       const totalRuns = activeWorkspace.runs.length;
       const successRate = totalRuns > 0 ? Math.round((completedRuns / totalRuns) * 1000) / 10 : 0;
       const progressPercent = totalRuns > 0 ? Math.min(100, Math.round(((completedRuns + failedRuns) / totalRuns) * 100)) : 0;
-      const pendingApprovals = activeWorkspace.approvals.filter((approval) => approval.status === "pending");
       const enabledTools = activeWorkspace.tools.filter((tool) => tool.enabled).length;
       const healthySkills = activeWorkspace.skills.filter((skill) => skill.health === "healthy").length;
       return (
@@ -2746,11 +2925,11 @@ export function ChatOverlay({ transport, workspaceAgent, variant = "overlay" }: 
               <span>{copy("Task", "任务")} · {activeWorkspace.agent.activeTask || activeRunStatusText?.title || "-"}</span>
               <span>{copy("Open runs", "待处理运行")} · {openRuns}</span>
               <span>{copy("Completed", "已完成")} · {completedRuns}</span>
-              <span>{copy("Pending approvals", "待确认")} · {pendingApprovals.length}</span>
+              <span>{copy("Failed", "失败")} · {failedRuns}</span>
             </div>
             <div className="agent-runtime-actions">
               <button type="button" onClick={() => setActivePanel("runs")}>{copy("View tasks", "查看任务")}</button>
-              <button type="button" onClick={() => setActivePanel("approvals")}>{copy("Review", "处理确认")}</button>
+              <button type="button" onClick={() => setActivePanel("conversation")}>{copy("Open timeline", "查看时间线")}</button>
             </div>
           </section>
 
@@ -2763,7 +2942,7 @@ export function ChatOverlay({ transport, workspaceAgent, variant = "overlay" }: 
               <div><span>{copy("Runs", "执行任务")}</span><strong>{totalRuns}</strong></div>
               <div><span>{copy("Success", "成功率")}</span><strong>{successRate}%</strong></div>
               <div><span>{copy("Open", "进行中")}</span><strong>{openRuns}</strong></div>
-              <div><span>{copy("Approvals", "待确认")}</span><strong>{pendingApprovals.length}</strong></div>
+              <div><span>{copy("Failed", "失败")}</span><strong>{failedRuns}</strong></div>
             </div>
           </section>
 
@@ -2776,22 +2955,6 @@ export function ChatOverlay({ transport, workspaceAgent, variant = "overlay" }: 
               </div>
               <span><i style={{ width: `${progressPercent}%` }} /></span>
               <p>{completedRuns + failedRuns} / {totalRuns || 0} {copy("runs resolved", "个运行已结束")}</p>
-            </div>
-          </section>
-
-          <section className="agent-runtime-card">
-            <div className="agent-runtime-card__title-row">
-              <div className="agent-runtime-card__eyebrow">{copy("Recent approvals", "最近确认")}</div>
-              <button type="button" onClick={() => setActivePanel("approvals")}>{copy("All", "全部")}</button>
-            </div>
-            <div className="agent-runtime-feed">
-              {activeWorkspace.approvals.slice(0, 4).map((approval) => (
-                <button key={approval.id} type="button" onClick={() => setActivePanel("approvals")}>
-                  <strong>{approval.title}</strong>
-                  <span>{approval.status} · {formatDateTime(approval.createdAt)}</span>
-                </button>
-              ))}
-              {!activeWorkspace.approvals.length ? <p>{copy("No approvals waiting.", "当前没有待确认项。")}</p> : null}
             </div>
           </section>
 
@@ -2869,17 +3032,6 @@ export function ChatOverlay({ transport, workspaceAgent, variant = "overlay" }: 
             </div>
           </section>
         );
-      case "approvals":
-        return (
-          <section className="chat-card">
-            <div className="chat-card__eyebrow">{copy("Approval summary", "审批概览")}</div>
-            <div className="chat-card__meta-list">
-              <span>{copy("Pending", "待审批")} · {activeWorkspace.approvals.filter((approval) => approval.status === "pending").length}</span>
-              <span>{copy("Approved", "已通过")} · {activeWorkspace.approvals.filter((approval) => approval.status === "approved").length}</span>
-              <span>{copy("Rejected", "已拒绝")} · {activeWorkspace.approvals.filter((approval) => approval.status === "rejected").length}</span>
-            </div>
-          </section>
-        );
       case "memory":
         return (
           <section className="chat-card">
@@ -2923,7 +3075,7 @@ export function ChatOverlay({ transport, workspaceAgent, variant = "overlay" }: 
       return null;
     }
     const openRuns = activeWorkspace.runs.filter((run) => isOpenRunStatus(run.status)).length;
-    const pendingApprovals = activeWorkspace.approvals.filter((approval) => approval.status === "pending").length;
+    const completedRuns = activeWorkspace.runs.filter((run) => run.status === "completed").length;
     const enabledTools = activeWorkspace.tools.filter((tool) => tool.enabled).length;
     const healthySkills = activeWorkspace.skills.filter((skill) => skill.health === "healthy").length;
     const triggerSources = activeAgent === "assistant"
@@ -2953,8 +3105,8 @@ export function ChatOverlay({ transport, workspaceAgent, variant = "overlay" }: 
             <strong>{openRuns}</strong>
           </div>
           <div>
-            <span>{copy("Approvals", "待确认")}</span>
-            <strong>{pendingApprovals}</strong>
+            <span>{copy("Completed", "已完成")}</span>
+            <strong>{completedRuns}</strong>
           </div>
           <div>
             <span>{copy("Tools", "可用工具")}</span>
@@ -3114,12 +3266,101 @@ export function ChatOverlay({ transport, workspaceAgent, variant = "overlay" }: 
     );
   };
 
+  const renderTimelineApprovalAttachment = useCallback(
+    (message: AgentConversationMessage): React.ReactNode => {
+      const matches = (activeWorkspace?.approvals ?? [])
+        .filter((approval) => approvalMatchesTimelineMessage(approval, message))
+        .sort((left, right) => {
+          if (left.status === "pending" && right.status !== "pending") {
+            return -1;
+          }
+          if (right.status === "pending" && left.status !== "pending") {
+            return 1;
+          }
+          return (
+            parseConversationSortTime(right.updatedAt ?? right.reviewedAt ?? right.createdAt) -
+            parseConversationSortTime(left.updatedAt ?? left.reviewedAt ?? left.createdAt)
+          );
+        });
+      const approval = matches[0] ?? null;
+      if (!approval) {
+        return null;
+      }
+
+      const options = approvalOptionsFor(approval, copy);
+      const selected = approvalSelections[approval.id] ?? options[0]?.key;
+      const isBusy = approvalActionId === approval.id;
+      const resolvedAt = approval.reviewedAt ?? approval.updatedAt ?? approval.createdAt;
+
+      if (approval.status !== "pending") {
+        return (
+          <section className="agent-inline-approval agent-inline-approval--resolved" data-status={approval.status}>
+            <div className="agent-inline-approval__head">
+              <div>
+                <strong>{cleanApprovalTitle(approval)}</strong>
+                <span>{formatDateTime(resolvedAt)}</span>
+              </div>
+              <StatusBadge tone={approvalStatusTone(approval.status)}>{approvalStatusLabel(approval.status, copy)}</StatusBadge>
+            </div>
+            <p>{approval.notes || describeApprovalIntent(approval, copy)}</p>
+          </section>
+        );
+      }
+
+      return (
+        <section className="agent-inline-approval" data-pending={isBusy ? "true" : undefined}>
+          <div className="agent-inline-approval__head">
+            <div>
+              <strong>{cleanApprovalTitle(approval)}</strong>
+              <span>{copy("Requested by", "发起方")}：{approval.requester}</span>
+            </div>
+            <StatusBadge tone="warning">{approvalStatusLabel(approval.status, copy)}</StatusBadge>
+          </div>
+          <p>{describeApprovalIntent(approval, copy)}</p>
+          <div className="agent-inline-approval__options">
+            {options.map((option) => (
+              <label key={option.key} data-active={option.key === selected}>
+                <input
+                  type="radio"
+                  name={`approval-${approval.id}`}
+                  checked={option.key === selected}
+                  onChange={() =>
+                    setApprovalSelections((current) => ({
+                      ...current,
+                      [approval.id]: option.key,
+                    }))
+                  }
+                />
+                <span>{option.label}</span>
+                <small>{option.description}</small>
+              </label>
+            ))}
+          </div>
+          <FormTextarea
+            value={approvalNotes[approval.id] ?? ""}
+            onChange={(event) =>
+              setApprovalNotes((current) => ({
+                ...current,
+                [approval.id]: event.target.value,
+              }))
+            }
+            placeholder={copy("Optional execution constraint or rejection reason…", "输入补充要求，例如：只处理高优先级候选人，或先预览影响范围…")}
+          />
+          <div className="agent-inline-approval__actions">
+            <button type="button" onClick={() => void handleApprovalAction(approval, "approve")} disabled={isBusy}>
+              {copy("Continue", "确认执行")}
+            </button>
+            <button type="button" onClick={() => void handleApprovalAction(approval, "reject")} disabled={isBusy}>
+              {copy("Reject", "拒绝")}
+            </button>
+          </div>
+        </section>
+      );
+    },
+    [activeWorkspace?.approvals, approvalActionId, approvalNotes, approvalSelections, copy],
+  );
+
   const renderPanelContent = () => {
-    const firstPendingApproval = activeWorkspace?.approvals.find((approval) => approval.status === "pending") ?? null;
-    const firstPendingApprovalOptions = firstPendingApproval ? approvalOptionsFor(firstPendingApproval, copy) : [];
-    const firstPendingApprovalSelection = firstPendingApproval
-      ? approvalSelections[firstPendingApproval.id] ?? firstPendingApprovalOptions[0]?.key
-      : undefined;
     if (activePanel === "conversation") {
       return (
         <div className="chat-stream chat-stream--management">
@@ -3127,75 +3368,7 @@ export function ChatOverlay({ transport, workspaceAgent, variant = "overlay" }: 
           <ChatMessageStream
             loading={loadingWorkspace || loadingConversation}
             messages={activeConversation?.messages ?? []}
-            timelineFooter={pageMode && firstPendingApproval ? (
-              <article className="agent-execution-event agent-execution-event--approval" data-event-kind="confirmation">
-                <div className="agent-execution-event__time">{formatTimelineTime(firstPendingApproval.createdAt)}</div>
-                <div className="agent-execution-event__node">
-                  <svg viewBox="0 0 18 18" aria-hidden="true">
-                    <path d="M9 3.2 15 14H3L9 3.2Z" />
-                    <path d="M9 7v3.2M9 12.3h.01" />
-                  </svg>
-                </div>
-                <div className="agent-execution-event__body">
-                  <div className="agent-execution-event__head">
-                    <div>
-                      <strong>{copy("Needs Confirmation", "需要你的确认")}</strong>
-                      <span>{copy("Human-in-the-loop", "Human-in-the-loop")}</span>
-                    </div>
-                  </div>
-                  <section className="agent-inline-approval" data-pending={approvalActionId === firstPendingApproval.id ? "true" : undefined}>
-                    <div className="agent-inline-approval__head">
-                      <div>
-                        <strong>{cleanApprovalTitle(firstPendingApproval)}</strong>
-                        <span>{copy("Requested by", "发起方")}：{firstPendingApproval.requester}</span>
-                      </div>
-                      <StatusBadge tone="warning">{copy("Waiting", "待确认")}</StatusBadge>
-                    </div>
-                    <p>{describeApprovalIntent(firstPendingApproval, copy)}</p>
-                    <div className="agent-inline-approval__options">
-                      {firstPendingApprovalOptions.map((option) => (
-                        <label key={option.key} data-active={option.key === firstPendingApprovalSelection}>
-                          <input
-                            type="radio"
-                            name={`approval-${firstPendingApproval.id}`}
-                            checked={option.key === firstPendingApprovalSelection}
-                            onChange={() =>
-                              setApprovalSelections((current) => ({
-                                ...current,
-                                [firstPendingApproval.id]: option.key,
-                              }))
-                            }
-                          />
-                          <span>{option.label}</span>
-                          <small>{option.description}</small>
-                        </label>
-                      ))}
-                    </div>
-                    <FormTextarea
-                      value={approvalNotes[firstPendingApproval.id] ?? ""}
-                      onChange={(event) =>
-                        setApprovalNotes((current) => ({
-                          ...current,
-                          [firstPendingApproval.id]: event.target.value,
-                        }))
-                      }
-                      placeholder={copy("Optional execution constraint or rejection reason…", "输入补充要求，例如：只处理高优先级候选人，或先预览影响范围…")}
-                    />
-                    <div className="agent-inline-approval__actions">
-                      <button type="button" onClick={() => void handleApprovalAction(firstPendingApproval, "approve")} disabled={approvalActionId === firstPendingApproval.id}>
-                        {copy("Continue", "确认执行")}
-                      </button>
-                      <button type="button" onClick={() => void handleApprovalAction(firstPendingApproval, "reject")} disabled={approvalActionId === firstPendingApproval.id}>
-                        {copy("Reject", "拒绝")}
-                      </button>
-                      <button type="button" onClick={() => setActivePanel("approvals")}>
-                        {copy("All confirmations", "全部确认")}
-                      </button>
-                    </div>
-                  </section>
-                </div>
-              </article>
-            ) : null}
+            renderTimelineAttachment={pageMode ? renderTimelineApprovalAttachment : undefined}
             variant={pageMode ? "timeline" : "cards"}
           />
         </div>
@@ -3211,8 +3384,6 @@ export function ChatOverlay({ transport, workspaceAgent, variant = "overlay" }: 
         return renderConfigPanel();
       case "runs":
         return renderRunsPanel(activeWorkspace.runs);
-      case "approvals":
-        return renderApprovalsPanel(activeWorkspace.approvals);
       case "memory":
         return renderMemoryPanel(activeWorkspace.memories);
       case "skills":

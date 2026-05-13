@@ -210,10 +210,10 @@ def test_job_description_funnel_stats_use_state_machine_milestones(tmp_path: Pat
                 )
 
             create_application(1, "discovered", "M01")
-            create_application(2, "outreach_pending", "M03")
-            create_application(3, "contact_acquired", "M11")
-            create_application(4, "interview_scheduled", "M12")
-            create_application(5, "offer_accepted", "M14")
+            create_application(2, "online_resume_passed", "M04")
+            create_application(3, "profile_ready", "M13")
+            create_application(4, "interview_scheduled", "M15")
+            create_application(5, "offer_accepted", "M19")
 
         response = client.get(f"/api/job-descriptions/{job.job_description_id}/funnel-stats")
         assert response.status_code == 200
@@ -229,7 +229,7 @@ def test_job_description_funnel_stats_use_state_machine_milestones(tmp_path: Pat
         assert payload["withAiScore"] == 1
         assert payload["byStatus"]["offer_accepted"] == 1
         steps = {item["key"]: item for item in payload["steps"]}
-        assert steps["communicating"]["label"] == "沟通中"
+        assert steps["communicating"]["label"] == "在线简历"
         assert steps["communicating"]["percent"] == 80.0
     finally:
         client.__exit__(None, None, None)

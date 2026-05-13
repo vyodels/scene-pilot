@@ -23,7 +23,6 @@ export type ChatOverlayPanelKey =
   | "conversation"
   | "config"
   | "runs"
-  | "approvals"
   | "memory"
   | "skills"
   | "tools";
@@ -357,6 +356,10 @@ export interface ApprovalItem {
   updatedAt?: string;
   surface: ApprovalSurface;
   relatedApplicationId?: string | null;
+  sourceKind?: AgentKind | string | null;
+  runPk?: string | null;
+  turnPk?: string | null;
+  toolName?: string | null;
 }
 
 export interface GoalSpecRecord {
@@ -678,9 +681,36 @@ export interface AgentWorkspaceRecord {
     systemPrompt: string;
     goalTemplate: string;
     scoringRubric: string;
+    recruitingPolicy: RecruitingPolicyConfig;
     boundaries: string[];
     providerLabel?: string | null;
     modelLabel?: string | null;
+  };
+}
+
+export interface RecruitingPolicyConfig {
+  jdStandards: string;
+  perJdEvaluation: string;
+  onlineResumeCriteria: string;
+  offlineResumeCriteria: string;
+  communicationEvidence: string;
+  compositeScoring: string;
+  screeningRules: string;
+  interviewScheduling: string;
+  offerHandoff: string;
+  scoreWeights: {
+    jdMatch: number;
+    onlineResume: number;
+    offlineResume: number;
+    communication: number;
+    stability: number;
+  };
+  thresholds: {
+    onlinePass: number;
+    offlinePass: number;
+    compositePass: number;
+    manualReviewMin: number;
+    interviewRecommend: number;
   };
 }
 
@@ -869,7 +899,7 @@ export interface DashboardSummary {
 }
 
 export interface ApplicationFollowUpSummaryDefinition {
-  key: "all" | "active" | "human" | "no_response" | "cooldown" | "archived" | "candidate_withdrew";
+  key: string;
   label: string;
   summary: string;
   relation?: string | null;

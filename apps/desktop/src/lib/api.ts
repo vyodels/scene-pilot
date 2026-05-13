@@ -15,6 +15,7 @@ import type {
   ApplicationStateSnapshotRecord,
   ApplicationThreadRecord,
   ApprovalItem,
+  ApprovalStatus,
   AgentEvent,
   AgentConversationMessage,
   AgentConversationRecord,
@@ -50,6 +51,7 @@ import type {
   McpToolRecord,
   OperatorInteractionRecord,
   RecruitAgentProfileRecord,
+  RecruitingPolicyConfig,
   ResumeArtifactRecord,
   RuntimeCapabilityDriver,
   RuntimeCompilerContract,
@@ -449,6 +451,69 @@ function asArray<T>(value: unknown): T[] {
   return Array.isArray(value) ? (value as T[]) : [];
 }
 
+const DEFAULT_RECRUITING_POLICY: RecruitingPolicyConfig = {
+  jdStandards: "拆解岗位目标、团队阶段、核心职责、硬性门槛、加分项、排除项和交付预期；所有候选人判断必须明确引用对应 JD 要求。",
+  perJdEvaluation: "不同 JD 可以覆盖通用权重、硬性门槛和优先级。评估时先读取当前 JD 的专属标准，再应用通用招聘规则。",
+  onlineResumeCriteria: "在线简历优先判断 JD 匹配度、最近岗位相关性、核心技能证据、项目深度、稳定性和明显风险；不足以判断时进入补充材料环节。",
+  offlineResumeCriteria: "离线简历用于补齐在线资料缺失的信息，重点检查项目细节、影响指标、职责边界、联系方式和时间线一致性。",
+  communicationEvidence: "沟通记录用于判断候选人意向、可联系性、薪资/城市/到岗约束、简历获取结果和风险信号；不得跨候选人或跨 JD 混用沟通事实。",
+  compositeScoring: "AI 综合评分基于在线简历、离线简历、沟通记录和 JD 标准生成，必须输出维度分、证据引用、通过/淘汰建议和下一步动作。",
+  screeningRules: "人工筛选阶段必须已具备在线简历评估、离线简历评估和 AI 综合评分。综合分达到阈值且无硬性排除项时建议通过，否则给出淘汰或补充材料建议。",
+  interviewScheduling: "进入待预约面试前必须有可用联系方式、明确意向和可解释的通过理由。面试安排应记录时间、轮次、联系人和确认状态。",
+  offerHandoff: "Offer 阶段只处理已通过面试的候选人；需要记录薪资期望、风险点、候选人反馈和交接备注。",
+  scoreWeights: {
+    jdMatch: 30,
+    onlineResume: 20,
+    offlineResume: 25,
+    communication: 15,
+    stability: 10,
+  },
+  thresholds: {
+    onlinePass: 70,
+    offlinePass: 72,
+    compositePass: 75,
+    manualReviewMin: 60,
+    interviewRecommend: 80,
+  },
+};
+
+function numberFrom(value: unknown, fallback: number): number {
+  const numeric = typeof value === "number" ? value : Number.parseFloat(String(value ?? ""));
+  return Number.isFinite(numeric) ? numeric : fallback;
+}
+
+function normalizeRecruitingPolicy(raw: unknown): RecruitingPolicyConfig {
+  const record = asRecord(raw);
+  const scoreWeights = asRecord(record.scoreWeights ?? record.score_weights);
+  const thresholds = asRecord(record.thresholds);
+  return {
+    ...DEFAULT_RECRUITING_POLICY,
+    jdStandards: String(record.jdStandards ?? record.jd_standards ?? DEFAULT_RECRUITING_POLICY.jdStandards),
+    perJdEvaluation: String(record.perJdEvaluation ?? record.per_jd_evaluation ?? DEFAULT_RECRUITING_POLICY.perJdEvaluation),
+    onlineResumeCriteria: String(record.onlineResumeCriteria ?? record.online_resume_criteria ?? DEFAULT_RECRUITING_POLICY.onlineResumeCriteria),
+    offlineResumeCriteria: String(record.offlineResumeCriteria ?? record.offline_resume_criteria ?? DEFAULT_RECRUITING_POLICY.offlineResumeCriteria),
+    communicationEvidence: String(record.communicationEvidence ?? record.communication_evidence ?? DEFAULT_RECRUITING_POLICY.communicationEvidence),
+    compositeScoring: String(record.compositeScoring ?? record.composite_scoring ?? DEFAULT_RECRUITING_POLICY.compositeScoring),
+    screeningRules: String(record.screeningRules ?? record.screening_rules ?? DEFAULT_RECRUITING_POLICY.screeningRules),
+    interviewScheduling: String(record.interviewScheduling ?? record.interview_scheduling ?? DEFAULT_RECRUITING_POLICY.interviewScheduling),
+    offerHandoff: String(record.offerHandoff ?? record.offer_handoff ?? DEFAULT_RECRUITING_POLICY.offerHandoff),
+    scoreWeights: {
+      jdMatch: numberFrom(scoreWeights.jdMatch ?? scoreWeights.jd_match, DEFAULT_RECRUITING_POLICY.scoreWeights.jdMatch),
+      onlineResume: numberFrom(scoreWeights.onlineResume ?? scoreWeights.online_resume, DEFAULT_RECRUITING_POLICY.scoreWeights.onlineResume),
+      offlineResume: numberFrom(scoreWeights.offlineResume ?? scoreWeights.offline_resume, DEFAULT_RECRUITING_POLICY.scoreWeights.offlineResume),
+      communication: numberFrom(scoreWeights.communication, DEFAULT_RECRUITING_POLICY.scoreWeights.communication),
+      stability: numberFrom(scoreWeights.stability, DEFAULT_RECRUITING_POLICY.scoreWeights.stability),
+    },
+    thresholds: {
+      onlinePass: numberFrom(thresholds.onlinePass ?? thresholds.online_pass, DEFAULT_RECRUITING_POLICY.thresholds.onlinePass),
+      offlinePass: numberFrom(thresholds.offlinePass ?? thresholds.offline_pass, DEFAULT_RECRUITING_POLICY.thresholds.offlinePass),
+      compositePass: numberFrom(thresholds.compositePass ?? thresholds.composite_pass, DEFAULT_RECRUITING_POLICY.thresholds.compositePass),
+      manualReviewMin: numberFrom(thresholds.manualReviewMin ?? thresholds.manual_review_min, DEFAULT_RECRUITING_POLICY.thresholds.manualReviewMin),
+      interviewRecommend: numberFrom(thresholds.interviewRecommend ?? thresholds.interview_recommend, DEFAULT_RECRUITING_POLICY.thresholds.interviewRecommend),
+    },
+  };
+}
+
 function humanizeKey(value: string): string {
   return value
     .replace(/[_-]+/g, " ")
@@ -829,6 +894,7 @@ function normalizeAgentWorkspace(raw: unknown, fallbackKind: AgentKind): AgentWo
       systemPrompt: String(config.systemPrompt ?? config.system_prompt ?? ""),
       goalTemplate: String(config.goalTemplate ?? config.goal_template ?? ""),
       scoringRubric: String(config.scoringRubric ?? config.scoring_rubric ?? config.rubric ?? ""),
+      recruitingPolicy: normalizeRecruitingPolicy(config.recruitingPolicy ?? config.recruiting_policy),
       boundaries: asArray<string>(config.boundaries),
       providerLabel: config.providerLabel ? String(config.providerLabel) : config.provider_label ? String(config.provider_label) : null,
       modelLabel: config.modelLabel ? String(config.modelLabel) : config.model_label ? String(config.model_label) : null,
@@ -907,6 +973,7 @@ function buildAgentConfig(
     systemPrompt: extractPromptText(profile) || defaultPrompt,
     goalTemplate: extractGoalTemplate(profile),
     scoringRubric: extractScoringRubric(profile),
+    recruitingPolicy: normalizeRecruitingPolicy(asRecord(profile?.promptConfig).recruitingPolicy ?? asRecord(profile?.promptConfig).recruiting_policy),
     boundaries: extractBoundaries(profile),
     providerLabel: provider?.name ?? null,
     modelLabel: provider?.model ?? null,
@@ -1486,6 +1553,48 @@ function normalizeApprovalItem(raw: unknown): ApprovalItem {
   const record = asRecord(raw);
   const payload = asRecord(record.payload);
   const targetType = String(record.targetType ?? record.target_type ?? record.kind ?? "approval");
+  const targetId =
+    record.targetId != null
+      ? String(record.targetId)
+      : record.target_id != null
+        ? String(record.target_id)
+        : undefined;
+  const sourceKind =
+    record.sourceKind != null
+      ? String(record.sourceKind)
+      : record.source_kind != null
+        ? String(record.source_kind)
+        : null;
+  const runPk =
+    record.runPk != null
+      ? String(record.runPk)
+      : record.run_pk != null
+        ? String(record.run_pk)
+        : payload.runPk != null
+          ? String(payload.runPk)
+          : payload.run_pk != null
+            ? String(payload.run_pk)
+            : null;
+  const turnPk =
+    record.turnPk != null
+      ? String(record.turnPk)
+      : record.turn_pk != null
+        ? String(record.turn_pk)
+        : payload.turnPk != null
+          ? String(payload.turnPk)
+          : payload.turn_pk != null
+            ? String(payload.turn_pk)
+            : null;
+  const toolName =
+    record.toolName != null
+      ? String(record.toolName)
+      : record.tool_name != null
+        ? String(record.tool_name)
+        : payload.toolName != null
+          ? String(payload.toolName)
+          : payload.tool_name != null
+            ? String(payload.tool_name)
+            : null;
   const relatedApplicationId =
     record.relatedApplicationId != null
       ? String(record.relatedApplicationId)
@@ -1517,6 +1626,7 @@ function normalizeApprovalItem(raw: unknown): ApprovalItem {
     status: String(record.status ?? "pending") as ApprovalItem["status"],
     createdAt: String(record.createdAt ?? record.created_at ?? new Date().toISOString()),
     targetType: targetType,
+    targetId,
     reviewedBy: record.reviewedBy ? String(record.reviewedBy) : record.reviewed_by ? String(record.reviewed_by) : null,
     reviewedAt: record.reviewedAt ? String(record.reviewedAt) : record.reviewed_at ? String(record.reviewed_at) : null,
     payload,
@@ -1524,7 +1634,41 @@ function normalizeApprovalItem(raw: unknown): ApprovalItem {
     updatedAt: record.updatedAt ? String(record.updatedAt) : record.updated_at ? String(record.updated_at) : undefined,
     surface,
     relatedApplicationId: relatedApplicationId ?? null,
+    sourceKind,
+    runPk,
+    turnPk,
+    toolName,
   };
+}
+
+function parseApprovalTime(value: string | null | undefined): number {
+  if (!value) {
+    return 0;
+  }
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function mergeApprovalItems(...groups: ApprovalItem[][]): ApprovalItem[] {
+  const merged = new Map<string, ApprovalItem>();
+  groups.flat().forEach((approval) => {
+    if (!approval.id) {
+      return;
+    }
+    const existing = merged.get(approval.id);
+    if (
+      !existing ||
+      parseApprovalTime(approval.updatedAt ?? approval.reviewedAt ?? approval.createdAt) >=
+        parseApprovalTime(existing.updatedAt ?? existing.reviewedAt ?? existing.createdAt)
+    ) {
+      merged.set(approval.id, approval);
+    }
+  });
+  return [...merged.values()].sort(
+    (left, right) =>
+      parseApprovalTime(right.updatedAt ?? right.reviewedAt ?? right.createdAt) -
+      parseApprovalTime(left.updatedAt ?? left.reviewedAt ?? left.createdAt),
+  );
 }
 
 function normalizeGoalSpec(raw: unknown): GoalSpecRecord {
@@ -2774,6 +2918,18 @@ async function requestRuntimeReplay(baseUrl: string, episodeId: string): Promise
   return normalizeRuntimeReplay(await requestJson<unknown>(baseUrl, `${recruitAgentExecutionApiBase}/runs/${episodeId}/replay`));
 }
 
+async function requestAgentApprovalHistory(baseUrl: string, kind: AgentKind): Promise<ApprovalItem[]> {
+  const statuses: ApprovalStatus[] = ["approved", "rejected"];
+  const groups = await Promise.all(
+    statuses.map((status) =>
+      requestOptionalJson<unknown>(baseUrl, `/api/agents/${kind}/approvals?status=${status}&limit=50`).then((value) =>
+        value ? asArray(value).map(normalizeApprovalItem) : [],
+      ),
+    ),
+  );
+  return mergeApprovalItems(...groups);
+}
+
 function createFetchClient(baseUrl: string): DesktopApiClient {
   return {
     checkHealth: async () => requestHealth(baseUrl),
@@ -3398,7 +3554,12 @@ function createFetchClient(baseUrl: string): DesktopApiClient {
     getAgentWorkspace: async (kind) => {
       const payload = await requestOptionalJson<unknown>(baseUrl, `/api/agents/${kind}/workspace`);
       if (payload) {
-        return normalizeAgentWorkspace(payload, kind);
+        const workspace = normalizeAgentWorkspace(payload, kind);
+        const approvalHistory = await requestAgentApprovalHistory(baseUrl, kind).catch(() => []);
+        return {
+          ...workspace,
+          approvals: mergeApprovalItems(workspace.approvals, approvalHistory),
+        };
       }
 
       const [snapshot, settings, profile, approvals, skills, servers, memoriesByScope, goals, queueItems] =

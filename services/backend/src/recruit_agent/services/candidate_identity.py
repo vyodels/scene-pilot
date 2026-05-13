@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -7,6 +8,11 @@ from sqlalchemy.orm import Session
 from recruit_agent.db.base import utcnow
 from recruit_agent.models import Candidate, CandidateApplication
 from recruit_agent.repositories import CandidatePlatformIdxRepository, CandidateRepository
+
+
+EMAIL_PATTERN = re.compile(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", re.IGNORECASE)
+PHONE_PATTERN = re.compile(r"(?:\+?86[-\s]*)?(1[3-9]\d(?:[-\s]?\d){8})")
+WECHAT_PATTERN = re.compile(r"(?:微信|wechat|wx)[:：\s]+([A-Za-z][A-Za-z0-9_-]{4,})", re.IGNORECASE)
 
 
 def normalize_phone(raw: str | None) -> str | None:
@@ -71,6 +77,23 @@ def merge_contact_info(target: dict[str, Any] | None, patch: dict[str, Any] | No
         if value not in (None, "", [], {}):
             merged[key] = value
     return canonicalize_contact_info(merged)
+
+
+def extract_contact_info_from_text(text: str | None) -> dict[str, Any]:
+    raw = str(text or "")
+    if not raw.strip():
+        return {}
+    contact_info: dict[str, Any] = {}
+    email_match = EMAIL_PATTERN.search(raw)
+    if email_match:
+        contact_info["email"] = email_match.group(0)
+    phone_match = PHONE_PATTERN.search(raw)
+    if phone_match:
+        contact_info["phone"] = phone_match.group(1)
+    wechat_match = WECHAT_PATTERN.search(raw)
+    if wechat_match:
+        contact_info["wechat"] = wechat_match.group(1)
+    return canonicalize_contact_info(contact_info) if contact_info else {}
 
 
 def _candidate_matches_identities(candidate: Candidate, identities: dict[str, str]) -> bool:

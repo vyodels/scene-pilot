@@ -1,5 +1,4 @@
 export * from "./contracts";
-export * from "./data/defaultStateMachine";
 export * from "./types/milestone";
 export * from "./types/stateMachine";
 export type {

@@ -13,7 +13,7 @@ interface DashboardViewProps {
   onOpenCandidates?(): void;
   onOpenJdWorkspace?(): void;
   onOpenCommunications?(filter?: string, applicationId?: string): void;
-  onOpenAgentApprovals?(): void;
+  onOpenAgentRuntime?(): void;
   onOpenAgentConfig?(): void;
 }
 
@@ -258,7 +258,7 @@ export function DashboardView({
   onOpenCandidates,
   onOpenJdWorkspace,
   onOpenCommunications,
-  onOpenAgentApprovals,
+  onOpenAgentRuntime,
   onOpenAgentConfig,
 }: DashboardViewProps): JSX.Element {
   const { copy } = useI18n();
@@ -537,7 +537,7 @@ export function DashboardView({
                         onOpenCommunications?.("application", item.relatedApplicationId);
                         return;
                       }
-                      onOpenAgentApprovals?.();
+                      onOpenAgentRuntime?.();
                     }}
                     style={{
                       ...candidateButtonStyle,
@@ -593,8 +593,8 @@ export function DashboardView({
             <button type="button" style={actionButtonStyle} onClick={() => onOpenCommunications?.("active")}>
               {copy("Open application workspace", "打开投递记录工作区")}
             </button>
-            <button type="button" style={actionButtonStyle} onClick={onOpenAgentApprovals}>
-              {copy("Open autonomous approvals", "打开 Autonomous 审批")}
+            <button type="button" style={actionButtonStyle} onClick={onOpenAgentRuntime}>
+              {copy("Open autonomous runtime", "打开 Autonomous 运行台")}
             </button>
             <button type="button" style={actionButtonStyle} onClick={onOpenAgentConfig}>
               {copy("Open assistant config", "打开 Assistant 配置")}

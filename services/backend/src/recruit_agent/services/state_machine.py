@@ -1,14 +1,14 @@
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from recruit_agent.db.base import utcnow
+from recruit_agent.product_adapters.recruitment_state_machine import default_recruitment_state_machine_payload
 from recruit_agent.repositories import (
     ApplicationStatusTransitionRepository,
     CandidateApplicationRepository,
@@ -36,21 +36,8 @@ class StateMachineTransitionResult:
     transition_record: Any
 
 
-def _repo_root() -> Path:
-    for parent in Path(__file__).resolve().parents:
-        if (parent / "packages/shared/src/data/defaultStateMachine.json").exists():
-            return parent
-    raise FileNotFoundError("Unable to locate packages/shared/src/data/defaultStateMachine.json")
-
-
-def _default_state_machine_path() -> Path:
-    return _repo_root() / "packages/shared/src/data/defaultStateMachine.json"
-
-
 def load_default_state_machine_payload() -> dict[str, Any]:
-    with _default_state_machine_path().open("r", encoding="utf-8") as handle:
-        payload = json.load(handle)
-    return normalize_state_machine_payload(payload)
+    return normalize_state_machine_payload(default_recruitment_state_machine_payload())
 
 
 def normalize_state_machine_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -128,19 +115,27 @@ def serialize_state_machine_version(record: Any) -> dict[str, Any]:
 def ensure_latest_state_machine(session: Session) -> dict[str, Any]:
     repo = RecruitmentStateMachineVersionRepository(session)
     latest = repo.latest()
-    if latest is None:
-        seed = load_default_state_machine_payload()
-        latest = repo.create(
-            {
-                "version": int(seed["version"]),
-                "updated_by": str(seed["updatedBy"]),
-                "change_summary": seed.get("changeSummary"),
-                "nodes_json": list(seed["nodes"]),
-                "transitions_json": list(seed["transitions"]),
-                "global_transitions_json": list(seed["globalTransitions"]),
-                "version_metadata": dict(seed.get("versionMetadata") or {}),
-            }
-        )
+    product_definition = load_default_state_machine_payload()
+    _validate_state_machine_payload(product_definition)
+    product_version = int(product_definition["version"])
+    if latest is None or int(latest.version) < product_version:
+        try:
+            latest = repo.create(
+                {
+                    "version": product_version,
+                    "updated_by": str(product_definition["updatedBy"]),
+                    "change_summary": product_definition.get("changeSummary"),
+                    "nodes_json": list(product_definition["nodes"]),
+                    "transitions_json": list(product_definition["transitions"]),
+                    "global_transitions_json": list(product_definition["globalTransitions"]),
+                    "version_metadata": dict(product_definition.get("versionMetadata") or {}),
+                }
+            )
+        except IntegrityError:
+            session.rollback()
+            latest = repo.latest()
+            if latest is None:
+                raise
     return serialize_state_machine_version(latest)
 
 
@@ -325,22 +320,26 @@ def apply_transition_snapshot(
         snapshot["contact_channels"] = unique_channels
         snapshot["contact_acquired"] = bool(unique_channels)
         snapshot["contact_status"] = "acquired" if unique_channels else "missing"
-    if payload.to_status == "contact_acquired" and not snapshot.get("contact_channels"):
-        contact_info = dict(getattr(contact_subject, "contact_info", None) or {})
-        channels = [key for key in ("phone", "mobile", "wechat") if contact_info.get(key)]
-        snapshot["contact_channels"] = channels
-        snapshot["contact_acquired"] = bool(channels)
-        snapshot["contact_status"] = "acquired" if channels else "missing"
-    if payload.to_status == "resume_requested":
+    if payload.to_status == "offline_resume_fetching":
         snapshot["resume_status"] = "requested"
-    elif payload.to_status == "resume_received":
+    elif payload.to_status == "offline_resume_acquired":
         snapshot["resume_status"] = "received"
-    if payload.to_status in {"ai_online_passed", "ai_online_rejected", "offline_score_passed", "offline_score_rejected"}:
+    if payload.to_status in {
+        "online_resume_passed",
+        "online_resume_rejected",
+        "offline_resume_passed",
+        "offline_resume_rejected",
+    }:
         snapshot["ai_assessment_status"] = "completed"
-    if payload.to_status == "pending_human_review":
+    if payload.to_status == "human_screening":
         snapshot["human_assessment_status"] = "pending"
-    elif payload.to_status in {"human_review_passed", "human_review_rejected"}:
+        snapshot["ai_composite_assessment_status"] = "required"
+    elif payload.to_status in {"human_screening_passed", "human_screening_rejected"}:
         snapshot["human_assessment_status"] = "completed"
+        snapshot["ai_composite_assessment_status"] = "completed"
+    if payload.to_status == "profile_ready":
+        snapshot["profile_ready"] = True
+        snapshot["ai_composite_assessment_status"] = "completed"
     interview_plan = dict(snapshot.get("interview_plan") or default_candidate_state_snapshot()["interview_plan"])
     rounds = list(interview_plan.get("rounds") or [])
     if payload.interview_round is not None:

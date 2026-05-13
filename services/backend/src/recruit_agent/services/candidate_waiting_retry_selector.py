@@ -63,9 +63,7 @@ def _normalize_datetime(value: int | float | str | datetime | None, *, now: date
 
 def map_waiting_application_retry_task_type(target: ApplicationWaitingRetryTarget) -> str | None:
     if target.current_status in {
-        "outreach_sent",
-        "resume_requested",
-        "contact_requested",
+        "offline_resume_fetching",
         "interview_scheduled",
         "offer_sent",
     }:
@@ -81,7 +79,7 @@ def is_waiting_candidate_retry_eligible(
     current_time = now or datetime.now(timezone.utc)
     if not target.application_id or not target.current_status or not target.node_id:
         return False
-    if target.is_terminal or target.is_soft_terminal or target.is_transient:
+    if target.is_terminal or target.is_soft_terminal:
         return False
     if target.has_open_task:
         return False
@@ -123,7 +121,7 @@ def select_waiting_application_retry_action(
                 node_label=target.node_label,
                 action_kind="close",
                 selected_task_type=None,
-                to_status="no_response",
+                to_status="exception_closed",
                 current_retry_count=target.current_retry_count,
                 next_retry_count=None,
                 hours_since_contact=hours_since_contact,

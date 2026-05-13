@@ -258,7 +258,7 @@ class RecruitPluginManifest:
             ),
             _tool(
                 name="archive_candidate",
-                description="Archive an application record by transitioning it to archived status.",
+                description="Close an application record through the exception_closed fallback state.",
                 parameters={
                     "type": "object",
                     "properties": {

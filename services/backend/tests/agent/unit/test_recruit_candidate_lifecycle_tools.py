@@ -210,7 +210,7 @@ def test_candidate_lifecycle_tools_cover_writeback_scoring_thread_and_progress(t
     assert progress["with_ai_score"] == 1
 
 
-def test_existing_platform_resume_can_transition_from_discovered(tmp_path) -> None:
+def test_existing_platform_resume_can_transition_from_resume_fetching(tmp_path) -> None:
     container = _build_container(tmp_path)
     job = upsert_job_description(
         container.session_factory,
@@ -225,7 +225,7 @@ def test_existing_platform_resume_can_transition_from_discovered(tmp_path) -> No
         platform="boss_mock",
         platform_candidate_id="geek-li-qing-001",
         job_description_id=job["job_description_id"],
-        current_status="discovered",
+        current_status="offline_resume_fetching",
     )
     application = candidate_result["application"]
 
@@ -237,23 +237,23 @@ def test_existing_platform_resume_can_transition_from_discovered(tmp_path) -> No
         extracted_text="平台侧已存在的简历 artifact。",
     )
 
-    assert "resume_received" in [
+    assert "offline_resume_acquired" in [
         str(item.get("toStatus"))
         for item in attached["thread"]["availableTransitions"]
     ]
-    assert attached["thread"]["stateSnapshot"]["next_recommended_stages"] == ["resume_received"]
+    assert attached["thread"]["stateSnapshot"]["next_recommended_stages"] == ["offline_resume_acquired"]
 
     transitioned = transition_application(
         container.session_factory,
         application_id=application["application_id"],
-        to_status="resume_received",
-        stage_key="discovered",
+        to_status="offline_resume_acquired",
+        stage_key="offline_resume_acquired",
         note="平台侧已有简历，已完成 artifact 入库。",
         trigger="artifact_attached",
     )
 
-    assert transitioned["thread"]["application"]["currentStatus"] == "resume_received"
-    assert transitioned["thread"]["stateSnapshot"]["current_stage_key"] == "resume_received"
+    assert transitioned["thread"]["application"]["currentStatus"] == "offline_resume_acquired"
+    assert transitioned["thread"]["stateSnapshot"]["current_stage_key"] == "offline_resume_acquired"
 
 
 def test_upsert_candidate_keeps_page_status_text_out_of_canonical_state(tmp_path) -> None:
@@ -279,7 +279,7 @@ def test_upsert_candidate_keeps_page_status_text_out_of_canonical_state(tmp_path
     application = candidate_result["application"]
     assert application["current_status"] == "discovered"
     assert application["current_stage_key"] == "discovered"
-    assert "resume_received" in application["state_snapshot"]["next_recommended_stages"]
+    assert "online_resume_fetching" in application["state_snapshot"]["next_recommended_stages"]
     assert application["application_metadata"]["source_state"] == {
         "requested_current_status": "active",
         "normalized_current_status": "discovered",
@@ -305,17 +305,43 @@ def test_upsert_candidate_uses_known_stage_when_page_status_is_display_text(tmp_
         platform_candidate_id="geek-wang-hai-001",
         job_description_id=job["job_description_id"],
         current_status="active",
-        current_stage_key="resume_received",
+        current_stage_key="offline_resume_acquired",
     )
 
     application = candidate_result["application"]
-    assert application["current_status"] == "resume_received"
-    assert application["current_stage_key"] == "resume_received"
-    assert "offline_scoring" in application["state_snapshot"]["next_recommended_stages"]
+    assert application["current_status"] == "offline_resume_acquired"
+    assert application["current_stage_key"] == "offline_resume_acquired"
+    assert "offline_resume_passed" in application["state_snapshot"]["next_recommended_stages"]
     assert application["application_metadata"]["source_state"] == {
         "requested_current_status": "active",
-        "normalized_current_status": "resume_received",
+        "normalized_current_status": "offline_resume_acquired",
     }
+
+
+def test_upsert_candidate_extracts_contact_info_from_profile_text(tmp_path) -> None:
+    container = _build_container(tmp_path)
+    job = upsert_job_description(container.session_factory, title="后端平台工程师")["job_description"]
+
+    candidate_result = upsert_candidate(
+        container.session_factory,
+        name="赵启明",
+        platform="mock-zhipin",
+        platform_candidate_id="cand-mock-005",
+        job_description_id=job["job_description_id"],
+        current_status="online_resume_rejected",
+        online_resume_text=(
+            "3年PHP后端，CMS和营销页，缺少平台/状态机经验。"
+            "联系方式：phone 138-0001-1005；email zhao.qiming@example.com。"
+        ),
+    )
+
+    candidate = candidate_result["candidate"]
+    application = candidate_result["application"]
+    assert candidate["contact_info"]["phone"] == "13800011005"
+    assert candidate["contact_info"]["email"] == "zhao.qiming@example.com"
+    assert candidate["contact_info"]["channels"] == ["phone", "email"]
+    assert application["contact_snapshot"]["channels"] == ["phone", "email"]
+    assert application["state_snapshot"]["contact_acquired"] is True
 
 
 def test_candidate_lifecycle_tools_support_archive_and_delete(tmp_path) -> None:
@@ -336,7 +362,7 @@ def test_candidate_lifecycle_tools_support_archive_and_delete(tmp_path) -> None:
         application_id=application["application_id"],
         note="当前轮次归档验证",
     )
-    assert archived["thread"]["application"]["currentStatus"] == "archived"
+    assert archived["thread"]["application"]["currentStatus"] == "exception_closed"
 
     deleted = delete_candidate(
         container.session_factory,

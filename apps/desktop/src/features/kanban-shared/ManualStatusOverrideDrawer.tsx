@@ -42,7 +42,7 @@ export function ManualStatusOverrideDrawer({
     for (const node of stateMachine.nodes) {
       allowed.add(node.id);
     }
-    return stateMachine.nodes.filter((node) => allowed.has(node.id) && !node.isTransient);
+    return stateMachine.nodes.filter((node) => allowed.has(node.id));
   }, [record, stateMachine.nodes]);
 
   if (!open || !record) {

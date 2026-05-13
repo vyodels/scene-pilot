@@ -92,7 +92,7 @@ def extract_candidate_ai_score(ai_scores: dict[str, Any] | None) -> float:
 def map_application_progression_task_type(target: ApplicationProgressionTarget) -> str | None:
     if not target.current_status or not target.node_id:
         return None
-    if target.is_terminal or target.is_soft_terminal or target.is_transient:
+    if target.is_terminal or target.is_soft_terminal:
         return None
     if target.locked:
         return None
@@ -104,11 +104,15 @@ def map_application_progression_task_type(target: ApplicationProgressionTarget) 
 
     explicit_map = {
         "discovered": "candidate_probe",
-        "ai_online_screening": "candidate_probe",
-        "outreach_pending": "candidate_outreach",
-        "in_conversation": "candidate_outreach",
-        "offline_scoring": "candidate_scoring",
-        "cooldown": "candidate_archive",
+        "online_resume_fetching": "candidate_probe",
+        "online_resume_acquired": "candidate_probe",
+        "online_resume_passed": "resume_collection",
+        "offline_resume_fetching": "resume_collection",
+        "offline_resume_acquired": "candidate_scoring",
+        "offline_resume_passed": "candidate_scoring",
+        "human_screening_passed": "candidate_outreach",
+        "profile_ready": "candidate_outreach",
+        "interview_passed": "candidate_outreach",
     }
     mapped = explicit_map.get(target.current_status)
     if mapped:
@@ -117,13 +121,13 @@ def map_application_progression_task_type(target: ApplicationProgressionTarget) 
     phase = str(target.phase or "").strip().upper()
     if phase == "A":
         return "candidate_probe"
-    if phase in {"B", "E", "F", "G", "H"}:
+    if phase in {"E", "F", "G", "H"}:
         return "candidate_outreach"
-    if phase == "C":
-        return "resume_collection"
+    if phase == "B":
+        return "candidate_probe"
     if phase == "D":
-        return "candidate_scoring"
-    if phase == "Z":
+        return "resume_collection"
+    if phase == "I":
         return "candidate_archive"
     return None
 
@@ -138,7 +142,7 @@ def is_application_progression_eligible(
         return False
     if target.has_open_task:
         return False
-    if target.is_terminal or target.is_soft_terminal or target.is_transient:
+    if target.is_terminal or target.is_soft_terminal:
         return False
     if target.locked:
         return False
@@ -219,9 +223,6 @@ def _selection_reason(*, score_breakdown: ApplicationProgressionScoreBreakdown, 
         reason_parts.append("stale_wait")
     else:
         reason_parts.append("fresh_signal")
-
-    if current_status == "cooldown":
-        reason_parts.append("cooldown_expired")
 
     return " + ".join(reason_parts)
 

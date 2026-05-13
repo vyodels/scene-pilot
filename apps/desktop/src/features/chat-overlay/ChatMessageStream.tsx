@@ -6,7 +6,7 @@ import type { AgentConversationMessage } from "../../lib/types";
 interface ChatMessageStreamProps {
   loading?: boolean;
   messages: AgentConversationMessage[];
-  timelineFooter?: React.ReactNode;
+  renderTimelineAttachment?: (message: AgentConversationMessage) => React.ReactNode;
   variant?: "cards" | "timeline";
 }
 
@@ -689,7 +689,7 @@ function TimelineNodeIcon({ kind }: { kind: TimelineEventKind }): JSX.Element {
   }
 }
 
-export function ChatMessageStream({ loading, messages, timelineFooter, variant = "cards" }: ChatMessageStreamProps): JSX.Element {
+export function ChatMessageStream({ loading, messages, renderTimelineAttachment, variant = "cards" }: ChatMessageStreamProps): JSX.Element {
   const { copy } = useI18n();
 
   if (loading) {
@@ -739,11 +739,11 @@ export function ChatMessageStream({ loading, messages, timelineFooter, variant =
                   </div>
                 </div>
                 {renderTimelinePayload(message, blocks, copy)}
+                {renderTimelineAttachment?.(message) ?? null}
               </div>
             </article>
           );
         })}
-        {timelineFooter}
       </div>
     );
   }

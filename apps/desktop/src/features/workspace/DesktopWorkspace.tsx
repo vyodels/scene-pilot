@@ -4,7 +4,7 @@ import type {
   RecruitmentStateMachine,
 } from "@recruit-agent/shared";
 import { AppLayout, Sidebar, ToastNotification, TopBar } from "../../components";
-import { ChatOverlay, FloatingBubble, useChatOverlay } from "../chat-overlay";
+import { ChatOverlay, useChatOverlay } from "../chat-overlay";
 import { apiClient } from "../../lib/api";
 import { useI18n } from "../../lib/i18n";
 import type {
@@ -232,13 +232,13 @@ export function DesktopWorkspace(): JSX.Element {
     () => {
       const followUpCount = candidateKanbanModels.filter((item) => {
           const node = item.displayNode;
-          if (!node || node.uiConfig?.showInKanban === false || node.isTransient) {
+          if (!node || node.uiConfig?.showInKanban === false) {
             return false;
           }
-          if (["no_response", "cooldown", "archived", "candidate_withdrew"].includes(item.displayStatus)) {
+          if (item.displayStatus === "exception_closed") {
             return false;
           }
-          return node.phase !== "Z" && (((!node.isTerminal && !node.isSoftTerminal) || node.isSuccess));
+          return node.phase !== "I" && (((!node.isTerminal && !node.isSoftTerminal) || node.isSuccess));
       }).length;
       return {
         applicationFunnel: candidateKanbanModels.length,
@@ -380,7 +380,7 @@ export function DesktopWorkspace(): JSX.Element {
     setTab("home");
   };
 
-  const openAgents = (panel: "conversation" | "config" | "approvals", agent: "assistant" | "autonomous") => {
+  const openAgents = (panel: "conversation" | "config", agent: "assistant" | "autonomous") => {
     focusAgent(agent, panel);
     setTab("agents");
   };
@@ -394,7 +394,7 @@ export function DesktopWorkspace(): JSX.Element {
             onOpenCandidates={openApplicationFunnel}
             onOpenJdWorkspace={openJdManagement}
             onOpenCommunications={() => openApplicationWorkspace("active")}
-            onOpenAgentApprovals={() => openAgents("approvals", "autonomous")}
+            onOpenAgentRuntime={() => openAgents("conversation", "autonomous")}
             onOpenAgentConfig={() => openAgents("config", "assistant")}
           />
         );
@@ -466,6 +466,7 @@ export function DesktopWorkspace(): JSX.Element {
   const applicationSurface =
     tab === "applicationFunnel" || tab === "applicationFollowUp" || tab === "jdManagement";
   const visibleErrorMessage = errorMessage && errorMessage !== dismissedErrorMessage ? errorMessage : undefined;
+  const runtimeGateCount = summary.agent.status === "waiting_human" ? 1 : 0;
 
   return (
     <>
@@ -480,7 +481,7 @@ export function DesktopWorkspace(): JSX.Element {
             expanded={sidebarExpanded}
             onExpandedChange={setSidebarExpanded}
             agentStatus={summary.agent.status}
-            agentCount={summary.approvals.filter((approval) => approval.status === "pending").length}
+            agentCount={runtimeGateCount}
             onOpenAgents={() => openAgents("conversation", "autonomous")}
           />
         }
@@ -507,13 +508,6 @@ export function DesktopWorkspace(): JSX.Element {
         />
       ) : null}
 
-      {tab === "jdManagement" || tab === "agents" ? null : (
-        <FloatingBubble
-          status={summary.agent.status}
-          pendingCount={summary.approvals.filter((approval) => approval.status === "pending").length}
-        />
-      )}
-      {tab === "agents" ? null : <ChatOverlay transport={transport} workspaceAgent={summary.agent} />}
     </>
   );
 }

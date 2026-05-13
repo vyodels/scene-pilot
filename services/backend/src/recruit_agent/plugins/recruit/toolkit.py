@@ -27,7 +27,12 @@ from recruit_agent.schemas import (
     TalentPoolSyncRecordCreate,
 )
 from recruit_agent.services.application_window import make_application_window
-from recruit_agent.services.candidate_identity import canonicalize_contact_info, contact_channels_from_info, merge_contact_info
+from recruit_agent.services.candidate_identity import (
+    canonicalize_contact_info,
+    contact_channels_from_info,
+    extract_contact_info_from_text,
+    merge_contact_info,
+)
 from recruit_agent.services.job_description_stats import build_job_description_funnel_stats
 from recruit_agent.services.recruit_agent import default_candidate_state_snapshot
 from recruit_agent.services.state_machine import available_state_statuses
@@ -326,24 +331,36 @@ def upsert_candidate(
         if candidate is None and normalized_platform_candidate_id:
             candidate = candidate_repo.by_platform_candidate_id(normalized_platform, normalized_platform_candidate_id)
 
+        normalized_contact_info: dict[str, Any] | None = None
+        if contact_info is not _UNSET:
+            normalized_contact_info = canonicalize_contact_info(
+                _normalize_mapping(contact_info, field_name="contact_info")
+            )
+        normalized_online_resume_text = (
+            _normalize_optional_text(online_resume_text) if online_resume_text is not _UNSET else None
+        )
+        inferred_contact_info = extract_contact_info_from_text(normalized_online_resume_text)
+        if inferred_contact_info:
+            normalized_contact_info = merge_contact_info(inferred_contact_info, normalized_contact_info)
+
         candidate_payload: dict[str, Any] = {
             "name": normalized_name,
             "platform": normalized_platform,
         }
         if normalized_platform_candidate_id is not None:
             candidate_payload["platform_candidate_id"] = normalized_platform_candidate_id
-        if contact_info is not _UNSET:
-            candidate_payload["contact_info"] = canonicalize_contact_info(_normalize_mapping(contact_info, field_name="contact_info"))
+        if normalized_contact_info is not None:
+            candidate_payload["contact_info"] = normalized_contact_info
         if resume_path is not _UNSET:
             candidate_payload["resume_path"] = _normalize_optional_text(resume_path)
         if online_resume_text is not _UNSET:
-            candidate_payload["online_resume_text"] = _normalize_optional_text(online_resume_text)
+            candidate_payload["online_resume_text"] = normalized_online_resume_text
 
         candidate_action = "created"
         if candidate is None:
             candidate = candidate_repo.create(candidate_payload)
         else:
-            if contact_info is not _UNSET:
+            if normalized_contact_info is not None:
                 candidate_payload["contact_info"] = merge_contact_info(dict(candidate.contact_info or {}), candidate_payload["contact_info"])
             candidate = candidate_repo.update(candidate, candidate_payload)
             candidate_action = "updated"
@@ -840,12 +857,12 @@ def archive_candidate(
 ) -> dict[str, Any]:
     return transition_application(
         session_factory,
-        to_status="archived",
+        to_status="exception_closed",
         application_id=application_id,
         candidate_person_id=candidate_person_id,
         job_description_id=job_description_id,
-        stage_key="archived",
-        stage_label="Archived",
+        stage_key="exception_closed",
+        stage_label="异常关闭",
         note=note,
         actor="agent",
         actor_id="autonomous",

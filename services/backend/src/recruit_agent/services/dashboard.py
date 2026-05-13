@@ -64,11 +64,11 @@ def _runtime_scene_account(settings: AppSettings) -> str:
 
 
 PIPELINE_STAGE_GROUPS: tuple[tuple[str, frozenset[str]], ...] = (
-    ("发现与 AI 在线评估", frozenset({"A"})),
-    ("发起沟通与建立对话", frozenset({"B"})),
-    ("获取简历与评估", frozenset({"C", "D", "E"})),
-    ("获取联系方式", frozenset({"F"})),
-    ("面试与结果", frozenset({"G", "H"})),
+    ("发现与在线简历", frozenset({"A", "B"})),
+    ("离线简历评估", frozenset({"D"})),
+    ("人工筛选与资料", frozenset({"E", "F"})),
+    ("面试", frozenset({"G"})),
+    ("Offer", frozenset({"H"})),
 )
 PIPELINE_PHASE_TO_DEPTH = {
     phase: depth
@@ -137,7 +137,7 @@ def _pipeline_milestone_depths(node_by_id: dict[str, dict[str, Any]]) -> dict[st
     for node in node_by_id.values():
         milestone_id = str(node.get("milestoneId") or node.get("milestone_id") or "").strip()
         phase = str(node.get("phase") or "").strip().upper()
-        if not milestone_id or not phase or phase == "Z":
+        if not milestone_id or not phase or phase == "I":
             continue
         depth = PIPELINE_PHASE_TO_DEPTH.get(phase)
         if depth is None:
@@ -155,7 +155,7 @@ def _application_pipeline_depth(
     current_status = str(getattr(application, "current_status", None) or "").strip()
     current_node = node_by_id.get(current_status) or {}
     current_phase = str(current_node.get("phase") or "").strip().upper()
-    current_depth = PIPELINE_PHASE_TO_DEPTH.get(current_phase, -1) if current_phase != "Z" else -1
+    current_depth = PIPELINE_PHASE_TO_DEPTH.get(current_phase, -1) if current_phase != "I" else -1
     deepest_milestone = str(getattr(application, "deepest_milestone", None) or "").strip()
     deepest_depth = milestone_depth_by_id.get(deepest_milestone, -1)
     return max(current_depth, deepest_depth)
@@ -193,16 +193,14 @@ def _candidate_followup_summary_definitions(session: Session) -> list[dict[str, 
     visible_statuses = [
         status_id
         for status_id, node in node_by_id.items()
-        if node.get("uiConfig", {}).get("showInKanban", True) is not False and not node.get("isTransient")
+        if node.get("uiConfig", {}).get("showInKanban", True) is not False
     ]
-    closure_statuses = [
-        status_id for status_id in ("no_response", "cooldown", "archived", "candidate_withdrew") if status_id in node_by_id
-    ]
+    closure_statuses = [status_id for status_id in ("exception_closed",) if status_id in node_by_id]
     active_statuses = [
         status_id
         for status_id, node in node_by_id.items()
         if status_id in visible_statuses
-        and node.get("phase") != "Z"
+        and node.get("phase") != "I"
         and (((not node.get("isTerminal")) and (not node.get("isSoftTerminal"))) or node.get("isSuccess"))
         and status_id not in closure_statuses
     ]
@@ -263,36 +261,12 @@ def _candidate_followup_summary_definitions(session: Session) -> list[dict[str, 
             exclude_statuses=closure_statuses,
         ),
         build_definition(
-            key="no_response",
-            label="无回复·可重试",
-            summary="已发送跟进但尚未回复，仍处于可自动重试窗口内的候选人。",
-            relation="独立等待池",
+            key="exception_closed",
+            label="异常关闭",
+            summary="因撤回、重复数据、无法继续推进等异常原因关闭的候选人。",
+            relation="异常兜底",
             matching_mode="status_set",
-            include_statuses=[status_id for status_id in ["no_response"] if status_id in node_by_id],
-        ),
-        build_definition(
-            key="cooldown",
-            label="冷却中",
-            summary="已暂时暂停推进，等待冷却期结束或人工重新激活的候选人。",
-            relation="暂停池",
-            matching_mode="status_set",
-            include_statuses=[status_id for status_id in ["cooldown"] if status_id in node_by_id],
-        ),
-        build_definition(
-            key="archived",
-            label="已归档",
-            summary="流程已收口，仅做记录保留的候选人。",
-            relation="收口态",
-            matching_mode="status_set",
-            include_statuses=[status_id for status_id in ["archived"] if status_id in node_by_id],
-        ),
-        build_definition(
-            key="candidate_withdrew",
-            label="候选人主动放弃",
-            summary="候选人明确表示退出当前流程，不再继续推进。",
-            relation="收口态",
-            matching_mode="status_set",
-            include_statuses=[status_id for status_id in ["candidate_withdrew"] if status_id in node_by_id],
+            include_statuses=[status_id for status_id in ["exception_closed"] if status_id in node_by_id],
         ),
     ]
 
@@ -354,7 +328,7 @@ class DashboardService:
                 {
                     "label": "候选人",
                     "value": str(application_count),
-                    "delta": f"{application_by_status.get('ai_online_screening', 0) + application_by_status.get('offline_scoring', 0) + application_by_status.get('pending_human_review', 0)} 个正在评估",
+                    "delta": f"{application_by_status.get('online_resume_fetching', 0) + application_by_status.get('offline_resume_fetching', 0) + application_by_status.get('human_screening', 0)} 个正在评估",
                     "tone": "positive" if application_count else "neutral",
                     "caption": "已记录到本地 SQLite",
                 },

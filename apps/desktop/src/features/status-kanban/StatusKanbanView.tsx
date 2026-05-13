@@ -35,7 +35,7 @@ interface StatusKanbanViewProps {
 }
 
 function isGlobalTerminal(node: StateNode): boolean {
-  return node.phase === "Z";
+  return node.phase === "I";
 }
 
 function isBranchNode(node: StateNode): boolean {
@@ -46,7 +46,7 @@ function isBranchNode(node: StateNode): boolean {
 }
 
 function applicationStatusLabel(label: string): string {
-  return applicationScopedLabel(label);
+  return label;
 }
 
 export function StatusKanbanView({
@@ -171,9 +171,7 @@ export function StatusKanbanView({
     () =>
       stateMachine.nodes.filter(
         (node) =>
-          node.id !== "no_response" &&
           node.uiConfig?.showInKanban !== false &&
-          !node.isTransient &&
           !isGlobalTerminal(node) &&
           !isBranchNode(node),
       ),
@@ -184,9 +182,7 @@ export function StatusKanbanView({
     () =>
       stateMachine.nodes.filter(
         (node) =>
-          node.id !== "no_response" &&
           node.uiConfig?.showInKanban !== false &&
-          !node.isTransient &&
           !isGlobalTerminal(node) &&
           isBranchNode(node),
       ),
@@ -325,7 +321,7 @@ export function StatusKanbanView({
           <ToolbarSelect value={selectedStatus} onChange={(event) => setSelectedStatus(event.target.value)}>
             <option value="all">{copy("Main flow", "主流程")}</option>
             {stateMachine.nodes
-              .filter((node) => node.uiConfig?.showInKanban !== false && !node.isTransient)
+              .filter((node) => node.uiConfig?.showInKanban !== false)
               .map((node) => (
                 <option key={node.id} value={node.id}>
                   {applicationStatusLabel(node.label)}

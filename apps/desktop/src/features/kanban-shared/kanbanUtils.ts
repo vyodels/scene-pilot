@@ -269,7 +269,7 @@ export function createTransitionMap(stateMachine: RecruitmentStateMachine): Map<
 }
 
 function isDisplayableStatusNode(node: StateNode | undefined): node is StateNode {
-  return Boolean(node && node.uiConfig?.showInKanban !== false && !node.isTransient);
+  return Boolean(node && node.uiConfig?.showInKanban !== false);
 }
 
 export function resolveApplicationDisplayStatus(

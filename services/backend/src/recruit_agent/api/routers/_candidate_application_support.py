@@ -477,8 +477,8 @@ def create_application_resume_artifact(
     if payload.artifact_type == "resume":
         snapshot["resume_status"] = "received"
         snapshot["latest_note"] = payload.file_name or snapshot.get("latest_note")
-        if "resume_received" in available_state_transition_targets(session, from_status=application.current_status):
-            snapshot["next_recommended_stages"] = ["resume_received"]
+        if "offline_resume_acquired" in available_state_transition_targets(session, from_status=application.current_status):
+            snapshot["next_recommended_stages"] = ["offline_resume_acquired"]
         resume_snapshot = {
             **dict(application.resume_snapshot or {}),
             "available": True,
