@@ -16,13 +16,15 @@ import type {
   ApplicationThreadRecord,
   ApprovalItem,
   ApprovalStatus,
+  AgentDefinitionConfig,
+  AgentDefinitionRecord,
   AgentEvent,
   AgentConversationMessage,
   AgentConversationRecord,
   AgentConversationSummary,
   AgentKind,
   AgentMemorySummary,
-  AgentProfileSummary,
+  AgentDefinitionSummary,
   AgentQueueItem,
   AgentRunRecord,
   AgentSnapshot,
@@ -35,8 +37,9 @@ import type {
   AssistantMessageRequest,
   AssistantMessageRequestResult,
   AssistantTurnStreamEvent,
-  AutonomousGoalStartRequest,
-  AutonomousGoalStartResult,
+  AutonomousRunStartRequest,
+  AutonomousRunStartResult,
+  AgentProductBindingRecord,
   CompileTaskRequest,
   CompileTaskResponse,
   DashboardSummary,
@@ -44,13 +47,11 @@ import type {
   ExecutionGraphProjectionRecord,
   ExecutionTraceRecord,
   EvolutionArtifactRecord,
-  GoalSpecRecord,
   ApplicationAssignmentRecord,
   McpPresetTemplateRecord,
   McpServerRecord,
   McpToolRecord,
   OperatorInteractionRecord,
-  RecruitAgentProfileRecord,
   RecruitingPolicyConfig,
   ResumeArtifactRecord,
   RuntimeCapabilityDriver,
@@ -67,7 +68,6 @@ import type {
   RuntimeSnapshot,
   RuntimeTaskSpec,
   RuntimeTemplate,
-  SharedSceneTemplateRecord,
   RuntimeWorkspaceData,
   SettingsSnapshot,
   SkillRecord,
@@ -118,26 +118,12 @@ export interface DesktopApiClient {
   replanRuntimePlan(payload: RuntimePlanReplanRequest): Promise<RuntimePlanReplanResult>;
   approveRuntimePatch(id: string, reason?: string): Promise<RuntimePatch>;
   rejectRuntimePatch(id: string, reason?: string): Promise<RuntimePatch>;
-  getRecruitAgentProfile(): Promise<RecruitAgentProfileRecord>;
-  updateRecruitAgentProfile(payload: Partial<RecruitAgentProfileRecord>): Promise<RecruitAgentProfileRecord>;
-  getAgentProfile(kind: AgentKind): Promise<RecruitAgentProfileRecord>;
-  updateAgentProfile(kind: AgentKind, payload: Partial<RecruitAgentProfileRecord>): Promise<RecruitAgentProfileRecord>;
-  listGoals(): Promise<GoalSpecRecord[]>;
-  createGoal(payload: {
-    title: string;
-    goalText: string;
-    goalKind?: string;
-    requestedBy?: string;
-    constraints?: Record<string, unknown>;
-    successCriteria?: Record<string, unknown>;
-    contextHints?: Record<string, unknown>;
-    trialBudget?: Record<string, unknown>;
-    runPreferences?: Record<string, unknown>;
-    summary?: string;
-    priority?: number;
-  }): Promise<GoalSpecRecord>;
-  listExecutionTraces(goalId?: string): Promise<ExecutionTraceRecord[]>;
-  listExecutionGraphs(goalId?: string): Promise<ExecutionGraphProjectionRecord[]>;
+  getAgentDefinition(): Promise<AgentDefinitionRecord>;
+  updateAgentDefinition(payload: Partial<AgentDefinitionRecord>): Promise<AgentDefinitionRecord>;
+  getProductAgentDefinition(kind: AgentKind): Promise<AgentDefinitionRecord>;
+  updateProductAgentDefinition(kind: AgentKind, payload: Partial<AgentDefinitionRecord>): Promise<AgentDefinitionRecord>;
+  listExecutionTraces(runId?: string): Promise<ExecutionTraceRecord[]>;
+  listExecutionGraphs(runId?: string): Promise<ExecutionGraphProjectionRecord[]>;
   listStrategyFragments(): Promise<StrategyFragmentRecord[]>;
   listOperatorInteractions(applicationId?: string): Promise<OperatorInteractionRecord[]>;
   resolveOperatorInteraction(
@@ -240,25 +226,9 @@ export interface DesktopApiClient {
   runAgentOnce(): Promise<AgentRunResult>;
   queueTask(task: AgentTaskRequest): Promise<AgentTaskEnqueueResult>;
   getAgentWorkspace(kind: AgentKind): Promise<AgentWorkspaceRecord>;
-  listSharedSceneTemplates(): Promise<SharedSceneTemplateRecord[]>;
   getAgentConversation(kind: AgentKind, conversationId: string): Promise<AgentConversationRecord>;
-  updateGoal(goalId: string, payload: Partial<GoalSpecRecord>): Promise<GoalSpecRecord>;
-  deleteGoal(goalId: string): Promise<void>;
   cancelAutonomousRun(runId: string, reason?: string): Promise<AgentRunRecord>;
   resumeAutonomousRun(runId: string, reason?: string): Promise<AgentRunRecord>;
-  runSceneTemplate(
-    templateKey: string,
-    payload?: {
-      title?: string;
-      goalText?: string;
-      jdId?: string | null;
-      conversationId?: string | null;
-      candidateCountTarget?: number | null;
-      constraints?: Record<string, unknown>;
-      successCriteria?: Record<string, unknown>;
-      contextHints?: Record<string, unknown>;
-    },
-  ): Promise<AutonomousGoalStartResult>;
   createAssistantConversation(payload: { userId: string; title?: string | null }): Promise<AssistantConversationRecord>;
   streamAssistantTurn(
     payload: {
@@ -269,7 +239,7 @@ export interface DesktopApiClient {
     onEvent: (event: AssistantTurnStreamEvent) => void,
   ): Promise<void>;
   sendAssistantMessage(payload: AssistantMessageRequest): Promise<AssistantMessageRequestResult>;
-  startAutonomousGoal(payload: AutonomousGoalStartRequest): Promise<AutonomousGoalStartResult>;
+  startAutonomousRun(payload: AutonomousRunStartRequest): Promise<AutonomousRunStartResult>;
 }
 
 export interface ApiDescription {
@@ -522,6 +492,124 @@ function humanizeKey(value: string): string {
     .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
+function stringListFrom(value: unknown): string[] {
+  return asArray(value)
+    .map((item) => String(item).trim())
+    .filter(Boolean);
+}
+
+function nullableString(value: unknown): string | null {
+  if (typeof value === "string" && value.trim()) {
+    return value;
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return String(value);
+  }
+  return null;
+}
+
+function normalizeAgentDefinitionConfig(raw: unknown): AgentDefinitionConfig {
+  const record = asRecord(raw);
+  const promptRecord = asRecord(record.prompt ?? record.promptConfig ?? record.prompt_config);
+  return {
+    identity: asRecord(record.identity ?? record.persona),
+    systemPrompt: String(record.systemPrompt ?? record.system_prompt ?? promptRecord.systemPrompt ?? promptRecord.system_prompt ?? ""),
+    duties: stringListFrom(record.duties ?? record.responsibilities),
+    boundaries: stringListFrom(record.boundaries),
+    successCriteria: stringListFrom(record.successCriteria ?? record.success_criteria),
+    toolScope: asRecord(record.toolScope ?? record.tool_scope ?? record.allowedToolPolicy ?? record.allowed_tool_policy),
+    permissionPolicy: asRecord(record.permissionPolicy ?? record.permission_policy),
+    outputPolicy: asRecord(record.outputPolicy ?? record.output_policy),
+    budgetPolicy: asRecord(record.budgetPolicy ?? record.budget_policy),
+    modelConfig: asRecord(record.modelConfig ?? record.model_config),
+    runtimeMetadata: asRecord(record.runtimeMetadata ?? record.runtime_metadata),
+  };
+}
+
+function normalizeAgentDefinition(raw: unknown, fallbackKind: AgentKind, fallbackDefinition?: AgentDefinitionRecord | null): AgentDefinitionRecord {
+  const record = asRecord(raw);
+  const roleDefinition = asRecord(record.roleDefinition ?? record.role_definition);
+  const promptConfig = asRecord(record.promptConfig ?? record.prompt_config);
+  const fallbackConfig = fallbackDefinition?.config ?? {
+    identity: roleDefinition.identity ?? roleDefinition.persona,
+    systemPrompt: String(promptConfig.systemPrompt ?? promptConfig.system_prompt ?? promptConfig.prompt ?? record.description ?? ""),
+    duties: roleDefinition.duties ?? roleDefinition.responsibilities,
+    boundaries: stringListFrom(roleDefinition.boundaries ?? roleDefinition.forbiddenActions ?? roleDefinition.forbidden_actions ?? promptConfig.boundaries),
+    successCriteria: roleDefinition.successCriteria ?? roleDefinition.success_criteria,
+    toolScope: roleDefinition.toolScope ?? roleDefinition.tool_scope,
+    permissionPolicy: promptConfig.permissionPolicy ?? promptConfig.permission_policy,
+    outputPolicy: promptConfig.outputPolicy ?? promptConfig.output_policy,
+    budgetPolicy: promptConfig.budgetPolicy ?? promptConfig.budget_policy,
+    modelConfig: promptConfig.modelConfig ?? promptConfig.model_config,
+    runtimeMetadata: promptConfig.runtimeMetadata ?? promptConfig.runtime_metadata,
+  };
+  const key = String(record.key ?? record.definitionKey ?? record.definition_key ?? fallbackDefinition?.key ?? `${fallbackKind}-definition`);
+  return {
+    id: String(record.id ?? record.definitionId ?? record.definition_id ?? key),
+    key,
+    name: String(record.name ?? fallbackDefinition?.name ?? agentDefinitionFallbackName(fallbackKind)),
+    description: nullableString(record.description ?? fallbackDefinition?.description),
+    status: String(record.status ?? fallbackDefinition?.status ?? "active"),
+    config: normalizeAgentDefinitionConfig(record.config ?? record.definitionConfig ?? record.definition_config ?? fallbackConfig),
+    createdAt: nullableString(record.createdAt ?? record.created_at ?? fallbackDefinition?.createdAt),
+    updatedAt: nullableString(record.updatedAt ?? record.updated_at ?? fallbackDefinition?.updatedAt),
+  };
+}
+
+function agentDefinitionFallbackName(kind: AgentKind): string {
+  return kind === "assistant" ? "Assistant Definition" : "Autonomous Definition";
+}
+
+function normalizeAgentProductBinding(
+  raw: unknown,
+  fallbackKind: AgentKind,
+  definition: AgentDefinitionRecord,
+  fallbackConfig: Record<string, unknown>,
+): AgentProductBindingRecord {
+  const record = asRecord(raw);
+  const adapterConfig = asRecord(record.adapterConfig ?? record.adapter_config ?? fallbackConfig);
+  return {
+    id: nullableString(record.id ?? record.bindingId ?? record.binding_id),
+    agentKind: String(record.agentKind ?? record.agent_kind ?? fallbackKind),
+    productAdapterKey: String(record.productAdapterKey ?? record.product_adapter_key ?? record.adapterKey ?? record.adapter_key ?? fallbackKind),
+    agentDefinitionId: nullableString(record.agentDefinitionId ?? record.agent_definition_id ?? definition.id),
+    agentDefinitionKey: nullableString(record.agentDefinitionKey ?? record.agent_definition_key ?? definition.key),
+    status: String(record.status ?? "active"),
+    adapterConfig,
+    bindingMetadata: asRecord(record.bindingMetadata ?? record.binding_metadata),
+    updatedAt: nullableString(record.updatedAt ?? record.updated_at),
+  };
+}
+
+function agentDefinitionPatchPayload(payload: Partial<AgentDefinitionRecord>): Record<string, unknown> {
+  const config = payload.config;
+  return {
+    definition_key: payload.key,
+    name: payload.name,
+    status: payload.status,
+    description: payload.description,
+    role_definition: config
+      ? {
+          identity: config.identity,
+          duties: config.duties,
+          boundaries: config.boundaries,
+          success_criteria: config.successCriteria,
+          tool_scope: config.toolScope,
+        }
+      : undefined,
+    prompt_config: config
+      ? {
+          system_prompt: config.systemPrompt,
+          permission_policy: config.permissionPolicy,
+          output_policy: config.outputPolicy,
+          budget_policy: config.budgetPolicy,
+          model_config: config.modelConfig,
+          runtime_metadata: config.runtimeMetadata,
+        }
+      : undefined,
+  };
+}
+
 function labelFromSignal(value: unknown): string | null {
   const record = asRecord(value);
   const label = record.label ?? record.kind ?? record.name ?? record.id;
@@ -726,16 +814,33 @@ function deriveSnapshotFromDashboard(summary: DashboardSummary): AgentSnapshot {
   return summary.agent;
 }
 
-function normalizeAgentProfileSummary(raw: unknown): AgentProfileSummary {
+function normalizeAgentDefinitionSummary(raw: unknown): AgentDefinitionSummary {
   const record = asRecord(raw);
   return {
     kind: String(record.kind ?? "assistant") as AgentKind,
     name: String(record.name ?? "Agent"),
     description: record.description ? String(record.description) : null,
+    definitionKey:
+      record.definitionKey != null
+        ? String(record.definitionKey)
+        : record.definition_key != null
+          ? String(record.definition_key)
+          : null,
+    productAdapterKey:
+      record.productAdapterKey != null
+        ? String(record.productAdapterKey)
+        : record.product_adapter_key != null
+          ? String(record.product_adapter_key)
+          : null,
     status: String(record.status ?? "idle"),
-    health: String(record.health ?? "warning") as AgentProfileSummary["health"],
+    health: String(record.health ?? "warning") as AgentDefinitionSummary["health"],
     activeTask: record.activeTask ? String(record.activeTask) : record.active_task ? String(record.active_task) : null,
-    activeGoal: record.activeGoal ? String(record.activeGoal) : record.active_goal ? String(record.active_goal) : null,
+    activeInstruction:
+      record.activeInstruction
+        ? String(record.activeInstruction)
+        : record.active_instruction
+          ? String(record.active_instruction)
+          : null,
     defaultModel: record.defaultModel ? String(record.defaultModel) : record.default_model ? String(record.default_model) : null,
     pendingApprovals: Number(record.pendingApprovals ?? record.pending_approvals ?? 0),
     unreadCount: Number(record.unreadCount ?? record.unread_count ?? 0),
@@ -818,124 +923,141 @@ function normalizeAgentMemorySummary(raw: unknown): AgentMemorySummary {
     title: String(record.title ?? record.name ?? humanizeKey(String(record.scope ?? "memory"))),
     summary: String(record.summary ?? record.preview ?? ""),
     status: String(record.status ?? "active"),
+    source: nullableString(record.source ?? record.path),
+    metadata: asRecord(record.metadata ?? record.memoryMetadata ?? record.memory_metadata),
     updatedAt: String(record.updatedAt ?? record.updated_at ?? new Date().toISOString()),
   };
 }
 
 function normalizeAgentToolSummary(raw: unknown): AgentToolSummary {
   const record = asRecord(raw);
+  const metadata = asRecord(record.toolMetadata ?? record.tool_metadata ?? record.metadata);
+  const parameters = asRecord(record.parameters ?? record.inputSchema ?? record.input_schema ?? record.schema);
+  const businessTool = record.businessTool != null ? Boolean(record.businessTool) : Boolean(record.business_tool ?? metadata.business_tool ?? false);
+  const serverId = nullableString(record.serverId ?? record.server_id);
+  const serverName = String(record.serverName ?? record.server_name ?? (serverId?.startsWith("memory:") ? "Memory Files" : "MCP"));
+  const sourceKind = String(
+    record.sourceKind ??
+      record.source_kind ??
+      metadata.source_kind ??
+      (businessTool ? "business_tool" : serverId?.startsWith("memory:") ? "memory_tool" : /mcp/i.test(serverName) || serverId ? "mcp_tool" : "system_tool"),
+  );
   return {
     id: String(record.id ?? `${record.serverId ?? record.server_id ?? ""}:${record.name ?? ""}`),
-    serverId: record.serverId ? String(record.serverId) : record.server_id ? String(record.server_id) : null,
-    serverName: String(record.serverName ?? record.server_name ?? "MCP"),
+    serverId,
+    serverName,
     name: String(record.name ?? "tool"),
+    description: nullableString(record.description ?? metadata.description),
+    sourceKind,
+    source: String(record.source ?? metadata.source ?? serverName),
+    status: String(record.status ?? record.healthStatus ?? record.health_status ?? (record.enabled === false ? "disabled" : "active")),
     riskLevel: String(record.riskLevel ?? record.risk_level ?? "medium"),
-    businessTool: record.businessTool != null ? Boolean(record.businessTool) : Boolean(record.business_tool ?? false),
+    businessTool,
     businessDomain:
       record.businessDomain != null
         ? String(record.businessDomain)
         : record.business_domain != null
           ? String(record.business_domain)
+          : metadata.business_domain != null
+            ? String(metadata.business_domain)
           : null,
     resourceTargetKind:
       record.resourceTargetKind != null
         ? String(record.resourceTargetKind)
         : record.resource_target_kind != null
           ? String(record.resource_target_kind)
+          : metadata.resource_target_kind != null
+            ? String(metadata.resource_target_kind)
           : null,
     permissionScope:
       record.permissionScope != null
         ? String(record.permissionScope)
         : record.permission_scope != null
           ? String(record.permission_scope)
+          : metadata.permission_scope != null
+            ? String(metadata.permission_scope)
           : null,
+    capabilities: stringListFrom(record.capabilities ?? metadata.capabilities),
+    inputSchema: parameters,
+    outputSchema: asRecord(record.outputSchema ?? record.output_schema ?? metadata.output_schema),
+    parameters,
+    toolMetadata: metadata,
     enabled: Boolean(record.enabled ?? true),
-    endpoint: record.endpoint ? String(record.endpoint) : null,
-  };
-}
-
-function normalizeSharedSceneTemplate(raw: unknown): SharedSceneTemplateRecord {
-  const record = asRecord(raw);
-  return {
-    key: String(record.key ?? ""),
-    title: String(record.title ?? ""),
-    summary: String(record.summary ?? ""),
-    goalKind: String(record.goalKind ?? record.goal_kind ?? "recruiting"),
-    defaultGoalText: String(record.defaultGoalText ?? record.default_goal_text ?? ""),
-    requiresJd: Boolean(record.requiresJd ?? record.requires_jd ?? false),
-    supportsCandidateCountTarget: Boolean(
-      record.supportsCandidateCountTarget ?? record.supports_candidate_count_target ?? false,
-    ),
-    defaultCandidateCountTarget:
-      record.defaultCandidateCountTarget != null
-        ? Number(record.defaultCandidateCountTarget)
-        : record.default_candidate_count_target != null
-          ? Number(record.default_candidate_count_target)
-          : null,
-    directRunnable: Boolean(record.directRunnable ?? record.direct_runnable ?? false),
-    constraints: asRecord(record.constraints),
-    successCriteria: asRecord(record.successCriteria ?? record.success_criteria),
-    contextHints: asRecord(record.contextHints ?? record.context_hints),
+    endpoint: nullableString(record.endpoint),
   };
 }
 
 function normalizeAgentWorkspace(raw: unknown, fallbackKind: AgentKind): AgentWorkspaceRecord {
   const record = asRecord(raw);
   const config = asRecord(record.config);
+  const agent = normalizeAgentDefinitionSummary(record.agent ?? { ...record, kind: fallbackKind });
+  const fallbackDefinition = normalizeAgentDefinition(record.agent ?? { ...record, definition_key: fallbackKind, name: agent.name, status: agent.status }, fallbackKind);
+  const definition = normalizeAgentDefinition(
+    record.agentDefinition ?? record.agent_definition ?? config.agentDefinition ?? config.agent_definition,
+    fallbackKind,
+    fallbackDefinition,
+  );
+  const productAdapterConfig = {
+    recruitingPolicy: normalizeRecruitingPolicy(
+      config.recruitingPolicy ??
+        config.recruiting_policy ??
+        asRecord(record.productBinding ?? record.product_binding).recruitingPolicy ??
+        asRecord(record.productBinding ?? record.product_binding).recruiting_policy,
+    ),
+    scoringRubric: String(config.scoringRubric ?? config.scoring_rubric ?? config.rubric ?? ""),
+    triggers: asRecord(config.triggers ?? config.trigger_config),
+    approvalPolicy: asRecord(config.approvalPolicy ?? config.approval_policy),
+    contextPolicy: asRecord(config.contextPolicy ?? config.context_policy),
+    memoryPolicy: asRecord(config.memoryPolicy ?? config.memory_policy),
+    adapterMetadata: asRecord(config.adapterMetadata ?? config.adapter_metadata),
+    providerLabel: config.providerLabel ? String(config.providerLabel) : config.provider_label ? String(config.provider_label) : null,
+    modelLabel: config.modelLabel ? String(config.modelLabel) : config.model_label ? String(config.model_label) : null,
+  };
+  const productBinding = normalizeAgentProductBinding(
+    record.productBinding ?? record.product_binding ?? config.productBinding ?? config.product_binding,
+    fallbackKind,
+    definition,
+    productAdapterConfig,
+  );
   return {
-    agent: normalizeAgentProfileSummary(record.agent ?? { ...record, kind: fallbackKind }),
+    agent: {
+      ...agent,
+      definitionKey: agent.definitionKey ?? definition.key,
+      productAdapterKey: agent.productAdapterKey ?? productBinding.productAdapterKey,
+    },
     conversations: asArray(record.conversations).map((item) => normalizeAgentConversationSummary(item, fallbackKind)),
     runs: asArray(record.runs).map((item) => normalizeAgentRunRecord(item, fallbackKind)),
     approvals: asArray(record.approvals).map(normalizeApprovalItem),
     memories: asArray(record.memories).map(normalizeAgentMemorySummary),
     skills: asArray(record.skills).map(normalizeSkillRecord),
     tools: asArray(record.tools).map(normalizeAgentToolSummary),
+    agentDefinition: definition,
+    productBinding,
+    definitionConfig: definition.config,
+    productAdapterConfig,
     config: {
-      systemPrompt: String(config.systemPrompt ?? config.system_prompt ?? ""),
-      goalTemplate: String(config.goalTemplate ?? config.goal_template ?? ""),
-      scoringRubric: String(config.scoringRubric ?? config.scoring_rubric ?? config.rubric ?? ""),
-      recruitingPolicy: normalizeRecruitingPolicy(config.recruitingPolicy ?? config.recruiting_policy),
-      boundaries: asArray<string>(config.boundaries),
-      providerLabel: config.providerLabel ? String(config.providerLabel) : config.provider_label ? String(config.provider_label) : null,
-      modelLabel: config.modelLabel ? String(config.modelLabel) : config.model_label ? String(config.model_label) : null,
+      systemPrompt: definition.config.systemPrompt,
+      scoringRubric: productAdapterConfig.scoringRubric,
+      recruitingPolicy: productAdapterConfig.recruitingPolicy,
+      boundaries: definition.config.boundaries,
+      providerLabel: productAdapterConfig.providerLabel,
+      modelLabel: productAdapterConfig.modelLabel,
     },
   };
 }
 
-function extractPromptText(profile: RecruitAgentProfileRecord | null): string {
-  if (!profile) {
+function extractPromptText(definition: AgentDefinitionRecord | null): string {
+  if (!definition) {
     return "";
   }
-  const promptConfig = asRecord(profile.promptConfig);
-  return String(
-    promptConfig.systemPrompt ??
-      promptConfig.system_prompt ??
-      promptConfig.prompt ??
-      profile.description ??
-      "",
-  );
+  return String(definition.config.systemPrompt || definition.description || "");
 }
 
-function extractGoalTemplate(profile: RecruitAgentProfileRecord | null): string {
-  if (!profile) {
+function extractScoringRubric(definition: AgentDefinitionRecord | null): string {
+  if (!definition) {
     return "";
   }
-  const roleDefinition = asRecord(profile.roleDefinition);
-  const promptConfig = asRecord(profile.promptConfig);
-  return String(
-    roleDefinition.goalTemplate ??
-      roleDefinition.goal_template ??
-      promptConfig.goalTemplate ??
-      promptConfig.goal_template ??
-      "",
-  );
-}
-
-function extractScoringRubric(profile: RecruitAgentProfileRecord | null): string {
-  if (!profile) {
-    return "";
-  }
-  const promptConfig = asRecord(profile.promptConfig);
+  const promptConfig = asRecord(definition.config.runtimeMetadata);
   return String(
     promptConfig.scoringRubric ??
       promptConfig.scoring_rubric ??
@@ -945,22 +1067,15 @@ function extractScoringRubric(profile: RecruitAgentProfileRecord | null): string
   );
 }
 
-function extractBoundaries(profile: RecruitAgentProfileRecord | null): string[] {
-  if (!profile) {
+function extractBoundaries(definition: AgentDefinitionRecord | null): string[] {
+  if (!definition) {
     return [];
   }
-  const roleDefinition = asRecord(profile.roleDefinition);
-  const promptConfig = asRecord(profile.promptConfig);
-  return asArray<string>(
-    roleDefinition.boundaries ??
-      roleDefinition.forbiddenActions ??
-      roleDefinition.forbidden_actions ??
-      promptConfig.boundaries,
-  );
+  return stringListFrom(definition.config.boundaries);
 }
 
 function buildAgentConfig(
-  profile: RecruitAgentProfileRecord | null,
+  definition: AgentDefinitionRecord | null,
   settings: SettingsSnapshot,
   kind: AgentKind,
 ): AgentWorkspaceRecord["config"] {
@@ -968,40 +1083,75 @@ function buildAgentConfig(
   const defaultPrompt =
     kind === "assistant"
       ? "Respond inside the desktop workspace and keep actions reviewable."
-      : "Drive sourcing goals to completion while surfacing approvals in time.";
+      : "Run autonomous recruiting tasks while surfacing approvals in time.";
   return {
-    systemPrompt: extractPromptText(profile) || defaultPrompt,
-    goalTemplate: extractGoalTemplate(profile),
-    scoringRubric: extractScoringRubric(profile),
-    recruitingPolicy: normalizeRecruitingPolicy(asRecord(profile?.promptConfig).recruitingPolicy ?? asRecord(profile?.promptConfig).recruiting_policy),
-    boundaries: extractBoundaries(profile),
+    systemPrompt: extractPromptText(definition) || defaultPrompt,
+    scoringRubric: extractScoringRubric(definition),
+    recruitingPolicy: normalizeRecruitingPolicy(asRecord(definition?.config.runtimeMetadata).recruitingPolicy ?? asRecord(definition?.config.runtimeMetadata).recruiting_policy),
+    boundaries: extractBoundaries(definition),
     providerLabel: provider?.name ?? null,
     modelLabel: provider?.model ?? null,
+  };
+}
+
+function buildAgentDefinition(
+  definition: AgentDefinitionRecord | null,
+  kind: AgentKind,
+): AgentDefinitionRecord {
+  return normalizeAgentDefinition(undefined, kind, definition ?? {
+    id: `${kind}-definition`,
+    key: kind,
+    name: agentDefinitionFallbackName(kind),
+    status: "active",
+    config: normalizeAgentDefinitionConfig({}),
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  });
+}
+
+function buildProductAdapterConfig(
+  definition: AgentDefinitionRecord | null,
+  settings: SettingsSnapshot,
+  kind: AgentKind,
+): AgentWorkspaceRecord["productAdapterConfig"] {
+  const config = buildAgentConfig(definition, settings, kind);
+  return {
+    recruitingPolicy: config.recruitingPolicy,
+    scoringRubric: config.scoringRubric,
+    triggers: {},
+    approvalPolicy: {},
+    contextPolicy: asRecord(definition?.config.runtimeMetadata.contextPolicy ?? definition?.config.runtimeMetadata.context_policy),
+    memoryPolicy: {},
+    adapterMetadata: asRecord(definition?.config.runtimeMetadata),
+    providerLabel: config.providerLabel,
+    modelLabel: config.modelLabel,
   };
 }
 
 function buildAgentSummary(
   kind: AgentKind,
   snapshot: AgentSnapshot,
-  profile: RecruitAgentProfileRecord | null,
+  definition: AgentDefinitionRecord | null,
   settings: SettingsSnapshot,
   approvals: ApprovalItem[],
-): AgentProfileSummary {
+): AgentDefinitionSummary {
   const provider = settings.providers.find((item) => item.enabled) ?? settings.providers[0];
   return {
     kind,
     name:
       kind === "assistant"
         ? "Assistant Agent"
-        : profile?.name || "Autonomous Agent",
+        : definition?.name || "Autonomous Agent",
     description:
       kind === "assistant"
         ? "桌面内联协作与问答入口。"
-        : profile?.description || "负责目标驱动 sourcing、审批与执行编排。",
+        : definition?.description || "负责自主 sourcing、审批与执行编排。",
+    definitionKey: definition?.key ?? `${kind}-definition`,
+    productAdapterKey: kind,
     status: snapshot.status,
     health: snapshot.health,
     activeTask: snapshot.activeTask,
-    activeGoal: null,
+    activeInstruction: null,
     defaultModel: provider?.model ?? null,
     pendingApprovals: approvals.filter((approval) => approval.status === "pending").length,
     unreadCount: 0,
@@ -1009,7 +1159,7 @@ function buildAgentSummary(
   };
 }
 
-function goalToConversationStatus(status: string): AgentConversationSummary["status"] {
+function runToConversationStatus(status: string): AgentConversationSummary["status"] {
   return /completed|approved/i.test(status)
     ? "completed"
     : /failed|rejected/i.test(status)
@@ -1021,54 +1171,40 @@ function goalToConversationStatus(status: string): AgentConversationSummary["sta
           : "active";
 }
 
-function goalToConversation(goal: GoalSpecRecord): AgentConversationSummary {
+function runToConversation(run: AgentRunRecord): AgentConversationSummary {
   return {
-    id: goal.id,
+    id: run.id,
     agentKind: "autonomous",
-    title: goal.title,
-    preview: goal.summary || goal.goalText,
-    status: goalToConversationStatus(goal.status),
+    title: run.title,
+    preview: run.summary ?? null,
+    status: runToConversationStatus(run.status),
     unreadCount: 0,
-    updatedAt: goal.updatedAt,
-    refId: goal.latestRunId ?? goal.id,
+    updatedAt: run.updatedAt,
+    refId: run.id,
   };
 }
 
 function buildAutonomousPrimaryConversation(
-  goals: GoalSpecRecord[],
+  runs: AgentRunRecord[],
   snapshot?: AgentSnapshot | null,
-  profile?: RecruitAgentProfileRecord | null,
+  definition?: AgentDefinitionRecord | null,
 ): AgentConversationSummary {
-  const latestGoal = goals[0] ?? null;
+  const latestRun = runs[0] ?? null;
   return {
     id: AUTONOMOUS_PRIMARY_CONVERSATION_ID,
     agentKind: "autonomous",
-    title: profile?.name || "Autonomous Agent",
+    title: definition?.name || "Autonomous Agent",
     preview:
-      latestGoal?.summary
-      || latestGoal?.goalText
+      latestRun?.summary
       || snapshot?.activeTask
-      || profile?.description
+      || definition?.description
       || null,
-    status: latestGoal
-      ? goalToConversationStatus(latestGoal.status)
-      : goalToConversationStatus(String(snapshot?.status ?? "idle")),
+    status: latestRun
+      ? runToConversationStatus(latestRun.status)
+      : runToConversationStatus(String(snapshot?.status ?? "idle")),
     unreadCount: 0,
-    updatedAt: latestGoal?.updatedAt || new Date().toISOString(),
-    refId: latestGoal?.latestRunId ?? null,
-  };
-}
-
-function goalToRun(goal: GoalSpecRecord): AgentRunRecord {
-  return {
-    id: goal.latestRunId ?? goal.id,
-    agentKind: "autonomous",
-    title: goal.title,
-    status: goal.status,
-    summary: goal.summary ?? goal.goalText,
-    startedAt: goal.createdAt,
-    updatedAt: goal.updatedAt,
-    refId: AUTONOMOUS_PRIMARY_CONVERSATION_ID,
+    updatedAt: latestRun?.updatedAt || new Date().toISOString(),
+    refId: latestRun?.id ?? null,
   };
 }
 
@@ -1671,32 +1807,6 @@ function mergeApprovalItems(...groups: ApprovalItem[][]): ApprovalItem[] {
   );
 }
 
-function normalizeGoalSpec(raw: unknown): GoalSpecRecord {
-  const record = asRecord(raw);
-  return {
-    id: String(record.id ?? ""),
-    agentProfileId: String(record.agentProfileId ?? record.agent_profile_id ?? ""),
-    title: String(record.title ?? ""),
-    goalText: String(record.goalText ?? record.goal_text ?? ""),
-    goalKind: String(record.goalKind ?? record.goal_kind ?? "recruiting"),
-    status: String(record.status ?? "draft"),
-    source: String(record.source ?? "operator"),
-    sourceText: record.sourceText ? String(record.sourceText) : record.source_text ? String(record.source_text) : null,
-    requestedBy: record.requestedBy ? String(record.requestedBy) : record.requested_by ? String(record.requested_by) : null,
-    constraints: asRecord(record.constraints),
-    successCriteria: asRecord(record.successCriteria ?? record.success_criteria),
-    contextHints: asRecord(record.contextHints ?? record.context_hints),
-    trialBudget: asRecord(record.trialBudget ?? record.trial_budget),
-    runPreferences: asRecord(record.runPreferences ?? record.run_preferences),
-    summary: record.summary ? String(record.summary) : null,
-    latestRunId: record.latestRunId ? String(record.latestRunId) : record.latest_run_id ? String(record.latest_run_id) : null,
-    lastActivityAt: record.lastActivityAt ? String(record.lastActivityAt) : record.last_activity_at ? String(record.last_activity_at) : null,
-    goalMetadata: asRecord(record.goalMetadata ?? record.goal_metadata),
-    createdAt: String(record.createdAt ?? record.created_at ?? new Date().toISOString()),
-    updatedAt: String(record.updatedAt ?? record.updated_at ?? new Date().toISOString()),
-  };
-}
-
 function normalizeExecutionTrace(raw: unknown): ExecutionTraceRecord {
   const record = asRecord(raw);
   const traceMetadata = asRecord(record.traceMetadata ?? record.trace_metadata);
@@ -1704,7 +1814,6 @@ function normalizeExecutionTrace(raw: unknown): ExecutionTraceRecord {
     id: String(record.id ?? ""),
     sessionId: String(record.sessionId ?? record.session_id ?? ""),
     runId: record.runId ? String(record.runId) : record.run_id ? String(record.run_id) : null,
-    goalSpecId: record.goalSpecId ? String(record.goalSpecId) : record.goal_spec_id ? String(record.goal_spec_id) : null,
     personId: record.personId != null ? String(record.personId) : record.person_id != null ? String(record.person_id) : null,
     applicationId:
       traceMetadata.applicationId != null
@@ -1733,7 +1842,6 @@ function normalizeExecutionGraph(raw: unknown): ExecutionGraphProjectionRecord {
   const graphMetadata = asRecord(record.graphMetadata ?? record.graph_metadata);
   return {
     id: String(record.id ?? ""),
-    goalSpecId: record.goalSpecId ? String(record.goalSpecId) : record.goal_spec_id ? String(record.goal_spec_id) : null,
     runId: record.runId ? String(record.runId) : record.run_id ? String(record.run_id) : null,
     personId: record.personId != null ? String(record.personId) : record.person_id != null ? String(record.person_id) : null,
     applicationId:
@@ -1758,8 +1866,7 @@ function normalizeStrategyFragment(raw: unknown): StrategyFragmentRecord {
   const record = asRecord(raw);
   return {
     id: String(record.id ?? ""),
-    agentProfileId: String(record.agentProfileId ?? record.agent_profile_id ?? ""),
-    goalSpecId: record.goalSpecId ? String(record.goalSpecId) : record.goal_spec_id ? String(record.goal_spec_id) : null,
+    agentDefinitionId: String(record.agentDefinitionId ?? record.agent_definition_id ?? ""),
     runId: record.runId ? String(record.runId) : record.run_id ? String(record.run_id) : null,
     personId: record.personId != null ? String(record.personId) : record.person_id != null ? String(record.person_id) : null,
     jobDescriptionId:
@@ -1792,7 +1899,6 @@ function normalizeOperatorInteraction(raw: unknown): OperatorInteractionRecord {
     runId: record.runId ? String(record.runId) : record.run_id ? String(record.run_id) : null,
     checkpointId: record.checkpointId ? String(record.checkpointId) : record.checkpoint_id ? String(record.checkpoint_id) : null,
     approvalId: record.approvalId ? String(record.approvalId) : record.approval_id ? String(record.approval_id) : null,
-    goalSpecId: record.goalSpecId ? String(record.goalSpecId) : record.goal_spec_id ? String(record.goal_spec_id) : null,
     personId: record.personId != null ? String(record.personId) : record.person_id != null ? String(record.person_id) : null,
     applicationId:
       interactionMetadata.applicationId != null
@@ -1813,27 +1919,6 @@ function normalizeOperatorInteraction(raw: unknown): OperatorInteractionRecord {
     surfacedAt: String(record.surfacedAt ?? record.surfaced_at ?? new Date().toISOString()),
     resolvedAt: record.resolvedAt ? String(record.resolvedAt) : record.resolved_at ? String(record.resolved_at) : null,
     resolvedBy: record.resolvedBy ? String(record.resolvedBy) : record.resolved_by ? String(record.resolved_by) : null,
-    createdAt: String(record.createdAt ?? record.created_at ?? new Date().toISOString()),
-    updatedAt: String(record.updatedAt ?? record.updated_at ?? new Date().toISOString()),
-  };
-}
-
-function normalizeRecruitAgentProfile(raw: unknown): RecruitAgentProfileRecord {
-  const record = asRecord(raw);
-  return {
-    id: String(record.id ?? ""),
-    agentKey: String(record.agentKey ?? record.agent_key ?? "recruit-agent"),
-    name: String(record.name ?? "Recruit Agent"),
-    status: String(record.status ?? "draft"),
-    description: record.description ? String(record.description) : undefined,
-    isPrimary: Boolean(record.isPrimary ?? record.is_primary ?? false),
-    roleDefinition: asRecord(record.roleDefinition ?? record.role_definition),
-    promptConfig: asRecord(record.promptConfig ?? record.prompt_config),
-    playbookBlueprint: asRecord(record.playbookBlueprint ?? record.playbook_blueprint),
-    memoryPolicy: asRecord(record.memoryPolicy ?? record.memory_policy),
-    dashboardConfig: asRecord(record.dashboardConfig ?? record.dashboard_config),
-    channelConfig: asRecord(record.channelConfig ?? record.channel_config),
-    agentMetadata: asRecord(record.agentMetadata ?? record.agent_metadata),
     createdAt: String(record.createdAt ?? record.created_at ?? new Date().toISOString()),
     updatedAt: String(record.updatedAt ?? record.updated_at ?? new Date().toISOString()),
   };
@@ -2113,7 +2198,7 @@ function normalizeEvolutionArtifact(raw: unknown): EvolutionArtifactRecord {
   const artifactMetadata = asRecord(record.artifactMetadata ?? record.artifact_metadata);
   return {
     id: String(record.id ?? ""),
-    agentProfileId: record.agentProfileId ? String(record.agentProfileId) : record.agent_profile_id ? String(record.agent_profile_id) : null,
+    agentDefinitionId: record.agentDefinitionId ? String(record.agentDefinitionId) : record.agent_definition_id ? String(record.agent_definition_id) : null,
     artifactKind: String(record.artifactKind ?? record.artifact_kind ?? "playbook_patch") as EvolutionArtifactRecord["artifactKind"],
     title: String(record.title ?? ""),
     summary: record.summary ? String(record.summary) : null,
@@ -2250,7 +2335,7 @@ function normalizeRuntimeTask(raw: unknown): RuntimeTaskSpec {
     id: String(record.id ?? ""),
     title: String(record.title ?? "Untitled task"),
     description: record.description ? String(record.description) : null,
-    goal: String(record.goal ?? ""),
+    instruction: String(record.instruction ?? record.run_instruction ?? ""),
     domain: String(record.domain ?? "general"),
     status: String(record.status ?? "draft"),
     sourceKind: String(record.sourceKind ?? record.source_kind ?? "natural_language"),
@@ -2912,10 +2997,10 @@ function normalizeCompileTaskResponse(raw: unknown): CompileTaskResponse {
   };
 }
 
-const recruitAgentExecutionApiBase = "/api/recruit-agent/execution";
+const recruitAgentRuntimeApiBase = "/api/recruit-agent/runtime";
 
 async function requestRuntimeReplay(baseUrl: string, episodeId: string): Promise<RuntimeEpisodeReplay> {
-  return normalizeRuntimeReplay(await requestJson<unknown>(baseUrl, `${recruitAgentExecutionApiBase}/runs/${episodeId}/replay`));
+  return normalizeRuntimeReplay(await requestJson<unknown>(baseUrl, `${recruitAgentRuntimeApiBase}/execution-episodes/${episodeId}/replay`));
 }
 
 async function requestAgentApprovalHistory(baseUrl: string, kind: AgentKind): Promise<ApprovalItem[]> {
@@ -2937,17 +3022,17 @@ function createFetchClient(baseUrl: string): DesktopApiClient {
     getRuntimeWorkspaceData: async () => {
       const [compilerContract, domainPacks, taskSpecs, plans, episodes, snapshots, capabilityDrivers, environmentAssessments, templates, patches, replans] =
         await Promise.all([
-        requestOptionalJson<unknown>(baseUrl, `${recruitAgentExecutionApiBase}/compiler-contract`),
-        requestOptionalJson<unknown>(baseUrl, `${recruitAgentExecutionApiBase}/profiles`),
-        requestOptionalJson<unknown>(baseUrl, `${recruitAgentExecutionApiBase}/playbooks`),
-        requestOptionalJson<unknown>(baseUrl, `${recruitAgentExecutionApiBase}/plans`),
-        requestOptionalJson<unknown>(baseUrl, `${recruitAgentExecutionApiBase}/runs`),
-        requestOptionalJson<unknown>(baseUrl, `${recruitAgentExecutionApiBase}/snapshots`),
-        requestOptionalJson<unknown>(baseUrl, `${recruitAgentExecutionApiBase}/capabilities`),
-        requestOptionalJson<unknown>(baseUrl, `${recruitAgentExecutionApiBase}/environment-assessments`),
-        requestOptionalJson<unknown>(baseUrl, `${recruitAgentExecutionApiBase}/playbook-versions`),
-        requestOptionalJson<unknown>(baseUrl, `${recruitAgentExecutionApiBase}/adjustments`),
-        requestOptionalJson<unknown>(baseUrl, `${recruitAgentExecutionApiBase}/replans`),
+        requestOptionalJson<unknown>(baseUrl, `${recruitAgentRuntimeApiBase}/compiler-contract`),
+        requestOptionalJson<unknown>(baseUrl, `${recruitAgentRuntimeApiBase}/domain-packs`),
+        requestOptionalJson<unknown>(baseUrl, `${recruitAgentRuntimeApiBase}/task-specs`),
+        requestOptionalJson<unknown>(baseUrl, `${recruitAgentRuntimeApiBase}/execution-plans`),
+        requestOptionalJson<unknown>(baseUrl, `${recruitAgentRuntimeApiBase}/execution-episodes`),
+        requestOptionalJson<unknown>(baseUrl, `${recruitAgentRuntimeApiBase}/snapshots`),
+        requestOptionalJson<unknown>(baseUrl, `${recruitAgentRuntimeApiBase}/capabilities`),
+        requestOptionalJson<unknown>(baseUrl, `${recruitAgentRuntimeApiBase}/environment-assessments`),
+        requestOptionalJson<unknown>(baseUrl, `${recruitAgentRuntimeApiBase}/playbook-versions`),
+        requestOptionalJson<unknown>(baseUrl, `${recruitAgentRuntimeApiBase}/adjustments`),
+        requestOptionalJson<unknown>(baseUrl, `${recruitAgentRuntimeApiBase}/replans`),
       ]);
       return {
         compilerContract: compilerContract ? normalizeRuntimeCompilerContract(compilerContract) : null,
@@ -2964,12 +3049,12 @@ function createFetchClient(baseUrl: string): DesktopApiClient {
       };
     },
     getTaskCompilerContract: async () =>
-      normalizeRuntimeCompilerContract(await requestJson<unknown>(baseUrl, `${recruitAgentExecutionApiBase}/compiler-contract`)),
-    listDomainPacks: async () => asArray(await requestJson<unknown>(baseUrl, `${recruitAgentExecutionApiBase}/profiles`)).map(normalizeDomainPack),
-    listRuntimeTasks: async () => asArray(await requestJson<unknown>(baseUrl, `${recruitAgentExecutionApiBase}/playbooks`)).map(normalizeRuntimeTask),
+      normalizeRuntimeCompilerContract(await requestJson<unknown>(baseUrl, `${recruitAgentRuntimeApiBase}/compiler-contract`)),
+    listDomainPacks: async () => asArray(await requestJson<unknown>(baseUrl, `${recruitAgentRuntimeApiBase}/domain-packs`)).map(normalizeDomainPack),
+    listRuntimeTasks: async () => asArray(await requestJson<unknown>(baseUrl, `${recruitAgentRuntimeApiBase}/task-specs`)).map(normalizeRuntimeTask),
     compileRuntimeTask: async (payload) =>
       normalizeCompileTaskResponse(
-        await requestJson<unknown>(baseUrl, `${recruitAgentExecutionApiBase}/playbooks/compile`, {
+        await requestJson<unknown>(baseUrl, `${recruitAgentRuntimeApiBase}/task-specs/compile`, {
           method: "POST",
           body: JSON.stringify({
             instruction: payload.instruction,
@@ -2982,10 +3067,10 @@ function createFetchClient(baseUrl: string): DesktopApiClient {
           }),
         }),
       ),
-    listRuntimePlans: async () => asArray(await requestJson<unknown>(baseUrl, `${recruitAgentExecutionApiBase}/plans`)).map(normalizeRuntimePlan),
+    listRuntimePlans: async () => asArray(await requestJson<unknown>(baseUrl, `${recruitAgentRuntimeApiBase}/execution-plans`)).map(normalizeRuntimePlan),
     launchRuntimePlan: async (planId, taskSpecId, mode = "production") =>
       normalizeRuntimePlanLaunchResult(
-        await requestJson<unknown>(baseUrl, `${recruitAgentExecutionApiBase}/plans/${planId}/launch`, {
+        await requestJson<unknown>(baseUrl, `${recruitAgentRuntimeApiBase}/execution-plans/${planId}/launch`, {
           method: "POST",
           body: JSON.stringify({
             task_spec_id: taskSpecId,
@@ -2997,7 +3082,7 @@ function createFetchClient(baseUrl: string): DesktopApiClient {
       ),
     createTrialRun: async (taskSpecId, executionPlanId, notes) =>
       normalizeRuntimeEpisode(
-        await requestJson<unknown>(baseUrl, `${recruitAgentExecutionApiBase}/runs`, {
+        await requestJson<unknown>(baseUrl, `${recruitAgentRuntimeApiBase}/execution-episodes`, {
           method: "POST",
           body: JSON.stringify({
             task_spec_id: taskSpecId,
@@ -3007,10 +3092,10 @@ function createFetchClient(baseUrl: string): DesktopApiClient {
           }),
         }),
       ),
-    listRuntimeEpisodes: async () => asArray(await requestJson<unknown>(baseUrl, `${recruitAgentExecutionApiBase}/runs`)).map(normalizeRuntimeEpisode),
+    listRuntimeEpisodes: async () => asArray(await requestJson<unknown>(baseUrl, `${recruitAgentRuntimeApiBase}/execution-episodes`)).map(normalizeRuntimeEpisode),
     executeTrialRun: async (episodeId, notes) =>
       normalizeRuntimeLearningOutcome(
-        await requestJson<unknown>(baseUrl, `${recruitAgentExecutionApiBase}/runs/${episodeId}/execute`, {
+        await requestJson<unknown>(baseUrl, `${recruitAgentRuntimeApiBase}/execution-episodes/${episodeId}/execute`, {
           method: "POST",
           body: JSON.stringify({
             operator: "desktop-user",
@@ -3021,13 +3106,13 @@ function createFetchClient(baseUrl: string): DesktopApiClient {
       ),
     refreshRuntimeLearning: async (episodeId) =>
       normalizeRuntimeLearningOutcome(
-        await requestJson<unknown>(baseUrl, `${recruitAgentExecutionApiBase}/runs/${episodeId}/learn`, {
+        await requestJson<unknown>(baseUrl, `${recruitAgentRuntimeApiBase}/execution-episodes/${episodeId}/learn`, {
           method: "POST",
         }),
       ),
     confirmTrialRun: async (episodeId, reason) =>
       normalizeRuntimeLearningOutcome(
-        await requestJson<unknown>(baseUrl, `${recruitAgentExecutionApiBase}/runs/${episodeId}/confirm`, {
+        await requestJson<unknown>(baseUrl, `${recruitAgentRuntimeApiBase}/execution-episodes/${episodeId}/confirm`, {
           method: "POST",
           body: JSON.stringify({
             reviewer: "desktop-user",
@@ -3037,18 +3122,18 @@ function createFetchClient(baseUrl: string): DesktopApiClient {
         }),
       ),
     getRuntimeReplay: async (episodeId) => requestRuntimeReplay(baseUrl, episodeId),
-    listRuntimeSnapshots: async () => asArray(await requestJson<unknown>(baseUrl, `${recruitAgentExecutionApiBase}/snapshots`)).map(normalizeRuntimeSnapshot),
+    listRuntimeSnapshots: async () => asArray(await requestJson<unknown>(baseUrl, `${recruitAgentRuntimeApiBase}/snapshots`)).map(normalizeRuntimeSnapshot),
     listCapabilityDrivers: async () => {
-      const payload = await requestOptionalJson<unknown>(baseUrl, `${recruitAgentExecutionApiBase}/capabilities`);
+      const payload = await requestOptionalJson<unknown>(baseUrl, `${recruitAgentRuntimeApiBase}/capabilities`);
       return payload ? asArray(payload).map(normalizeRuntimeCapabilityDriver) : [];
     },
     listRuntimeEnvironmentAssessments: async () => {
-      const payload = await requestOptionalJson<unknown>(baseUrl, `${recruitAgentExecutionApiBase}/environment-assessments`);
+      const payload = await requestOptionalJson<unknown>(baseUrl, `${recruitAgentRuntimeApiBase}/environment-assessments`);
       return payload ? asArray(payload).map(normalizeRuntimeEnvironmentAssessment) : [];
     },
     assessRuntimeEnvironment: async (payload) =>
       normalizeRuntimeEnvironmentAssessment(
-        await requestJson<unknown>(baseUrl, `${recruitAgentExecutionApiBase}/environment-assessments`, {
+        await requestJson<unknown>(baseUrl, `${recruitAgentRuntimeApiBase}/environment-assessments`, {
           method: "POST",
           body: JSON.stringify({
             task_spec_id: payload.taskSpecId,
@@ -3074,15 +3159,15 @@ function createFetchClient(baseUrl: string): DesktopApiClient {
           }),
         }),
       ),
-    listRuntimeTemplates: async () => asArray(await requestJson<unknown>(baseUrl, `${recruitAgentExecutionApiBase}/playbook-versions`)).map(normalizeRuntimeTemplate),
-    listRuntimePatches: async () => asArray(await requestJson<unknown>(baseUrl, `${recruitAgentExecutionApiBase}/adjustments`)).map(normalizeRuntimePatch),
+    listRuntimeTemplates: async () => asArray(await requestJson<unknown>(baseUrl, `${recruitAgentRuntimeApiBase}/playbook-versions`)).map(normalizeRuntimeTemplate),
+    listRuntimePatches: async () => asArray(await requestJson<unknown>(baseUrl, `${recruitAgentRuntimeApiBase}/adjustments`)).map(normalizeRuntimePatch),
     listRuntimeReplans: async () => {
-      const payload = await requestOptionalJson<unknown>(baseUrl, `${recruitAgentExecutionApiBase}/replans`);
+      const payload = await requestOptionalJson<unknown>(baseUrl, `${recruitAgentRuntimeApiBase}/replans`);
       return payload ? asArray(payload).map(normalizeRuntimeReplanResult) : [];
     },
     replanRuntimePlan: async (payload) =>
       normalizeRuntimeReplanResult(
-        await requestJson<unknown>(baseUrl, `${recruitAgentExecutionApiBase}/plans/${payload.executionPlanId}/replan`, {
+        await requestJson<unknown>(baseUrl, `${recruitAgentRuntimeApiBase}/execution-plans/${payload.executionPlanId}/replan`, {
           method: "POST",
           body: JSON.stringify({
             task_spec_id: payload.taskSpecId,
@@ -3117,92 +3202,48 @@ function createFetchClient(baseUrl: string): DesktopApiClient {
       ),
     approveRuntimePatch: async (id, reason) =>
       normalizeRuntimePatch(
-        await requestJson<unknown>(baseUrl, `${recruitAgentExecutionApiBase}/adjustments/${id}/approve`, {
+        await requestJson<unknown>(baseUrl, `${recruitAgentRuntimeApiBase}/adjustments/${id}/approve`, {
           method: "POST",
           body: JSON.stringify({ reviewer: "desktop-user", reason, apply_immediately: true }),
         }),
       ),
     rejectRuntimePatch: async (id, reason) =>
       normalizeRuntimePatch(
-        await requestJson<unknown>(baseUrl, `${recruitAgentExecutionApiBase}/adjustments/${id}/reject`, {
+        await requestJson<unknown>(baseUrl, `${recruitAgentRuntimeApiBase}/adjustments/${id}/reject`, {
           method: "POST",
           body: JSON.stringify({ reviewer: "desktop-user", reason }),
         }),
       ),
-    getRecruitAgentProfile: async () => normalizeRecruitAgentProfile(await requestJson<unknown>(baseUrl, "/api/recruit-agent/profile")),
-    updateRecruitAgentProfile: async (payload) =>
-      normalizeRecruitAgentProfile(
-        await requestJson<unknown>(baseUrl, "/api/recruit-agent/profile", {
+    getAgentDefinition: async () => normalizeAgentDefinition(await requestJson<unknown>(baseUrl, "/api/recruit-agent/agent-definition"), "autonomous"),
+    updateAgentDefinition: async (payload) =>
+      normalizeAgentDefinition(
+        await requestJson<unknown>(baseUrl, "/api/recruit-agent/agent-definition", {
           method: "PATCH",
-          body: JSON.stringify({
-            agent_key: payload.agentKey,
-            name: payload.name,
-            status: payload.status,
-            description: payload.description,
-            is_primary: payload.isPrimary,
-            role_definition: payload.roleDefinition,
-            prompt_config: payload.promptConfig,
-            playbook_blueprint: payload.playbookBlueprint,
-            memory_policy: payload.memoryPolicy,
-            dashboard_config: payload.dashboardConfig,
-            channel_config: payload.channelConfig,
-            agent_metadata: payload.agentMetadata,
-          }),
+          body: JSON.stringify(agentDefinitionPatchPayload(payload)),
         }),
+        "autonomous",
       ),
-    getAgentProfile: async (kind) => normalizeRecruitAgentProfile(await requestJson<unknown>(baseUrl, `/api/agents/${kind}`)),
-    updateAgentProfile: async (kind, payload) =>
-      normalizeRecruitAgentProfile(
+    getProductAgentDefinition: async (kind) => normalizeAgentDefinition(await requestJson<unknown>(baseUrl, `/api/agents/${kind}`), kind),
+    updateProductAgentDefinition: async (kind, payload) =>
+      normalizeAgentDefinition(
         await requestJson<unknown>(baseUrl, `/api/agents/${kind}`, {
           method: "PATCH",
-          body: JSON.stringify({
-            agent_key: payload.agentKey,
-            name: payload.name,
-            status: payload.status,
-            description: payload.description,
-            is_primary: payload.isPrimary,
-            role_definition: payload.roleDefinition,
-            prompt_config: payload.promptConfig,
-            playbook_blueprint: payload.playbookBlueprint,
-            memory_policy: payload.memoryPolicy,
-            dashboard_config: payload.dashboardConfig,
-            channel_config: payload.channelConfig,
-            agent_metadata: payload.agentMetadata,
-          }),
+          body: JSON.stringify(agentDefinitionPatchPayload(payload)),
         }),
+        kind,
       ),
-    listGoals: async () => asArray(await requestJson<unknown>(baseUrl, "/api/recruit-agent/goals")).map(normalizeGoalSpec),
-    createGoal: async (payload) =>
-      normalizeGoalSpec(
-        await requestJson<unknown>(baseUrl, "/api/recruit-agent/goals", {
-          method: "POST",
-          body: JSON.stringify({
-            title: payload.title,
-            goal_text: payload.goalText,
-            goal_kind: payload.goalKind ?? "recruiting",
-            requested_by: payload.requestedBy ?? "desktop-user",
-            constraints: payload.constraints ?? {},
-            success_criteria: payload.successCriteria ?? {},
-            context_hints: payload.contextHints ?? {},
-            trial_budget: payload.trialBudget ?? {},
-            run_preferences: payload.runPreferences ?? {},
-            summary: payload.summary,
-            priority: payload.priority ?? 100,
-          }),
-        }),
-      ),
-    listExecutionTraces: async (goalId) =>
+    listExecutionTraces: async (runId) =>
       asArray(
         await requestJson<unknown>(
           baseUrl,
-          `/api/recruit-agent/runtime/traces${goalId ? `?goal_id=${encodeURIComponent(goalId)}` : ""}`,
+          `/api/recruit-agent/runtime/traces${runId ? `?run_id=${encodeURIComponent(runId)}` : ""}`,
         ),
       ).map(normalizeExecutionTrace),
-    listExecutionGraphs: async (goalId) =>
+    listExecutionGraphs: async (runId) =>
       asArray(
         await requestJson<unknown>(
           baseUrl,
-          `/api/recruit-agent/runtime/graphs${goalId ? `?goal_id=${encodeURIComponent(goalId)}` : ""}`,
+          `/api/recruit-agent/runtime/graphs${runId ? `?run_id=${encodeURIComponent(runId)}` : ""}`,
         ),
       ).map(normalizeExecutionGraph),
     listStrategyFragments: async () =>
@@ -3562,12 +3603,12 @@ function createFetchClient(baseUrl: string): DesktopApiClient {
         };
       }
 
-      const [snapshot, settings, profile, approvals, skills, servers, memoriesByScope, goals, queueItems] =
+      const [snapshot, settings, definition, approvals, skills, servers, memoriesByScope, agentRuns, queueItems] =
         await Promise.all([
           createFetchClient(baseUrl).getDashboardSummary().then(deriveSnapshotFromDashboard),
           requestJson<unknown>(baseUrl, "/api/settings").then(normalizeSettings),
-          requestOptionalJson<unknown>(baseUrl, "/api/recruit-agent/profile").then((value) =>
-            value ? normalizeRecruitAgentProfile(value) : null,
+          requestOptionalJson<unknown>(baseUrl, `/api/agents/${kind}`).then((value) =>
+            value ? normalizeAgentDefinition(value, kind) : null,
           ),
           requestOptionalJson<unknown>(baseUrl, "/api/approvals").then((value) =>
             value ? asArray(value).map(normalizeApprovalItem) : [],
@@ -3585,8 +3626,8 @@ function createFetchClient(baseUrl: string): DesktopApiClient {
               ),
             ),
           ),
-          requestOptionalJson<unknown>(baseUrl, "/api/recruit-agent/goals").then((value) =>
-            value ? asArray(value).map(normalizeGoalSpec) : [],
+          requestOptionalJson<unknown>(baseUrl, `/api/agents/${kind}/execution-episodes`).then((value) =>
+            value ? asArray(value).map((item) => normalizeAgentRunRecord(item, kind)) : [],
           ),
           requestOptionalJson<unknown>(baseUrl, "/api/agents/queue").then((value) =>
             value ? asArray(value).map(normalizeAgentQueueItem) : [],
@@ -3596,9 +3637,9 @@ function createFetchClient(baseUrl: string): DesktopApiClient {
 
       const conversations =
         kind === "autonomous"
-          ? [buildAutonomousPrimaryConversation(goals, snapshot, profile)]
+          ? [buildAutonomousPrimaryConversation(agentRuns, snapshot, definition)]
           : [buildAssistantConversationSummary(snapshot)];
-      const runs = kind === "autonomous" ? goals.slice(0, 8).map(goalToRun) : queueItems.slice(0, 8).map(queueItemToRun);
+      const runs = kind === "autonomous" ? agentRuns.slice(0, 8) : queueItems.slice(0, 8).map(queueItemToRun);
       const tools = servers.flatMap((server) =>
         server.tools.map((tool) =>
           normalizeAgentToolSummary({
@@ -3606,27 +3647,34 @@ function createFetchClient(baseUrl: string): DesktopApiClient {
             server_id: server.id,
             server_name: server.name,
             name: tool.name,
+            description: tool.description,
             risk_level: tool.riskLevel,
+            parameters: tool.parameters,
+            capabilities: tool.capabilities,
+            tool_metadata: tool.toolMetadata,
             enabled: tool.enabled,
             endpoint: server.endpoint,
           }),
         ),
       );
+      const agentDefinition = buildAgentDefinition(definition, kind);
+      const productAdapterConfig = buildProductAdapterConfig(definition, settings, kind);
+      const productBinding = normalizeAgentProductBinding(undefined, kind, agentDefinition, productAdapterConfig);
 
       return {
-        agent: buildAgentSummary(kind, snapshot, profile, settings, approvals),
+        agent: buildAgentSummary(kind, snapshot, definition, settings, approvals),
         conversations,
         runs,
         approvals,
         memories,
         skills,
         tools,
-        config: buildAgentConfig(profile, settings, kind),
+        agentDefinition,
+        productBinding,
+        definitionConfig: agentDefinition.config,
+        productAdapterConfig,
+        config: buildAgentConfig(definition, settings, kind),
       };
-    },
-    listSharedSceneTemplates: async () => {
-      const payload = await requestOptionalJson<unknown>(baseUrl, "/api/agents/shared-scene-templates");
-      return payload ? asArray(payload).map(normalizeSharedSceneTemplate) : [];
     },
     getAgentConversation: async (kind, conversationId) => {
       const payload = await requestOptionalJson<unknown>(
@@ -3638,25 +3686,25 @@ function createFetchClient(baseUrl: string): DesktopApiClient {
       }
 
       if (kind === "autonomous") {
-        const goals = await requestOptionalJson<unknown>(baseUrl, "/api/recruit-agent/goals").then((value) =>
-          value ? asArray(value).map(normalizeGoalSpec) : [],
+        const runs = await requestOptionalJson<unknown>(baseUrl, "/api/agents/autonomous/runs").then((value) =>
+          value ? asArray(value).map((item) => normalizeAgentRunRecord(item, "autonomous")) : [],
         );
-        const traceGoalId =
+        const traceRunId =
           conversationId === AUTONOMOUS_PRIMARY_CONVERSATION_ID
-            ? (goals[0]?.id ?? null)
+            ? (runs[0]?.id ?? null)
             : conversationId;
-        const traces = traceGoalId
+        const traces = traceRunId
           ? await requestOptionalJson<unknown>(
             baseUrl,
-            `/api/recruit-agent/runtime/traces?goal_id=${encodeURIComponent(traceGoalId)}`,
+            `/api/recruit-agent/runtime/traces?run_id=${encodeURIComponent(traceRunId)}`,
           ).then((value) => (value ? asArray(value).map(normalizeExecutionTrace) : []))
           : [];
-        const goal = traceGoalId ? (goals.find((item) => item.id === traceGoalId) ?? null) : null;
+        const run = traceRunId ? (runs.find((item) => item.id === traceRunId) ?? null) : null;
         const fallbackConversation =
           conversationId === AUTONOMOUS_PRIMARY_CONVERSATION_ID
-            ? buildAutonomousPrimaryConversation(goals)
-            : goal
-              ? goalToConversation(goal)
+            ? buildAutonomousPrimaryConversation(runs)
+            : run
+              ? runToConversation(run)
               : {
                   id: conversationId,
                   agentKind: "autonomous" as const,
@@ -3667,28 +3715,28 @@ function createFetchClient(baseUrl: string): DesktopApiClient {
                   updatedAt: new Date().toISOString(),
                   refId: null,
                 };
-        const goalMessage =
-          goal != null
+        const runMessage =
+          run != null
             ? [
                 {
-                  id: `${fallbackConversation.id}-goal`,
+                  id: `${fallbackConversation.id}-run`,
                   conversationId,
                   role: "system" as const,
                   kind: "status" as const,
-                  content: goal.goalText,
-                  createdAt: goal.createdAt,
+                  content: run.summary ?? run.title,
+                  createdAt: run.startedAt ?? run.updatedAt,
                   status: "sent" as const,
-                  title: goal.title,
+                  title: run.title,
                   metadata: {
-                    eventKind: goal.status === "waiting_human" ? "confirmation" : goal.status === "completed" ? "execution_result" : "thinking",
-                    status: goal.status,
+                    eventKind: run.status === "waiting_human" ? "confirmation" : run.status === "completed" ? "execution_result" : "thinking",
+                    status: run.status,
                   },
                 },
               ]
             : [];
         return {
           conversation: fallbackConversation,
-          messages: [...goalMessage, ...traces.map((trace) => traceToConversationMessage(trace, conversationId))],
+          messages: [...runMessage, ...traces.map((trace) => traceToConversationMessage(trace, conversationId))],
         };
       }
 
@@ -3717,36 +3765,9 @@ function createFetchClient(baseUrl: string): DesktopApiClient {
         messages: [],
       };
     },
-    updateGoal: async (goalId, payload) =>
-      normalizeGoalSpec(
-        await requestJson<unknown>(baseUrl, `/api/recruit-agent/goals/${encodeURIComponent(goalId)}`, {
-          method: "PATCH",
-          body: JSON.stringify({
-            title: payload.title,
-            goal_text: payload.goalText,
-            goal_kind: payload.goalKind,
-            status: payload.status,
-            source: payload.source,
-            source_text: payload.goalText,
-            requested_by: payload.requestedBy,
-            constraints: payload.constraints,
-            success_criteria: payload.successCriteria,
-            context_hints: payload.contextHints,
-            trial_budget: payload.trialBudget,
-            run_preferences: payload.runPreferences,
-            summary: payload.summary,
-            latest_run_id: payload.latestRunId,
-          }),
-        }),
-      ),
-    deleteGoal: async (goalId) => {
-      await requestVoid(baseUrl, `/api/recruit-agent/goals/${encodeURIComponent(goalId)}`, {
-        method: "DELETE",
-      });
-    },
     cancelAutonomousRun: async (runId, reason) => {
       const payload = asRecord(
-        await requestJson<unknown>(baseUrl, `/api/agents/autonomous/runs/${encodeURIComponent(runId)}/cancel`, {
+        await requestJson<unknown>(baseUrl, `/api/agents/autonomous/execution-episodes/${encodeURIComponent(runId)}/cancel`, {
           method: "POST",
           body: JSON.stringify({ reviewer: "desktop-user", reason }),
         }),
@@ -3755,35 +3776,12 @@ function createFetchClient(baseUrl: string): DesktopApiClient {
     },
     resumeAutonomousRun: async (runId, reason) => {
       const payload = asRecord(
-        await requestJson<unknown>(baseUrl, `/api/agents/autonomous/runs/${encodeURIComponent(runId)}/resume`, {
+        await requestJson<unknown>(baseUrl, `/api/agents/autonomous/execution-episodes/${encodeURIComponent(runId)}/resume`, {
           method: "POST",
           body: JSON.stringify({ reviewer: "desktop-user", reason }),
         }),
       );
       return normalizeAgentRunRecord(payload.run ?? {}, "autonomous");
-    },
-    runSceneTemplate: async (templateKey, payload) => {
-      const record = asRecord(
-        await requestJson<unknown>(baseUrl, `/api/agents/scene-templates/${encodeURIComponent(templateKey)}/runs`, {
-          method: "POST",
-          body: JSON.stringify({
-            requested_by: "desktop-user",
-            title: payload?.title,
-            goal_text: payload?.goalText,
-            jd_id: payload?.jdId,
-            conversation_id: payload?.conversationId,
-            candidate_count_target: payload?.candidateCountTarget,
-            constraints: payload?.constraints,
-            success_criteria: payload?.successCriteria,
-            context_hints: payload?.contextHints,
-          }),
-        }),
-      );
-      return {
-        conversationId: String(record.conversationId ?? record.conversation_id ?? AUTONOMOUS_PRIMARY_CONVERSATION_ID),
-        runId: record.runId ? String(record.runId) : record.run_id ? String(record.run_id) : null,
-        status: String(record.status ?? "queued"),
-      };
     },
     createAssistantConversation: async ({ userId, title }) => {
       const payload = await requestJson<unknown>(baseUrl, "/api/assistant/conversations", {
@@ -3857,13 +3855,13 @@ function createFetchClient(baseUrl: string): DesktopApiClient {
         status: "queued",
       };
     },
-    startAutonomousGoal: async (payload) => {
-      const response = await requestOptionalJson<unknown>(baseUrl, "/api/agents/autonomous/goals", {
+    startAutonomousRun: async (payload) => {
+      const response = await requestJson<unknown>(baseUrl, "/api/agents/autonomous/runs", {
         method: "POST",
         body: JSON.stringify({
           title: payload.title,
-          goal_text: payload.goalText,
-          goal_kind: payload.goalKind,
+          instruction: payload.instruction,
+          kind: payload.kind,
           jd_id: payload.jdId,
           candidate_count_target: payload.candidateCountTarget,
           conversation_id: payload.conversationId,
@@ -3873,41 +3871,11 @@ function createFetchClient(baseUrl: string): DesktopApiClient {
           trial_budget: payload.trialBudget,
         }),
       });
-      if (response) {
-        const record = asRecord(response);
-        return {
-          conversationId: String(record.conversationId ?? record.conversation_id ?? AUTONOMOUS_PRIMARY_CONVERSATION_ID),
-          runId: record.runId ? String(record.runId) : record.run_id ? String(record.run_id) : null,
-          status: String(record.status ?? "queued"),
-        };
-      }
-
-      const goal = normalizeGoalSpec(
-        await requestJson<unknown>(baseUrl, "/api/recruit-agent/goals", {
-          method: "POST",
-          body: JSON.stringify({
-            title: payload.title,
-            goal_text: payload.goalText,
-            goal_kind: payload.goalKind ?? "autonomous",
-            requested_by: "desktop-user",
-            constraints: payload.constraints ?? (payload.jdId ? { jd_id: payload.jdId } : {}),
-            success_criteria: payload.successCriteria ?? (
-              payload.candidateCountTarget
-                ? { candidate_count_target: payload.candidateCountTarget }
-                : {}
-            ),
-            context_hints: payload.contextHints ?? {},
-            trial_budget: payload.trialBudget ?? {},
-            run_preferences: {},
-            summary: payload.goalText,
-            priority: 160,
-          }),
-        }),
-      );
+      const record = asRecord(response);
       return {
-        conversationId: AUTONOMOUS_PRIMARY_CONVERSATION_ID,
-        runId: goal.latestRunId ?? null,
-        status: goal.status,
+        conversationId: String(record.conversationId ?? record.conversation_id ?? AUTONOMOUS_PRIMARY_CONVERSATION_ID),
+        runId: record.runId ? String(record.runId) : record.run_id ? String(record.run_id) : null,
+        status: String(record.status ?? "queued"),
       };
     },
   };

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 
 ADAPTIVE_STAGES: tuple[str, ...] = (
-    "goal_intake",
+    "instruction_intake",
     "exploration_trial",
     "candidate_discovery",
     "candidate_probe",

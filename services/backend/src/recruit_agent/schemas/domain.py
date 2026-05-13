@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import AliasChoices, AliasPath, BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, AliasPath, BaseModel, ConfigDict, Field, field_validator
 
 class FeatureFlags(BaseModel):
     enable_autonomy: bool = False
@@ -418,8 +418,11 @@ class ApplicationSubjectRead(BaseModel):
     updated_at: int | None = Field(default=None, serialization_alias="updatedAt")
 
 
-class RecruitAgentProfileBase(BaseModel):
-    agent_key: str
+class AgentDefinitionBase(BaseModel):
+    definition_key: str = Field(
+        validation_alias=AliasChoices("definition_key", "definitionKey"),
+        serialization_alias="definitionKey",
+    )
     name: str
     status: str = "draft"
     description: str | None = None
@@ -430,15 +433,22 @@ class RecruitAgentProfileBase(BaseModel):
     memory_policy: dict[str, Any] = Field(default_factory=dict)
     dashboard_config: dict[str, Any] = Field(default_factory=dict)
     channel_config: dict[str, Any] = Field(default_factory=dict)
+    product_bindings: dict[str, Any] = Field(default_factory=dict)
+    product_config: dict[str, Any] = Field(default_factory=dict)
+    product_projections: dict[str, Any] = Field(default_factory=dict)
     agent_metadata: dict[str, Any] = Field(default_factory=dict)
 
 
-class RecruitAgentProfileCreate(RecruitAgentProfileBase):
+class AgentDefinitionCreate(AgentDefinitionBase):
     pass
 
 
-class RecruitAgentProfileUpdate(BaseModel):
-    agent_key: str | None = None
+class AgentDefinitionUpdate(BaseModel):
+    definition_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("definition_key", "definitionKey"),
+        serialization_alias="definitionKey",
+    )
     name: str | None = None
     status: str | None = None
     description: str | None = None
@@ -449,15 +459,25 @@ class RecruitAgentProfileUpdate(BaseModel):
     memory_policy: dict[str, Any] | None = None
     dashboard_config: dict[str, Any] | None = None
     channel_config: dict[str, Any] | None = None
+    product_bindings: dict[str, Any] | None = None
+    product_config: dict[str, Any] | None = None
+    product_projections: dict[str, Any] | None = None
     agent_metadata: dict[str, Any] | None = None
 
 
-class RecruitAgentProfileRead(RecruitAgentProfileBase):
+class AgentDefinitionRead(AgentDefinitionBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
     created_at: int
     updated_at: int
+
+    @field_validator("created_at", "updated_at", mode="before")
+    @classmethod
+    def _timestamp_to_int(cls, value: Any) -> int:
+        if isinstance(value, datetime):
+            return int(value.timestamp())
+        return int(value or 0)
 
 
 class CandidateConversationEntryBase(BaseModel):
@@ -792,7 +812,11 @@ class TalentPoolSyncRecordRead(TalentPoolSyncRecordBase):
 
 
 class EvolutionArtifactBase(BaseModel):
-    agent_profile_id: str | None = None
+    agent_definition_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("agent_definition_id", "agentDefinitionId"),
+        serialization_alias="agentDefinitionId",
+    )
     artifact_kind: Literal["skill_draft", "prompt_patch", "memory_policy_patch", "playbook_patch", "playbook_patch"]
     title: str
     summary: str | None = None
@@ -1004,7 +1028,7 @@ class PlaybookRead(PlaybookBase):
 class TaskSpecBase(BaseModel):
     title: str
     description: str | None = None
-    goal: str
+    instruction: str
     domain: str = "general"
     status: str = "draft"
     source_kind: str = "natural_language"
@@ -1027,7 +1051,7 @@ class TaskSpecCreate(TaskSpecBase):
 class TaskSpecUpdate(BaseModel):
     title: str | None = None
     description: str | None = None
-    goal: str | None = None
+    instruction: str | None = None
     domain: str | None = None
     status: str | None = None
     source_kind: str | None = None
@@ -2106,14 +2130,6 @@ class AgentTaskEnqueueRead(BaseModel):
     queue_depth: int
 
 
-class AgentRunRead(BaseModel):
-    processed: bool
-    status: str
-    task_id: str | None = None
-    enqueued_follow_ups: int = 0
-    error: str | None = None
-
-
 class AgentQueueAuditEventRead(BaseModel):
     kind: str
     at: int | None = None
@@ -2159,10 +2175,12 @@ class RuntimeSessionRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
-    agent_profile_id: str
+    agent_definition_id: str = Field(
+        validation_alias=AliasChoices("agent_definition_id", "agentDefinitionId"),
+        serialization_alias="agentDefinitionId",
+    )
     session_key: str
     status: str
-    current_goal_id: str | None = None
     current_lane: str | None = None
     last_active_at: int | None = None
     last_run_at: int | None = None
@@ -2177,7 +2195,6 @@ class RuntimeControlledRunRead(BaseModel):
     id: str
     session_id: str
     execution_episode_id: str | None = None
-    goal_spec_id: str | None = None
     person_id: str | None = Field(
         default=None,
         validation_alias=AliasChoices("person_id", "personId"),
@@ -2205,40 +2222,6 @@ class RuntimeControlledRunRead(BaseModel):
     started_at: int | None = None
     finished_at: int | None = None
     blocked_reason: str | None = None
-    last_error: str | None = None
-    created_at: int
-    updated_at: int
-
-
-class RuntimeWorkItemRead(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: str
-    session_id: str
-    run_id: str | None = None
-    queue_task_id: str | None = None
-    goal_spec_id: str | None = None
-    person_id: str | None = Field(
-        default=None,
-        validation_alias=AliasChoices("person_id", "personId"),
-        serialization_alias="personId",
-    )
-    application_id: str | None = Field(
-        default=None,
-        validation_alias=AliasChoices("application_id", "applicationId"),
-        serialization_alias="applicationId",
-    )
-    platform: str
-    lane: str
-    item_type: str
-    status: str
-    priority: int
-    dedupe_key: str | None = None
-    payload: dict[str, Any] = Field(default_factory=dict)
-    scheduled_for: int | None = None
-    claimed_at: int | None = None
-    completed_at: int | None = None
-    deferred_until: int | None = None
     last_error: str | None = None
     created_at: int
     updated_at: int
@@ -2278,6 +2261,9 @@ class RuntimeEventRead(BaseModel):
     id: str
     session_id: str
     run_id: str | None = None
+    turn_id: str | None = None
+    conversation_id: str | None = None
+    seq: int
     person_id: str | None = Field(
         default=None,
         validation_alias=AliasChoices("person_id", "personId"),
@@ -2298,75 +2284,12 @@ class RuntimeEventRead(BaseModel):
     updated_at: int
 
 
-class GoalSpecBase(BaseModel):
-    title: str
-    goal_text: str
-    goal_kind: str = "recruiting"
-    status: str = "draft"
-    source: str = "operator"
-    source_text: str | None = None
-    requested_by: str | None = None
-    constraints: dict[str, Any] = Field(default_factory=dict)
-    success_criteria: dict[str, Any] = Field(default_factory=dict)
-    context_hints: dict[str, Any] = Field(default_factory=dict)
-    trial_budget: dict[str, Any] = Field(default_factory=dict)
-    run_preferences: dict[str, Any] = Field(default_factory=dict)
-    summary: str | None = None
-    latest_run_id: str | None = None
-    last_activity_at: datetime | None = None
-    goal_metadata: dict[str, Any] = Field(default_factory=dict)
-
-
-class GoalSpecCreate(BaseModel):
-    title: str
-    goal_text: str
-    goal_kind: str = "recruiting"
-    requested_by: str = "desktop-user"
-    constraints: dict[str, Any] = Field(default_factory=dict)
-    success_criteria: dict[str, Any] = Field(default_factory=dict)
-    context_hints: dict[str, Any] = Field(default_factory=dict)
-    trial_budget: dict[str, Any] = Field(default_factory=dict)
-    run_preferences: dict[str, Any] = Field(default_factory=dict)
-    summary: str | None = None
-    priority: int = 100
-
-
-class GoalSpecUpdate(BaseModel):
-    title: str | None = None
-    goal_text: str | None = None
-    goal_kind: str | None = None
-    status: str | None = None
-    source: str | None = None
-    source_text: str | None = None
-    requested_by: str | None = None
-    constraints: dict[str, Any] | None = None
-    success_criteria: dict[str, Any] | None = None
-    context_hints: dict[str, Any] | None = None
-    trial_budget: dict[str, Any] | None = None
-    run_preferences: dict[str, Any] | None = None
-    summary: str | None = None
-    latest_run_id: str | None = None
-    last_activity_at: datetime | None = None
-    goal_metadata: dict[str, Any] | None = None
-
-
-class GoalSpecRead(GoalSpecBase):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: str
-    agent_profile_id: str
-    last_activity_at: int | None = None
-    created_at: int
-    updated_at: int
-
-
 class ExecutionTraceRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
     session_id: str
     run_id: str | None = None
-    goal_spec_id: str | None = None
     person_id: str | None = Field(
         default=None,
         validation_alias=AliasChoices("person_id", "personId"),
@@ -2401,8 +2324,10 @@ class StrategyFragmentRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
-    agent_profile_id: str
-    goal_spec_id: str | None = None
+    agent_definition_id: str = Field(
+        validation_alias=AliasChoices("agent_definition_id", "agentDefinitionId"),
+        serialization_alias="agentDefinitionId",
+    )
     run_id: str | None = None
     person_id: str | None = Field(
         default=None,
@@ -2442,7 +2367,6 @@ class ExecutionGraphProjectionRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
-    goal_spec_id: str | None = None
     run_id: str | None = None
     person_id: str | None = Field(
         default=None,
@@ -2478,7 +2402,6 @@ class OperatorInteractionRead(BaseModel):
     run_id: str | None = None
     checkpoint_id: str | None = None
     approval_id: str | None = None
-    goal_spec_id: str | None = None
     person_id: str | None = Field(
         default=None,
         validation_alias=AliasChoices("person_id", "personId"),

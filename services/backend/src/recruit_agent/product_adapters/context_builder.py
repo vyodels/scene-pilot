@@ -14,49 +14,112 @@ class RenderedAdapterInput:
     context_payload: dict[str, Any]
 
 
+def build_agent_turn_context(
+    *,
+    agent_kind: str,
+    agent_name: str,
+    system_prompt: str,
+    turn_input: str,
+    history_messages: list[LLMMessage] | None = None,
+    instruction: str | None = None,
+    title: str | None = None,
+    agent_definition_id: str | None = None,
+    scope_kind: str | None = None,
+    scope_ref: str | None = None,
+    constraints: dict[str, Any] | None = None,
+    world_snapshot: dict[str, Any] | None = None,
+    recent_events: list[dict[str, Any]] | None = None,
+    memory_entries: list[dict[str, Any]] | None = None,
+    memory_layers: dict[str, Any] | None = None,
+    available_tools: list[str] | None = None,
+    skill_contexts: list[dict[str, Any]] | None = None,
+    available_mcps: list[str] | None = None,
+    mcp_resource_contexts: list[dict[str, Any]] | None = None,
+    response_policy: dict[str, Any] | None = None,
+) -> RenderedAdapterInput:
+    payload = _without_empty(
+        {
+            "agent": {
+                "kind": agent_kind,
+                "name": agent_name,
+                "definition_id": agent_definition_id,
+            },
+            "title": title,
+            "instruction": instruction,
+            "scope": (
+                {"kind": scope_kind, "ref": scope_ref}
+                if scope_kind is not None or scope_ref is not None
+                else None
+            ),
+            "constraints": constraints,
+            "world_snapshot": world_snapshot,
+            "recent_events": recent_events,
+            "memory_layers": memory_layers,
+            "memory_entries": memory_entries,
+            "available_tools": available_tools,
+            "skill_contexts": skill_contexts,
+            "available_mcps": available_mcps,
+            "mcp_resource_contexts": list(mcp_resource_contexts or []),
+            "response_policy": response_policy,
+        }
+    )
+    prompt = _agent_system_prompt(
+        system_prompt=system_prompt,
+        agent_kind=agent_kind,
+        agent_name=agent_name,
+        instruction=instruction,
+        context_payload=payload,
+    )
+    return RenderedAdapterInput(
+        initial_messages=[LLMMessage(role="system", content=prompt), *list(history_messages or [])],
+        turn_input=turn_input,
+        context_payload=payload,
+    )
+
+
 def build_assistant_turn_context(
     *,
     history_messages: list[LLMMessage],
     user_message: str,
-    agent_profile_id: str | None = None,
+    agent_name: str = "Assistant",
+    system_prompt: str = "",
+    agent_definition_id: str | None = None,
     memory_entries: list[dict[str, Any]] | None = None,
+    available_tools: list[str] | None = None,
+    skill_contexts: list[dict[str, Any]] | None = None,
+    available_mcps: list[str] | None = None,
     mcp_resource_contexts: list[dict[str, Any]] | None = None,
+    response_policy: dict[str, Any] | None = None,
 ) -> RenderedAdapterInput:
-    payload: dict[str, Any] = {}
-    initial_messages = list(history_messages)
-    if memory_entries:
-        payload["memory_layers"] = {
+    return build_agent_turn_context(
+        agent_kind="assistant",
+        agent_name=agent_name,
+        system_prompt=system_prompt,
+        history_messages=history_messages,
+        turn_input=user_message,
+        agent_definition_id=agent_definition_id,
+        scope_kind="conversation",
+        memory_entries=list(memory_entries or []),
+        memory_layers={
             "short_term": "recent conversation transcript is provided as history messages",
             "medium_term": "conversation summaries are provided by the assistant session store when compaction runs",
             "long_term": "memory entries are stored as markdown files; read full files only when needed",
-        }
-        payload["memory_scope"] = {
-            "agent_profile_id": agent_profile_id,
-            "scope_kind": "conversation",
-        }
-        payload["memory_entries"] = list(memory_entries)
-    if mcp_resource_contexts:
-        payload["mcp_resource_contexts"] = list(mcp_resource_contexts)
-    if payload:
-        initial_messages.insert(
-            0,
-            LLMMessage(
-                role="system",
-                content="Assistant product context: "
-                + json.dumps(payload, ensure_ascii=False, default=str),
-            ),
-        )
-    return RenderedAdapterInput(
-        initial_messages=initial_messages,
-        turn_input=user_message,
-        context_payload=payload,
+        },
+        available_tools=available_tools,
+        skill_contexts=skill_contexts,
+        available_mcps=available_mcps,
+        mcp_resource_contexts=mcp_resource_contexts,
+        response_policy=response_policy,
     )
 
 
 def build_autonomous_turn_context(
     *,
     title: str | None,
-    goal_text: str,
+    instruction: str,
+    agent_name: str = "Autonomous",
+    system_prompt: str = "",
+    agent_definition_id: str | None = None,
     scope_kind: str,
     scope_ref: str,
     constraints: dict[str, Any],
@@ -68,44 +131,37 @@ def build_autonomous_turn_context(
     available_mcps: list[str],
     mcp_resource_contexts: list[dict[str, Any]] | None = None,
 ) -> RenderedAdapterInput:
-    payload = {
-        "title": title,
+    turn_input_payload = {
+        "instruction": instruction,
         "scope": {"kind": scope_kind, "ref": scope_ref},
-        "constraints": constraints,
         "world_snapshot": world_snapshot,
-        "recent_events": recent_events,
         "memory_entries": memory_entries,
-        "memory_layers": {
+        "constraints": constraints,
+        "mcp_resource_contexts": list(mcp_resource_contexts or []),
+    }
+    return build_agent_turn_context(
+        agent_kind="autonomous",
+        agent_name=agent_name,
+        system_prompt=system_prompt,
+        title=title,
+        instruction=instruction,
+        agent_definition_id=agent_definition_id,
+        scope_kind=scope_kind,
+        scope_ref=scope_ref,
+        constraints=constraints,
+        world_snapshot=world_snapshot,
+        recent_events=recent_events,
+        memory_entries=memory_entries,
+        memory_layers={
             "short_term": "recent run events and current turn transcript",
             "medium_term": "run context, checkpoints, and compacted summaries",
             "long_term": "memory index with previews; use read_memory_file for full markdown content",
         },
-        "available_tools": available_tools,
-        "skill_contexts": skill_contexts,
-        "available_mcps": available_mcps,
-        "mcp_resource_contexts": list(mcp_resource_contexts or []),
-    }
-    system_prompt = "\n".join(
-        [
-            "You are the Autonomous agent for Recruit Agent.",
-            "Use the available tools to advance the goal. Keep externally visible history business-level.",
-            "Memory is file-based. If the user explicitly asks you to remember or forget something, use the memory tools for the relevant scope. Do not encode memory updates in final text.",
-            f"Goal: {goal_text}",
-            f"Context: {json.dumps(payload, ensure_ascii=False, default=str)}",
-        ]
-    )
-    turn_input_payload = {
-        "goal": goal_text,
-        "scope": {"kind": scope_kind, "ref": scope_ref},
-        "world_snapshot": world_snapshot,
-        "memory_entries": memory_entries,
-        "constraints": constraints,
-        "mcp_resource_contexts": list(mcp_resource_contexts or []),
-    }
-    return RenderedAdapterInput(
-        initial_messages=[LLMMessage(role="system", content=system_prompt)],
+        available_tools=available_tools,
+        skill_contexts=skill_contexts,
+        available_mcps=available_mcps,
+        mcp_resource_contexts=mcp_resource_contexts,
         turn_input=json.dumps(turn_input_payload, ensure_ascii=False, default=str),
-        context_payload=payload,
     )
 
 
@@ -118,7 +174,7 @@ def build_scene_turn_context(
     recent_events: list[dict[str, Any]],
     available_tools: list[str],
     available_mcps: list[str],
-    goal_text: str,
+    instruction: str,
 ) -> RenderedAdapterInput:
     payload = {
         "scene_request": {
@@ -146,7 +202,7 @@ def build_scene_turn_context(
     )
     return RenderedAdapterInput(
         initial_messages=[LLMMessage(role="system", content=system_prompt)],
-        turn_input=goal_text,
+        turn_input=instruction,
         context_payload=payload,
     )
 
@@ -169,3 +225,41 @@ def _compact_value(value: Any, *, depth: int = 0) -> Any:
     if isinstance(value, str):
         return value[:2000]
     return value
+
+
+def _agent_system_prompt(
+    *,
+    system_prompt: str,
+    agent_kind: str,
+    agent_name: str,
+    instruction: str | None,
+    context_payload: dict[str, Any],
+) -> str:
+    base_prompt = str(system_prompt or "").strip() or f"You are {agent_name}, a {agent_kind} type of Recruit Agent."
+    lines = [
+        base_prompt,
+        "You run through the shared Recruit Agent product adapter. Use the available tools, skills, MCP resources, memory context, and product context without treating the agent type as a separate capability set.",
+        "Memory is file-based. If the user explicitly asks you to remember or forget something, use the memory tools for the relevant scope. Do not encode memory updates in final text.",
+    ]
+    if instruction:
+        lines.append(f"Instruction: {instruction}")
+    if context_payload:
+        lines.append(f"Context: {json.dumps(context_payload, ensure_ascii=False, default=str)}")
+    return "\n".join(lines)
+
+
+def _without_empty(payload: dict[str, Any]) -> dict[str, Any]:
+    compact: dict[str, Any] = {}
+    for key, value in payload.items():
+        if value is None:
+            continue
+        if value == [] or value == {}:
+            continue
+        if isinstance(value, dict):
+            nested = {nested_key: nested_value for nested_key, nested_value in value.items() if nested_value is not None}
+            if not nested:
+                continue
+            compact[key] = nested
+            continue
+        compact[key] = value
+    return compact

@@ -439,8 +439,6 @@ function timelineMetadataPairs(message: AgentConversationMessage): Array<{ key: 
     "label",
     "uiLabel",
     "message_type",
-    "goal_id",
-    "goal_kind",
     "latest_run_id",
     "run_id",
     "turn_id",

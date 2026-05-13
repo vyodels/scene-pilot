@@ -296,7 +296,7 @@ def register_core_tools(
     memory_scope_properties = {
         "scope_kind": {"type": "string"},
         "scope_ref": {"type": "string"},
-        "agent_profile_id": {"type": "string"},
+        "agent_definition_id": {"type": "string"},
     }
     registry.register(
         ToolDefinition(
@@ -479,7 +479,7 @@ def build_delegate_scene_context_tool(
                 },
                 "browser_target": {
                     "type": "object",
-                    "description": "Optional top-level shortcut for the browser target; equivalent to environment_requirements.browser_target. When the operator goal or current contract includes an explicit web target URL, preserve it here as browser_target.url and derive host from that URL/browser evidence so stale tabs on a different origin are rejected.",
+                    "description": "Optional top-level shortcut for the browser target; equivalent to environment_requirements.browser_target. When the operator instruction or current contract includes an explicit web target URL, preserve it here as browser_target.url and derive host from that URL/browser evidence so stale tabs on a different origin are rejected.",
                 },
                 "computer_target": {
                     "type": "object",

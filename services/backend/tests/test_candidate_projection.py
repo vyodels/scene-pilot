@@ -15,7 +15,7 @@ from recruit_agent.repositories.domain import (
     OperatorInteractionRepository,
 )
 from recruit_agent.server import create_app
-from recruit_agent.services.recruit_agent import ensure_primary_recruit_agent_profile
+from recruit_agent.services.recruit_agent import ensure_primary_agent_definition
 
 
 def test_resume_artifact_updates_candidate_projection(tmp_path: Path) -> None:
@@ -128,13 +128,13 @@ def test_application_thread_runtime_records_are_isolated_by_application_id(tmp_p
                     "current_status": "contacting",
                 }
             )
-            profile = ensure_primary_recruit_agent_profile(session)
+            definition = ensure_primary_agent_definition(session)
             runtime_session = AgentSessionRepository(session).create(
                 {
-                    "agent_profile_id": profile.id,
+                    "agent_definition_id": definition.id,
                     "session_key": "primary",
                     "status": "active",
-                    "runtime_metadata": {"agent_key": profile.agent_key},
+                    "runtime_metadata": {"definition_key": definition.definition_key},
                 }
             )
 

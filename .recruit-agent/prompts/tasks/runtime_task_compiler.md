@@ -35,7 +35,7 @@ Return a single JSON object matching this shape:
 {
   "title": "short task title",
   "description": "optional description",
-  "goal": "what successful execution achieves",
+  "instruction": "what successful execution achieves",
   "domain": "general",
   "inputs": {},
   "constraints": {},
@@ -61,7 +61,7 @@ Field guidance:
 - `environment_requirements`: capture scene prerequisites such as browser, network, downstream connectivity, or snapshot requirements.
 - For browser/computer scenes, prefer explicit fields such as `browser_target`, `computer_target`, `target_regions`, and `action_plan` over vague prose.
 - `browser_target`: stable browser-side locator such as app/window/tab/host/url pattern when known.
-- When the operator goal includes a concrete target URL, `browser_target.url` is known and must be preserved in the scene contract. The host must come from that URL or later browser evidence, not from a site-specific branch.
+- When the operator instruction includes a concrete target URL, `browser_target.url` is known and must be preserved in the scene contract. The host must come from that URL or later browser evidence, not from a site-specific branch.
 - For recruiting website targets, prefer a dedicated normal Chrome window for the target page. If no matching tab exists, open the target with `browser_open_tab({url, newWindow: true, active: true})`; if a matching tab already exists inside a mixed window, detach it with `browser_open_tab({tabId, newWindow: true, active: true})`. This means a separate Chrome window in the same normal browser, not a separate Chrome process or profile.
 - Treat `browser_open_tab` as target acquisition / window isolation only. Do not use it to navigate between in-site routes, candidate pages, filters, form submissions, or downloads after the scene target page is open; those are browser writes and must be expressed as HID actions followed by browser observation.
 - Treat `browser_reload_extension` as an external maintenance/debug operation. Do not call it inside autonomous scene execution; the browser MCP runtime must be restored outside the scene before the run continues.
@@ -84,7 +84,7 @@ Field guidance:
 
 Quality bar:
 
-- Prefer concrete goals over short generic summaries.
+- Prefer concrete instructions over short generic summaries.
 - `success_criteria` and `output_contract` must be concrete enough to evaluate the first supervised trial.
 - `step_outline` should usually have at least 3 meaningful steps for non-trivial tasks.
 - If `success_criteria` requires a local file, downloaded artifact, or specific extension, `step_outline` should usually have at least 4 meaningful steps and one of them should explicitly verify the artifact path or format.

@@ -74,6 +74,9 @@ def normalize_result_payload(payload: Mapping[str, Any] | None) -> tuple[dict[st
 
 def extract_execution_status(payload: Mapping[str, Any] | None) -> str | None:
     raw_payload = dict(payload or {})
+    execution_status = _normalize_status(raw_payload.get("execution_status"))
+    if execution_status:
+        return execution_status
     status = _normalize_status(raw_payload.get("status"))
     if status:
         return status

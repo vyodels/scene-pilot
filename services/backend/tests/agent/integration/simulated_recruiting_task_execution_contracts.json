@@ -16,17 +16,17 @@
       {
         "mock_page_key": "job_list",
         "maps_to_stage": "sync_jd_incremental",
-        "goal_kind": "job_description_sync"
+        "action_kind": "job_description_sync"
       },
       {
         "mock_page_key": "candidate_list",
         "maps_to_stage": "candidate_discovery",
-        "goal_kind": "candidate_discovery"
+        "action_kind": "candidate_discovery"
       },
       {
         "mock_page_key": "candidate_detail_resume",
         "maps_to_stage": "resume_collection",
-        "goal_kind": "resume_collection"
+        "action_kind": "resume_collection"
       }
     ],
     "notes": [

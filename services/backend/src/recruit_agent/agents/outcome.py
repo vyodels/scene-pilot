@@ -7,7 +7,7 @@ from typing import Any, Literal
 @dataclass(slots=True)
 class AgentTurnOutcome:
     status: Literal["continue", "complete", "wait_human", "escalate", "error", "cancelled"]
-    gate_signal: Literal["continue", "wait_human", "budget_exhausted", "goal_done", "paused", "escalate"] | None = None
+    gate_signal: Literal["continue", "wait_human", "budget_exhausted", "run_done", "paused", "escalate"] | None = None
     final_output: str | None = None
     result_data: dict[str, Any] | None = None
     skill_draft: dict[str, Any] | None = None

@@ -106,7 +106,7 @@ class LearningWriter:
         source_run_id: str | None = None,
         source_turn_id: str | None = None,
         source_kind: str = "autonomous",
-        agent_profile_id: str | None = None,
+        agent_definition_id: str | None = None,
         proposed_by: str | None = None,
         environment_scope: str | None = None,
     ) -> dict[str, Any]:
@@ -145,7 +145,7 @@ class LearningWriter:
                 skill.status = "trial"
 
             artifact = EvolutionArtifact(
-                agent_profile_id=agent_profile_id,
+                agent_definition_id=agent_definition_id,
                 artifact_kind="skill_draft",
                 title=skill_name or "llm-trial-skill",
                 summary=str(draft_contract.get("description") or "").strip() or None,

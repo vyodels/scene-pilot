@@ -1,8 +1,35 @@
 import type {
+  AgentDefinition as SharedAgentDefinition,
+  AgentDefinitionConfig as SharedAgentDefinitionConfig,
+  AgentProductBinding as SharedAgentProductBinding,
   ApplicationStatusTransition,
+  CompileTaskRequest as SharedCompileTaskRequest,
+  CompileTaskResponse as SharedCompileTaskResponse,
+  DomainPackRecord as SharedDomainPackRecord,
   JobDescriptionPageParams as SharedJobDescriptionPageParams,
   JobDescriptionPageRecord as SharedJobDescriptionPageRecord,
   JobDescriptionSummaryRecord as SharedJobDescriptionSummaryRecord,
+  LearningDraft as SharedLearningDraft,
+  RuntimeActionAffordance as SharedRuntimeActionAffordance,
+  RuntimeCapabilityDriver as SharedRuntimeCapabilityDriver,
+  RuntimeCompilerContract as SharedRuntimeCompilerContract,
+  RuntimeEnvironmentAssessment as SharedRuntimeEnvironmentAssessment,
+  RuntimeEnvironmentAssessmentRequest as SharedRuntimeEnvironmentAssessmentRequest,
+  RuntimeEpisode as SharedRuntimeEpisode,
+  RuntimeEpisodeReplay as SharedRuntimeEpisodeReplay,
+  RuntimeExecutionPlan as SharedRuntimeExecutionPlan,
+  RuntimeLearningOutcome as SharedRuntimeLearningOutcome,
+  RuntimeObservedEntity as SharedRuntimeObservedEntity,
+  RuntimePatch as SharedRuntimePatch,
+  RuntimePlanLaunchResult as SharedRuntimePlanLaunchResult,
+  RuntimePlanReplanRequest as SharedRuntimePlanReplanRequest,
+  RuntimePlanReplanResult as SharedRuntimePlanReplanResult,
+  RuntimePlannerGuidance as SharedRuntimePlannerGuidance,
+  RuntimeSceneProfile as SharedRuntimeSceneProfile,
+  RuntimeSnapshot as SharedRuntimeSnapshot,
+  RuntimeTaskSpec as SharedRuntimeTaskSpec,
+  RuntimeTemplate as SharedRuntimeTemplate,
+  RuntimeWorkspaceData as SharedRuntimeWorkspaceData,
 } from "@recruit-agent/shared";
 
 export type WorkspaceTab =
@@ -22,10 +49,9 @@ export type AgentKind = "assistant" | "autonomous";
 export type ChatOverlayPanelKey =
   | "conversation"
   | "config"
-  | "runs"
-  | "memory"
-  | "skills"
-  | "tools";
+  | "capabilities"
+  | "outputs"
+  | "runs";
 
 export interface PersonSummaryRecord {
   personId?: string | null;
@@ -362,34 +388,10 @@ export interface ApprovalItem {
   toolName?: string | null;
 }
 
-export interface GoalSpecRecord {
-  id: string;
-  agentProfileId: string;
-  title: string;
-  goalText: string;
-  goalKind: string;
-  status: string;
-  source: string;
-  sourceText?: string | null;
-  requestedBy?: string | null;
-  constraints: Record<string, unknown>;
-  successCriteria: Record<string, unknown>;
-  contextHints: Record<string, unknown>;
-  trialBudget: Record<string, unknown>;
-  runPreferences: Record<string, unknown>;
-  summary?: string | null;
-  latestRunId?: string | null;
-  lastActivityAt?: string | null;
-  goalMetadata: Record<string, unknown>;
-  createdAt: string;
-  updatedAt: string;
-}
-
 export interface ExecutionTraceRecord {
   id: string;
   sessionId: string;
   runId?: string | null;
-  goalSpecId?: string | null;
   personId?: string | null;
   applicationId?: string | null;
   lane: string;
@@ -409,7 +411,6 @@ export interface ExecutionTraceRecord {
 
 export interface ExecutionGraphProjectionRecord {
   id: string;
-  goalSpecId?: string | null;
   runId?: string | null;
   personId?: string | null;
   applicationId?: string | null;
@@ -426,8 +427,7 @@ export interface ExecutionGraphProjectionRecord {
 
 export interface StrategyFragmentRecord {
   id: string;
-  agentProfileId: string;
-  goalSpecId?: string | null;
+  agentDefinitionId: string;
   runId?: string | null;
   personId?: string | null;
   jobDescriptionId?: string | null;
@@ -451,7 +451,6 @@ export interface OperatorInteractionRecord {
   runId?: string | null;
   checkpointId?: string | null;
   approvalId?: string | null;
-  goalSpecId?: string | null;
   personId?: string | null;
   applicationId?: string | null;
   lane: string;
@@ -471,23 +470,9 @@ export interface OperatorInteractionRecord {
   updatedAt: string;
 }
 
-export interface RecruitAgentProfileRecord {
-  id: string;
-  agentKey: string;
-  name: string;
-  status: string;
-  description?: string;
-  isPrimary: boolean;
-  roleDefinition: Record<string, unknown>;
-  promptConfig: Record<string, unknown>;
-  playbookBlueprint: Record<string, unknown>;
-  memoryPolicy: Record<string, unknown>;
-  dashboardConfig: Record<string, unknown>;
-  channelConfig: Record<string, unknown>;
-  agentMetadata: Record<string, unknown>;
-  createdAt: string;
-  updatedAt: string;
-}
+export type AgentDefinitionConfig = SharedAgentDefinitionConfig;
+export type AgentDefinitionRecord = SharedAgentDefinition;
+export type AgentProductBindingRecord = SharedAgentProductBinding;
 
 export interface ApplicationConversationEntry {
   id: string;
@@ -530,7 +515,7 @@ export type EvolutionArtifactStatus = "draft" | "pending_review" | "approved" | 
 
 export interface EvolutionArtifactRecord {
   id: string;
-  agentProfileId?: string | null;
+  agentDefinitionId?: string | null;
   artifactKind: EvolutionArtifactKind;
   title: string;
   summary?: string | null;
@@ -578,14 +563,16 @@ export type AgentConversationStatus =
 export type ChatMessageRole = "user" | "assistant" | "system" | "tool";
 export type ChatMessageKind = "message" | "tool_use" | "tool_result" | "status";
 
-export interface AgentProfileSummary {
+export interface AgentDefinitionSummary {
   kind: AgentKind;
   name: string;
   description?: string | null;
+  definitionKey?: string | null;
+  productAdapterKey?: string | null;
   status: AgentSnapshot["status"] | string;
   health: HealthStatus;
   activeTask?: string | null;
-  activeGoal?: string | null;
+  activeInstruction?: string | null;
   defaultModel?: string | null;
   pendingApprovals: number;
   unreadCount: number;
@@ -637,6 +624,8 @@ export interface AgentMemorySummary {
   title: string;
   summary: string;
   status: string;
+  source?: string | null;
+  metadata?: Record<string, unknown>;
   updatedAt: string;
 }
 
@@ -645,41 +634,48 @@ export interface AgentToolSummary {
   serverId?: string | null;
   serverName: string;
   name: string;
+  description?: string | null;
+  sourceKind: "business_tool" | "system_tool" | "mcp_tool" | "memory_tool" | string;
+  source: string;
+  status: string;
   riskLevel: string;
   businessTool?: boolean;
   businessDomain?: string | null;
   resourceTargetKind?: string | null;
   permissionScope?: string | null;
+  capabilities: string[];
+  inputSchema: Record<string, unknown>;
+  outputSchema: Record<string, unknown>;
+  parameters: Record<string, unknown>;
+  toolMetadata: Record<string, unknown>;
   enabled: boolean;
   endpoint?: string | null;
 }
 
-export interface SharedSceneTemplateRecord {
-  key: string;
-  title: string;
-  summary: string;
-  goalKind: string;
-  defaultGoalText: string;
-  requiresJd: boolean;
-  supportsCandidateCountTarget: boolean;
-  defaultCandidateCountTarget?: number | null;
-  directRunnable: boolean;
-  constraints: Record<string, unknown>;
-  successCriteria: Record<string, unknown>;
-  contextHints: Record<string, unknown>;
-}
-
 export interface AgentWorkspaceRecord {
-  agent: AgentProfileSummary;
+  agent: AgentDefinitionSummary;
   conversations: AgentConversationSummary[];
   runs: AgentRunRecord[];
   approvals: ApprovalItem[];
   memories: AgentMemorySummary[];
   skills: SkillRecord[];
   tools: AgentToolSummary[];
+  agentDefinition: AgentDefinitionRecord;
+  productBinding: AgentProductBindingRecord;
+  definitionConfig: AgentDefinitionConfig;
+  productAdapterConfig: {
+    recruitingPolicy: RecruitingPolicyConfig;
+    scoringRubric: string;
+    triggers: Record<string, unknown>;
+    approvalPolicy: Record<string, unknown>;
+    contextPolicy: Record<string, unknown>;
+    memoryPolicy: Record<string, unknown>;
+    adapterMetadata: Record<string, unknown>;
+    providerLabel?: string | null;
+    modelLabel?: string | null;
+  };
   config: {
     systemPrompt: string;
-    goalTemplate: string;
     scoringRubric: string;
     recruitingPolicy: RecruitingPolicyConfig;
     boundaries: string[];
@@ -738,10 +734,10 @@ export interface AssistantMessageRequestResult {
   status: string;
 }
 
-export interface AutonomousGoalStartRequest {
+export interface AutonomousRunStartRequest {
   title: string;
-  goalText: string;
-  goalKind?: string | null;
+  instruction: string;
+  kind?: string | null;
   jdId?: string | null;
   candidateCountTarget?: number | null;
   conversationId?: string | null;
@@ -751,7 +747,7 @@ export interface AutonomousGoalStartRequest {
   trialBudget?: Record<string, unknown>;
 }
 
-export interface AutonomousGoalStartResult {
+export interface AutonomousRunStartResult {
   conversationId: string;
   runId?: string | null;
   status: string;
@@ -932,361 +928,30 @@ export interface AgentTaskEnqueueResult {
   queueDepth: number;
 }
 
-export interface DomainPackRecord {
-  key: string;
-  name: string;
-  description: string;
-  version: string;
-  maturity: string;
-  runtimeOnly: boolean;
-  defaultCapabilities: string[];
-  sampleTasks: string[];
-  defaultConstraints: Record<string, unknown>;
-  defaultOutputContract: Record<string, unknown>;
-  templateKeys: string[];
-  compilerHints: string[];
-  qualityGates: Record<string, unknown>;
-  sceneExpectations: string[];
-  trialExpectations: Record<string, unknown>;
-  templateCount: number;
-  activeTemplateCount: number;
-}
-
-export interface RuntimeCompilerContract {
-  contractVersion: string;
-  strategy: string;
-  fallbackStrategy: string;
-  promptAsset: string;
-  requiredFields: string[];
-  optionalFields: string[];
-  invariants: string[];
-  qualityGates: string[];
-  repairPolicy: Record<string, unknown>;
-  availableDomains: DomainPackRecord[];
-  availableCapabilities: RuntimeCapabilityDriver[];
-}
-
-export interface RuntimeTaskSpec {
-  id: string;
-  title: string;
-  description?: string | null;
-  goal: string;
-  domain: string;
-  status: string;
-  sourceKind: string;
-  sourceText?: string | null;
-  inputs: Record<string, unknown>;
-  constraints: Record<string, unknown>;
-  successCriteria: Record<string, unknown>;
-  approvalPolicy: Record<string, unknown>;
-  outputContract: Record<string, unknown>;
-  preferredCapabilities: string[];
-  preferredDomains: string[];
-  compiledPayload: Record<string, unknown>;
-  activePlanId?: string | null;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface RuntimeExecutionPlan {
-  id: string;
-  taskSpecId: string;
-  name: string;
-  mode: string;
-  status: string;
-  version: number;
-  approvalState: string;
-  planBody: {
-    steps: Array<Record<string, unknown>>;
-    instruction?: string;
-    domain?: string;
-  };
-  environmentRequirements: Record<string, unknown>;
-  checkpoints: Array<Record<string, unknown>>;
-  runtimeMetadata: Record<string, unknown>;
-  compiledFromPatchId?: string | null;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface RuntimeEpisode {
-  id: string;
-  taskSpecId: string;
-  executionPlanId: string;
-  mode: string;
-  status: string;
-  requestedBy?: string | null;
-  requiresConfirmation: boolean;
-  startedAt?: string | null;
-  finishedAt?: string | null;
-  resultSummary?: string | null;
-  observations: Array<Record<string, unknown>>;
-  actions: Array<Record<string, unknown>>;
-  metrics: Record<string, unknown>;
-  divergenceDetected: boolean;
-  patchId?: string | null;
-  runtimeMetadata: Record<string, unknown>;
-  lastError?: string | null;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface RuntimeSnapshot {
-  id: string;
-  taskSpecId?: string | null;
-  executionPlanId?: string | null;
-  executionEpisodeId?: string | null;
-  source: string;
-  environmentKey?: string | null;
-  status: string;
-  url?: string | null;
-  title?: string | null;
-  pageType?: string | null;
-  capabilityHints: string[];
-  observedEntities: Array<Record<string, unknown>>;
-  affordances: Array<Record<string, unknown>>;
-  runtimeMetadata: Record<string, unknown>;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface RuntimeCapabilityDriver {
-  id: string;
-  key: string;
-  name: string;
-  category: string;
-  status: string;
-  scope: string;
-  description: string;
-  safetyMode: string;
-  supportsWrite: boolean;
-  sceneTypes: string[];
-  signalLabels: string[];
-  supportedDomains?: string[];
-  requiresSupervision?: boolean;
-  executorMode?: string;
-  replanOnError?: boolean;
-  sceneRequired?: boolean;
-  preferredTools?: string[];
-  checkpointPolicy?: Record<string, unknown>;
-  updatedAt: string;
-}
-
-export interface RuntimeEnvironmentAssessment {
-  id: string;
-  taskSpecId?: string | null;
-  executionPlanId?: string | null;
-  executionEpisodeId?: string | null;
-  snapshotId?: string | null;
-  environmentKey: string;
-  sceneLabel: string;
-  sceneType: string;
-  status: string;
-  confidence: number;
-  summary: string;
-  observedEntities: RuntimeObservedEntity[];
-  affordances: RuntimeActionAffordance[];
-  sceneProfile: RuntimeSceneProfile;
-  plannerGuidance: RuntimePlannerGuidance;
-  capabilityKeys: string[];
-  observedLabels: string[];
-  affordanceLabels: string[];
-  driftSignals: string[];
-  recommendedActions: string[];
-  checkpoints?: Array<Record<string, unknown>>;
-  environmentRequirements?: Record<string, unknown>;
-  notes?: string[];
-  auditMetadata?: Record<string, unknown>;
-  updatedAt: string;
-}
-
-export interface RuntimeObservedEntity {
-  kind: string;
-  label: string;
-  entityId?: string | null;
-  role?: string | null;
-  confidence?: number | null;
-  state?: string | null;
-  interactive: boolean;
-  signals: string[];
-  locator: Record<string, unknown>;
-  attributes: Record<string, unknown>;
-}
-
-export interface RuntimeActionAffordance {
-  kind: string;
-  label: string;
-  action: string;
-  target?: string | null;
-  confidence?: number | null;
-  enabled: boolean;
-  requiresConfirmation: boolean;
-  signals: string[];
-  locator: Record<string, unknown>;
-  metadata: Record<string, unknown>;
-}
-
-export interface RuntimeSceneProfile {
-  source: string;
-  sceneType: string;
-  interactionMode: string;
-  volatility: string;
-  authState: string;
-  entityCount: number;
-  affordanceCount: number;
-  primaryTargets: string[];
-  signals: string[];
-  blockers: string[];
-  evidence: Record<string, unknown>;
-}
-
-export interface RuntimePlannerGuidance {
-  posture: string;
-  requiredCapabilities: string[];
-  insertedCapabilities: string[];
-  preferredNextActions: string[];
-  requiresSceneAssessment: boolean;
-  requiresHumanReview: boolean;
-  shouldCheckpoint: boolean;
-  rationale: string[];
-}
-
-export interface RuntimeTemplate {
-  id: string;
-  templateKey: string;
-  name: string;
-  domain: string;
-  status: string;
-  version: number;
-  sourceTaskSpecId?: string | null;
-  templateBody: Record<string, unknown>;
-  activationStrategy: Record<string, unknown>;
-  validationSummary?: string | null;
-  lastValidatedAt?: string | null;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface RuntimePatch {
-  id: string;
-  title: string;
-  patchKind: string;
-  status: string;
-  templateId?: string | null;
-  taskSpecId?: string | null;
-  executionPlanId?: string | null;
-  executionEpisodeId?: string | null;
-  proposedBy?: string | null;
-  reviewedBy?: string | null;
-  reviewedAt?: string | null;
-  appliedAt?: string | null;
-  divergenceSummary?: string | null;
-  rationale?: string | null;
-  patchBody: Record<string, unknown>;
-  runtimeMetadata: Record<string, unknown>;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface LearningDraft {
-  id: string;
-  content: string;
-  tags: string[];
-  sourceTaskId?: string | null;
-  consolidatedAt?: string | null;
-  isActive: boolean;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface RuntimeLearningOutcome {
-  episode: RuntimeEpisode;
-  template?: RuntimeTemplate | null;
-  patch?: RuntimePatch | null;
-  learningDraft?: LearningDraft | null;
-  approval?: {
-    id: string;
-    targetType: string;
-    targetId: string;
-    title: string;
-    status: string;
-    requestedBy?: string | null;
-    reviewedBy?: string | null;
-    reviewedAt?: string | null;
-    payload?: Record<string, unknown>;
-    notes?: string | null;
-    createdAt?: string;
-    updatedAt?: string;
-  } | null;
-  templateApproval?: RuntimeLearningOutcome["approval"] | null;
-  skillHealth?: Record<string, unknown> | null;
-}
-
-export interface RuntimeEpisodeReplay {
-  episode: RuntimeEpisode;
-  taskSpec?: RuntimeTaskSpec | null;
-  executionPlan?: RuntimeExecutionPlan | null;
-  snapshots: RuntimeSnapshot[];
-  patch?: RuntimePatch | null;
-  template?: RuntimeTemplate | null;
-  approval?: RuntimeLearningOutcome["approval"] | null;
-  diagnostics: TimelineEvent[];
-  notes: string[];
-}
-
-export interface RuntimeEnvironmentAssessmentRequest {
-  taskSpecId?: string;
-  executionPlanId?: string;
-  executionEpisodeId?: string;
-  snapshotId?: string;
-  snapshot?: Partial<RuntimeSnapshot>;
-  compilerPayload?: Record<string, unknown>;
-  planContext?: Record<string, unknown>;
-}
-
-export interface RuntimePlanReplanRequest {
-  executionPlanId: string;
-  taskSpecId?: string;
-  executionEpisodeId?: string;
-  snapshotId?: string;
-  snapshot?: Partial<RuntimeSnapshot>;
-  trigger?: string;
-  reason?: string;
-  notes?: string;
-  requestedBy?: string;
-  preferredCapabilityKeys?: string[];
-  compilerPayload?: Record<string, unknown>;
-  planContext?: Record<string, unknown>;
-  runtimeMetadata?: Record<string, unknown>;
-  checkpoints?: Array<Record<string, unknown>>;
-  preserveActivePlan?: boolean;
-}
-
-export interface RuntimePlanReplanResult {
-  id: string;
-  taskSpecId?: string | null;
-  baseExecutionPlanId: string;
-  executionPlan: RuntimeExecutionPlan;
-  status: string;
-  trigger: string;
-  summary: string;
-  compilerNotes: string[];
-  recommendedCapabilityKeys: string[];
-  environmentAssessment?: RuntimeEnvironmentAssessment | null;
-  patch?: RuntimePatch | null;
-  auditMetadata?: Record<string, unknown>;
-  createdAt: string;
-}
-
-export interface RuntimePlanLaunchResult {
-  taskId: string;
-  taskType: string;
-  priority: number;
-  queueDepth: number;
-  taskSpecId: string;
-  executionPlanId: string;
-  executionEpisode: RuntimeEpisode;
-}
+export type DomainPackRecord = SharedDomainPackRecord;
+export type RuntimeCompilerContract = SharedRuntimeCompilerContract;
+export type RuntimeTaskSpec = SharedRuntimeTaskSpec;
+export type RuntimeExecutionPlan = SharedRuntimeExecutionPlan;
+export type RuntimeEpisode = SharedRuntimeEpisode;
+export type RuntimeSnapshot = SharedRuntimeSnapshot;
+export type RuntimeCapabilityDriver = SharedRuntimeCapabilityDriver;
+export type RuntimeEnvironmentAssessment = SharedRuntimeEnvironmentAssessment;
+export type RuntimeObservedEntity = SharedRuntimeObservedEntity;
+export type RuntimeActionAffordance = SharedRuntimeActionAffordance;
+export type RuntimeSceneProfile = SharedRuntimeSceneProfile;
+export type RuntimePlannerGuidance = SharedRuntimePlannerGuidance;
+export type RuntimeTemplate = SharedRuntimeTemplate;
+export type RuntimePatch = SharedRuntimePatch;
+export type LearningDraft = SharedLearningDraft;
+export type RuntimeLearningOutcome = SharedRuntimeLearningOutcome;
+export type RuntimeEpisodeReplay = SharedRuntimeEpisodeReplay;
+export type RuntimeEnvironmentAssessmentRequest = SharedRuntimeEnvironmentAssessmentRequest;
+export type RuntimePlanReplanRequest = SharedRuntimePlanReplanRequest;
+export type RuntimePlanReplanResult = SharedRuntimePlanReplanResult;
+export type RuntimePlanLaunchResult = SharedRuntimePlanLaunchResult;
+export type RuntimeWorkspaceData = SharedRuntimeWorkspaceData;
+export type CompileTaskRequest = SharedCompileTaskRequest;
+export type CompileTaskResponse = SharedCompileTaskResponse;
 
 export interface SyncBacklogItem {
   id: string;
@@ -1332,35 +997,4 @@ export interface SyncFlushResult {
   failed: number;
   remoteAvailable: boolean;
   message: string;
-}
-
-export interface RuntimeWorkspaceData {
-  compilerContract?: RuntimeCompilerContract | null;
-  domainPacks: DomainPackRecord[];
-  taskSpecs: RuntimeTaskSpec[];
-  plans: RuntimeExecutionPlan[];
-  episodes: RuntimeEpisode[];
-  snapshots: RuntimeSnapshot[];
-  capabilityDrivers: RuntimeCapabilityDriver[];
-  environmentAssessments: RuntimeEnvironmentAssessment[];
-  templates: RuntimeTemplate[];
-  patches: RuntimePatch[];
-  replans: RuntimePlanReplanResult[];
-}
-
-export interface CompileTaskRequest {
-  instruction: string;
-  title?: string;
-  description?: string;
-  domainHint?: string;
-  inputs?: Record<string, unknown>;
-  constraints?: Record<string, unknown>;
-  preferredCapabilities?: string[];
-}
-
-export interface CompileTaskResponse {
-  domainPack: DomainPackRecord;
-  compilerNotes: string[];
-  taskSpec: RuntimeTaskSpec;
-  executionPlan?: RuntimeExecutionPlan | null;
 }

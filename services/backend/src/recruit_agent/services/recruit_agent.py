@@ -1,15 +1,12 @@
 from __future__ import annotations
 
-from functools import lru_cache
-from pathlib import Path
 from typing import Any
 
-from recruit_agent.asset_paths import prompt_path
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from recruit_agent.models import RecruitAgentProfile
-from recruit_agent.repositories import RecruitAgentProfileRepository
+from recruit_agent.models import AgentDefinition
+from recruit_agent.repositories import AgentDefinitionRepository
 
 
 EVOLUTION_ARTIFACT_KINDS = {
@@ -50,6 +47,21 @@ CONTEXT_POLICY_WEIGHT_KEYS = {
     "approval_context",
     "platform_context",
 }
+ALLOWED_PROMPT_CONFIG_KEYS = {
+    "system_prompt",
+    "systemPrompt",
+    "prompt",
+    "context_slots",
+    "context_policy",
+    "response_policy",
+    "scoringRubric",
+    "scoring_rubric",
+    "rubric",
+    "rubric_text",
+    "recruitingPolicy",
+    "recruiting_policy",
+    "boundaries",
+}
 
 DEFAULT_CANDIDATE_STATUSES = [
     "discovered",
@@ -74,21 +86,6 @@ DEFAULT_CANDIDATE_STATUSES = [
     "offer_rejected",
     "exception_closed",
 ]
-
-
-@lru_cache(maxsize=8)
-def _load_prompt_text(prompt_key: str) -> str:
-    asset_path = prompt_path(prompt_key)
-    if not asset_path.exists():
-        return ""
-    return asset_path.read_text(encoding="utf-8").strip()
-
-
-def resolve_goal_template(prompt_config: dict[str, Any] | None) -> str:
-    configured = str((prompt_config or {}).get("goal_template") or (prompt_config or {}).get("goalTemplate") or "").strip()
-    if configured:
-        return configured
-    return _load_prompt_text("base/autonomous_goal_template")
 
 
 def _playbook_stage_groups() -> list[dict[str, Any]]:
@@ -319,6 +316,10 @@ def resolve_context_policy(prompt_config: dict[str, Any] | None) -> dict[str, An
     }
 
 
+def normalize_prompt_config(prompt_config: dict[str, Any] | None) -> dict[str, Any]:
+    return {key: value for key, value in dict(prompt_config or {}).items() if key in ALLOWED_PROMPT_CONFIG_KEYS}
+
+
 def resolve_memory_policy(memory_policy: dict[str, Any] | None) -> dict[str, Any]:
     defaults = default_memory_policy()
     configured = dict(memory_policy or {})
@@ -448,20 +449,20 @@ def validate_evolution_artifact(
 
 def _adaptive_execution_to_payload() -> dict[str, Any]:
     return {
-        "blueprint_id": "recruit-goal-driven-v1",
-        "name": "Recruit Goal-Driven Runtime",
+        "blueprint_id": "recruit-run-driven-v1",
+        "name": "Recruit Run-Driven Runtime",
         "initial_stage": "exploration_trial",
         "version": 1,
         "stage_groups": _playbook_stage_groups(),
         "status_machine": {"default_statuses": DEFAULT_CANDIDATE_STATUSES, "mutable": True},
         "adaptive_stages": [
             {
-                "id": "goal_intake",
-                "name": "Goal Intake",
-                "task_type": "goal_intake",
+                "id": "instruction_intake",
+                "name": "Instruction Intake",
+                "task_type": "instruction_intake",
                 "requires_skill": False,
-                "kind": "goal",
-                "purpose": "把用户目标、约束和成功标准归一成一次可执行目标。",
+                "kind": "instruction",
+                "purpose": "把用户输入、约束和成功标准归一成一次可执行运行输入。",
                 "next_stage": "exploration_trial",
             },
             {
@@ -533,7 +534,7 @@ def _adaptive_execution_to_payload() -> dict[str, Any]:
                 "task_type": "scale_execution",
                 "requires_skill": True,
                 "kind": "execution",
-                "purpose": "把已验证的路径扩大到更多投递记录或更多目标范围。",
+                "purpose": "把已验证的路径扩大到更多投递记录或更多任务范围。",
                 "next_stage": "strategy_distill",
             },
             {
@@ -546,7 +547,7 @@ def _adaptive_execution_to_payload() -> dict[str, Any]:
                 "next_stage": "strategy_distill",
             }
         ],
-        "goal_modes": [
+        "action_modes": [
             {
                 "key": "candidate_review",
                 "label": "投递记录评估",
@@ -569,10 +570,9 @@ def _adaptive_execution_to_payload() -> dict[str, Any]:
     }
 
 
-def default_recruit_agent_profile() -> dict[str, Any]:
-    goal_template = resolve_goal_template(None)
+def default_agent_definition() -> dict[str, Any]:
     return {
-        "agent_key": "recruit-agent",
+        "definition_key": "recruit-agent",
         "name": "Recruit Agent",
         "status": "active",
         "description": "招聘场景优先的本地 agent，负责候选人发现，以及围绕投递记录完成初筛、跟进、简历获取、评分与后续交接。",
@@ -605,8 +605,7 @@ def default_recruit_agent_profile() -> dict[str, Any]:
             ],
         },
         "prompt_config": {
-            "system_prompt": "你是 Recruit Agent。你的核心职责是严格在招聘场景中维护候选人与投递记录事实，以投递记录为单位推进流程、记录证据，并把高风险动作交给人工确认。",
-            "goal_template": goal_template,
+            "system_prompt": _default_recruit_agent_system_prompt(),
             "context_slots": ["candidate_context", "job_context", "global_context", "candidate_thread", "candidate_progress"],
             "context_policy": default_context_policy(),
             "response_policy": {
@@ -631,28 +630,79 @@ def default_recruit_agent_profile() -> dict[str, Any]:
             "resume_request": {"enabled": True, "requires_confirmation": True},
             "talent_pool_upload": {"enabled": False, "mode": "future_integration"},
         },
+        "product_bindings": {
+            "autonomous": {
+                "enabled": True,
+                "session_key": "autonomous",
+                "definition_role": "primary_execution",
+                "memory_scope": "agent_definition",
+            },
+            "assistant": {
+                "enabled": True,
+                "session_key": "assistant",
+                "definition_role": "interactive_projection",
+                "memory_scope": "agent_definition",
+            },
+        },
+        "product_config": {
+            "autonomous": {
+                "context_policy": default_context_policy(),
+                "memory_policy": default_memory_policy(),
+            },
+            "assistant": {
+                "prompt_config": {
+                    "system_prompt": "你是 Assistant 类型的 Recruit Agent。你的职责是在聊天界面中与用户协作，清晰解释状态、回答问题，并在高风险动作前等待确认。",
+                    "context_policy": {
+                        "memory_scope": "conversation",
+                        "share_global_context": True,
+                    },
+                    "response_policy": {
+                        "prefer_structured_output": False,
+                        "require_evidence_refs": False,
+                        "separate_fact_from_inference": True,
+                    },
+                },
+                "memory_policy": default_memory_policy(),
+            },
+        },
+        "product_projections": {
+            "autonomous": {
+                "name": "Autonomous",
+                "description": "长期运行的招聘执行 Agent，负责按指令推进招聘任务、沉淀结果并请求必要审批。",
+                "dashboard_config": {"layout": ["candidate_progress", "agent_activity", "skill_health", "evolution_queue"]},
+                "channel_config": {
+                    "candidate_messaging": {"enabled": True, "requires_confirmation": True},
+                    "resume_request": {"enabled": True, "requires_confirmation": True},
+                },
+            },
+            "assistant": {
+                "name": "Assistant",
+                "description": "面向聊天界面的协作助手，负责解释状态、回答问题，并在需要时等待人工确认。",
+                "dashboard_config": {"layout": ["chat_sessions", "recent_activity"]},
+                "channel_config": {"chat": {"enabled": True, "requires_confirmation": True}},
+            },
+        },
         "agent_metadata": {
             "product_mode": "recruit_agent",
             "supports_builtin_agents": True,
-            "current_primary_agent": "recruit-agent",
+            "current_primary_definition": "recruit-agent",
         },
     }
 
 
-def ensure_primary_recruit_agent_profile(session: Session) -> RecruitAgentProfile:
-    repo = RecruitAgentProfileRepository(session)
+def ensure_primary_agent_definition(session: Session) -> AgentDefinition:
+    repo = AgentDefinitionRepository(session)
     existing = repo.primary()
     if existing is not None:
-        prompt_config = dict(existing.prompt_config or {})
+        original_prompt_config = dict(existing.prompt_config or {})
+        prompt_config = normalize_prompt_config(original_prompt_config)
         resolved_context_policy = resolve_context_policy(prompt_config)
-        resolved_goal_template = resolve_goal_template(prompt_config)
         resolved_memory_policy = resolve_memory_policy(existing.memory_policy)
         patch: dict[str, Any] = {}
+        if prompt_config != original_prompt_config:
+            patch["prompt_config"] = prompt_config
         if prompt_config.get("context_policy") != resolved_context_policy:
             prompt_config["context_policy"] = resolved_context_policy
-            patch["prompt_config"] = prompt_config
-        if prompt_config.get("goal_template") != resolved_goal_template:
-            prompt_config["goal_template"] = resolved_goal_template
             patch["prompt_config"] = prompt_config
         if existing.memory_policy != resolved_memory_policy:
             patch["memory_policy"] = resolved_memory_policy
@@ -660,25 +710,38 @@ def ensure_primary_recruit_agent_profile(session: Session) -> RecruitAgentProfil
             existing = repo.update(existing, patch)
         return existing
     try:
-        return repo.create(default_recruit_agent_profile())
+        return repo.create(default_agent_definition())
     except IntegrityError:
         session.rollback()
         existing = repo.primary()
         if existing is None:
             raise
-        prompt_config = dict(existing.prompt_config or {})
+        original_prompt_config = dict(existing.prompt_config or {})
+        prompt_config = normalize_prompt_config(original_prompt_config)
         resolved_context_policy = resolve_context_policy(prompt_config)
-        resolved_goal_template = resolve_goal_template(prompt_config)
         resolved_memory_policy = resolve_memory_policy(existing.memory_policy)
         patch: dict[str, Any] = {}
+        if prompt_config != original_prompt_config:
+            patch["prompt_config"] = prompt_config
         if prompt_config.get("context_policy") != resolved_context_policy:
             prompt_config["context_policy"] = resolved_context_policy
-            patch["prompt_config"] = prompt_config
-        if prompt_config.get("goal_template") != resolved_goal_template:
-            prompt_config["goal_template"] = resolved_goal_template
             patch["prompt_config"] = prompt_config
         if existing.memory_policy != resolved_memory_policy:
             patch["memory_policy"] = resolved_memory_policy
         if patch:
             existing = repo.update(existing, patch)
         return existing
+
+
+def _default_recruit_agent_system_prompt() -> str:
+    return "\n".join(
+        [
+            "你是 Recruit Agent。你的核心职责是严格在招聘场景中维护候选人与投递记录事实，以投递记录为单位推进流程、记录证据，并把高风险动作交给人工确认。",
+            "你负责在共享招聘工作区中持续推进完整的招聘任务，而不是只停留在某一个孤立节点。",
+            "默认覆盖 JD 同步、候选人发现、在线资料或在线简历读取、AI 评分、合规外联草拟、简历或补充材料索取、系统事实写回和后续交接。",
+            "执行时优先利用当前会话、共享工作区、已有 JD、投递记录和可访问外部场景来拆解子任务。",
+            "涉及外部站点时，优先复用普通浏览器里已经打开且可继续任务的页签；工具能力不足以确认时，应标记为工具能力阻塞。",
+            "除非出现登录、验证码、权限、设备绑定、人工审批或其它明确 human-only blocker，否则不要只完成某一步就结束。",
+            "若本轮只能完成一部分，在结果中明确区分已完成、待继续、已阻塞，以及每一项对应的系统内状态更新。",
+        ]
+    )

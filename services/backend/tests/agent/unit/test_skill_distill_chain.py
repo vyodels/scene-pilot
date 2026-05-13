@@ -25,7 +25,7 @@ def test_build_skill_distill_review_payload_only_contains_run_evidence() -> None
     payload = build_skill_distill_review_payload(
         run_id="run-1",
         run_type="sync_jd_incremental",
-        goal_kind="sync_jd_incremental",
+        run_kind="sync_jd_incremental",
         engine_output_count=2,
         final_output='{"status":"completed","created":1}',
         tool_activity=[{"tool_name": "list_job_descriptions", "event_type": "tool_event", "kind": "tool_result_ready"}],
@@ -33,10 +33,10 @@ def test_build_skill_distill_review_payload_only_contains_run_evidence() -> None
     )
 
     assert payload["run_id"] == "run-1"
-    assert payload["goal_kind"] == "sync_jd_incremental"
+    assert payload["run_kind"] == "sync_jd_incremental"
     assert payload["engine_output_count"] == 2
     assert payload["tool_activity"][0]["tool_name"] == "list_job_descriptions"
-    assert "goal_text" not in payload
+    assert "instruction_text" not in payload
     assert "constraints" not in payload
     assert "success_criteria" not in payload
     assert "context_hints" not in payload

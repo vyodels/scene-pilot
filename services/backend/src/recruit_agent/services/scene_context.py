@@ -48,7 +48,7 @@ class SceneContextService:
                 {
                     "title": request["title"],
                     "description": request["description"],
-                    "goal": _build_scene_goal_text(request),
+                    "instruction": _build_scene_instruction(request),
                     "domain": "scene",
                     "status": "running",
                     "source_kind": "scene_context",
@@ -203,7 +203,7 @@ class SceneContextService:
             recent_events=list(episode.observations or [])[-8:],
             available_tools=sorted(scene_tool_registry.tools.keys()),
             available_mcps=_available_mcp_names(scene_tool_registry),
-            goal_text=_build_scene_goal_text(request),
+            instruction=_build_scene_instruction(request),
         )
         engine = InteractionEngine(
             InteractionEngineConfig(
@@ -383,10 +383,6 @@ def _normalize_scene_request(arguments: dict[str, Any], *, default_max_llm_invoc
                 instruction,
                 title,
                 arguments.get("description"),
-                input_payload.get("goal"),
-                input_payload.get("goal_text"),
-                context.get("goal"),
-                context.get("goal_text"),
             ),
         )
     )
@@ -448,7 +444,7 @@ def _normalize_scene_request(arguments: dict[str, Any], *, default_max_llm_invoc
     }
 
 
-def _build_scene_goal_text(request: dict[str, Any]) -> str:
+def _build_scene_instruction(request: dict[str, Any]) -> str:
     parts = [
         request["instruction"],
         "只使用当前可用的 scene 工具完成任务。",
@@ -625,7 +621,7 @@ def _scene_outcome_from_engine(
 ) -> AgentTurnOutcome:
     final_output = ""
     status = "complete"
-    gate_signal = "goal_done"
+    gate_signal = "run_done"
     result_data: dict[str, Any] | None = None
     engine_output_count = 0
     for output in engine.submitMessage(instruction):

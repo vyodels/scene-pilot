@@ -12,13 +12,13 @@ _HUMAN_ONLY_BLOCKER_MARKERS = ("登录", "captcha", "验证码", "权限", "授�
 def project_runtime_business_state(
     *,
     content: dict[str, Any] | None = None,
-    goal_kind: str | None = None,
-    goal_title: str | None = None,
+    run_kind: str | None = None,
+    run_title: str | None = None,
     run_status: str | None = None,
 ) -> dict[str, Any]:
     structured = dict(content or {})
-    action_kind = _normalize_action_key(goal_kind or structured.get("goal_kind") or structured.get("run_type") or "")
-    action_label = _resolve_action_label(structured=structured, goal_title=goal_title, action_kind=action_kind)
+    action_kind = _normalize_action_key(run_kind or structured.get("run_kind") or structured.get("run_type") or "")
+    action_label = _resolve_action_label(structured=structured, run_title=run_title, action_kind=action_kind)
     status = _normalize_status(structured.get("status") or run_status or "unknown")
     created = _coerce_int(structured.get("created"))
     updated = _coerce_int(structured.get("updated"))
@@ -46,10 +46,10 @@ def _normalize_action_key(value: str) -> str:
     return str(value or "").strip().lower()
 
 
-def _resolve_action_label(*, structured: dict[str, Any], goal_title: str | None, action_kind: str) -> str:
+def _resolve_action_label(*, structured: dict[str, Any], run_title: str | None, action_kind: str) -> str:
     for candidate in (
-        goal_title,
-        structured.get("goal_title"),
+        run_title,
+        structured.get("run_title"),
         structured.get("title"),
         structured.get("label"),
     ):
@@ -58,13 +58,13 @@ def _resolve_action_label(*, structured: dict[str, Any], goal_title: str | None,
             return text
     if action_kind:
         return _humanize_identifier(action_kind)
-    return "当前目标"
+    return "当前任务"
 
 
 def _humanize_identifier(value: str) -> str:
     text = " ".join(part for part in str(value or "").replace("-", "_").split("_") if part).strip()
     if not text:
-        return "当前目标"
+        return "当前任务"
     words = [part.upper() if part.lower() == "jd" else part.capitalize() for part in text.split()]
     return " ".join(words)
 

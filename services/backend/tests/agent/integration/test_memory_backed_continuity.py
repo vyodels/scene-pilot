@@ -10,7 +10,7 @@ from recruit_agent.agent_runtime.types import LLMInvocationResult, LLMMessage, L
 from recruit_agent.core.settings import AppSettings
 from recruit_agent.db.session import create_engine_from_settings, create_session_factory, initialize_database
 from recruit_agent.memory.filesystem import MemoryFileStore
-from recruit_agent.models.domain import AgentRun, AgentSession, Candidate, RecruitAgentProfile
+from recruit_agent.models.domain import AgentRun, AgentSession, Candidate, AgentDefinition
 from recruit_agent.plugins.host import PluginHost
 from recruit_agent.agent_runtime.providers import LLMProvider
 from recruit_agent.capabilities.tools import ToolRegistry, register_core_tools
@@ -78,12 +78,12 @@ def _make_session(tmp_path: Path) -> Session:
 def test_autonomous_memory_backed_continuity_across_turns(tmp_path: Path) -> None:
     session = _make_session(tmp_path)
     try:
-        profile = RecruitAgentProfile(agent_key="primary", name="Primary", is_primary=True)
+        definition = AgentDefinition(definition_key="primary", name="Primary", is_primary=True)
         candidate = Candidate(name="Alice")
-        session.add_all([profile, candidate])
+        session.add_all([definition, candidate])
         session.flush()
 
-        agent_session = AgentSession(agent_profile_id=profile.id)
+        agent_session = AgentSession(agent_definition_id=definition.id)
         session.add(agent_session)
         session.flush()
 
@@ -136,12 +136,12 @@ def test_autonomous_memory_backed_continuity_across_turns(tmp_path: Path) -> Non
 def test_autonomous_memory_writeback_does_not_call_llm_on_every_completed_turn(tmp_path: Path) -> None:
     session = _make_session(tmp_path)
     try:
-        profile = RecruitAgentProfile(agent_key="primary", name="Primary", is_primary=True)
+        definition = AgentDefinition(definition_key="primary", name="Primary", is_primary=True)
         candidate = Candidate(name="Alice")
-        session.add_all([profile, candidate])
+        session.add_all([definition, candidate])
         session.flush()
 
-        agent_session = AgentSession(agent_profile_id=profile.id)
+        agent_session = AgentSession(agent_definition_id=definition.id)
         session.add(agent_session)
         session.flush()
 
@@ -181,7 +181,7 @@ def test_autonomous_memory_writeback_does_not_call_llm_on_every_completed_turn(t
         assert memory_store.list_files(
             scope_kind="candidate",
             scope_ref=candidate.candidate_person_id,
-            agent_profile_id=profile.id,
+            agent_definition_id=definition.id,
         ) == []
     finally:
         session.close()

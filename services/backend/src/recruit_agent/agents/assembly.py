@@ -5,7 +5,7 @@ from typing import Any
 
 
 @dataclass(slots=True)
-class AutonomousAssembly:
+class AgentAssembly:
     prompt_overlay: dict[str, Any] = field(default_factory=dict)
     scenario_policy: dict[str, Any] = field(default_factory=dict)
     tool_allowlist: list[str] = field(default_factory=list)

@@ -6,7 +6,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from recruit_agent.core.settings import load_settings
-from recruit_agent.models.domain import AgentRun, AgentSession, AgentTurnRecord, RecruitAgentProfile
+from recruit_agent.models.domain import AgentRun, AgentSession, AgentTurnRecord, AgentDefinition
 from recruit_agent.server import create_app
 
 
@@ -19,8 +19,8 @@ def test_turn_routes_expose_turns(tmp_path: Path) -> None:
     try:
         session_factory = app.state.session_factory
         with session_factory() as session:
-            profile = session.query(RecruitAgentProfile).filter_by(agent_key="autonomous").one()
-            agent_session = AgentSession(agent_profile_id=profile.id)
+            definition = session.query(AgentDefinition).filter_by(definition_key="recruit-agent").one()
+            agent_session = AgentSession(agent_definition_id=definition.id, session_key="autonomous")
             session.add(agent_session)
             session.flush()
             run = AgentRun(session_id=agent_session.id, run_id="run-turn-route", agent_kind="autonomous")

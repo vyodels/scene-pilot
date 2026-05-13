@@ -6,18 +6,21 @@ from queue import Queue
 from threading import Thread
 from typing import Any, cast
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
-from recruit_agent.agent_runtime.engine import InteractionEngine, InteractionEngineConfig
-from recruit_agent.agent_runtime.types import InteractionOutput, LLMMessage, LLMProvider
+from recruit_agent.agent_runtime.engine import InteractionEngine
+from recruit_agent.agent_runtime.types import LLMMessage, LLMProvider
 from recruit_agent.assistant.conversation import ConversationService
 from recruit_agent.assistant.session_store import AssistantSessionStore
 from recruit_agent.memory.filesystem import MemoryFileStore
-from recruit_agent.models.domain import RecruitAgentProfile
+from recruit_agent.models.domain import AgentDefinition, McpServer, Skill
 from recruit_agent.product_adapters.limits import TurnLimits
 from recruit_agent.product_adapters.context_builder import build_assistant_turn_context
+from recruit_agent.product_adapters.agent_runner import AgentRunStatusDefaults, run_agent_turn, runtime_output_payload
 from recruit_agent.plugins.host import PluginHost
 from recruit_agent.capabilities.tools import ToolRegistry
+from recruit_agent.skills.context import build_skill_context_injections
 
 
 @dataclass(slots=True)
@@ -176,76 +179,62 @@ class AssistantAdapter:
         message: str | None,
         event_queue: Queue[tuple[str, dict[str, Any]] | None],
     ) -> None:
-        def _emit_output(output: InteractionOutput) -> None:
-            event_queue.put((output.type, _runtime_output_payload(output)))
-
         try:
-            agent_profile_id = self._agent_profile_id()
+            definition_context = self._agent_definition_context(message or "")
+            agent_definition_id = definition_context["agent_definition_id"]
             memory_entries = []
             if self.memory_file_store is not None:
                 memory_entries = _read_memory_file_index_entries(
                     self.memory_file_store,
                     scope_kind="conversation",
                     scope_ref=conversation_id,
-                    agent_profile_id=agent_profile_id,
+                    agent_definition_id=agent_definition_id,
                 )
             adapter_context = build_assistant_turn_context(
                 history_messages=self._runtime_history_messages(conversation_id, exclude_turn_id=user_turn_id),
                 user_message=message or "",
-                agent_profile_id=agent_profile_id,
+                agent_name=definition_context["agent_name"],
+                system_prompt=definition_context["system_prompt"],
+                agent_definition_id=agent_definition_id,
                 memory_entries=memory_entries,
-            )
-            engine = InteractionEngine(
-                InteractionEngineConfig(
-                    conversation_id=conversation_id,
-                    provider=cast(Any, self.provider),
-                    tools=_scoped_tool_registry(self.tool_registry, agent_profile_id).to_agent_runtime_tools(),
-                    initial_messages=adapter_context.initial_messages,
-                    max_llm_invocations=self.turn_limits.max_llm_invocations or 12,
-                    max_history_messages=self.max_history_messages,
-                )
+                available_tools=sorted(self.tool_registry.tools.keys()),
+                skill_contexts=definition_context["skill_contexts"],
+                available_mcps=definition_context["available_mcps"],
+                response_policy=definition_context["response_policy"],
             )
             active = self.active_turns.get(conversation_id)
-            if active is not None and active.turn_id == assistant_turn_id:
-                active.engine = engine
-                if active.cancel_reason:
-                    engine.interrupt()
-            final_output = ""
-            status = "completed"
-            tool_results: list[dict[str, Any]] = []
-            tool_calls: list[dict[str, Any]] = []
-            for output in engine.submitMessage(adapter_context.turn_input):
-                _emit_output(output)
-                if output.type == "assistant_message_completed":
-                    final_output = str(output.data.get("message") or "")
-                elif output.type == "tool_event":
-                    data = dict(output.data)
-                    if data.get("kind") == "tool_result_ready":
-                        tool_results.append(
-                            {
-                                "tool_name": data.get("tool_name"),
-                                "output": data.get("content"),
-                                "is_error": data.get("is_error", False),
-                                "metadata": {},
-                            }
-                        )
-                    elif data.get("kind") in {"tool_use_completed", "tool_call_started"}:
-                        tool_calls.append(data)
-                elif output.type == "turn_interrupted":
-                    status = "cancelled"
-                elif output.type == "turn_failed":
-                    status = "failed"
-                elif output.type == "permission_requested":
-                    status = "waiting_human"
-                    tool_calls = [_permission_payload(dict(output.data))]
-                    self.pending_permission_engines[conversation_id] = engine
+
+            def _bind_engine(engine: InteractionEngine) -> None:
+                if active is not None and active.turn_id == assistant_turn_id:
+                    active.engine = engine
+                    if active.cancel_reason:
+                        engine.interrupt()
+
+            result = run_agent_turn(
+                provider=self.provider,
+                tool_registry=self.tool_registry,
+                agent_definition_id=agent_definition_id,
+                conversation_id=conversation_id,
+                initial_messages=adapter_context.initial_messages,
+                turn_input=adapter_context.turn_input,
+                max_llm_invocations=self.turn_limits.max_llm_invocations or 12,
+                max_history_messages=self.max_history_messages,
+                output_sink=lambda output: event_queue.put((output.type, runtime_output_payload(output))),
+                engine_sink=_bind_engine,
+                status_defaults=AgentRunStatusDefaults(completed_status="completed"),
+                include_tool_result_metadata=True,
+            )
+            if result.status == "waiting_human":
+                self.pending_permission_engines[conversation_id] = result.engine
+            else:
+                self.pending_permission_engines.pop(conversation_id, None)
             self.session_store.update_turn(
                 assistant_turn_id,
-                content={"text": final_output},
-                tool_calls=tool_calls,
-                tool_results=tool_results,
-                status=status,
-                cancel_reason=active.cancel_reason if active is not None and status == "cancelled" else None,
+                content={"text": result.final_output},
+                tool_calls=result.tool_calls,
+                tool_results=result.tool_results,
+                status=result.status,
+                cancel_reason=active.cancel_reason if active is not None and result.status == "cancelled" else None,
             )
             conversation = self.session_store.get_session(conversation_id)
             if conversation is not None:
@@ -253,10 +242,10 @@ class AssistantAdapter:
                     conversation,
                     {
                         "role": "assistant",
-                        "content": final_output,
+                        "content": result.final_output,
                         "turn_id": assistant_turn_id,
-                        "status": status,
-                        "tool_calls": tool_calls,
+                        "status": result.status,
+                        "tool_calls": result.tool_calls,
                     },
                 )
                 if compaction_event is not None:
@@ -277,10 +266,31 @@ class AssistantAdapter:
             self.active_turns.pop(conversation_id, None)
             event_queue.put(None)
 
-    def _agent_profile_id(self) -> str | None:
+    def _agent_definition_id(self) -> str | None:
         with self.session_factory() as session:
-            profile = session.query(RecruitAgentProfile).filter(RecruitAgentProfile.agent_key == "assistant").first()
-            return None if profile is None else str(profile.id)
+            definition = session.query(AgentDefinition).filter(AgentDefinition.definition_key == "assistant").first()
+            return None if definition is None else str(definition.id)
+
+    def _agent_definition_context(self, task_text: str) -> dict[str, Any]:
+        with self.session_factory() as session:
+            definition = session.query(AgentDefinition).filter(AgentDefinition.definition_key == "assistant").first()
+            prompt_config = dict((definition.prompt_config if definition is not None else {}) or {})
+            skills = list(session.query(Skill).filter(Skill.status.in_(("trial", "active"))).order_by(Skill.name.asc(), Skill.skill_id.asc()).all())
+            return {
+                "agent_definition_id": None if definition is None else str(definition.id),
+                "agent_name": str((definition.name if definition is not None else None) or "Assistant"),
+                "system_prompt": _definition_system_prompt(definition),
+                "response_policy": dict(prompt_config.get("response_policy") or {}),
+                "skill_contexts": [
+                    item.to_prompt_payload()
+                    for item in build_skill_context_injections(
+                        skills,
+                        query=task_text,
+                        task_text=task_text,
+                    )
+                ],
+                "available_mcps": [str(name) for name in session.scalars(select(McpServer.name).order_by(McpServer.name.asc())).all()],
+            }
 
     def _resolve_confirmed_permission(
         self,
@@ -293,30 +303,22 @@ class AssistantAdapter:
         if conversation is None:
             raise KeyError(f"unknown conversation: {conversation_id}")
         tool_results: list[dict[str, Any]] = []
-        final_output = ""
-        status = "completed"
-        for output in engine.resolvePermission(approved=True):
-            event_sink(output.type, _runtime_output_payload(output))
-            if output.type == "assistant_message_completed":
-                final_output = str(output.data.get("message") or "")
-            elif output.type == "tool_event":
-                data = dict(output.data)
-                if data.get("kind") == "tool_result_ready":
-                    tool_results.append(
-                        {
-                            "tool_name": data.get("tool_name"),
-                            "output": data.get("content"),
-                            "is_error": data.get("is_error", False),
-                            "metadata": {},
-                        }
-                    )
-            elif output.type == "permission_requested":
-                status = "waiting_human"
-            elif output.type == "turn_interrupted":
-                status = "cancelled"
-            elif output.type == "turn_failed":
-                status = "failed"
-        return {"status": status, "final_output": final_output, "tool_results": tool_results}
+        result = run_agent_turn(
+            provider=self.provider,
+            tool_registry=self.tool_registry,
+            agent_definition_id=self._agent_definition_id(),
+            conversation_id=conversation_id,
+            initial_messages=[],
+            turn_input="",
+            max_llm_invocations=self.turn_limits.max_llm_invocations or 12,
+            existing_engine=engine,
+            resolve_permission=True,
+            output_sink=lambda output: event_sink(output.type, runtime_output_payload(output)),
+            status_defaults=AgentRunStatusDefaults(completed_status="completed"),
+            include_tool_result_metadata=True,
+        )
+        tool_results.extend(result.tool_results)
+        return {"status": result.status, "final_output": result.final_output, "tool_results": tool_results}
 
     def _runtime_history_messages(self, conversation_id: str, *, exclude_turn_id: str | None) -> list[LLMMessage]:
         conversation = self.session_store.get_session(conversation_id)
@@ -333,40 +335,20 @@ class AssistantAdapter:
         return messages
 
 
-def _runtime_output_payload(output: InteractionOutput) -> dict[str, Any]:
-    return {
-        "type": output.type,
-        "conversation_id": output.conversation_id,
-        "turn_id": output.turn_id,
-        "seq": output.seq,
-        "data": dict(output.data or {}),
-    }
-
-
-def _permission_payload(data: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "tool_name": str(data.get("tool_name") or ""),
-        "tool_use_id": str(data.get("tool_use_id") or ""),
-        "tool_call_id": str(data.get("tool_call_id") or ""),
-        "input": dict(data.get("input") or {}),
-        "reason": str(data.get("reason") or "pending_confirmation"),
-    }
-
-
 def _read_memory_file_index_entries(
     memory_file_store: MemoryFileStore,
     *,
     scope_kind: str,
     scope_ref: str,
-    agent_profile_id: str | None,
+    agent_definition_id: str | None,
 ) -> list[dict[str, Any]]:
     try:
         entries: list[dict[str, Any]] = []
-        for item in memory_file_store.list_files(scope_kind=scope_kind, scope_ref=scope_ref, agent_profile_id=agent_profile_id)[:12]:
+        for item in memory_file_store.list_files(scope_kind=scope_kind, scope_ref=scope_ref, agent_definition_id=agent_definition_id)[:12]:
             content = memory_file_store.read_file(
                 scope_kind=scope_kind,
                 scope_ref=scope_ref,
-                agent_profile_id=agent_profile_id,
+                agent_definition_id=agent_definition_id,
                 path=str(item["path"]),
             ).get("content", "")
             entries.append(
@@ -392,20 +374,14 @@ def _first_non_empty_memory_line(text: str) -> str | None:
     return None
 
 
-def _scoped_tool_registry(registry: ToolRegistry, agent_profile_id: str | None) -> ToolRegistry:
-    if not agent_profile_id:
-        return registry
-    scoped = ToolRegistry()
-    for tool in registry.tools.values():
-        cloned = tool.clone()
-        if cloned.category == "memory":
-            original_handler = cloned.handler
-
-            def _handler(arguments: dict[str, Any], *, handler=original_handler) -> Any:
-                scoped_arguments = dict(arguments or {})
-                scoped_arguments["agent_profile_id"] = agent_profile_id
-                return handler(scoped_arguments)
-
-            cloned.handler = _handler
-        scoped.register(cloned)
-    return scoped
+def _definition_system_prompt(definition: AgentDefinition | None) -> str:
+    if definition is None:
+        return "你是 Assistant 类型的 Recruit Agent。你的职责是在聊天界面中与用户协作，清晰解释状态、回答问题，并在高风险动作前等待确认。"
+    prompt_config = dict(definition.prompt_config or {})
+    return str(
+        prompt_config.get("system_prompt")
+        or prompt_config.get("systemPrompt")
+        or prompt_config.get("prompt")
+        or definition.description
+        or ""
+    )

@@ -7,7 +7,7 @@ from uuid import uuid4
 
 from .history import ConversationHistory
 from .tools import ToolRegistry
-from .transcript import InMemoryTranscript, Transcript
+from .transcript import InMemoryTranscript, Transcript, TranscriptState
 from .types import (
     InteractionOutput,
     LLMMessage,
@@ -16,6 +16,7 @@ from .types import (
     ToolCall,
     ToolDefinition,
     ToolResult,
+    ToolUse,
     TurnContext,
 )
 
@@ -73,8 +74,15 @@ class InteractionEngine:
         state = None if self.config.initial_messages else self.transcript.load(self.config.conversation_id)
         messages = list(self.config.initial_messages or (state.messages if state else []))
         self.history = ConversationHistory(messages)
+        if self.config.initial_messages:
+            self.transcript.record_messages(self.config.conversation_id, messages)
         if state is not None:
             self._seq = count(state.next_seq)
+            self.pending_permission = _pending_permission_from_payload(
+                state.pending_permissions[-1] if state.pending_permissions else None,
+                conversation_id=self.config.conversation_id,
+                tools=self.config.tools,
+            )
         elif self.config.initial_seq > 1:
             self._seq = count(self.config.initial_seq)
 
@@ -105,6 +113,7 @@ class InteractionEngine:
         if pending is None:
             raise RuntimeError("No pending permission for this conversation")
         self.pending_permission = None
+        self.transcript.clear_pending_permission(self.config.conversation_id)
         self._interrupted = False
         self.active_turn_id = pending.turn_id
         try:
@@ -244,6 +253,10 @@ class InteractionEngine:
                         context=context,
                         next_invocation_index=invocation_index + 1,
                     )
+                    self.transcript.record_pending_permission(
+                        self.config.conversation_id,
+                        _pending_permission_payload(self.pending_permission),
+                    )
                     yield self._output(
                         "permission_requested",
                         turn_id,
@@ -360,6 +373,10 @@ class InteractionEngine:
         self.transcript.record_output(self.config.conversation_id, output)
         return output
 
+    def checkpoint_state(self) -> dict[str, object]:
+        state = self.transcript.load(self.config.conversation_id) or TranscriptState()
+        return transcript_state_to_payload(state)
+
 
 def _message_text(message: LLMMessage) -> str:
     if isinstance(message.content, str):
@@ -377,3 +394,150 @@ def _tool_result_content(result: ToolResult) -> str:
     import json
 
     return json.dumps(result.content, ensure_ascii=False, sort_keys=True, default=str)
+
+
+def transcript_state_to_payload(state: TranscriptState) -> dict[str, object]:
+    return {
+        "messages": [_message_to_payload(message) for message in state.messages],
+        "next_seq": state.next_seq,
+        "pending_permissions": [dict(item) for item in state.pending_permissions],
+        "tool_states": [dict(item) for item in state.tool_states],
+    }
+
+
+def transcript_state_from_payload(payload: dict[str, object] | None) -> TranscriptState:
+    raw = dict(payload or {})
+    return TranscriptState(
+        messages=[
+            _message_from_payload(item)
+            for item in list(raw.get("messages") or [])
+            if isinstance(item, dict)
+        ],
+        next_seq=_positive_int(raw.get("next_seq"), default=1),
+        pending_permissions=[
+            dict(item)
+            for item in list(raw.get("pending_permissions") or [])
+            if isinstance(item, dict)
+        ],
+        tool_states=[
+            dict(item)
+            for item in list(raw.get("tool_states") or [])
+            if isinstance(item, dict)
+        ],
+    )
+
+
+def transcript_from_checkpoint(conversation_id: str, payload: dict[str, object] | None) -> InMemoryTranscript:
+    transcript = InMemoryTranscript()
+    transcript.states[conversation_id] = transcript_state_from_payload(payload)
+    return transcript
+
+
+def _pending_permission_payload(pending: PendingPermissionState | None) -> dict[str, object]:
+    if pending is None:
+        return {}
+    return {
+        "turn_id": pending.turn_id,
+        "next_invocation_index": pending.next_invocation_index,
+        "tool_call": {
+            "id": pending.tool_call.id,
+            "turn_id": pending.tool_call.turn_id,
+            "llm_invocation_id": pending.tool_call.llm_invocation_id,
+            "tool_use_id": pending.tool_call.tool_use_id,
+            "name": pending.tool_call.name,
+            "input": dict(pending.tool_call.input or {}),
+        },
+        "context": {
+            "turn_id": pending.context.turn_id,
+            "conversation_id": pending.context.conversation_id,
+            "runtime": dict(pending.context.runtime or {}),
+        },
+    }
+
+
+def _pending_permission_from_payload(
+    payload: dict[str, object] | None,
+    *,
+    conversation_id: str,
+    tools: list[ToolDefinition],
+) -> PendingPermissionState | None:
+    if not isinstance(payload, dict):
+        return None
+    raw_tool_call = payload.get("tool_call")
+    if not isinstance(raw_tool_call, dict):
+        return None
+    tool_call = ToolCall(
+        id=str(raw_tool_call.get("id") or ""),
+        turn_id=str(raw_tool_call.get("turn_id") or payload.get("turn_id") or ""),
+        llm_invocation_id=str(raw_tool_call.get("llm_invocation_id") or ""),
+        tool_use_id=str(raw_tool_call.get("tool_use_id") or ""),
+        name=str(raw_tool_call.get("name") or ""),
+        input=dict(raw_tool_call.get("input") or {}),
+    )
+    if not tool_call.id or not tool_call.turn_id or not tool_call.name:
+        return None
+    raw_context = payload.get("context")
+    context_payload = dict(raw_context) if isinstance(raw_context, dict) else {}
+    context = TurnContext(
+        turn_id=str(context_payload.get("turn_id") or tool_call.turn_id),
+        conversation_id=str(context_payload.get("conversation_id") or conversation_id),
+        tools=tools,
+        runtime=dict(context_payload.get("runtime") or {}),
+    )
+    return PendingPermissionState(
+        turn_id=str(payload.get("turn_id") or tool_call.turn_id),
+        tool_call=tool_call,
+        context=context,
+        next_invocation_index=_positive_int(payload.get("next_invocation_index"), default=1),
+    )
+
+
+def _message_to_payload(message: LLMMessage) -> dict[str, object]:
+    return {
+        "role": message.role,
+        "content": message.content,
+        "name": message.name,
+        "tool_use_id": message.tool_use_id,
+        "tool_uses": [
+            {
+                "id": tool_use.id,
+                "name": tool_use.name,
+                "input": dict(tool_use.input or {}),
+                "raw": dict(tool_use.raw or {}),
+            }
+            for tool_use in message.tool_uses
+        ],
+        "metadata": dict(message.metadata or {}),
+    }
+
+
+def _message_from_payload(payload: dict[str, object]) -> LLMMessage:
+    raw_tool_uses = [
+        item
+        for item in list(payload.get("tool_uses") or [])
+        if isinstance(item, dict)
+    ]
+    return LLMMessage(
+        role=payload.get("role") if payload.get("role") in {"system", "user", "assistant", "tool"} else "user",  # type: ignore[arg-type]
+        content=payload.get("content") if isinstance(payload.get("content"), (str, list)) else "",
+        name=str(payload.get("name") or "") or None,
+        tool_use_id=str(payload.get("tool_use_id") or "") or None,
+        tool_uses=[
+            ToolUse(
+                id=str(item.get("id") or ""),
+                name=str(item.get("name") or ""),
+                input=dict(item.get("input") or {}),
+                raw=dict(item.get("raw") or {}),
+            )
+            for item in raw_tool_uses
+        ],
+        metadata=dict(payload.get("metadata") or {}),
+    )
+
+
+def _positive_int(value: object, *, default: int) -> int:
+    try:
+        parsed = int(value or default)
+    except (TypeError, ValueError):
+        return default
+    return max(1, parsed)

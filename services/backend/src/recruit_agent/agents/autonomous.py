@@ -8,7 +8,7 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
 
-from recruit_agent.agent_runtime.engine import InteractionEngine, InteractionEngineConfig
+from recruit_agent.agent_runtime.engine import InteractionEngine, transcript_from_checkpoint
 from recruit_agent.agent_runtime.types import InteractionOutput, LLMProvider
 from recruit_agent.db.base import utcnow
 from recruit_agent.evolution.learning_writer import LearningWriter
@@ -29,16 +29,16 @@ from recruit_agent.models.domain import (
     ApprovalItem,
     Candidate,
     CandidateApplication,
-    GoalSpec,
     McpServer,
     OperatorInteraction,
-    RecruitAgentProfile,
+    AgentDefinition,
     Skill,
 )
 from recruit_agent.product_adapters.limits import TurnLimits
 from recruit_agent.agents.outcome import AgentTurnOutcome
 from recruit_agent.plugins.host import PluginHost
 from recruit_agent.product_adapters.context_builder import build_autonomous_turn_context
+from recruit_agent.product_adapters.agent_runner import AgentRunStatusDefaults, run_agent_turn
 from recruit_agent.product_adapters.mcp_resource_context import build_mcp_resource_context, extract_mcp_resource_context_policy
 from recruit_agent.product_adapters.result_semantics import extract_execution_status
 from recruit_agent.product_adapters.target_contracts import derive_browser_target
@@ -77,14 +77,14 @@ class AutonomousAdapter:
                 run.started_at = utcnow()
             next_seq = self._next_turn_seq(session, run.id)
             agent_session = session.get(AgentSession, run.session_id)
-            agent_profile_id = None if agent_session is None else agent_session.agent_profile_id
-            goal_spec = session.get(GoalSpec, run.goal_spec_id) if run.goal_spec_id else None
-            resolved_application_id = _resolve_application_subject(run=run, envelope=envelope, goal=goal_spec)
+            agent_definition_id = None if agent_session is None else agent_session.agent_definition_id
+            instruction_snapshot = _run_instruction_snapshot(run=run, envelope=envelope)
+            resolved_application_id = _resolve_application_subject(run=run, envelope=envelope, snapshot=instruction_snapshot)
             resolved_person_id = _resolve_person_subject(
                 session,
                 run=run,
                 envelope=envelope,
-                goal=goal_spec,
+                snapshot=instruction_snapshot,
                 application_id=resolved_application_id,
             )
             if resolved_application_id and str((run.runtime_metadata or {}).get("application_id") or "").strip() != resolved_application_id:
@@ -95,10 +95,6 @@ class AutonomousAdapter:
                 run.application_id = resolved_application_id
             if resolved_person_id and str(run.person_id or "").strip() != resolved_person_id:
                 run.person_id = resolved_person_id
-            if goal_spec is not None:
-                goal_spec.status = "running"
-                goal_spec.latest_run_id = run.run_id
-                goal_spec.last_activity_at = utcnow()
             turn = AgentTurnRecord(
                 run_pk=run.id,
                 seq=next_seq,
@@ -111,7 +107,6 @@ class AutonomousAdapter:
             _append_runtime_event(
                 session,
                 run=run,
-                goal=goal_spec,
                 turn_id=turn.turn_id,
                 seq=next_seq,
                 event_type="adapter_turn_started",
@@ -120,38 +115,38 @@ class AutonomousAdapter:
             )
             session.commit()
 
-            goal_constraints = dict(getattr(goal_spec, "constraints", {}) or {})
-            goal_constraints["run_pk"] = run.id
-            goal_constraints["agent_profile_id"] = agent_profile_id
-            goal_constraints["goal_kind"] = str(getattr(goal_spec, "goal_kind", None) or run.run_type or "").strip()
-            goal_constraints["success_criteria"] = dict(getattr(goal_spec, "success_criteria", {}) or {})
-            goal_constraints["context_hints"] = dict(getattr(goal_spec, "context_hints", {}) or {})
-            goal_constraints["trial_budget"] = dict(getattr(goal_spec, "trial_budget", {}) or {})
-            goal_constraints["global_scope_ref"] = (
-                str(goal_constraints.get("global_scope_ref") or "") or agent_profile_id
+            run_constraints = dict(instruction_snapshot.get("constraints") or {})
+            run_constraints["run_pk"] = run.id
+            run_constraints["agent_definition_id"] = agent_definition_id
+            run_constraints["run_kind"] = _snapshot_kind(instruction_snapshot, run)
+            run_constraints["success_criteria"] = dict(instruction_snapshot.get("success_criteria") or {})
+            run_constraints["context_hints"] = dict(instruction_snapshot.get("context_hints") or {})
+            run_constraints["trial_budget"] = dict(instruction_snapshot.get("trial_budget") or {})
+            run_constraints["global_scope_ref"] = (
+                str(run_constraints.get("global_scope_ref") or "") or agent_definition_id
             )
-            goal_constraints["source_kind"] = "autonomous"
+            run_constraints["source_kind"] = "autonomous"
             if resolved_application_id:
-                goal_constraints["application_id"] = resolved_application_id
+                run_constraints["application_id"] = resolved_application_id
             browser_target = derive_browser_target(
-                existing=goal_constraints.get("browser_target") or goal_constraints["context_hints"].get("browser_target"),
+                existing=run_constraints.get("browser_target") or run_constraints["context_hints"].get("browser_target"),
                 structured_sources=(
-                    goal_constraints,
-                    goal_constraints["context_hints"],
+                    run_constraints,
+                    run_constraints["context_hints"],
                     run.context_manifest,
                     run.runtime_metadata,
                     envelope.get("world_snapshot"),
                     envelope.get("metadata"),
                 ),
                 text_sources=(
-                    (run.context_manifest or {}).get("goal"),
-                    getattr(goal_spec, "goal_text", None),
-                    getattr(goal_spec, "title", None),
+                    (run.context_manifest or {}).get("instruction"),
+                    instruction_snapshot.get("instruction"),
+                    instruction_snapshot.get("title"),
                 ),
             )
             if browser_target:
-                goal_constraints["browser_target"] = browser_target
-                goal_constraints["context_hints"]["browser_target"] = browser_target
+                run_constraints["browser_target"] = browser_target
+                run_constraints["context_hints"]["browser_target"] = browser_target
 
             scope_kind = str(envelope.get("scope_kind") or ("application" if resolved_application_id else run.lane or "global"))
             if scope_kind == "application":
@@ -159,28 +154,23 @@ class AutonomousAdapter:
             else:
                 scope_ref = str(envelope.get("scope_ref") or resolved_person_id or run.person_id or run.job_description_id or run.id)
 
-            memory_scope_kind = str(goal_constraints.get("memory_scope_kind") or scope_kind or "global").strip() or "global"
-            memory_scope_ref = str(goal_constraints.get("memory_scope_ref") or scope_ref or agent_profile_id or run.id)
-            if memory_scope_kind == "global" and agent_profile_id:
-                memory_scope_ref = str(goal_constraints.get("memory_scope_ref") or goal_constraints.get("global_scope_ref") or agent_profile_id)
+            memory_scope_kind = str(run_constraints.get("memory_scope_kind") or scope_kind or "global").strip() or "global"
+            memory_scope_ref = str(run_constraints.get("memory_scope_ref") or scope_ref or agent_definition_id or run.id)
+            if memory_scope_kind == "global" and agent_definition_id:
+                memory_scope_ref = str(run_constraints.get("memory_scope_ref") or run_constraints.get("global_scope_ref") or agent_definition_id)
             memory_entries = []
             if self.memory_file_store is not None:
                 memory_entries = _read_memory_file_index_entries(
                     self.memory_file_store,
                     scope_kind=memory_scope_kind,
                     scope_ref=memory_scope_ref,
-                    agent_profile_id=agent_profile_id,
+                    agent_definition_id=agent_definition_id,
                 )
-            agent_profile = session.get(RecruitAgentProfile, agent_profile_id) if agent_profile_id else None
-            memory_writeback_policy = _memory_writeback_policy(agent_profile)
-            goal_text = str(
-                (run.context_manifest or {}).get("goal")
-                or getattr(goal_spec, "goal_text", None)
-                or run.run_type
-                or "Autonomous execution"
-            )
-            goal_title = str(getattr(goal_spec, "title", None) or run.run_type or "Autonomous execution").strip() or None
-            active_turn_limits = _resolve_turn_limits(self.turn_limits, goal_spec)
+            agent_definition = session.get(AgentDefinition, agent_definition_id) if agent_definition_id else None
+            memory_writeback_policy = _memory_writeback_policy(agent_definition)
+            instruction = _snapshot_instruction(instruction_snapshot, run)
+            run_title = str(instruction_snapshot.get("title") or run.run_type or "Autonomous execution").strip() or None
+            active_turn_limits = _resolve_turn_limits(self.turn_limits, dict(instruction_snapshot.get("trial_budget") or {}))
 
             last_outcome = AgentTurnOutcome(status="continue", gate_signal="continue")
             runtime_event_seq = 0
@@ -189,111 +179,99 @@ class AutonomousAdapter:
                 world_snapshot = dict(envelope.get("world_snapshot") or {})
                 mcp_resource_contexts = _mcp_resource_contexts(
                     self.mcp_registry,
-                    goal_constraints,
-                    dict(goal_constraints.get("context_hints") or {}),
+                    run_constraints,
+                    dict(run_constraints.get("context_hints") or {}),
                     world_snapshot,
                     dict(envelope.get("metadata") or {}) if isinstance(envelope.get("metadata"), dict) else {},
                     envelope,
                 )
                 adapter_context = build_autonomous_turn_context(
-                    title=goal_title,
-                    goal_text=goal_text,
+                    title=run_title,
+                    instruction=instruction,
+                    agent_name=str((agent_definition.name if agent_definition is not None else None) or "Autonomous"),
+                    system_prompt=_definition_system_prompt(agent_definition),
+                    agent_definition_id=agent_definition_id,
                     scope_kind=scope_kind,
                     scope_ref=scope_ref,
-                    constraints=goal_constraints,
+                    constraints=run_constraints,
                     world_snapshot=world_snapshot,
                     recent_events=_fetch_recent_events(session, run_id=run.id, limit=8),
                     memory_entries=memory_entries,
                     available_tools=sorted(self.tool_registry.tools.keys()),
                     skill_contexts=self._skill_contexts(
                         session,
-                        query=goal_text,
+                        query=instruction,
                         task_text=json.dumps(
                             {
-                                "goal": goal_text,
-                                "constraints": goal_constraints,
+                                "instruction": instruction,
+                                "constraints": run_constraints,
                                 "world_snapshot": world_snapshot,
                             },
                             ensure_ascii=False,
                             default=str,
                         ),
-                        category=str(getattr(goal_spec, "goal_kind", None) or run.run_type or ""),
-                        explicit_skill_ids=_explicit_skill_refs(goal_constraints, envelope),
-                        token_budget=_skill_context_token_budget(goal_constraints, active_turn_limits),
+                        category=_snapshot_kind(instruction_snapshot, run),
+                        explicit_skill_ids=_explicit_skill_refs(run_constraints, envelope),
+                        token_budget=_skill_context_token_budget(run_constraints, active_turn_limits),
                     ),
                     available_mcps=self._available_mcp_names(session),
                     mcp_resource_contexts=mcp_resource_contexts,
                 )
                 approved_tool_calls = _approved_tool_calls_from_envelope(envelope, run=run)
+                runtime_conversation_id = run.session_id or run.id
+                existing_engine = None
+                resume_transcript = None
                 if approved_tool_calls:
-                    engine = self.pending_permission_engines.pop(run.id, None)
-                    if engine is None:
-                        raise RuntimeError("Pending runtime permission state is not available for this run")
-                    output_iter = engine.resolvePermission(approved=True)
-                else:
-                    engine = InteractionEngine(
-                        InteractionEngineConfig(
-                            conversation_id=run.session_id or run.id,
-                            provider=self.provider,
-                            tools=_scoped_tool_registry(self.tool_registry, agent_profile_id).to_agent_runtime_tools(),
-                            initial_messages=adapter_context.initial_messages,
-                            max_llm_invocations=active_turn_limits.max_llm_invocations or 12,
-                            initial_seq=runtime_event_seq + 1,
-                        )
-                    )
-                    output_iter = engine.submitMessage(adapter_context.turn_input)
-                tool_calls: list[dict[str, Any]] = []
-                tool_results: list[dict[str, Any]] = []
-                final_output = ""
-                gate_signal = "goal_done"
-                status = "complete"
-                for output in output_iter:
-                    runtime_event_seq = max(runtime_event_seq, int(output.seq or runtime_event_seq))
-                    engine_output_count += 1
-                    _record_engine_output(session, run=run, goal=goal_spec, turn_id=turn.turn_id, output=output)
-                    if output.type == "assistant_message_completed":
-                        final_output = str(output.data.get("message") or "")
-                    elif output.type == "llm_invocation_completed":
-                        structured_status = _outcome_from_structured_result_data(output.data.get("result_data"))
-                        if structured_status is not None:
-                            status, gate_signal = structured_status
-                    elif output.type == "tool_event":
-                        data = dict(output.data)
-                        if data.get("kind") in {"tool_call_started", "tool_use_completed"}:
-                            tool_calls.append(data)
-                        elif data.get("kind") == "tool_result_ready":
-                            tool_results.append(
-                                {
-                                    "tool_name": data.get("tool_name"),
-                                    "is_error": data.get("is_error", False),
-                                    "output": data.get("content"),
-                                }
-                            )
-                    elif output.type == "permission_requested":
-                        gate_signal = "wait_human"
-                        status = "wait_human"
-                        tool_calls = [_permission_payload(dict(output.data))]
-                        self.pending_permission_engines[run.id] = engine
-                    elif output.type == "turn_failed":
-                        gate_signal = "escalate"
-                        status = "error"
-                    elif output.type == "turn_interrupted":
-                        gate_signal = "paused"
-                        status = "cancelled"
+                    existing_engine = self.pending_permission_engines.pop(run.id, None)
+                    if existing_engine is None:
+                        runtime_checkpoint = _runtime_checkpoint_from_sources(session, run=run, envelope=envelope)
+                        if runtime_checkpoint is None:
+                            raise RuntimeError("Pending runtime permission state is not available for this run; durable checkpoint is missing")
+                        resume_transcript = transcript_from_checkpoint(runtime_conversation_id, runtime_checkpoint)
+                runner_result = run_agent_turn(
+                    provider=self.provider,
+                    tool_registry=self.tool_registry,
+                    agent_definition_id=agent_definition_id,
+                    conversation_id=runtime_conversation_id,
+                    initial_messages=adapter_context.initial_messages,
+                    turn_input=adapter_context.turn_input,
+                    max_llm_invocations=active_turn_limits.max_llm_invocations or 12,
+                    initial_seq=runtime_event_seq + 1,
+                    transcript=resume_transcript,
+                    existing_engine=existing_engine,
+                    resolve_permission=bool(approved_tool_calls),
+                    output_sink=lambda output: _record_engine_output(session, run=run, turn_id=turn.turn_id, output=output),
+                    structured_status_resolver=_outcome_from_structured_result_data,
+                    status_defaults=AgentRunStatusDefaults(
+                        completed_status="complete",
+                        completed_gate_signal="run_done",
+                        failed_status="error",
+                        failed_gate_signal="escalate",
+                        interrupted_status="cancelled",
+                        interrupted_gate_signal="paused",
+                        permission_status="wait_human",
+                        permission_gate_signal="wait_human",
+                    ),
+                )
+                runtime_event_seq = max(runtime_event_seq, runner_result.last_seq)
+                engine_output_count = runner_result.engine_output_count
                 last_outcome = AgentTurnOutcome(
-                    status=status,  # type: ignore[arg-type]
-                    gate_signal=gate_signal,  # type: ignore[arg-type]
-                    final_output=final_output,
+                    status=runner_result.status,  # type: ignore[arg-type]
+                    gate_signal=runner_result.gate_signal,  # type: ignore[arg-type]
+                    final_output=runner_result.final_output,
                     tool_calls=[],
                     tool_results=[],
                     metadata={
-                        "tool_calls": tool_calls,
-                        "pending_tool_calls": tool_calls if status == "wait_human" else [],
-                        "tool_results": tool_results,
+                        "tool_calls": runner_result.tool_calls,
+                        "pending_tool_calls": runner_result.pending_tool_calls,
+                        "tool_results": runner_result.tool_results,
+                        "runtime_checkpoint": runner_result.engine.checkpoint_state(),
                         "interaction_engine": True,
                     },
                 )
-                if status != "wait_human":
+                if runner_result.status == "wait_human":
+                    self.pending_permission_engines[run.id] = runner_result.engine
+                else:
                     self.pending_permission_engines.pop(run.id, None)
             except Exception as exc:
                 self.pending_permission_engines.pop(run.id, None)
@@ -305,15 +283,10 @@ class AutonomousAdapter:
                 run.status = "failed"
                 run.finished_at = utcnow()
                 run.last_error = str(exc)
-                if goal_spec is not None:
-                    goal_spec.status = "failed"
-                    goal_spec.latest_run_id = run.run_id
-                    goal_spec.last_activity_at = utcnow()
                 _resolve_wait_human_records(session, run=run)
                 _append_runtime_event(
                     session,
                     run=run,
-                    goal=goal_spec,
                     turn_id=turn.turn_id,
                     seq=next_seq,
                     event_type="adapter_failed",
@@ -336,10 +309,6 @@ class AutonomousAdapter:
             if run.status in {"completed", "waiting_human", "blocked", "failed", "cancelled"}:
                 run.finished_at = utcnow()
             run.last_error = None
-            if goal_spec is not None:
-                goal_spec.status = run.status
-                goal_spec.latest_run_id = run.run_id
-                goal_spec.last_activity_at = utcnow()
             if _is_waiting_human(last_outcome):
                 _materialize_wait_human_records(
                     session,
@@ -355,11 +324,11 @@ class AutonomousAdapter:
             self._maybe_record_trial_skill(
                 session,
                 run=run,
-                goal=goal_spec,
+                snapshot=instruction_snapshot,
                 turn=turn,
                 outcome=last_outcome,
                 engine_output_count=engine_output_count,
-                agent_profile_id=agent_profile_id,
+                agent_definition_id=agent_definition_id,
             )
             if run.status == "completed":
                 _maybe_write_turn_memory(
@@ -367,13 +336,13 @@ class AutonomousAdapter:
                     provider=self.provider,
                     scope_kind=memory_scope_kind,
                     scope_ref=memory_scope_ref,
-                    agent_profile_id=agent_profile_id,
+                    agent_definition_id=agent_definition_id,
                     run=run,
                     turn=turn,
-                    goal_text=goal_text,
+                    instruction=instruction,
                     memory_entries=memory_entries,
                     policy=memory_writeback_policy,
-                    force=_memory_writeback_force_requested(envelope, goal_constraints),
+                    force=_memory_writeback_force_requested(envelope, run_constraints),
                     memory_file_store=self.memory_file_store,
                 )
                 session.commit()
@@ -474,11 +443,11 @@ class AutonomousAdapter:
         session: Session,
         *,
         run: AgentRun,
-        goal: GoalSpec | None,
+        snapshot: dict[str, Any],
         turn: AgentTurnRecord,
         outcome: AgentTurnOutcome,
         engine_output_count: int,
-        agent_profile_id: str | None,
+        agent_definition_id: str | None,
     ) -> None:
         if run.status != "completed":
             return
@@ -495,7 +464,7 @@ class AutonomousAdapter:
         review_payload = build_skill_distill_review_payload(
             run_id=str(run.run_id or run.id),
             run_type=run.run_type,
-            goal_kind=None if goal is None else goal.goal_kind,
+            run_kind=_snapshot_kind(snapshot, run) or None,
             engine_output_count=engine_output_count,
             final_output=outcome.final_output,
             tool_activity=tool_activity,
@@ -505,12 +474,11 @@ class AutonomousAdapter:
         _append_runtime_event(
             session,
             run=run,
-            goal=goal,
             turn_id=turn.turn_id,
             seq=seq,
             event_type="skill_distill.started",
             message="distilling trial skill from successful run",
-            payload={"run_id": run.run_id, "goal_kind": None if goal is None else goal.goal_kind},
+            payload={"run_id": run.run_id, "run_kind": _snapshot_kind(snapshot, run) or None},
         )
         session.commit()
         try:
@@ -520,22 +488,21 @@ class AutonomousAdapter:
             )
             recorded = self.learning_writer.record_skill_draft(
                 draft_contract=draft_contract,
-                tags=_skill_distill_tags(run=run, goal=goal),
+                tags=_skill_distill_tags(run=run, snapshot=snapshot),
                 trial_metrics={"runs": 1, "successes": 1},
                 learning_content=_skill_learning_audit_log(review_payload, draft_contract),
                 source_run_id=run.id,
                 source_turn_id=turn.turn_id,
                 source_kind="autonomous",
-                agent_profile_id=agent_profile_id,
+                agent_definition_id=agent_definition_id,
                 proposed_by="autonomous",
-                environment_scope=_skill_environment_scope(run=run, goal=goal),
+                environment_scope=_skill_environment_scope(run=run, snapshot=snapshot),
             )
         except Exception as exc:
             session.rollback()
             _append_runtime_event(
                 session,
                 run=run,
-                goal=goal,
                 turn_id=turn.turn_id,
                 seq=seq,
                 event_type="skill_distill.failed",
@@ -548,7 +515,6 @@ class AutonomousAdapter:
         _append_runtime_event(
             session,
             run=run,
-            goal=goal,
             turn_id=turn.turn_id,
             seq=seq,
             event_type="skill_distill.completed",
@@ -572,7 +538,7 @@ class AutonomousAdapter:
 
 
 def _run_status_from_outcome(outcome: AgentTurnOutcome) -> str:
-    if outcome.status == "complete" or outcome.gate_signal == "goal_done":
+    if outcome.status == "complete" or outcome.gate_signal == "run_done":
         return "completed"
     if outcome.status == "wait_human" or outcome.gate_signal == "wait_human":
         return "waiting_human"
@@ -588,7 +554,7 @@ def _run_status_from_outcome(outcome: AgentTurnOutcome) -> str:
 
 
 def _turn_status_from_outcome(outcome: AgentTurnOutcome) -> str:
-    if outcome.status == "complete" or outcome.gate_signal == "goal_done":
+    if outcome.status == "complete" or outcome.gate_signal == "run_done":
         return "completed"
     if outcome.status == "wait_human" or outcome.gate_signal == "wait_human":
         return "waiting_human"
@@ -618,15 +584,12 @@ def _outcome_from_structured_result_data(value: Any) -> tuple[str, str] | None:
     if execution_status in {"blocked", "blocked_environment", "escalate"}:
         return "escalate", "escalate"
     if execution_status in {"completed", "complete", "success", "done"}:
-        return "complete", "goal_done"
+        return "complete", "run_done"
     return None
 
 
-def _resolve_turn_limits(defaults: TurnLimits, goal_spec: GoalSpec | None) -> TurnLimits:
-    if goal_spec is None:
-        return defaults
-
-    overrides = dict(getattr(goal_spec, "trial_budget", {}) or {})
+def _resolve_turn_limits(defaults: TurnLimits, trial_budget: dict[str, Any] | None) -> TurnLimits:
+    overrides = dict(trial_budget or {})
     if not overrides:
         return defaults
 
@@ -666,15 +629,15 @@ def _read_memory_file_index_entries(
     *,
     scope_kind: str,
     scope_ref: str,
-    agent_profile_id: str | None,
+    agent_definition_id: str | None,
 ) -> list[dict[str, Any]]:
     try:
         entries: list[dict[str, Any]] = []
-        for item in memory_file_store.list_files(scope_kind=scope_kind, scope_ref=scope_ref, agent_profile_id=agent_profile_id)[:12]:
+        for item in memory_file_store.list_files(scope_kind=scope_kind, scope_ref=scope_ref, agent_definition_id=agent_definition_id)[:12]:
             content = memory_file_store.read_file(
                 scope_kind=scope_kind,
                 scope_ref=scope_ref,
-                agent_profile_id=agent_profile_id,
+                agent_definition_id=agent_definition_id,
                 path=str(item["path"]),
             ).get("content", "")
             entries.append(
@@ -702,25 +665,6 @@ def _first_non_empty_memory_line(text: str) -> str | None:
 
 def _memory_preview(text: str, *, limit: int = 500) -> str:
     return str(text or "").strip()[:limit]
-
-
-def _scoped_tool_registry(registry: ToolRegistry, agent_profile_id: str | None) -> ToolRegistry:
-    if not agent_profile_id:
-        return registry
-    scoped = ToolRegistry()
-    for tool in registry.tools.values():
-        cloned = tool.clone()
-        if cloned.category == "memory":
-            original_handler = cloned.handler
-
-            def _handler(arguments: dict[str, Any], *, handler=original_handler) -> Any:
-                scoped_arguments = dict(arguments or {})
-                scoped_arguments["agent_profile_id"] = agent_profile_id
-                return handler(scoped_arguments)
-
-            cloned.handler = _handler
-        scoped.register(cloned)
-    return scoped
 
 
 def _fetch_recent_events(session: Session, *, run_id: str | None = None, conversation_id: str | None = None, limit: int = 20) -> list[dict[str, Any]]:
@@ -752,10 +696,10 @@ def _maybe_write_turn_memory(
     provider: LLMProvider,
     scope_kind: str,
     scope_ref: str,
-    agent_profile_id: str | None,
+    agent_definition_id: str | None,
     run: AgentRun,
     turn: AgentTurnRecord,
-    goal_text: str,
+    instruction: str,
     memory_entries: list[dict[str, Any]],
     policy: MemoryWritebackPolicy,
     force: bool = False,
@@ -767,7 +711,7 @@ def _maybe_write_turn_memory(
         session,
         run=run,
         last_turn_seq=last_turn_seq,
-        goal_text=goal_text,
+        instruction=instruction,
     )
     if not should_start_memory_writeback_job(
         policy,
@@ -780,10 +724,10 @@ def _maybe_write_turn_memory(
         provider=provider,
         scope_kind=scope_kind,
         scope_ref=scope_ref,
-        agent_profile_id=agent_profile_id,
+        agent_definition_id=agent_definition_id,
         run=run,
         turn=turn,
-        goal_text=goal_text,
+        instruction=instruction,
         evidence_text=evidence_text,
         memory_entries=memory_entries,
         policy=policy,
@@ -798,10 +742,10 @@ def _write_turn_memory(
     provider: LLMProvider,
     scope_kind: str,
     scope_ref: str,
-    agent_profile_id: str | None,
+    agent_definition_id: str | None,
     run: AgentRun,
     turn: AgentTurnRecord,
-    goal_text: str,
+    instruction: str,
     evidence_text: str,
     memory_entries: list[dict[str, Any]],
     policy: MemoryWritebackPolicy,
@@ -812,7 +756,7 @@ def _write_turn_memory(
     try:
         facts = select_stable_memory_facts_with_llm(
             provider,
-            goal_text=goal_text,
+            instruction=instruction,
             final_output=evidence_text,
             scope_kind=scope_kind,
             scope_ref=scope_ref,
@@ -823,7 +767,7 @@ def _write_turn_memory(
             memory_file_store,
             scope_kind=scope_kind,
             scope_ref=scope_ref,
-            agent_profile_id=agent_profile_id,
+            agent_definition_id=agent_definition_id,
             facts=facts,
             run_id=str(run.run_id or run.id),
             run_pk=run.id,
@@ -836,9 +780,22 @@ def _write_turn_memory(
         return False
 
 
-def _memory_writeback_policy(profile: RecruitAgentProfile | None) -> MemoryWritebackPolicy:
-    config = dict((profile.memory_policy if profile is not None else {}) or {}).get("writeback")
+def _memory_writeback_policy(definition: AgentDefinition | None) -> MemoryWritebackPolicy:
+    config = dict((definition.memory_policy if definition is not None else {}) or {}).get("writeback")
     return memory_writeback_policy_from_config(dict(config or {}))
+
+
+def _definition_system_prompt(definition: AgentDefinition | None) -> str:
+    if definition is None:
+        return "你是 Recruit Agent。你的核心职责是严格在招聘场景中维护候选人与投递记录事实，以投递记录为单位推进流程、记录证据，并把高风险动作交给人工确认。"
+    prompt_config = dict(definition.prompt_config or {})
+    return str(
+        prompt_config.get("system_prompt")
+        or prompt_config.get("systemPrompt")
+        or prompt_config.get("prompt")
+        or definition.description
+        or ""
+    )
 
 
 def _memory_writeback_state(run: AgentRun) -> dict[str, Any]:
@@ -852,7 +809,7 @@ def _memory_writeback_evidence_since_last_job(
     *,
     run: AgentRun,
     last_turn_seq: int,
-    goal_text: str,
+    instruction: str,
 ) -> tuple[str, int]:
     stmt = (
         select(AgentTurnRecord)
@@ -864,7 +821,7 @@ def _memory_writeback_evidence_since_last_job(
         .order_by(AgentTurnRecord.seq.asc(), AgentTurnRecord.id.asc())
     )
     rows = list(session.scalars(stmt).all())
-    parts: list[str] = [f"Goal: {goal_text}"]
+    parts: list[str] = [f"Instruction: {instruction}"]
     for item in rows:
         metadata = dict(item.turn_metadata or {})
         final_output = str(metadata.get("final_output") or "").strip()
@@ -884,8 +841,8 @@ def _record_memory_writeback_job(run: AgentRun, *, turn: AgentTurnRecord, eviden
     run.runtime_metadata = runtime_metadata
 
 
-def _memory_writeback_force_requested(envelope: dict[str, Any], goal_constraints: dict[str, Any]) -> bool:
-    for source in (envelope.get("memory_writeback"), goal_constraints.get("memory_writeback")):
+def _memory_writeback_force_requested(envelope: dict[str, Any], run_constraints: dict[str, Any]) -> bool:
+    for source in (envelope.get("memory_writeback"), run_constraints.get("memory_writeback")):
         if isinstance(source, dict) and source.get("force") is True:
             return True
         if str(source or "").strip().lower() == "force":
@@ -902,16 +859,6 @@ def _mcp_resource_contexts(mcp_registry: Any | None, *sources: dict[str, Any]) -
     return build_mcp_resource_context(mcp_registry, policy)
 
 
-def _permission_payload(data: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "tool_name": str(data.get("tool_name") or ""),
-        "tool_use_id": str(data.get("tool_use_id") or ""),
-        "tool_call_id": str(data.get("tool_call_id") or ""),
-        "input": dict(data.get("input") or {}),
-        "reason": str(data.get("reason") or "pending_confirmation"),
-    }
-
-
 def _approved_tool_calls_from_envelope(envelope: dict[str, Any], *, run: AgentRun) -> list[dict[str, Any]]:
     candidates = envelope.get("approved_tool_calls")
     if not isinstance(candidates, list):
@@ -921,12 +868,52 @@ def _approved_tool_calls_from_envelope(envelope: dict[str, Any], *, run: AgentRu
     return [dict(item) for item in candidates or [] if isinstance(item, dict)]
 
 
-def _skill_distill_tags(*, run: AgentRun, goal: GoalSpec | None) -> list[str]:
+def _runtime_checkpoint_from_sources(
+    session: Session,
+    *,
+    run: AgentRun,
+    envelope: dict[str, Any],
+) -> dict[str, Any] | None:
+    for source in (
+        envelope.get("runtime_checkpoint"),
+        envelope.get("engine_checkpoint"),
+        (run.wakeup_state or {}).get("runtime_checkpoint"),
+    ):
+        if _is_pending_runtime_checkpoint(source):
+            return dict(source)
+
+    checkpoint = session.scalars(
+        select(AgentRunCheckpoint)
+        .where(AgentRunCheckpoint.run_id == run.id)
+        .order_by(AgentRunCheckpoint.created_at.desc(), AgentRunCheckpoint.id.desc())
+    ).first()
+    if checkpoint is None:
+        return None
+    checkpoint_payload = dict(checkpoint.payload or {})
+    resume_task = checkpoint_payload.get("resume_task")
+    resume_payload = resume_task.get("payload") if isinstance(resume_task, dict) else None
+    for source in (
+        checkpoint_payload.get("runtime_checkpoint"),
+        resume_payload.get("runtime_checkpoint") if isinstance(resume_payload, dict) else None,
+    ):
+        if _is_pending_runtime_checkpoint(source):
+            return dict(source)
+    return None
+
+
+def _is_pending_runtime_checkpoint(value: Any) -> bool:
+    if not isinstance(value, dict):
+        return False
+    pending = value.get("pending_permissions")
+    return isinstance(pending, list) and any(isinstance(item, dict) for item in pending)
+
+
+def _skill_distill_tags(*, run: AgentRun, snapshot: dict[str, Any]) -> list[str]:
     tags = ["autonomous", "skill_distill"]
-    goal_kind = str((goal.goal_kind if goal is not None else run.run_type) or "").strip()
-    if goal_kind:
-        tags.append(goal_kind)
-    environment_scope = _skill_environment_scope(run=run, goal=goal)
+    run_kind = _snapshot_kind(snapshot, run)
+    if run_kind:
+        tags.append(run_kind)
+    environment_scope = _skill_environment_scope(run=run, snapshot=snapshot)
     if environment_scope in {"mock_only", "simulated"}:
         tags.append(environment_scope)
     return tags
@@ -949,7 +936,7 @@ def _collect_explicit_skill_refs(source: Any, refs: list[str]) -> None:
                     _append_ref(refs, item)
             elif isinstance(value, dict):
                 _collect_explicit_skill_refs(value, refs)
-            elif key in {"goal_text", "instruction", "query", "message"}:
+            elif key in {"instruction", "query", "message"}:
                 _collect_skill_markers(str(value or ""), refs)
         return
     if isinstance(source, list):
@@ -971,9 +958,9 @@ def _append_ref(refs: list[str], value: Any) -> None:
         refs.append(text)
 
 
-def _skill_context_token_budget(goal_constraints: dict[str, Any], limits: TurnLimits) -> int | None:
-    trial_budget = dict(goal_constraints.get("trial_budget") or {})
-    raw = trial_budget.get("skill_context_token_budget") or goal_constraints.get("skill_context_token_budget")
+def _skill_context_token_budget(run_constraints: dict[str, Any], limits: TurnLimits) -> int | None:
+    trial_budget = dict(run_constraints.get("trial_budget") or {})
+    raw = trial_budget.get("skill_context_token_budget") or run_constraints.get("skill_context_token_budget")
     if raw is not None:
         return _bounded_int(raw, default=1200, minimum=100, maximum=4000)
     if limits.token_budget:
@@ -989,12 +976,12 @@ def _bounded_int(value: Any, *, default: int, minimum: int, maximum: int) -> int
     return max(minimum, min(parsed, maximum))
 
 
-def _skill_environment_scope(*, run: AgentRun, goal: GoalSpec | None) -> str:
-    goal_constraints = dict(getattr(goal, "constraints", {}) or {})
-    context_hints = dict(goal_constraints.get("context_hints") or getattr(goal, "context_hints", {}) or {})
+def _skill_environment_scope(*, run: AgentRun, snapshot: dict[str, Any]) -> str:
+    run_constraints = dict(snapshot.get("constraints") or {})
+    context_hints = dict(run_constraints.get("context_hints") or snapshot.get("context_hints") or {})
     run_metadata = dict(run.runtime_metadata or {})
     candidates = [
-        goal_constraints.get("environment_scope"),
+        run_constraints.get("environment_scope"),
         context_hints.get("environment_scope"),
         run_metadata.get("environment_scope"),
     ]
@@ -1084,14 +1071,12 @@ def _record_engine_output(
     session: Session,
     *,
     run: AgentRun,
-    goal: GoalSpec | None,
     turn_id: str,
     output: InteractionOutput,
 ) -> None:
     _append_runtime_event(
         session,
         run=run,
-        goal=goal,
         turn_id=turn_id,
         seq=output.seq,
         event_type=output.type,
@@ -1105,7 +1090,6 @@ def _append_runtime_event(
     session: Session,
     *,
     run: AgentRun,
-    goal: GoalSpec | None,
     turn_id: str | None,
     seq: int,
     event_type: str,
@@ -1130,8 +1114,6 @@ def _append_runtime_event(
             payload=event_payload,
         )
     )
-    if goal is not None:
-        goal.last_activity_at = utcnow()
 
 
 def _resolve_run_application_id(run: AgentRun) -> str | None:
@@ -1160,28 +1142,123 @@ def _resolve_run_person_id(run: AgentRun) -> str | None:
     return None
 
 
+def _run_instruction_snapshot(*, run: AgentRun, envelope: dict[str, Any]) -> dict[str, Any]:
+    context_manifest = dict(run.context_manifest or {})
+    runtime_metadata = dict(run.runtime_metadata or {})
+    metadata = dict(envelope.get("metadata") or {}) if isinstance(envelope.get("metadata"), dict) else {}
+    world_snapshot = dict(envelope.get("world_snapshot") or {}) if isinstance(envelope.get("world_snapshot"), dict) else {}
+    constraints = _merged_dict(
+        runtime_metadata.get("constraints"),
+        context_manifest.get("constraints"),
+        metadata.get("constraints"),
+        world_snapshot.get("constraints"),
+        envelope.get("constraints"),
+    )
+    context_hints = _merged_dict(
+        runtime_metadata.get("context_hints"),
+        context_manifest.get("context_hints"),
+        metadata.get("context_hints"),
+        world_snapshot.get("context_hints"),
+        envelope.get("context_hints"),
+    )
+    return {
+        "instruction": _first_text(
+            context_manifest.get("instruction"),
+            runtime_metadata.get("instruction"),
+            metadata.get("instruction"),
+            world_snapshot.get("instruction"),
+            envelope.get("instruction"),
+        ),
+        "title": _first_text(
+            context_manifest.get("title"),
+            runtime_metadata.get("title"),
+            metadata.get("title"),
+            world_snapshot.get("title"),
+            envelope.get("title"),
+        ),
+        "kind": _first_text(
+            context_manifest.get("kind"),
+            runtime_metadata.get("kind"),
+            metadata.get("kind"),
+            world_snapshot.get("kind"),
+            envelope.get("kind"),
+            run.run_type,
+        ),
+        "requested_by": _first_text(
+            context_manifest.get("requested_by"),
+            runtime_metadata.get("requested_by"),
+            metadata.get("requested_by"),
+            world_snapshot.get("requested_by"),
+            envelope.get("requested_by"),
+        ),
+        "constraints": constraints,
+        "success_criteria": _merged_dict(
+            runtime_metadata.get("success_criteria"),
+            context_manifest.get("success_criteria"),
+            metadata.get("success_criteria"),
+            world_snapshot.get("success_criteria"),
+            envelope.get("success_criteria"),
+        ),
+        "context_hints": context_hints,
+        "trial_budget": _merged_dict(
+            runtime_metadata.get("trial_budget"),
+            context_manifest.get("trial_budget"),
+            metadata.get("trial_budget"),
+            world_snapshot.get("trial_budget"),
+            envelope.get("trial_budget"),
+        ),
+        "run_preferences": _merged_dict(
+            runtime_metadata.get("run_preferences"),
+            context_manifest.get("run_preferences"),
+            metadata.get("run_preferences"),
+            world_snapshot.get("run_preferences"),
+            envelope.get("run_preferences"),
+        ),
+    }
+
+
+def _snapshot_instruction(snapshot: dict[str, Any], run: AgentRun) -> str:
+    return _first_text(snapshot.get("instruction"), run.run_type, "Autonomous execution") or "Autonomous execution"
+
+
+def _snapshot_kind(snapshot: dict[str, Any], run: AgentRun) -> str:
+    return _first_text(snapshot.get("kind"), run.run_type) or ""
+
+
+def _merged_dict(*values: Any) -> dict[str, Any]:
+    merged: dict[str, Any] = {}
+    for value in values:
+        if isinstance(value, dict):
+            merged.update(dict(value))
+    return merged
+
+
+def _first_text(*values: Any) -> str | None:
+    for value in values:
+        text = str(value or "").strip()
+        if text:
+            return text
+    return None
+
+
 def _resolve_application_subject(
     *,
     run: AgentRun,
     envelope: dict[str, Any],
-    goal: GoalSpec | None = None,
+    snapshot: dict[str, Any] | None = None,
 ) -> str | None:
     metadata = dict(envelope.get("metadata") or {}) if isinstance(envelope.get("metadata"), dict) else {}
     world_snapshot = dict(envelope.get("world_snapshot") or {}) if isinstance(envelope.get("world_snapshot"), dict) else {}
+    snapshot_constraints = dict((snapshot or {}).get("constraints") or {})
+    snapshot_context_hints = dict((snapshot or {}).get("context_hints") or {})
     candidates: list[Any] = [
         envelope.get("application_id"),
         metadata.get("application_id"),
         world_snapshot.get("application_id"),
+        snapshot_constraints.get("application_id"),
+        snapshot_context_hints.get("application_id"),
         _resolve_run_application_id(run),
     ]
-    if goal is not None:
-        candidates.extend(
-            [
-                (goal.constraints or {}).get("application_id"),
-                (goal.context_hints or {}).get("application_id"),
-                (goal.goal_metadata or {}).get("application_id"),
-            ]
-        )
     for raw in candidates:
         normalized = str(raw or "").strip()
         if normalized:
@@ -1194,11 +1271,13 @@ def _resolve_person_subject(
     *,
     run: AgentRun,
     envelope: dict[str, Any],
-    goal: GoalSpec | None = None,
+    snapshot: dict[str, Any] | None = None,
     application_id: str | None = None,
 ) -> str | None:
     metadata = dict(envelope.get("metadata") or {}) if isinstance(envelope.get("metadata"), dict) else {}
     world_snapshot = dict(envelope.get("world_snapshot") or {}) if isinstance(envelope.get("world_snapshot"), dict) else {}
+    snapshot_constraints = dict((snapshot or {}).get("constraints") or {})
+    snapshot_context_hints = dict((snapshot or {}).get("context_hints") or {})
     candidates: list[Any] = [
         envelope.get("person_id"),
         envelope.get("personId"),
@@ -1206,19 +1285,12 @@ def _resolve_person_subject(
         metadata.get("personId"),
         world_snapshot.get("person_id"),
         world_snapshot.get("personId"),
+        snapshot_constraints.get("person_id"),
+        snapshot_constraints.get("personId"),
+        snapshot_context_hints.get("person_id"),
+        snapshot_context_hints.get("personId"),
         _resolve_run_person_id(run),
     ]
-    if goal is not None:
-        candidates.extend(
-            [
-                (goal.constraints or {}).get("person_id"),
-                (goal.constraints or {}).get("personId"),
-                (goal.context_hints or {}).get("person_id"),
-                (goal.context_hints or {}).get("personId"),
-                (goal.goal_metadata or {}).get("person_id"),
-                (goal.goal_metadata or {}).get("personId"),
-            ]
-        )
     for raw in candidates:
         normalized = str(raw or "").strip()
         if normalized:
@@ -1282,11 +1354,6 @@ def _interrupt_open_run(session: Session, *, run: AgentRun, reason: str) -> None
 
     run.checkpoint_status = "resolved" if checkpoint is not None else "none"
     run.wakeup_state = {}
-    goal_spec = session.get(GoalSpec, run.goal_spec_id) if run.goal_spec_id else None
-    if goal_spec is not None and str(goal_spec.status or "").strip().lower() in AUTONOMOUS_OPEN_RUN_STATUSES:
-        goal_spec.status = "interrupted"
-        goal_spec.latest_run_id = run.run_id
-        goal_spec.last_activity_at = utcnow()
 
 
 def _materialize_wait_human_records(
@@ -1302,6 +1369,7 @@ def _materialize_wait_human_records(
         for payload in list(outcome.metadata.get("pending_tool_calls") or [])
         if isinstance(payload, dict)
     ]
+    runtime_checkpoint = dict(outcome.metadata.get("runtime_checkpoint") or {})
     tool_names = [
         _pending_tool_name(payload)
         for payload in pending_tool_calls
@@ -1322,6 +1390,7 @@ def _materialize_wait_human_records(
         envelope=envelope,
         pending_tool_calls=pending_tool_calls,
         application_id=application_id,
+        runtime_checkpoint=runtime_checkpoint,
     )
     resume_task = {
         "task_id": run.queue_task_id or f"run-{run.id}",
@@ -1331,7 +1400,6 @@ def _materialize_wait_human_records(
         "person_id": _resolve_run_person_id(run),
         "metadata": {
             "agent_kind": run.agent_kind,
-            "goal_spec_id": run.goal_spec_id,
             "checkpoint_kind": "wait_human",
         },
     }
@@ -1345,6 +1413,7 @@ def _materialize_wait_human_records(
         "pending_tool_calls": pending_tool_calls,
         "resume_task": resume_task,
         "checkpoint_kind": "wait_human",
+        "runtime_checkpoint": runtime_checkpoint,
     }
     if application_id:
         approval_payload["application_id"] = application_id
@@ -1370,6 +1439,7 @@ def _materialize_wait_human_records(
             "turn_id": turn.turn_id,
             "pending_tool_calls": pending_tool_calls,
             "resume_task": resume_task,
+            "runtime_checkpoint": runtime_checkpoint,
             **({"application_id": application_id} if application_id else {}),
         },
     )
@@ -1388,6 +1458,7 @@ def _materialize_wait_human_records(
         "checkpoint_id": checkpoint.id,
         "approval_id": approval.id,
         "pending_tool_calls": pending_tool_calls,
+        "runtime_checkpoint": runtime_checkpoint,
         **({"application_id": application_id} if application_id else {}),
     }
 
@@ -1447,6 +1518,7 @@ def _build_resume_envelope(
     envelope: dict[str, Any],
     pending_tool_calls: list[dict[str, Any]],
     application_id: str | None = None,
+    runtime_checkpoint: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     scope_kind = str(envelope.get("scope_kind") or ("application" if application_id else run.lane or "global"))
     if scope_kind == "application":
@@ -1469,6 +1541,8 @@ def _build_resume_envelope(
         payload["world_snapshot"] = dict(envelope.get("world_snapshot") or {})
     if pending_tool_calls:
         payload["approved_tool_calls"] = pending_tool_calls
+    if runtime_checkpoint:
+        payload["runtime_checkpoint"] = dict(runtime_checkpoint)
     metadata = dict(envelope.get("metadata") or {}) if isinstance(envelope.get("metadata"), dict) else {}
     if application_id:
         metadata["application_id"] = application_id
@@ -1607,7 +1681,6 @@ def _upsert_wait_human_interaction(
             run_id=run.id,
             checkpoint_id=checkpoint.id,
             approval_id=approval.id,
-            goal_spec_id=run.goal_spec_id,
             person_id=run.person_id,
             application_id=application_id,
             lane=run.lane,
@@ -1628,7 +1701,6 @@ def _upsert_wait_human_interaction(
 
     interaction.approval_id = approval.id
     interaction.run_id = run.id
-    interaction.goal_spec_id = run.goal_spec_id
     interaction.person_id = run.person_id
     interaction.application_id = application_id
     interaction.status = "pending"

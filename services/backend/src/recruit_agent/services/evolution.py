@@ -69,7 +69,7 @@ def build_skill_distill_review_payload(
     *,
     run_id: str,
     run_type: str | None,
-    goal_kind: str | None,
+    run_kind: str | None,
     engine_output_count: int,
     final_output: str | None,
     tool_activity: list[dict[str, Any]],
@@ -78,7 +78,7 @@ def build_skill_distill_review_payload(
     return {
         "run_id": run_id,
         "run_type": str(run_type or "").strip() or None,
-        "goal_kind": str(goal_kind or "").strip() or None,
+        "run_kind": str(run_kind or "").strip() or None,
         "engine_output_count": max(int(engine_output_count or 0), 0),
         "final_output": str(final_output or "").strip() or None,
         "tool_activity": [dict(item) for item in tool_activity if isinstance(item, dict)],

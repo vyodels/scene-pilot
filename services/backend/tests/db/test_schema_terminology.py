@@ -18,8 +18,15 @@ def test_schema_uses_turn_terminology(tmp_path: Path) -> None:
     inspector = inspect(engine)
 
     table_names = set(inspector.get_table_names())
+    assert "agent_definitions" in table_names
+    assert "recruit_agent_profiles" not in table_names
+    assert "goal_specs" not in table_names
     turn_record_tables = {name for name in table_names if name.startswith("agent_") and name.endswith("_records")}
     assert turn_record_tables == {"agent_turn_records"}
+
+    definition_columns = {column["name"] for column in inspector.get_columns("agent_definitions")}
+    assert "definition_key" in definition_columns
+    assert "agent_key" not in definition_columns
 
     run_columns = {column["name"] for column in inspector.get_columns("agent_runs")}
     assert "turns_count" in run_columns
@@ -27,9 +34,8 @@ def test_schema_uses_turn_terminology(tmp_path: Path) -> None:
     assert {"person_id", "application_id"} <= run_columns
     assert "candidate_id" not in run_columns
 
-    work_item_columns = {column["name"] for column in inspector.get_columns("agent_work_items")}
-    assert {"person_id", "application_id"} <= work_item_columns
-    assert "candidate_id" not in work_item_columns
+    assert "agent_work_items" not in table_names
+    assert not {name for name in table_names if "work_item" in name}
 
     turn_record_columns = {column["name"] for column in inspector.get_columns("agent_turn_records")}
     assert {"turn_id", "run_pk", "seq", "turn_metadata"}.issubset(turn_record_columns)
@@ -60,3 +66,8 @@ def test_schema_uses_turn_terminology(tmp_path: Path) -> None:
 
     tool_invocation_columns = {column["name"] for column in inspector.get_columns("tool_invocations")}
     assert {name for name in tool_invocation_columns if name.endswith("_pk")} == {"turn_pk"}
+
+    for table_name in table_names:
+        column_names = {column["name"] for column in inspector.get_columns(table_name)}
+        assert "agent_profile_id" not in column_names
+        assert "goal_spec_id" not in column_names

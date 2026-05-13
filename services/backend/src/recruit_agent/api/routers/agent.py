@@ -7,7 +7,7 @@ from typing import Any, Literal
 from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -21,14 +21,13 @@ from recruit_agent.models.domain import (
     ApprovalItem,
     ConversationSession,
     ConversationTurn,
-    GoalSpec,
     OperatorInteraction,
-    RecruitAgentProfile,
+    AgentDefinition,
     Skill,
     TaskQueueItem,
 )
 from recruit_agent.repositories.domain import (
-    RecruitAgentProfileRepository,
+    AgentDefinitionRepository,
     SkillRepository,
     TaskQueueRepository,
 )
@@ -36,28 +35,23 @@ from recruit_agent.product_adapters.business_state_projection import project_run
 from recruit_agent.product_adapters.target_contracts import derive_browser_target
 from recruit_agent.schemas.domain import (
     ApprovalRead,
-    GoalSpecRead,
+    AgentDefinitionRead,
+    AgentDefinitionUpdate,
     McpServerRead,
-    RecruitAgentProfileRead,
-    RecruitAgentProfileUpdate,
     RuntimeControlledRunRead,
     RuntimeEventRead,
     RuntimeSessionRead,
     SkillRead,
 )
 from recruit_agent.services.container import AppContainer
-from recruit_agent.services.recruit_agent import resolve_context_policy, resolve_memory_policy
-from recruit_agent.services.scene_templates import (
-    SHARED_WORKSPACE_SCOPE_REF,
-    serialize_scene_template,
-    shared_scene_template_catalog,
-)
+from recruit_agent.services.recruit_agent import normalize_prompt_config, resolve_context_policy, resolve_memory_policy
 
 
 AgentKind = Literal["assistant", "autonomous"]
 MemoryScope = Literal["candidate", "job", "global"]
 BUILTIN_AGENT_KINDS: tuple[AgentKind, ...] = ("assistant", "autonomous")
 AUTONOMOUS_PRIMARY_CONVERSATION_ID = "autonomous-primary"
+SHARED_WORKSPACE_SCOPE_REF = "workspace:shared"
 AUTONOMOUS_OPEN_RUN_STATUSES: tuple[str, ...] = (
     "queued",
     "running",
@@ -102,39 +96,45 @@ class AgentTaskCreate(BaseModel):
     payload: dict[str, Any] = Field(default_factory=dict)
 
 
-class AutonomousGoalCreateRequest(BaseModel):
-    title: str
-    goal_text: str
-    goal_kind: str = "recruiting"
+class AutonomousTriggerRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    title: str | None = None
+    instruction: str
+    kind: str = "recruiting"
     requested_by: str = "desktop-user"
     summary: str | None = None
     priority: int = 100
-    jd_id: str | None = Field(default=None, alias="jd_id")
-    conversation_id: str | None = Field(default=None, alias="conversation_id")
-    candidate_count_target: int | None = None
+    jd_id: str | None = Field(default=None, validation_alias=AliasChoices("jd_id", "jdId"), serialization_alias="jdId")
+    conversation_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("conversation_id", "conversationId"),
+        serialization_alias="conversationId",
+    )
+    candidate_count_target: int | None = Field(
+        default=None,
+        validation_alias=AliasChoices("candidate_count_target", "candidateCountTarget"),
+        serialization_alias="candidateCountTarget",
+    )
     constraints: dict[str, Any] = Field(default_factory=dict)
     success_criteria: dict[str, Any] = Field(default_factory=dict)
     context_hints: dict[str, Any] = Field(default_factory=dict)
     trial_budget: dict[str, Any] = Field(default_factory=dict)
     run_preferences: dict[str, Any] = Field(default_factory=dict)
 
+    @field_validator("instruction")
+    @classmethod
+    def _instruction_must_not_be_empty(cls, value: str) -> str:
+        instruction = str(value or "").strip()
+        if not instruction:
+            raise ValueError("instruction must not be empty")
+        return instruction
+
 
 class RunControlRequest(BaseModel):
     reviewer: str = "desktop-user"
     reason: str | None = None
 
-
-class SceneTemplateRunRequest(BaseModel):
-    requested_by: str = "desktop-user"
-    title: str | None = None
-    goal_text: str | None = None
-    jd_id: str | None = Field(default=None, alias="jd_id")
-    conversation_id: str | None = Field(default=None, alias="conversation_id")
-    candidate_count_target: int | None = None
-    constraints: dict[str, Any] = Field(default_factory=dict)
-    success_criteria: dict[str, Any] = Field(default_factory=dict)
-    context_hints: dict[str, Any] = Field(default_factory=dict)
-    trial_budget: dict[str, Any] = Field(default_factory=dict)
 
 class AssistantConversationCreateRequest(BaseModel):
     user_id: str = "desktop-user"
@@ -202,38 +202,21 @@ def build_router(container: AppContainer) -> APIRouter:
     @router.get("")
     def list_agents() -> list[dict[str, Any]]:
         with container.session_factory() as session:
-            return [_serialize_profile(_resolve_profile(session, kind)) for kind in BUILTIN_AGENT_KINDS]
+            return [
+                _serialize_agent_projection(_resolve_agent_definition(session, kind), kind=kind)
+                for kind in BUILTIN_AGENT_KINDS
+            ]
 
-    @router.get("/autonomous/goals")
-    def list_autonomous_goals(
-        status: str | None = Query(default=None),
-        limit: int = Query(default=100, ge=1, le=500),
-        offset: int = Query(default=0, ge=0),
-    ) -> list[dict[str, Any]]:
+    @router.post("/autonomous/runs", status_code=201)
+    def create_autonomous_run(payload: AutonomousTriggerRequest) -> dict[str, Any]:
         with container.session_factory() as session:
-            profile = _resolve_profile(session, "autonomous")
-            from recruit_agent.models.domain import GoalSpec
-
-            query = select(GoalSpec).where(GoalSpec.agent_profile_id == profile.id)
-            if status is not None:
-                query = query.where(GoalSpec.status == status)
-            query = query.order_by(
-                GoalSpec.last_activity_at.desc().nullslast(),
-                GoalSpec.created_at.desc(),
-                GoalSpec.id.desc(),
-            ).offset(offset).limit(limit)
-            return [GoalSpecRead.model_validate(item).model_dump(by_alias=True) for item in session.scalars(query).all()]
-
-    @router.post("/autonomous/goals", status_code=201)
-    def create_autonomous_goal(payload: AutonomousGoalCreateRequest) -> dict[str, Any]:
-        with container.session_factory() as session:
-            profile = _resolve_profile(session, "autonomous")
-            agent_session = _ensure_agent_session(session, profile)
+            definition = _resolve_agent_definition(session, "autonomous")
+            agent_session = _ensure_agent_session(session, definition, kind="autonomous")
             open_run = _find_open_autonomous_run(session, session_id=agent_session.id)
             if open_run is not None:
                 raise HTTPException(
                     status_code=409,
-                    detail="Autonomous already has an open run. Wait for it to finish or resume it before creating a new goal.",
+                    detail="Autonomous already has an open run. Wait for it to finish or resume it before starting another run.",
                 )
 
             constraints = dict(payload.constraints or {})
@@ -260,64 +243,52 @@ def build_router(container: AppContainer) -> APIRouter:
             browser_target = derive_browser_target(
                 existing=context_hints.get("browser_target"),
                 structured_sources=(context_hints, constraints),
-                text_sources=(payload.goal_text, payload.title),
+                text_sources=(payload.instruction, payload.title),
             )
             if browser_target:
                 context_hints["browser_target"] = browser_target
                 constraints.setdefault("browser_target", browser_target)
 
-            goal = GoalSpec(
-                agent_profile_id=profile.id,
-                title=payload.title,
-                goal_text=payload.goal_text,
-                goal_kind=payload.goal_kind,
-                status="queued",
-                source="operator",
-                source_text=payload.goal_text,
-                requested_by=payload.requested_by,
-                constraints=constraints,
-                success_criteria=dict(payload.success_criteria or {}),
-                context_hints=context_hints,
-                trial_budget=dict(payload.trial_budget or {}),
-                run_preferences=dict(payload.run_preferences or {}),
-                summary=payload.summary or f"围绕目标“{payload.title}”启动 Autonomous run。",
-                last_activity_at=utcnow(),
-                goal_metadata={
-                    "created_from": "agents_api",
-                    "agent_kind": "autonomous",
-                    "overlay_parent_conversation_id": parent_conversation_id,
-                },
-            )
-            session.add(goal)
-            session.flush()
+            instruction = str(payload.instruction or "").strip()
+            title = str(payload.title or _trim_title(instruction) or "Autonomous run").strip()
 
             run = AgentRun(
                 session_id=agent_session.id,
-                goal_spec_id=goal.id,
                 job_description_id=payload.jd_id,
                 platform="site",
                 lane="agent",
-                run_type=payload.goal_kind,
+                run_type=payload.kind,
                 status="queued",
                 priority=payload.priority,
                 context_manifest={
-                    "goal": payload.goal_text,
-                    "title": payload.title,
+                    "instruction": instruction,
+                    "title": title,
+                    "kind": payload.kind,
                     "requested_by": payload.requested_by,
                     "candidate_count_target": payload.candidate_count_target,
                     "conversation_id": conversation_id,
                     "parent_conversation_id": parent_conversation_id,
-                    "goal_id": goal.id,
+                    "constraints": constraints,
+                    "success_criteria": dict(payload.success_criteria or {}),
+                    "context_hints": context_hints,
+                    "trial_budget": dict(payload.trial_budget or {}),
+                    "run_preferences": dict(payload.run_preferences or {}),
                     **({"browser_target": browser_target} if browser_target else {}),
                 },
                 runtime_metadata={
-                    "goal_title": payload.title,
-                    "goal_requested_by": payload.requested_by,
+                    "instruction": instruction,
+                    "title": title,
+                    "summary": payload.summary or instruction,
+                    "requested_by": payload.requested_by,
                     "jd_id": payload.jd_id,
                     "candidate_count_target": payload.candidate_count_target,
                     "conversation_id": conversation_id,
                     "parent_conversation_id": parent_conversation_id,
-                    "goal_id": goal.id,
+                    "constraints": constraints,
+                    "success_criteria": dict(payload.success_criteria or {}),
+                    "context_hints": context_hints,
+                    "trial_budget": dict(payload.trial_budget or {}),
+                    "run_preferences": dict(payload.run_preferences or {}),
                     **({"browser_target": browser_target} if browser_target else {}),
                 },
                 run_id=uuid4().hex,
@@ -326,127 +297,88 @@ def build_router(container: AppContainer) -> APIRouter:
             session.add(run)
             session.flush()
 
-            goal.latest_run_id = run.run_id
-            agent_session.current_goal_id = goal.id
             agent_session.current_lane = run.lane
             agent_session.last_active_at = utcnow()
 
-            envelope = _default_run_envelope(run=run, profile=profile, goal=goal)
+            envelope = _default_run_envelope(run=run, definition=definition)
             task = _enqueue_run_task(session, run=run, envelope=envelope)
             session.commit()
-            session.refresh(goal)
             session.refresh(run)
             session.refresh(agent_session)
             return {
                 "conversation_id": conversation_id,
                 "conversationId": conversation_id,
-                "goal_id": goal.id,
-                "goalId": goal.id,
                 "run_id": run.run_id,
                 "runId": run.run_id,
-                "status": goal.status,
-                "goal": GoalSpecRead.model_validate(goal).model_dump(by_alias=True),
+                "status": run.status,
                 "run": _serialize_run(run),
                 "session": RuntimeSessionRead.model_validate(agent_session).model_dump(by_alias=True),
                 "task_id": task.id,
             }
 
-    @router.get("/shared-scene-templates")
-    @router.get("/scene-templates")
-    def list_scene_templates() -> list[dict[str, Any]]:
-        return [serialize_scene_template(template) for template in shared_scene_template_catalog().values()]
-
-    @router.post("/scene-templates/{template_key}/runs", status_code=202)
-    def run_scene_template(template_key: str, payload: SceneTemplateRunRequest) -> dict[str, Any]:
-        template = shared_scene_template_catalog().get(template_key)
-        if template is None:
-            raise HTTPException(status_code=404, detail=f"Unknown scene template: {template_key}")
-        if bool(template.get("requires_jd")) and not str(payload.jd_id or "").strip():
-            raise HTTPException(status_code=400, detail=f"Scene template requires jd_id: {template_key}")
-
-        goal_title = str(payload.title or template["title"])
-        goal_text = str(payload.goal_text or template["default_goal_text"])
-
-        merged_constraints = {
-            **dict(template.get("constraints") or {}),
-            **dict(payload.constraints or {}),
-        }
-        merged_success_criteria = {
-            **dict(template.get("success_criteria") or {}),
-            **dict(payload.success_criteria or {}),
-        }
-        merged_context_hints = {
-            **dict(template.get("context_hints") or {}),
-            **dict(payload.context_hints or {}),
-            "scene_template_key": template_key,
-        }
-        merged_trial_budget = {
-            **dict(template.get("trial_budget") or {}),
-            **dict(payload.trial_budget or {}),
-        }
-        action_payload = AutonomousGoalCreateRequest(
-            title=goal_title,
-            goal_text=goal_text,
-            goal_kind=str(template["goal_kind"]),
-            requested_by=payload.requested_by,
-            jd_id=payload.jd_id,
-            conversation_id=payload.conversation_id,
-            candidate_count_target=(
-                payload.candidate_count_target
-                if payload.candidate_count_target is not None
-                else template.get("default_candidate_count_target")
-            ),
-            summary=goal_text,
-            constraints=merged_constraints,
-            success_criteria=merged_success_criteria,
-            context_hints=merged_context_hints,
-            trial_budget=merged_trial_budget,
-        )
-        return create_autonomous_goal(action_payload)
-
     @router.get("/{kind}")
     def get_agent(kind: AgentKind) -> dict[str, Any]:
         with container.session_factory() as session:
-            return _serialize_profile(_resolve_profile(session, kind))
+            return _serialize_agent_projection(_resolve_agent_definition(session, kind), kind=kind)
 
     @router.patch("/{kind}")
-    def update_agent(kind: AgentKind, payload: RecruitAgentProfileUpdate) -> dict[str, Any]:
+    def update_agent(kind: AgentKind, payload: AgentDefinitionUpdate) -> dict[str, Any]:
         with container.session_factory() as session:
-            repo = RecruitAgentProfileRepository(session)
-            profile = _resolve_profile(session, kind)
+            repo = AgentDefinitionRepository(session)
+            definition = _resolve_agent_definition(session, kind)
             patch = payload.model_dump(exclude_unset=True)
-            requested_key = patch.get("agent_key")
-            if requested_key is not None and requested_key != kind:
-                raise HTTPException(status_code=400, detail="Built-in agent key is immutable.")
-            expected_primary = kind == "autonomous"
-            requested_primary = patch.get("is_primary")
-            if requested_primary is not None and bool(requested_primary) != expected_primary:
-                raise HTTPException(status_code=400, detail="Built-in agent primary state is immutable.")
-            patch["agent_key"] = kind
-            patch["is_primary"] = expected_primary
+            if patch.get("definition_key") is not None:
+                raise HTTPException(status_code=400, detail="Agent definition key is immutable for product projections.")
+            if patch.get("is_primary") is not None:
+                raise HTTPException(status_code=400, detail="Agent definition primary state is immutable for product projections.")
+            definition_patch: dict[str, Any] = {}
+            projection_patch: dict[str, Any] = {}
+            config_patch: dict[str, Any] = {}
+            for key in ("name", "status", "description", "dashboard_config", "channel_config", "agent_metadata"):
+                if key in patch:
+                    projection_patch[key] = patch.pop(key)
+            for key in ("prompt_config", "memory_policy"):
+                if key in patch:
+                    config_patch[key] = patch.pop(key)
             if isinstance(patch.get("role_definition"), dict):
-                role_definition = dict(profile.role_definition or {})
+                role_definition = dict(definition.role_definition or {})
                 role_definition.update(dict(patch["role_definition"] or {}))
-                patch["role_definition"] = role_definition
-            if isinstance(patch.get("prompt_config"), dict):
-                prompt_config = dict(profile.prompt_config or {})
-                prompt_config.update(dict(patch["prompt_config"] or {}))
+                definition_patch["role_definition"] = role_definition
+            if isinstance(config_patch.get("prompt_config"), dict):
+                prompt_config = dict(_product_config(definition, kind).get("prompt_config") or {})
+                prompt_config.update(dict(config_patch["prompt_config"] or {}))
+                prompt_config = normalize_prompt_config(prompt_config)
                 prompt_config["context_policy"] = resolve_context_policy(prompt_config)
-                patch["prompt_config"] = prompt_config
-            if isinstance(patch.get("memory_policy"), dict):
-                memory_policy = dict(profile.memory_policy or {})
-                memory_policy.update(dict(patch["memory_policy"] or {}))
-                patch["memory_policy"] = resolve_memory_policy(memory_policy)
-            updated = repo.update(profile, patch)
+                config_patch["prompt_config"] = prompt_config
+            if isinstance(config_patch.get("memory_policy"), dict):
+                memory_policy = dict(_product_config(definition, kind).get("memory_policy") or {})
+                memory_policy.update(dict(config_patch["memory_policy"] or {}))
+                config_patch["memory_policy"] = resolve_memory_policy(memory_policy)
+            for key in ("playbook_blueprint", "product_bindings", "product_config", "product_projections"):
+                if key in patch:
+                    definition_patch[key] = patch[key]
+            if projection_patch:
+                product_projections = dict(definition.product_projections or {})
+                projection = dict(product_projections.get(kind) or {})
+                projection.update(projection_patch)
+                product_projections[kind] = projection
+                definition_patch["product_projections"] = product_projections
+            if config_patch:
+                product_config = dict(definition.product_config or {})
+                config = dict(product_config.get(kind) or {})
+                config.update(config_patch)
+                product_config[kind] = config
+                definition_patch["product_config"] = product_config
+            updated = repo.update(definition, definition_patch)
             session.commit()
             session.refresh(updated)
-            return _serialize_profile(updated)
+            return _serialize_agent_projection(updated, kind=kind)
 
     @router.get("/{kind}/workspace")
     def get_agent_workspace(kind: AgentKind) -> dict[str, Any]:
         with container.session_factory() as session:
-            profile = _resolve_profile(session, kind)
-            return _serialize_workspace(session, container=container, profile=profile, kind=kind)
+            definition = _resolve_agent_definition(session, kind)
+            return _serialize_workspace(session, container=container, definition=definition, kind=kind)
 
     @router.post("/assistant/conversations", status_code=201)
     def create_assistant_conversation(payload: AssistantConversationCreateRequest) -> dict[str, Any]:
@@ -459,7 +391,7 @@ def build_router(container: AppContainer) -> APIRouter:
     @router.post("/assistant/conversations/{conversation_id}/messages", status_code=202)
     def send_assistant_message(conversation_id: str, payload: AssistantMessageCreateRequest) -> dict[str, Any]:
         with container.session_factory() as session:
-            _resolve_profile(session, "assistant")
+            _resolve_agent_definition(session, "assistant")
             active_turn = container.assistant_adapter.active_turns.get(conversation_id)
             if active_turn is not None and active_turn.worker.is_alive():
                 raise HTTPException(status_code=409, detail="Assistant conversation already has an active turn.")
@@ -494,7 +426,7 @@ def build_router(container: AppContainer) -> APIRouter:
     @router.get("/{kind}/conversations/{conversation_id}")
     def get_agent_conversation(kind: AgentKind, conversation_id: str) -> dict[str, Any]:
         with container.session_factory() as session:
-            _resolve_profile(session, kind)
+            _resolve_agent_definition(session, kind)
             return _serialize_conversation_record(
                 session,
                 container=container,
@@ -510,8 +442,8 @@ def build_router(container: AppContainer) -> APIRouter:
         offset: int = Query(default=0, ge=0),
     ) -> list[dict[str, Any]]:
         with container.session_factory() as session:
-            profile = _resolve_profile(session, kind)
-            agent_session = _get_agent_session(session, profile)
+            definition = _resolve_agent_definition(session, kind)
+            agent_session = _get_agent_session(session, definition, kind=kind)
             if agent_session is None:
                 return []
             stmt = (
@@ -564,7 +496,6 @@ def build_router(container: AppContainer) -> APIRouter:
                 approval_status="rejected",
                 interaction_action="cancel",
             )
-            _update_goal_status(session, run=run, status="cancelled")
             session.commit()
             session.refresh(run)
             return {"run": _serialize_run(run)}
@@ -591,9 +522,8 @@ def build_router(container: AppContainer) -> APIRouter:
                 approval_status="approved",
                 interaction_action="resume",
             )
-            profile = _resolve_profile(session, "autonomous")
-            goal = _get_goal(session, run.goal_spec_id)
-            envelope = _resume_envelope_for_run(run=run, profile=profile, checkpoint=checkpoint, goal=goal)
+            definition = _resolve_agent_definition(session, "autonomous")
+            envelope = _resume_envelope_for_run(run=run, definition=definition, checkpoint=checkpoint)
             run.status = "queued"
             run.finished_at = None
             run.blocked_reason = None
@@ -603,7 +533,6 @@ def build_router(container: AppContainer) -> APIRouter:
                 "resumed_by": payload.reviewer,
                 "checkpoint_id": None if checkpoint is None else checkpoint.id,
             }
-            _update_goal_status(session, run=run, status="queued")
             task = _enqueue_run_task(session, run=run, envelope=envelope)
             session.commit()
             session.refresh(run)
@@ -617,7 +546,7 @@ def build_router(container: AppContainer) -> APIRouter:
         offset: int = Query(default=0, ge=0),
     ) -> list[dict[str, Any]]:
         with container.session_factory() as session:
-            _resolve_profile(session, kind)
+            _resolve_agent_definition(session, kind)
             stmt = select(ApprovalItem).order_by(ApprovalItem.created_at.desc(), ApprovalItem.id.desc())
             if status is None:
                 stmt = stmt.where(ApprovalItem.status == "pending")
@@ -638,12 +567,12 @@ def build_router(container: AppContainer) -> APIRouter:
         offset: int = Query(default=0, ge=0),
     ) -> list[dict[str, Any]]:
         with container.session_factory() as session:
-            profile = _resolve_profile(session, kind)
+            definition = _resolve_agent_definition(session, kind)
             return [
                 _serialize_memory_file_summary(item)
                 for item in container.memory_file_store.list_scope_files(
                     scope_kind=scope,
-                    agent_profile_id=profile.id,
+                    agent_definition_id=definition.id,
                     limit=limit,
                     offset=offset,
                 )
@@ -652,7 +581,7 @@ def build_router(container: AppContainer) -> APIRouter:
     @router.get("/{kind}/skills")
     def list_agent_skills(kind: AgentKind) -> list[dict[str, Any]]:
         with container.session_factory() as session:
-            _resolve_profile(session, kind)
+            _resolve_agent_definition(session, kind)
             stmt = (
                 select(Skill)
                 .where(Skill.status.in_(("trial", "active")))
@@ -663,7 +592,7 @@ def build_router(container: AppContainer) -> APIRouter:
     @router.get("/{kind}/mcp")
     def list_agent_mcps(kind: AgentKind) -> list[dict[str, Any]]:
         with container.session_factory() as session:
-            _resolve_profile(session, kind)
+            _resolve_agent_definition(session, kind)
         return [
             McpServerRead.model_validate(item).model_dump(by_alias=True)
             for item in container.mcp_registry.list_servers()
@@ -673,28 +602,84 @@ def build_router(container: AppContainer) -> APIRouter:
     return router
 
 
-def _serialize_profile(profile: RecruitAgentProfile) -> dict[str, Any]:
-    payload = RecruitAgentProfileRead.model_validate(
+def _serialize_agent_projection(definition: AgentDefinition, *, kind: AgentKind) -> dict[str, Any]:
+    projection = _product_projection(definition, kind)
+    config = _product_config(definition, kind)
+    definition_payload = AgentDefinitionRead.model_validate(
         {
-            "id": profile.id,
-            "agent_key": profile.agent_key,
-            "name": profile.name,
-            "status": profile.status,
-            "description": profile.description,
-            "is_primary": profile.is_primary,
-            "role_definition": dict(profile.role_definition or {}),
-            "prompt_config": dict(profile.prompt_config or {}),
-            "playbook_blueprint": dict(profile.playbook_blueprint or {}),
-            "memory_policy": dict(profile.memory_policy or {}),
-            "dashboard_config": dict(profile.dashboard_config or {}),
-            "channel_config": dict(profile.channel_config or {}),
-            "agent_metadata": dict(profile.agent_metadata or {}),
-            "created_at": int(_timestamp_sort_value(profile.created_at)),
-            "updated_at": int(_timestamp_sort_value(profile.updated_at)),
+            "id": definition.id,
+            "definition_key": definition.definition_key,
+            "name": definition.name,
+            "status": definition.status,
+            "description": definition.description,
+            "is_primary": definition.is_primary,
+            "role_definition": dict(definition.role_definition or {}),
+            "prompt_config": dict(definition.prompt_config or {}),
+            "playbook_blueprint": dict(definition.playbook_blueprint or {}),
+            "memory_policy": dict(definition.memory_policy or {}),
+            "dashboard_config": dict(definition.dashboard_config or {}),
+            "channel_config": dict(definition.channel_config or {}),
+            "product_bindings": dict(definition.product_bindings or {}),
+            "product_config": dict(definition.product_config or {}),
+            "product_projections": dict(definition.product_projections or {}),
+            "agent_metadata": dict(definition.agent_metadata or {}),
+            "created_at": int(_timestamp_sort_value(definition.created_at)),
+            "updated_at": int(_timestamp_sort_value(definition.updated_at)),
         }
     ).model_dump(by_alias=True)
-    payload["kind"] = profile.agent_key
+    payload = {
+        "id": kind,
+        "kind": kind,
+        "agent_definition_id": definition.id,
+        "agentDefinitionId": definition.id,
+        "definition_key": definition.definition_key,
+        "definitionKey": definition.definition_key,
+        "name": str(projection.get("name") or definition.name),
+        "status": str(projection.get("status") or definition.status),
+        "description": projection.get("description", definition.description),
+        "is_primary": kind == "autonomous",
+        "isPrimary": kind == "autonomous",
+        "role_definition": dict(definition.role_definition or {}),
+        "roleDefinition": dict(definition.role_definition or {}),
+        "prompt_config": dict(config.get("prompt_config") or definition.prompt_config or {}),
+        "promptConfig": dict(config.get("prompt_config") or definition.prompt_config or {}),
+        "playbook_blueprint": dict(definition.playbook_blueprint or {}),
+        "playbookBlueprint": dict(definition.playbook_blueprint or {}),
+        "memory_policy": dict(config.get("memory_policy") or definition.memory_policy or {}),
+        "memoryPolicy": dict(config.get("memory_policy") or definition.memory_policy or {}),
+        "dashboard_config": dict(projection.get("dashboard_config") or definition.dashboard_config or {}),
+        "dashboardConfig": dict(projection.get("dashboard_config") or definition.dashboard_config or {}),
+        "channel_config": dict(projection.get("channel_config") or definition.channel_config or {}),
+        "channelConfig": dict(projection.get("channel_config") or definition.channel_config or {}),
+        "agent_metadata": dict(projection.get("agent_metadata") or definition.agent_metadata or {}),
+        "agentMetadata": dict(projection.get("agent_metadata") or definition.agent_metadata or {}),
+        "product_binding": _product_binding(definition, kind),
+        "productBinding": _product_binding(definition, kind),
+        "agent_definition": definition_payload,
+        "agentDefinition": definition_payload,
+        "created_at": definition_payload["created_at"],
+        "createdAt": definition_payload.get("createdAt", definition_payload["created_at"]),
+        "updated_at": definition_payload["updated_at"],
+        "updatedAt": definition_payload.get("updatedAt", definition_payload["updated_at"]),
+    }
     return payload
+
+
+def _product_binding(definition: AgentDefinition, kind: AgentKind) -> dict[str, Any]:
+    return dict((definition.product_bindings or {}).get(kind) or {})
+
+
+def _product_config(definition: AgentDefinition, kind: AgentKind) -> dict[str, Any]:
+    return dict((definition.product_config or {}).get(kind) or {})
+
+
+def _product_projection(definition: AgentDefinition, kind: AgentKind) -> dict[str, Any]:
+    return dict((definition.product_projections or {}).get(kind) or {})
+
+
+def _agent_session_key(definition: AgentDefinition, kind: AgentKind) -> str:
+    binding = _product_binding(definition, kind)
+    return str(binding.get("session_key") or kind).strip() or kind
 
 
 def _serialize_run(run: AgentRun) -> dict[str, Any]:
@@ -703,7 +688,6 @@ def _serialize_run(run: AgentRun) -> dict[str, Any]:
             "id": run.id,
             "session_id": run.session_id,
             "execution_episode_id": run.execution_episode_id,
-            "goal_spec_id": run.goal_spec_id,
             "person_id": run.person_id,
             "application_id": run.application_id,
             "job_description_id": run.job_description_id,
@@ -805,32 +789,37 @@ def _list_run_events(session: Session, run: AgentRun) -> list[dict[str, Any]]:
     return [RuntimeEventRead.model_validate(item).model_dump(by_alias=True) for item in items]
 
 
-def _resolve_profile(session: Session, kind: str) -> RecruitAgentProfile:
+def _resolve_agent_definition(session: Session, kind: str) -> AgentDefinition:
     if kind not in BUILTIN_AGENT_KINDS:
         raise HTTPException(status_code=404, detail=f"Unknown agent kind: {kind}")
-    profile = RecruitAgentProfileRepository(session).by_agent_key(kind)
-    if profile is None:
-        raise HTTPException(status_code=404, detail=f"Agent profile not found: {kind}")
-    return profile
+    definition = AgentDefinitionRepository(session).by_product_kind(kind)
+    if definition is None:
+        raise HTTPException(status_code=404, detail=f"Agent definition not found for product kind: {kind}")
+    return definition
 
 
-def _get_agent_session(session: Session, profile: RecruitAgentProfile) -> AgentSession | None:
+def _get_agent_session(session: Session, definition: AgentDefinition, *, kind: AgentKind) -> AgentSession | None:
     stmt = (
         select(AgentSession)
         .where(
-            AgentSession.agent_profile_id == profile.id,
-            AgentSession.session_key == "primary",
+            AgentSession.agent_definition_id == definition.id,
+            AgentSession.session_key == _agent_session_key(definition, kind),
         )
         .order_by(AgentSession.updated_at.desc(), AgentSession.id.asc())
     )
     return session.scalars(stmt).first()
 
 
-def _ensure_agent_session(session: Session, profile: RecruitAgentProfile) -> AgentSession:
-    existing = _get_agent_session(session, profile)
+def _ensure_agent_session(session: Session, definition: AgentDefinition, *, kind: AgentKind) -> AgentSession:
+    existing = _get_agent_session(session, definition, kind=kind)
     if existing is not None:
         return existing
-    item = AgentSession(agent_profile_id=profile.id, session_key="primary", status="active")
+    item = AgentSession(
+        agent_definition_id=definition.id,
+        session_key=_agent_session_key(definition, kind),
+        status="active",
+        runtime_metadata={"agent_definition_key": definition.definition_key, "agent_kind": kind},
+    )
     session.add(item)
     session.flush()
     return item
@@ -843,9 +832,9 @@ def _resolve_run_for_kind(session: Session, kind: AgentKind, run_id: str) -> Age
         run = session.get(AgentRun, run_id)
     if run is None or run.agent_kind != kind:
         raise HTTPException(status_code=404, detail=f"Run not found for agent kind: {kind}")
-    profile = _resolve_profile(session, kind)
+    definition = _resolve_agent_definition(session, kind)
     agent_session = session.get(AgentSession, run.session_id)
-    if agent_session is None or agent_session.agent_profile_id != profile.id:
+    if agent_session is None or agent_session.agent_definition_id != definition.id:
         raise HTTPException(status_code=404, detail=f"Run not found for agent kind: {kind}")
     return run
 
@@ -884,37 +873,48 @@ def _approval_belongs_to_kind(session: Session, approval: ApprovalItem, kind: Ag
 def _default_run_envelope(
     *,
     run: AgentRun,
-    profile: RecruitAgentProfile,
-    goal: Any,
+    definition: AgentDefinition,
 ) -> dict[str, Any]:
-    constraints = dict(getattr(goal, "constraints", {}) or {})
-    context_hints = dict(getattr(goal, "context_hints", {}) or {})
+    constraints = dict((run.context_manifest or {}).get("constraints") or (run.runtime_metadata or {}).get("constraints") or {})
+    context_hints = dict((run.context_manifest or {}).get("context_hints") or (run.runtime_metadata or {}).get("context_hints") or {})
     browser_target = derive_browser_target(
         existing=context_hints.get("browser_target") or constraints.get("browser_target") or (run.context_manifest or {}).get("browser_target"),
         structured_sources=(context_hints, constraints, run.context_manifest, run.runtime_metadata),
-        text_sources=((run.context_manifest or {}).get("goal"), getattr(goal, "goal_text", None), getattr(goal, "title", None)),
+        text_sources=((run.context_manifest or {}).get("instruction"), (run.context_manifest or {}).get("title")),
     )
     scope_kind = "job" if run.job_description_id else str(constraints.get("scope_kind") or "global")
     scope_ref = (
         run.job_description_id
         or str(constraints.get("scope_ref") or "")
-        or profile.id
+        or definition.id
     )
     return {
         "run_pk": run.id,
         "run_id": run.run_id,
         "scope_kind": scope_kind,
         "scope_ref": scope_ref,
-        "trigger_type": "goal_created",
+        "trigger_type": "run_triggered",
         "world_snapshot": {
-            "goal_id": goal.id,
-            "goal_title": goal.title,
-            "requested_by": goal.requested_by,
+            "instruction": (run.context_manifest or {}).get("instruction"),
+            "title": _run_title(run),
+            "requested_by": (run.context_manifest or {}).get("requested_by") or (run.runtime_metadata or {}).get("requested_by"),
+            "constraints": constraints,
+            "success_criteria": dict((run.context_manifest or {}).get("success_criteria") or (run.runtime_metadata or {}).get("success_criteria") or {}),
+            "context_hints": context_hints,
+            "trial_budget": dict((run.context_manifest or {}).get("trial_budget") or (run.runtime_metadata or {}).get("trial_budget") or {}),
+            "run_preferences": dict((run.context_manifest or {}).get("run_preferences") or (run.runtime_metadata or {}).get("run_preferences") or {}),
             **({"browser_target": browser_target} if browser_target else {}),
         },
         "metadata": {
             "agent_kind": run.agent_kind,
-            "goal_spec_id": goal.id,
+            "instruction": (run.context_manifest or {}).get("instruction"),
+            "title": _run_title(run),
+            "kind": run.run_type,
+            "constraints": constraints,
+            "success_criteria": dict((run.context_manifest or {}).get("success_criteria") or (run.runtime_metadata or {}).get("success_criteria") or {}),
+            "context_hints": context_hints,
+            "trial_budget": dict((run.context_manifest or {}).get("trial_budget") or (run.runtime_metadata or {}).get("trial_budget") or {}),
+            "run_preferences": dict((run.context_manifest or {}).get("run_preferences") or (run.runtime_metadata or {}).get("run_preferences") or {}),
             **({"browser_target": browser_target} if browser_target else {}),
         },
     }
@@ -923,9 +923,8 @@ def _default_run_envelope(
 def _resume_envelope_for_run(
     *,
     run: AgentRun,
-    profile: RecruitAgentProfile,
+    definition: AgentDefinition,
     checkpoint: AgentRunCheckpoint | None,
-    goal: Any | None,
 ) -> dict[str, Any]:
     if checkpoint is not None:
         checkpoint_payload = dict(checkpoint.payload or {})
@@ -934,15 +933,7 @@ def _resume_envelope_for_run(
             payload = dict(resume_task.get("payload") or {})
             payload["trigger_type"] = "resume"
             return payload
-    if goal is not None:
-        return _default_run_envelope(run=run, profile=profile, goal=goal)
-    return {
-        "run_pk": run.id,
-        "run_id": run.run_id,
-        "scope_kind": "global",
-        "scope_ref": profile.id,
-        "trigger_type": "resume",
-    }
+    return _default_run_envelope(run=run, definition=definition)
 
 
 def _enqueue_run_task(session: Session, *, run: AgentRun, envelope: dict[str, Any]) -> TaskQueueItem:
@@ -1035,32 +1026,16 @@ def _resolve_run_gate_records(
     return checkpoint
 
 
-def _update_goal_status(session: Session, *, run: AgentRun, status: str) -> None:
-    goal = _get_goal(session, run.goal_spec_id)
-    if goal is None:
-        return
-    goal.status = status
-    goal.latest_run_id = run.run_id
-    goal.last_activity_at = utcnow()
-
-
-def _get_goal(session: Session, goal_id: str | None) -> Any | None:
-    if not goal_id:
-        return None
-
-    return session.get(GoalSpec, goal_id)
-
-
 def _serialize_workspace(
     session: Session,
     *,
     container: AppContainer,
-    profile: RecruitAgentProfile,
+    definition: AgentDefinition,
     kind: AgentKind,
 ) -> dict[str, Any]:
     provider_label, model_label = _overlay_provider_labels(container)
     approvals = _list_pending_approvals(session, kind)
-    memories = _list_memory_summaries(container, profile)
+    memories = _list_memory_summaries(container, definition)
     if kind == "assistant":
         conversations = session.scalars(
             select(ConversationSession)
@@ -1078,10 +1053,11 @@ def _serialize_workspace(
         latest = serialized_conversations[0] if serialized_conversations else None
         return {
             "agent": _workspace_agent_payload(
-                profile=profile,
+                definition=definition,
+                kind=kind,
                 status=None if latest is None else latest["status"],
                 active_task=None if latest is None else latest.get("preview"),
-                active_goal=None if latest is None else latest.get("title"),
+                active_instruction=None if latest is None else latest.get("title"),
                 default_model=model_label,
                 pending_approvals=len(approvals),
             ),
@@ -1091,38 +1067,24 @@ def _serialize_workspace(
             "memories": memories,
             "skills": _list_workspace_skills(session),
             "tools": _list_workspace_tools(container),
-            "config": _workspace_config(profile, provider_label=provider_label, model_label=model_label),
+            "config": _workspace_config(definition, kind=kind, provider_label=provider_label, model_label=model_label),
         }
 
-    latest_goal = session.scalars(
-        select(GoalSpec)
-        .where(GoalSpec.agent_profile_id == profile.id)
-        .order_by(
-            GoalSpec.last_activity_at.desc().nullslast(),
-            GoalSpec.created_at.desc(),
-            GoalSpec.id.desc(),
-        )
-        .limit(1)
-    ).first()
-    runs = _list_workspace_runs(session, profile, kind)
+    runs = _list_workspace_runs(session, definition, kind)
     latest_run = runs[0] if runs else None
     return {
         "agent": _workspace_agent_payload(
-            profile=profile,
+            definition=definition,
+            kind=kind,
             status=None if latest_run is None else latest_run["status"],
             active_task=None if latest_run is None else latest_run.get("summary"),
-            active_goal=(
-                latest_goal.title
-                if latest_goal is not None
-                else None if latest_run is None else str(latest_run.get("title") or "")
-            ),
+            active_instruction=None if latest_run is None else str(latest_run.get("title") or ""),
             default_model=model_label,
             pending_approvals=len(approvals),
         ),
         "conversations": [
             _autonomous_primary_conversation_summary(
-                profile=profile,
-                latest_goal=latest_goal,
+                definition=definition,
                 latest_run=latest_run,
             )
         ],
@@ -1131,7 +1093,7 @@ def _serialize_workspace(
         "memories": memories,
         "skills": _list_workspace_skills(session),
         "tools": _list_workspace_tools(container),
-        "config": _workspace_config(profile, provider_label=provider_label, model_label=model_label),
+        "config": _workspace_config(definition, kind=kind, provider_label=provider_label, model_label=model_label),
     }
 
 
@@ -1161,21 +1123,16 @@ def _serialize_conversation_record(
             ],
         }
 
-    profile = _resolve_profile(session, "autonomous")
+    definition = _resolve_agent_definition(session, "autonomous")
     if conversation_id == AUTONOMOUS_PRIMARY_CONVERSATION_ID:
-        return _serialize_autonomous_primary_conversation_record(session, profile=profile)
+        return _serialize_autonomous_primary_conversation_record(session, definition=definition)
 
-    goal = session.get(GoalSpec, conversation_id)
-    if goal is None:
+    run = _resolve_run_for_kind(session, "autonomous", conversation_id)
+    if run is None:
         raise HTTPException(status_code=404, detail="Conversation not found for agent kind: autonomous")
-    messages: list[dict[str, Any]] = [_autonomous_goal_message(conversation_id, goal)]
-    run = None if not goal.latest_run_id else _resolve_run_for_kind(session, "autonomous", goal.latest_run_id)
-    if run is not None:
-        messages.append(_autonomous_run_message(goal.id, run, goal))
-        messages = sorted(messages, key=_agent_message_sort_key)
     return {
-        "conversation": _autonomous_goal_conversation_summary(goal),
-        "messages": messages,
+        "conversation": _autonomous_run_conversation_summary(run),
+        "messages": [_autonomous_run_message(conversation_id, run)],
     }
 
 
@@ -1195,21 +1152,23 @@ def _serialize_assistant_conversation_summary(
 
 def _workspace_agent_payload(
     *,
-    profile: RecruitAgentProfile,
+    definition: AgentDefinition,
+    kind: AgentKind,
     status: str | None,
     active_task: str | None,
-    active_goal: str | None,
+    active_instruction: str | None,
     default_model: str | None,
     pending_approvals: int,
 ) -> dict[str, Any]:
-    payload = _serialize_profile(profile)
-    resolved_status = str(status or profile.status or "idle")
+    projection = _product_projection(definition, kind)
+    payload = _serialize_agent_projection(definition, kind=kind)
+    resolved_status = str(status or projection.get("status") or definition.status or "idle")
     payload["status"] = resolved_status
     payload["health"] = _workspace_health(resolved_status)
     payload["active_task"] = active_task
     payload["activeTask"] = active_task
-    payload["active_goal"] = active_goal
-    payload["activeGoal"] = active_goal
+    payload["active_instruction"] = active_instruction
+    payload["activeInstruction"] = active_instruction
     payload["default_model"] = default_model
     payload["defaultModel"] = default_model
     payload["pending_approvals"] = pending_approvals
@@ -1220,13 +1179,16 @@ def _workspace_agent_payload(
 
 
 def _workspace_config(
-    profile: RecruitAgentProfile,
+    definition: AgentDefinition,
     *,
+    kind: AgentKind,
     provider_label: str | None,
     model_label: str | None,
 ) -> dict[str, Any]:
-    prompt_config = dict(profile.prompt_config or {})
-    role_definition = dict(profile.role_definition or {})
+    config = _product_config(definition, kind)
+    projection = _product_projection(definition, kind)
+    prompt_config = dict(config.get("prompt_config") or definition.prompt_config or {})
+    role_definition = dict(definition.role_definition or {})
     boundaries = role_definition.get("boundaries")
     if not isinstance(boundaries, list):
         boundaries = role_definition.get("forbiddenActions") or role_definition.get("forbidden_actions") or prompt_config.get("boundaries") or []
@@ -1235,14 +1197,8 @@ def _workspace_config(
             prompt_config.get("systemPrompt")
             or prompt_config.get("system_prompt")
             or prompt_config.get("prompt")
-            or profile.description
-            or ""
-        ),
-        "goal_template": str(
-            role_definition.get("goalTemplate")
-            or role_definition.get("goal_template")
-            or prompt_config.get("goalTemplate")
-            or prompt_config.get("goal_template")
+            or projection.get("description")
+            or definition.description
             or ""
         ),
         "scoring_rubric": str(
@@ -1443,54 +1399,26 @@ def _assistant_run_from_conversation(conversation: dict[str, Any]) -> dict[str, 
     }
 
 
-def _autonomous_goal_conversation_summary(goal: GoalSpec) -> dict[str, Any]:
-    updated_at = _serialize_timestamp(goal.last_activity_at or goal.updated_at)
-    status = _workspace_status(goal.status)
-    preview = _goal_summary(goal)
-    return {
-        "id": goal.id,
-        "conversation_id": goal.id,
-        "conversationId": goal.id,
-        "agent_kind": "autonomous",
-        "agentKind": "autonomous",
-        "title": goal.title,
-        "preview": preview,
-        "status": status,
-        "unread_count": 0,
-        "unreadCount": 0,
-        "updated_at": updated_at,
-        "updatedAt": updated_at,
-        "ref_id": goal.latest_run_id or goal.id,
-        "refId": goal.latest_run_id or goal.id,
-    }
-
-
 def _autonomous_primary_conversation_summary(
     *,
-    profile: RecruitAgentProfile,
-    latest_goal: GoalSpec | None,
+    definition: AgentDefinition,
     latest_run: dict[str, Any] | None,
 ) -> dict[str, Any]:
+    projection = _product_projection(definition, "autonomous")
     updated_at = (
         None if latest_run is None else latest_run.get("updatedAt")
-    ) or _serialize_timestamp(
-        None if latest_goal is None else (latest_goal.last_activity_at or latest_goal.updated_at)
-    ) or _serialize_timestamp(profile.updated_at)
+    ) or _serialize_timestamp(definition.updated_at)
     status = _workspace_status(None if latest_run is None else latest_run.get("status"))
-    if status == "idle" and latest_goal is not None:
-        status = _workspace_status(latest_goal.status)
     preview = (
         None if latest_run is None else str(latest_run.get("summary") or "").strip()
-    ) or (
-        None if latest_goal is None else _goal_summary(latest_goal)
-    ) or str(profile.description or "").strip() or None
+    ) or str(projection.get("description") or definition.description or "").strip() or None
     return {
         "id": AUTONOMOUS_PRIMARY_CONVERSATION_ID,
         "conversation_id": AUTONOMOUS_PRIMARY_CONVERSATION_ID,
         "conversationId": AUTONOMOUS_PRIMARY_CONVERSATION_ID,
         "agent_kind": "autonomous",
         "agentKind": "autonomous",
-        "title": str(profile.name or "Autonomous").strip() or "Autonomous",
+        "title": str(projection.get("name") or "Autonomous").strip() or "Autonomous",
         "preview": preview,
         "status": status,
         "unread_count": 0,
@@ -1502,33 +1430,28 @@ def _autonomous_primary_conversation_summary(
     }
 
 
-def _autonomous_goal_message(conversation_id: str, goal: GoalSpec) -> dict[str, Any]:
-    created_at = _serialize_timestamp(goal.created_at)
+def _autonomous_run_conversation_summary(run: AgentRun) -> dict[str, Any]:
+    updated_at = _serialize_timestamp(run.updated_at or run.created_at)
+    status = _workspace_status(run.status)
     return {
-        "id": f"{goal.id}:goal",
-        "conversation_id": conversation_id,
-        "conversationId": conversation_id,
-        "role": "system",
-        "kind": "status",
-        "title": goal.title,
-        "content": _goal_summary(goal) or goal.title,
-        "created_at": created_at,
-        "createdAt": created_at,
-        "status": _workspace_status(goal.status),
-        "metadata": {
-            "eventKind": _goal_event_kind(goal.status),
-            "itemType": "automation_goal",
-            "message_type": "goal",
-            "goal_id": goal.id,
-            "goal_kind": goal.goal_kind,
-            "requested_by": goal.requested_by,
-            "latest_run_id": goal.latest_run_id,
-            "constraints": dict(goal.constraints or {}),
-        },
+        "id": run.run_id or run.id,
+        "conversation_id": run.run_id or run.id,
+        "conversationId": run.run_id or run.id,
+        "agent_kind": "autonomous",
+        "agentKind": "autonomous",
+        "title": _run_title(run),
+        "preview": _run_summary(run),
+        "status": status,
+        "unread_count": 0,
+        "unreadCount": 0,
+        "updated_at": updated_at,
+        "updatedAt": updated_at,
+        "ref_id": run.run_id or run.id,
+        "refId": run.run_id or run.id,
     }
 
 
-def _autonomous_run_message(conversation_id: str, run: AgentRun, goal: GoalSpec | None) -> dict[str, Any]:
+def _autonomous_run_message(conversation_id: str, run: AgentRun) -> dict[str, Any]:
     created_at = _serialize_timestamp(run.created_at)
     return {
         "id": f"{conversation_id}:run:{run.run_id or run.id}",
@@ -1536,7 +1459,7 @@ def _autonomous_run_message(conversation_id: str, run: AgentRun, goal: GoalSpec 
         "conversationId": conversation_id,
         "role": "system",
         "kind": "status",
-        "title": goal.title if goal is not None else _run_title(run),
+        "title": _run_title(run),
         "content": _run_summary(run) or _autonomous_run_status_text(run),
         "created_at": created_at,
         "createdAt": created_at,
@@ -1546,7 +1469,6 @@ def _autonomous_run_message(conversation_id: str, run: AgentRun, goal: GoalSpec 
             "itemType": "agent_run",
             "message_type": "run",
             "run_id": run.run_id,
-            "goal_id": None if goal is None else goal.id,
             "lane": run.lane,
             "priority": run.priority,
         },
@@ -1609,14 +1531,14 @@ def _autonomous_event_message(conversation_id: str, event: dict[str, Any]) -> di
 def _autonomous_run_status_text(run: AgentRun) -> str:
     status = run.status.strip().lower()
     if status == "queued":
-        return "Autonomous goal is queued in the backend."
+        return "Autonomous run is queued in the backend."
     if status == "waiting_human":
-        return "Autonomous goal is waiting for desktop approval."
+        return "Autonomous run is waiting for desktop approval."
     if status == "completed":
-        return "Autonomous goal completed."
+        return "Autonomous run completed."
     if status in {"failed", "cancelled", "interrupted"}:
-        return f"Autonomous goal {status}."
-    return f"Autonomous goal status: {run.status}."
+        return f"Autonomous run {status}."
+    return f"Autonomous run status: {run.status}."
 
 
 def _autonomous_run_event_kind(run: AgentRun) -> str:
@@ -1655,15 +1577,6 @@ def _runtime_event_kind(event_type: str, payload: dict[str, Any]) -> str:
         return "execution_result"
     if "llm_invocation" in source or "reasoning" in source or "thinking" in source:
         return "thinking"
-    return "thinking"
-
-
-def _goal_event_kind(status: str) -> str:
-    normalized = status.strip().lower()
-    if normalized == "waiting_human":
-        return "confirmation"
-    if normalized in {"completed", "failed", "cancelled", "interrupted"}:
-        return "execution_result"
     return "thinking"
 
 
@@ -1710,8 +1623,6 @@ def _message_sort_rank(message: dict[str, Any]) -> str:
     metadata = message.get("metadata")
     if isinstance(metadata, dict):
         message_type = str(metadata.get("message_type") or "").strip().lower()
-        if message_type == "goal":
-            return "0"
         if message_type == "run":
             return "1"
         if message_type == "turn":
@@ -1746,14 +1657,13 @@ def _serialize_unix_timestamp(value: Any) -> int | None:
 def _serialize_autonomous_primary_conversation_record(
     session: Session,
     *,
-    profile: RecruitAgentProfile,
+    definition: AgentDefinition,
 ) -> dict[str, Any]:
-    agent_session = _get_agent_session(session, profile)
+    agent_session = _get_agent_session(session, definition, kind="autonomous")
     if agent_session is None:
         return {
             "conversation": _autonomous_primary_conversation_summary(
-                profile=profile,
-                latest_goal=None,
+                definition=definition,
                 latest_run=None,
             ),
             "messages": [],
@@ -1781,35 +1691,11 @@ def _serialize_autonomous_primary_conversation_record(
         ).all()
         for turn in turns:
             turns_by_run_id.setdefault(turn.run_pk, []).append(turn)
-    goal_ids = [run.goal_spec_id for run in recent_runs if run.goal_spec_id]
-    goals = (
-        session.scalars(select(GoalSpec).where(GoalSpec.id.in_(goal_ids))).all()
-        if goal_ids
-        else []
-    )
-    goal_by_id = {goal.id: goal for goal in goals}
     latest_run_payload = None if not recent_runs else _serialize_run(recent_runs[-1])
-    latest_goal = (
-        None
-        if not recent_runs or not recent_runs[-1].goal_spec_id
-        else goal_by_id.get(recent_runs[-1].goal_spec_id)
-    )
-    if latest_goal is None:
-        latest_goal = session.scalars(
-            select(GoalSpec)
-            .where(GoalSpec.agent_profile_id == profile.id)
-            .order_by(
-                GoalSpec.last_activity_at.desc().nullslast(),
-                GoalSpec.created_at.desc(),
-                GoalSpec.id.desc(),
-            )
-            .limit(1)
-        ).first()
 
     messages: list[dict[str, Any]] = []
     for run in recent_runs:
-        goal = None if not run.goal_spec_id else goal_by_id.get(run.goal_spec_id)
-        run_message = _autonomous_run_message(AUTONOMOUS_PRIMARY_CONVERSATION_ID, run, goal)
+        run_message = _autonomous_run_message(AUTONOMOUS_PRIMARY_CONVERSATION_ID, run)
         messages.append(run_message)
         for turn in turns_by_run_id.get(run.id, []):
             turn_message = _autonomous_turn_message(AUTONOMOUS_PRIMARY_CONVERSATION_ID, run, turn)
@@ -1820,21 +1706,18 @@ def _serialize_autonomous_primary_conversation_record(
             has_final_output = bool(str((turn.turn_metadata or {}).get("final_output") or "").strip())
             if has_final_output or turn_status in {"waiting_human", "failed", "cancelled", "interrupted"}:
                 messages.append(turn_message)
-    if not messages and latest_goal is not None:
-        messages.append(_autonomous_goal_message(AUTONOMOUS_PRIMARY_CONVERSATION_ID, latest_goal))
 
     return {
         "conversation": _autonomous_primary_conversation_summary(
-            profile=profile,
-            latest_goal=latest_goal,
+            definition=definition,
             latest_run=latest_run_payload,
         ),
         "messages": sorted(messages, key=_agent_message_sort_key),
     }
 
 
-def _list_workspace_runs(session: Session, profile: RecruitAgentProfile, kind: AgentKind) -> list[dict[str, Any]]:
-    agent_session = _get_agent_session(session, profile)
+def _list_workspace_runs(session: Session, definition: AgentDefinition, kind: AgentKind) -> list[dict[str, Any]]:
+    agent_session = _get_agent_session(session, definition, kind=kind)
     if agent_session is None:
         return []
     runs = session.scalars(
@@ -1856,10 +1739,10 @@ def _list_pending_approvals(session: Session, kind: AgentKind) -> list[dict[str,
     return [_serialize_approval(item) for item in items[:20]]
 
 
-def _list_memory_summaries(container: AppContainer, profile: RecruitAgentProfile) -> list[dict[str, Any]]:
+def _list_memory_summaries(container: AppContainer, definition: AgentDefinition) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     for scope in ("global", "conversation", "candidate", "job"):
-        for item in container.memory_file_store.list_scope_files(scope_kind=scope, agent_profile_id=profile.id, limit=3, offset=0):
+        for item in container.memory_file_store.list_scope_files(scope_kind=scope, agent_definition_id=definition.id, limit=3, offset=0):
             items.append(_serialize_memory_file_summary(item))
     return items
 
@@ -2044,10 +1927,10 @@ def _normalize_mcp_tool_payload(tool: Any) -> dict[str, Any]:
 
 
 def _run_title(run: AgentRun) -> str:
-    goal_title = str((run.runtime_metadata or {}).get("goal_title") or "").strip()
-    if goal_title:
-        return goal_title
     title = str((run.context_manifest or {}).get("title") or "").strip()
+    if title:
+        return title
+    title = str((run.runtime_metadata or {}).get("title") or "").strip()
     if title:
         return title
     run_type = str(run.run_type or "").replace("_", " ").strip()
@@ -2057,22 +1940,15 @@ def _run_title(run: AgentRun) -> str:
 def _run_summary(run: AgentRun) -> str | None:
     projected = project_runtime_business_state(
         content=dict(run.runtime_metadata or {}),
-        goal_kind=str(run.run_type or "").strip() or None,
-        goal_title=_run_title(run),
+        run_kind=str(run.run_type or "").strip() or None,
+        run_title=_run_title(run),
         run_status=str(run.status or "").strip() or None,
     )
     summary = str(projected.get("summary") or "").strip()
-    return summary or None
-
-
-def _goal_summary(goal: GoalSpec) -> str | None:
-    projected = project_runtime_business_state(
-        content=dict(goal.goal_metadata or {}),
-        goal_kind=str(goal.goal_kind or "").strip() or None,
-        goal_title=str(goal.title or "").strip() or None,
-        run_status=str(goal.status or "").strip() or None,
-    )
-    summary = str(projected.get("summary") or "").strip()
+    if not summary:
+        summary = str((run.runtime_metadata or {}).get("summary") or "").strip()
+    if not summary:
+        summary = str((run.context_manifest or {}).get("instruction") or "").strip()
     return summary or None
 
 

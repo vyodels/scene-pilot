@@ -10,27 +10,27 @@ from recruit_agent.memory.writeback import (
 )
 
 
-def test_memory_files_isolate_agent_profiles_and_scopes(tmp_path: Path) -> None:
+def test_memory_files_isolate_agent_definitions_and_scopes(tmp_path: Path) -> None:
     store = MemoryFileStore(tmp_path / "memory-files")
 
     store.write_file(
         scope_kind="conversation",
         scope_ref="session-1",
-        agent_profile_id="assistant-profile",
+        agent_definition_id="assistant-profile",
         path="MEMORY.md",
         content="- Assistant-specific preference\n",
     )
     store.write_file(
         scope_kind="conversation",
         scope_ref="session-1",
-        agent_profile_id="autonomous-profile",
+        agent_definition_id="autonomous-profile",
         path="MEMORY.md",
         content="- Autonomous-specific preference\n",
     )
     store.write_file(
         scope_kind="candidate",
         scope_ref="candidate-1",
-        agent_profile_id="assistant-profile",
+        agent_definition_id="assistant-profile",
         path="MEMORY.md",
         content="- Candidate-scoped fact\n",
     )
@@ -38,19 +38,19 @@ def test_memory_files_isolate_agent_profiles_and_scopes(tmp_path: Path) -> None:
     assistant_memory = store.read_file(
         scope_kind="conversation",
         scope_ref="session-1",
-        agent_profile_id="assistant-profile",
+        agent_definition_id="assistant-profile",
         path="MEMORY.md",
     )
     autonomous_memory = store.read_file(
         scope_kind="conversation",
         scope_ref="session-1",
-        agent_profile_id="autonomous-profile",
+        agent_definition_id="autonomous-profile",
         path="MEMORY.md",
     )
     candidate_file = store.read_file(
         scope_kind="candidate",
         scope_ref="candidate-1",
-        agent_profile_id="assistant-profile",
+        agent_definition_id="assistant-profile",
         path="MEMORY.md",
     )
 
@@ -66,7 +66,7 @@ def test_memory_file_store_rejects_path_traversal(tmp_path: Path) -> None:
         store.write_file(
             scope_kind="global",
             scope_ref="workspace",
-            agent_profile_id="assistant-profile",
+            agent_definition_id="assistant-profile",
             path="../MEMORY.md",
             content="escape",
         )
@@ -83,7 +83,7 @@ def test_file_memory_writeback_accepts_explicit_stable_facts(tmp_path: Path) -> 
         store,
         scope_kind="candidate",
         scope_ref="candidate-1",
-        agent_profile_id="autonomous-profile",
+        agent_definition_id="autonomous-profile",
         facts=[{"summary": "Alice prefers remote roles.", "content": {"preference": "remote"}, "confidence": 0.8}],
         run_id="run-memory-patch",
         run_pk="run-pk",
@@ -94,7 +94,7 @@ def test_file_memory_writeback_accepts_explicit_stable_facts(tmp_path: Path) -> 
     memory = store.read_file(
         scope_kind="candidate",
         scope_ref="candidate-1",
-        agent_profile_id="autonomous-profile",
+        agent_definition_id="autonomous-profile",
         path="stable_facts.md",
     )
     assert result.stable_facts_written == 1
@@ -139,7 +139,7 @@ def test_file_memory_writeback_filters_low_confidence_and_duplicates(tmp_path: P
         store,
         scope_kind="candidate",
         scope_ref="candidate-1",
-        agent_profile_id="autonomous-profile",
+        agent_definition_id="autonomous-profile",
         facts=[
             {"summary": "Alice is open to remote roles.", "confidence": 2.5},
             {"summary": "Alice can start in June.", "confidence": 0.4},
@@ -150,7 +150,7 @@ def test_file_memory_writeback_filters_low_confidence_and_duplicates(tmp_path: P
         store,
         scope_kind="candidate",
         scope_ref="candidate-1",
-        agent_profile_id="autonomous-profile",
+        agent_definition_id="autonomous-profile",
         facts=[{"summary": "Alice is open to remote roles.", "confidence": 0.9}],
         policy=policy,
     )
@@ -158,7 +158,7 @@ def test_file_memory_writeback_filters_low_confidence_and_duplicates(tmp_path: P
     memory = store.read_file(
         scope_kind="candidate",
         scope_ref="candidate-1",
-        agent_profile_id="autonomous-profile",
+        agent_definition_id="autonomous-profile",
         path="stable_facts.md",
     )
     assert first.stable_facts_written == 1

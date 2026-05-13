@@ -33,7 +33,6 @@ Recruit 业务方法需要包装为业务 tool，作为 Agent 和招聘业务系
 - `attach_resume_artifact` / `delete_resume_artifact`
 - `transition_application` / `archive_candidate`
 - `create_candidate_sync_record`
-- `get_goal_progress`
 - `take_over_candidate` / `release_candidate` / `list_locked_candidates`
 - `request_human_approval`
 

@@ -84,11 +84,11 @@
 
 - 共享招聘能力应通过通用 `plugin / toolkit / MCP / tool surface` 暴露。
 - 不应把共享业务能力建模成某个 Agent 私有动作目录。
-- `Assistant` 与 `Autonomous` 的差异应体现在目标、记忆、生命周期与执行策略上，而不是能力是否被单独挂载。
+- `Assistant` 与 `Autonomous` 的差异应体现在用户输入形态、记忆、生命周期与执行策略上，而不是能力是否被单独挂载。
 
 ### 外部开发代理
 
-- 外部开发代理可以用 UI 工具触发 goal、配置参数和查看状态。
+- 外部开发代理可以用 UI 工具触发 Autonomous run、配置参数和查看状态。
 - 外部开发代理不得用 Playwright、Chrome DevTools、页面 JS 或 `browser-mcp` 直接替内部 Autonomous type 操作招聘网站。
 - `browser-mcp` 只保留给主程序内部 Agent 驱动外部 / mock 招聘网站。
 

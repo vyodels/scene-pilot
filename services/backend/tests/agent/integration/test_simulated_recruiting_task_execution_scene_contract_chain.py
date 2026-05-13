@@ -1,12 +1,9 @@
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 
-from fastapi.testclient import TestClient
-
-from recruit_agent.core.settings import AppSettings, load_settings
+from recruit_agent.core.settings import AppSettings
 from recruit_agent.db.session import create_engine_from_settings, create_session_factory, initialize_database
 from recruit_agent.models.domain import ExecutionEpisode
 from recruit_agent.plugins.host import PluginHost
@@ -14,8 +11,8 @@ from recruit_agent.plugins.recruit.toolkit import attach_resume_artifact, upsert
 from agent_runtime.fixtures import LLMResponse, ToolCall
 from agent_runtime.fixtures import ScriptedProvider
 from recruit_agent.capabilities.tools import ToolDefinition, ToolRegistry
-from recruit_agent.server import create_app
 from recruit_agent.services.scene_context import SceneContextService
+from recruit_agent.services.scene_templates import shared_scene_template_catalog
 
 
 _FIXTURE_PATH = Path(__file__).with_name("simulated_recruiting_task_execution_contracts.json")
@@ -174,22 +171,11 @@ def test_autonomous_recruiting_task_execution_scene_contract_chain_proves_artifa
 
 
 def test_resume_collection_scene_template_is_listed_for_simulated_recruiting_task_execution(tmp_path: Path) -> None:
-    os.environ["RECRUIT_AGENT_DATA_DIR"] = str(tmp_path)
-    load_settings.cache_clear()
-    app = create_app()
-    client = TestClient(app)
-    client.__enter__()
-    try:
-        response = client.get("/api/agents/shared-scene-templates")
-        assert response.status_code == 200
-        template = next(item for item in response.json() if item["key"] == "resume_collection")
-        assert template["goal_kind"] == "resume_collection"
-        assert template["requiresJd"] is True
-        assert template["directRunnable"] is False
-        assert "本地 artifact 路径定位与业务格式验证" in template["summary"]
-        assert "共享工作区" in template["defaultGoalText"]
-        assert "zhipin.com" not in template["summary"]
-    finally:
-        client.__exit__(None, None, None)
-        os.environ.pop("RECRUIT_AGENT_DATA_DIR", None)
-        load_settings.cache_clear()
+    template = shared_scene_template_catalog()["resume_collection"]
+
+    assert template["action_kind"] == "resume_collection"
+    assert template["requires_jd"] is True
+    assert template["direct_runnable"] is False
+    assert "本地 artifact 路径定位与业务格式验证" in template["summary"]
+    assert "共享工作区" in template["default_instruction"]
+    assert "zhipin.com" not in template["summary"]

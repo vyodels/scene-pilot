@@ -241,7 +241,7 @@ function presentRecruitingText(text: string, copy: (en: string, zh: string) => s
   const cleaned = text
     .trim()
     .replace(/^Review template candidate for\s*/i, copy("Application review: ", "投递记录待复核："))
-    .replace(/^Goal intake failed to compile an executable plan:\s*/i, copy("Plan generation failed: ", "计划生成失败："))
+    .replace(/^Instruction intake failed to compile an executable plan:\s*/i, copy("Plan generation failed: ", "计划生成失败："))
     .replace(/^Runtime execution completed for recruiting\.?\s*/i, "")
     .replace(/\s+/g, " ")
     .trim();
@@ -323,7 +323,7 @@ export function DashboardView({
   const activePlaybooks = summary.playbooks.filter((item) => item.status === "active");
   const topAlerts = summary.alerts.slice(0, 4).map((event) => ({
     ...event,
-    label: presentRecruitingText(event.label.replace(/^Goal /, "Task "), copy),
+    label: presentRecruitingText(event.label, copy),
     detail: presentRecruitingText(event.detail, copy),
   }));
   const focusMetrics: Array<{ label: string; value: string; caption: string; tone: "positive" | "neutral" | "warning" }> = [

@@ -382,7 +382,6 @@ def test_run_migrations_aligns_agent_run_columns_for_existing_schema(tmp_path):
                     id TEXT PRIMARY KEY NOT NULL,
                     session_id TEXT NOT NULL,
                     execution_episode_id TEXT,
-                    goal_spec_id TEXT,
                     candidate_id TEXT,
                     jd_id TEXT,
                     platform TEXT NOT NULL DEFAULT 'site',

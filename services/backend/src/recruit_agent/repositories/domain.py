@@ -21,12 +21,11 @@ from recruit_agent.models import (
     ApplicationSyncRecord,
     ExecutionGraphProjection,
     ExecutionTrace,
-    GoalSpec,
     AgentRun,
     AgentRunCheckpoint,
     AgentRuntimeEvent,
     AgentSession,
-    AgentWorkItem,
+    AgentDefinition,
     OperatorInteraction,
     ApprovalItem,
     AppSetting,
@@ -49,7 +48,6 @@ from recruit_agent.models import (
     JobDescriptionPlatformIdx,
     McpServer,
     McpTool,
-    RecruitAgentProfile,
     PersonResumeArtifact,
     ResumeArtifact,
     Skill,
@@ -862,18 +860,28 @@ class EvolutionArtifactRepository(BaseRepository[EvolutionArtifact]):
         return None
 
 
-class RecruitAgentProfileRepository(BaseRepository[RecruitAgentProfile]):
-    model = RecruitAgentProfile
+class AgentDefinitionRepository(BaseRepository[AgentDefinition]):
+    model = AgentDefinition
 
-    def by_agent_key(self, agent_key: str) -> RecruitAgentProfile | None:
-        stmt = select(RecruitAgentProfile).where(RecruitAgentProfile.agent_key == agent_key)
+    def by_definition_key(self, definition_key: str) -> AgentDefinition | None:
+        stmt = select(AgentDefinition).where(AgentDefinition.definition_key == definition_key)
         return self.session.scalars(stmt).first()
 
-    def primary(self) -> RecruitAgentProfile | None:
+    def by_product_kind(self, product_kind: str) -> AgentDefinition | None:
+        normalized = str(product_kind or "").strip()
+        if not normalized:
+            return None
+        for item in self.list(limit=500, offset=0):
+            bindings = dict(item.product_bindings or {})
+            if normalized in bindings:
+                return item
+        return self.by_definition_key(normalized)
+
+    def primary(self) -> AgentDefinition | None:
         stmt = (
-            select(RecruitAgentProfile)
-            .where(RecruitAgentProfile.is_primary.is_(True))
-            .order_by(RecruitAgentProfile.updated_at.desc(), RecruitAgentProfile.id.asc())
+            select(AgentDefinition)
+            .where(AgentDefinition.is_primary.is_(True))
+            .order_by(AgentDefinition.updated_at.desc(), AgentDefinition.id.asc())
         )
         return self.session.scalars(stmt).first()
 
@@ -881,9 +889,11 @@ class RecruitAgentProfileRepository(BaseRepository[RecruitAgentProfile]):
 class AgentSessionRepository(BaseRepository[AgentSession]):
     model = AgentSession
 
-    def by_agent_and_key(self, *, agent_profile_id: str, session_key: str = "primary") -> AgentSession | None:
+    def by_agent_and_key(self, *, agent_definition_id: str | None = None, session_key: str = "primary") -> AgentSession | None:
+        if agent_definition_id is None:
+            return None
         stmt = select(AgentSession).where(
-            AgentSession.agent_profile_id == agent_profile_id,
+            AgentSession.agent_definition_id == agent_definition_id,
             AgentSession.session_key == session_key,
         )
         return self.session.scalars(stmt).first()
@@ -987,46 +997,6 @@ class AgentRunRepository(BaseRepository[AgentRun]):
         return self.session.scalars(stmt).first()
 
 
-class AgentWorkItemRepository(BaseRepository[AgentWorkItem]):
-    model = AgentWorkItem
-
-    def by_queue_task_id(self, queue_task_id: str) -> AgentWorkItem | None:
-        stmt = select(AgentWorkItem).where(AgentWorkItem.queue_task_id == queue_task_id)
-        return self.session.scalars(stmt).first()
-
-    def list_filtered(
-        self,
-        *,
-        run_id: str | None = None,
-        status: str | None = None,
-        person_id: str | None = None,
-        application_id: str | None = None,
-        limit: int = 100,
-        offset: int = 0,
-    ) -> list[AgentWorkItem]:
-        stmt = select(AgentWorkItem)
-        if run_id is not None:
-            stmt = stmt.where(AgentWorkItem.run_id == run_id)
-        if status is not None:
-            stmt = stmt.where(AgentWorkItem.status == status)
-        if person_id is not None:
-            stmt = stmt.where(AgentWorkItem.person_id == person_id)
-        if application_id is not None:
-            stmt = stmt.where(AgentWorkItem.application_id == application_id)
-        stmt = stmt.order_by(AgentWorkItem.created_at.asc(), AgentWorkItem.id.asc()).offset(offset).limit(limit)
-        return list(self.session.scalars(stmt).all())
-
-    def list_for_run(self, run_id: str, limit: int = 100, offset: int = 0) -> list[AgentWorkItem]:
-        stmt = (
-            select(AgentWorkItem)
-            .where(AgentWorkItem.run_id == run_id)
-            .order_by(AgentWorkItem.created_at.asc(), AgentWorkItem.id.asc())
-            .offset(offset)
-            .limit(limit)
-        )
-        return list(self.session.scalars(stmt).all())
-
-
 class AgentRunCheckpointRepository(BaseRepository[AgentRunCheckpoint]):
     model = AgentRunCheckpoint
 
@@ -1070,30 +1040,6 @@ class AgentRuntimeEventRepository(BaseRepository[AgentRuntimeEvent]):
         return list(self.session.scalars(stmt).all())
 
 
-class GoalSpecRepository(BaseRepository[GoalSpec]):
-    model = GoalSpec
-
-    def list_recent(
-        self,
-        *,
-        agent_profile_id: str | None = None,
-        status: str | None = None,
-        limit: int = 100,
-        offset: int = 0,
-    ) -> list[GoalSpec]:
-        stmt = select(GoalSpec)
-        if agent_profile_id is not None:
-            stmt = stmt.where(GoalSpec.agent_profile_id == agent_profile_id)
-        if status is not None:
-            stmt = stmt.where(GoalSpec.status == status)
-        stmt = stmt.order_by(
-            GoalSpec.last_activity_at.desc().nullslast(),
-            GoalSpec.created_at.desc(),
-            GoalSpec.id.desc(),
-        ).offset(offset).limit(limit)
-        return list(self.session.scalars(stmt).all())
-
-
 class ExecutionTraceRepository(BaseRepository[ExecutionTrace]):
     model = ExecutionTrace
 
@@ -1108,16 +1054,16 @@ class ExecutionTraceRepository(BaseRepository[ExecutionTrace]):
     def list_recent(
         self,
         *,
-        goal_spec_id: str | None = None,
         session_id: str | None = None,
+        run_id: str | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[ExecutionTrace]:
         stmt = select(ExecutionTrace)
-        if goal_spec_id is not None:
-            stmt = stmt.where(ExecutionTrace.goal_spec_id == goal_spec_id)
         if session_id is not None:
             stmt = stmt.where(ExecutionTrace.session_id == session_id)
+        if run_id is not None:
+            stmt = stmt.where(ExecutionTrace.run_id == run_id)
         stmt = stmt.order_by(ExecutionTrace.created_at.desc(), ExecutionTrace.id.desc()).offset(offset).limit(limit)
         return list(self.session.scalars(stmt).all())
 
@@ -1128,15 +1074,15 @@ class StrategyFragmentRepository(BaseRepository[StrategyFragment]):
     def list_recent(
         self,
         *,
-        agent_profile_id: str | None = None,
+        agent_definition_id: str | None = None,
         status: str | None = None,
         scope: str | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[StrategyFragment]:
         stmt = select(StrategyFragment)
-        if agent_profile_id is not None:
-            stmt = stmt.where(StrategyFragment.agent_profile_id == agent_profile_id)
+        if agent_definition_id is not None:
+            stmt = stmt.where(StrategyFragment.agent_definition_id == agent_definition_id)
         if status is not None:
             stmt = stmt.where(StrategyFragment.status == status)
         if scope is not None:
@@ -1159,16 +1105,16 @@ class ExecutionGraphProjectionRepository(BaseRepository[ExecutionGraphProjection
     def list_recent(
         self,
         *,
-        goal_spec_id: str | None = None,
         candidate_id: str | None = None,
+        run_id: str | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[ExecutionGraphProjection]:
         stmt = select(ExecutionGraphProjection)
-        if goal_spec_id is not None:
-            stmt = stmt.where(ExecutionGraphProjection.goal_spec_id == goal_spec_id)
         if candidate_id is not None:
             stmt = stmt.where(ExecutionGraphProjection.candidate_id == candidate_id)
+        if run_id is not None:
+            stmt = stmt.where(ExecutionGraphProjection.run_id == run_id)
         stmt = stmt.order_by(ExecutionGraphProjection.created_at.desc(), ExecutionGraphProjection.id.desc()).offset(offset).limit(limit)
         return list(self.session.scalars(stmt).all())
 

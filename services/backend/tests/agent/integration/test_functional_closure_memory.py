@@ -8,7 +8,7 @@ from recruit_agent.agents.autonomous import AutonomousAdapter
 from recruit_agent.core.settings import AppSettings
 from recruit_agent.db.session import create_engine_from_settings, create_session_factory, initialize_database
 from recruit_agent.memory.filesystem import MemoryFileStore
-from recruit_agent.models.domain import AgentRun, AgentSession, Candidate, RecruitAgentProfile
+from recruit_agent.models.domain import AgentRun, AgentSession, Candidate, AgentDefinition
 from recruit_agent.plugins.host import PluginHost
 from recruit_agent.capabilities.tools import ToolRegistry, register_core_tools
 
@@ -28,11 +28,11 @@ def _make_session(tmp_path: Path) -> Session:
 def test_functional_closure_memory_service_is_in_autonomous_loop(tmp_path: Path) -> None:
     session = _make_session(tmp_path)
     try:
-        profile = RecruitAgentProfile(agent_key="primary", name="Primary", is_primary=True)
+        definition = AgentDefinition(definition_key="primary", name="Primary", is_primary=True)
         candidate = Candidate(name="Alice")
-        session.add_all([profile, candidate])
+        session.add_all([definition, candidate])
         session.flush()
-        agent_session = AgentSession(agent_profile_id=profile.id)
+        agent_session = AgentSession(agent_definition_id=definition.id)
         session.add(agent_session)
         session.flush()
         run = AgentRun(session_id=agent_session.id, run_id="run-func-memory", person_id=candidate.candidate_person_id)

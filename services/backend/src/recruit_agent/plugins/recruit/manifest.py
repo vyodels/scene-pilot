@@ -18,7 +18,7 @@ from recruit_agent.plugins.recruit.toolkit import (
     delete_candidate,
     delete_resume_artifact,
     get_candidate_thread,
-    get_goal_progress,
+    get_jd_progress,
     list_candidates,
     list_candidate_threads,
     list_job_descriptions,
@@ -589,7 +589,7 @@ class RecruitPluginManifest:
                 metadata={"capabilities": ["candidate", "sync", "recruit_write"]},
             ),
             _tool(
-                name="get_goal_progress",
+                name="get_jd_progress",
                 description="Summarize application progress for one JD, including by-status counts and how many records already have contact, resume, or AI score.",
                 parameters={
                     "type": "object",
@@ -597,7 +597,7 @@ class RecruitPluginManifest:
                     "required": ["job_description_id"],
                     "additionalProperties": False,
                 },
-                handler=lambda arguments: get_goal_progress(self.session_factory, **arguments),
+                handler=lambda arguments: get_jd_progress(self.session_factory, **arguments),
                 resource_target_kind="job",
                 metadata={"capabilities": ["candidate", "progress", "recruit_read"]},
             ),

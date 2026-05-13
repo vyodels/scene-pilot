@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from recruit_agent.agents.autonomous import AutonomousAdapter
 from recruit_agent.core.settings import AppSettings
 from recruit_agent.db.session import create_engine_from_settings, create_session_factory, initialize_database
-from recruit_agent.models.domain import AgentRun, AgentSession, AgentTurnRecord, Candidate, RecruitAgentProfile
+from recruit_agent.models.domain import AgentRun, AgentSession, AgentTurnRecord, Candidate, AgentDefinition
 from recruit_agent.plugins.host import PluginHost
 from agent_runtime.fixtures import LLMResponse
 from agent_runtime.fixtures import ScriptedProvider
@@ -28,12 +28,12 @@ def _make_session(tmp_path: Path) -> Session:
 def test_autonomous_turn_persists_run_turn_records(tmp_path: Path) -> None:
     session = _make_session(tmp_path)
     try:
-        profile = RecruitAgentProfile(agent_key="primary", name="Primary", is_primary=True)
+        definition = AgentDefinition(definition_key="primary", name="Primary", is_primary=True)
         candidate = Candidate(name="Alice")
-        session.add_all([profile, candidate])
+        session.add_all([definition, candidate])
         session.flush()
 
-        agent_session = AgentSession(agent_profile_id=profile.id)
+        agent_session = AgentSession(agent_definition_id=definition.id)
         session.add(agent_session)
         session.flush()
 

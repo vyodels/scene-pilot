@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 
 
@@ -59,4 +60,72 @@ def test_agent_runtime_does_not_import_product_capability_layers() -> None:
     assert not (ROOT / "agent_runtime" / "models.py").exists()
     assert not (ROOT / "runtime").exists()
     assert not (ROOT / "scheduler" / "types.py").exists()
+    assert not offenders
+
+
+def test_agent_runtime_does_not_reintroduce_product_run_concepts() -> None:
+    forbidden_terms = [
+        "GoalSpec",
+        "AgentProfile",
+        "RecruitAgentProfile",
+        "Assistant",
+        "Autonomous",
+        "AgentRun",
+        "Candidate",
+        "JobDescription",
+        "business_tool",
+        "agent_work_items",
+        "work_item",
+        "automationInstruction",
+        "instructionTemplate",
+        "instruction_template",
+    ]
+    offenders: list[str] = []
+    for path in (ROOT / "agent_runtime").rglob("*.py"):
+        source = path.read_text(encoding="utf-8")
+        for term in forbidden_terms:
+            if term in source:
+                offenders.append(f"{path.relative_to(ROOT)} contains {term}")
+        for token in source.replace('"', " ").replace("'", " ").split():
+            if token.strip(".,:;()[]{}") == "goal":
+                offenders.append(f"{path.relative_to(ROOT)} contains goal")
+
+    assert not offenders
+
+
+def test_agent_runtime_keeps_agent_definition_product_agnostic() -> None:
+    allowed_agent_definition_classes = {"AgentDefinition"}
+    forbidden_agent_definition_terms = [
+        "AssistantDefinition",
+        "AutonomousDefinition",
+        "AssistantAgentDefinition",
+        "AutonomousAgentDefinition",
+    ]
+    forbidden_agent_definition_fragments = [
+        "Assistant",
+        "Autonomous",
+        "AgentRun",
+        "AgentTurnRecord",
+        "agent_kind",
+        "product_type",
+    ]
+
+    offenders: list[str] = []
+    for path in (ROOT / "agent_runtime").rglob("*.py"):
+        source = path.read_text(encoding="utf-8")
+        module = ast.parse(source)
+        for node in ast.walk(module):
+            if not isinstance(node, ast.ClassDef):
+                continue
+            if node.name in forbidden_agent_definition_terms:
+                offenders.append(f"{path.relative_to(ROOT)} defines product-specific {node.name}")
+            if node.name.endswith("AgentDefinition") and node.name not in allowed_agent_definition_classes:
+                offenders.append(f"{path.relative_to(ROOT)} defines duplicate agent definition contract {node.name}")
+            if node.name != "AgentDefinition":
+                continue
+            class_source = ast.get_source_segment(source, node) or ""
+            for fragment in forbidden_agent_definition_fragments:
+                if fragment in class_source:
+                    offenders.append(f"{path.relative_to(ROOT)} AgentDefinition contains product term {fragment}")
+
     assert not offenders

@@ -2,7 +2,7 @@
 
 - key: candidate_scoring
 - display_order: 40
-- goal_kind: candidate_scoring
+- action_kind: candidate_scoring
 - requires_jd: true
 - supports_candidate_count_target: false
 - direct_runnable: false
@@ -11,7 +11,7 @@
 
 对指定 JD 下的投递记录执行 AI 评分，并把评分结果回写工作区。
 
-## Goal Text
+## Instruction
 
 对指定 JD 下的投递记录执行 AI 评分，并把评分结论回写工作区。
 

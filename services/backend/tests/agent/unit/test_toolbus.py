@@ -6,7 +6,7 @@ from pathlib import Path
 from recruit_agent.capabilities.tools import ToolDefinition, ToolRegistry, build_delegate_scene_context_tool, is_scene_context_tool, register_core_tools
 from recruit_agent.core.settings import AppSettings
 from recruit_agent.db.session import create_engine_from_settings, create_session_factory, initialize_database
-from recruit_agent.models.domain import Candidate, RecruitAgentProfile
+from recruit_agent.models.domain import Candidate
 from recruit_agent.plugins.host import PluginHost
 from recruit_agent.plugins.recruit.manifest import RecruitPluginManifest
 from recruit_agent.memory.filesystem import MemoryFileStore
@@ -111,13 +111,13 @@ def test_core_read_memory_tool_uses_memory_files(tmp_path: Path) -> None:
     store.write_file(
         scope_kind="candidate",
         scope_ref="alice",
-        agent_profile_id="agent-1",
+        agent_definition_id="agent-1",
         path="status.md",
         content="# Alice replied\n\nCandidate replied to outreach.",
     )
 
     output = _build_read_memory_handler(store)(
-        {"scope_kind": "candidate", "scope_ref": "alice", "agent_profile_id": "agent-1"}
+        {"scope_kind": "candidate", "scope_ref": "alice", "agent_definition_id": "agent-1"}
     )
 
     assert output["count"] == 1
@@ -133,19 +133,19 @@ def test_memory_tools_are_scoped_to_memory_root(tmp_path: Path) -> None:
         {
             "scope_kind": "global",
             "scope_ref": "workspace",
-            "agent_profile_id": "agent-1",
+            "agent_definition_id": "agent-1",
             "path": "preferences.md",
             "content": "- Use concise status updates.\n",
         }
     )
     list_output = _build_list_memory_files_handler(store)(
-        {"scope_kind": "global", "scope_ref": "workspace", "agent_profile_id": "agent-1"}
+        {"scope_kind": "global", "scope_ref": "workspace", "agent_definition_id": "agent-1"}
     )
     read_output = _build_read_memory_file_handler(store)(
         {
             "scope_kind": "global",
             "scope_ref": "workspace",
-            "agent_profile_id": "agent-1",
+            "agent_definition_id": "agent-1",
             "path": "preferences.md",
         }
     )
@@ -159,7 +159,7 @@ def test_memory_tools_are_scoped_to_memory_root(tmp_path: Path) -> None:
             {
                 "scope_kind": "global",
                 "scope_ref": "workspace",
-                "agent_profile_id": "agent-1",
+                "agent_definition_id": "agent-1",
                 "path": "../preferences.md",
             }
         )
@@ -248,7 +248,7 @@ def test_recruit_plugin_tools_are_marked_as_business_tools(tmp_path: Path) -> No
         "delete_resume_artifact": "business_write",
         "transition_application": "business_write",
         "create_candidate_sync_record": "business_write",
-        "get_goal_progress": "business_read",
+        "get_jd_progress": "business_read",
         "request_human_approval": "approval",
     }
     assert set(host.tool_registry.tools) == set(expected_permission_scopes)

@@ -91,8 +91,7 @@ class ApiAppTests(unittest.TestCase):
             "/api/sync/status": self.client.get("/api/sync/status"),
             "/api/mcp/presets": self.client.get("/api/mcp/presets"),
             "/api/mcp/servers": self.client.get("/api/mcp/servers"),
-            "/api/recruit-agent/profile": self.client.get("/api/recruit-agent/profile"),
-            "/api/recruit-agent/goals": self.client.get("/api/recruit-agent/goals"),
+            "/api/recruit-agent/agent-definition": self.client.get("/api/recruit-agent/agent-definition"),
             "/api/recruit-agent/runtime/traces": self.client.get("/api/recruit-agent/runtime/traces"),
             "/api/recruit-agent/runtime/graphs": self.client.get("/api/recruit-agent/runtime/graphs"),
             "/api/recruit-agent/runtime/strategy-fragments": self.client.get("/api/recruit-agent/runtime/strategy-fragments"),
@@ -113,7 +112,7 @@ class ApiAppTests(unittest.TestCase):
             session.add(
                 AgentLearning(
                     content=(
-                        '{"goal_title":"同步 JD（增量）","status":"blocked","created":0,"updated":0,"skipped":0,"blocked":1,'
+                        '{"run_title":"同步 JD（增量）","status":"blocked","created":0,"updated":0,"skipped":0,"blocked":1,'
                         '"evidence":["当前浏览器仅有 1 个标签页：\'CLI Proxy API Management Center\'",'
                         '"活动页 URL: http://127.0.0.1:8317/management.html#/auth-files"],'
                         '"next_step":"请先在浏览器中打开并切换到招聘平台的职位列表或职位详情页面，然后继续同步。"}'
@@ -138,7 +137,7 @@ class ApiAppTests(unittest.TestCase):
                 "target_type": "blocked_task",
                 "target_id": "approval-target-1",
                 "title": "Resume blocked task",
-                "payload": {"blocked_task": {"task_type": "goal_intake", "payload": {"goal_id": "g-1"}}},
+                "payload": {"blocked_task": {"task_type": "instruction_intake", "payload": {"run_id": "r-1"}}},
             },
         )
         self.assertEqual(created.status_code, 201)

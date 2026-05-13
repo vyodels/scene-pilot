@@ -9,7 +9,7 @@ SHARED_WORKSPACE_SCOPE_REF = "workspace:shared"
 
 _META_SECTION = "__meta__"
 _SUMMARY_SECTION = "summary"
-_GOAL_TEXT_SECTION = "goal text"
+_INSTRUCTION_SECTION = "instruction"
 _CONSTRAINTS_SECTION = "constraints"
 _SUCCESS_CRITERIA_SECTION = "success criteria"
 _CONTEXT_HINTS_SECTION = "context hints"
@@ -43,10 +43,10 @@ def serialize_scene_template(template: dict[str, Any]) -> dict[str, Any]:
         "key": template["key"],
         "title": template["title"],
         "summary": template["summary"],
-        "goal_kind": template["goal_kind"],
-        "goalKind": template["goal_kind"],
-        "default_goal_text": template["default_goal_text"],
-        "defaultGoalText": template["default_goal_text"],
+        "action_kind": template["action_kind"],
+        "actionKind": template["action_kind"],
+        "default_instruction": template["default_instruction"],
+        "defaultInstruction": template["default_instruction"],
         "requires_jd": bool(template.get("requires_jd")),
         "requiresJd": bool(template.get("requires_jd")),
         "supports_candidate_count_target": bool(template.get("supports_candidate_count_target")),
@@ -65,7 +65,7 @@ def serialize_scene_template(template: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def resolve_scene_action_definition(action_kind: str | None, *, goal_title: str | None = None) -> dict[str, Any]:
+def resolve_scene_action_definition(action_kind: str | None, *, run_title: str | None = None) -> dict[str, Any]:
     normalized_action_kind = str(action_kind or "").strip().lower()
     template = shared_scene_template_catalog().get(normalized_action_kind or "") or {}
     constraints = dict(template.get("constraints") or {})
@@ -74,7 +74,7 @@ def resolve_scene_action_definition(action_kind: str | None, *, goal_title: str 
     source_surface = str(constraints.get("source_surface") or "").strip().lower() or None
     return {
         "action_kind": normalized_action_kind or "unknown",
-        "action_label": str(goal_title or template.get("title") or normalized_action_kind or "业务动作").strip() or "业务动作",
+        "action_label": str(run_title or template.get("title") or normalized_action_kind or "业务动作").strip() or "业务动作",
         "target_entity": target_entity,
         "source_surface": source_surface,
         "summary_mode": _resolve_summary_mode(
@@ -157,13 +157,13 @@ def _parse_scene_template_doc(path) -> dict[str, Any]:
     trial_budget = _parse_mapping_block(path=path, block_name="Trial Budget", lines=sections.get(_TRIAL_BUDGET_SECTION, []))
 
     key = str(metadata.get("key") or path.stem).strip()
-    goal_kind = str(metadata.get("goal_kind") or key).strip()
+    action_kind = str(metadata.get("action_kind") or key).strip()
     template: dict[str, Any] = {
         "key": key,
         "title": title,
         "summary": _parse_text_block(path=path, block_name="Summary", lines=sections.get(_SUMMARY_SECTION, [])),
-        "goal_kind": goal_kind,
-        "default_goal_text": _parse_text_block(path=path, block_name="Goal Text", lines=sections.get(_GOAL_TEXT_SECTION, [])),
+        "action_kind": action_kind,
+        "default_instruction": _parse_text_block(path=path, block_name="Instruction", lines=sections.get(_INSTRUCTION_SECTION, [])),
         "requires_jd": bool(metadata.get("requires_jd", False)),
         "supports_candidate_count_target": bool(metadata.get("supports_candidate_count_target", False)),
         "direct_runnable": bool(metadata.get("direct_runnable", False)),

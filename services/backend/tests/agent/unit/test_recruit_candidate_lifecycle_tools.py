@@ -9,7 +9,7 @@ from recruit_agent.plugins.recruit.toolkit import (
     create_candidate_sync_record,
     delete_candidate,
     get_candidate_thread,
-    get_goal_progress,
+    get_jd_progress,
     list_candidates,
     list_pending_candidate_message_syncs,
     record_candidate_message,
@@ -46,7 +46,7 @@ def test_candidate_lifecycle_tools_cover_writeback_scoring_thread_and_progress(t
         "create_candidate_review_decision",
         "create_candidate_sync_record",
         "get_candidate_thread",
-        "get_goal_progress",
+        "get_jd_progress",
         "request_human_approval",
     ):
         assert tool_name in container.tool_registry.tools
@@ -200,7 +200,7 @@ def test_candidate_lifecycle_tools_cover_writeback_scoring_thread_and_progress(t
         assert person_artifact.file_name == "zhao-yunlong-resume.pdf"
         assert person_artifact.file_path == "/tmp/zhao-yunlong-resume.pdf"
 
-    progress = get_goal_progress(
+    progress = get_jd_progress(
         container.session_factory,
         job_description_id=job["job_description_id"],
     )

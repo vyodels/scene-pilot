@@ -48,7 +48,7 @@ def should_start_memory_writeback_job(
 def select_stable_memory_facts_with_llm(
     provider: LLMProvider,
     *,
-    goal_text: str,
+    instruction: str,
     final_output: str,
     scope_kind: str,
     scope_ref: str,
@@ -59,7 +59,7 @@ def select_stable_memory_facts_with_llm(
         return []
     request_id = f"memory_writeback_{uuid4().hex}"
     prompt = {
-        "goal": goal_text,
+        "instruction": instruction,
         "scope": {"kind": scope_kind, "ref": scope_ref},
         "existing_memory_summaries": [
             {
@@ -104,7 +104,7 @@ def write_stable_memory_facts_to_files(
     *,
     scope_kind: str,
     scope_ref: str,
-    agent_profile_id: str | None,
+    agent_definition_id: str | None,
     facts: list[dict[str, Any]],
     run_id: str | None = None,
     run_pk: str | None = None,
@@ -113,14 +113,14 @@ def write_stable_memory_facts_to_files(
     policy: MemoryWritebackPolicy | None = None,
 ) -> MemoryWritebackResult:
     result = MemoryWritebackResult()
-    if agent_profile_id is None:
+    if agent_definition_id is None:
         return result
     active_policy = policy or MemoryWritebackPolicy()
     existing_content = memory_file_store.read_file(
         scope_kind=scope_kind,
         scope_ref=scope_ref,
         path="stable_facts.md",
-        agent_profile_id=agent_profile_id,
+        agent_definition_id=agent_definition_id,
     ).get("content", "")
     existing_text = str(existing_content or "")
     lines: list[str] = []
@@ -150,7 +150,7 @@ def write_stable_memory_facts_to_files(
             scope_kind=scope_kind,
             scope_ref=scope_ref,
             path="stable_facts.md",
-            agent_profile_id=agent_profile_id,
+            agent_definition_id=agent_definition_id,
             content=prefix + "".join(lines),
             mode="append",
         )

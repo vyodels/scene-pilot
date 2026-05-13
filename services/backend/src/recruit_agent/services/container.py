@@ -37,9 +37,9 @@ from recruit_agent.capabilities.tools import (
 from recruit_agent.scheduler.queue import SqlAlchemyQueue
 from recruit_agent.scheduler.scheduler import SerialScheduler
 from recruit_agent.services.recruit_agent import (
-    default_recruit_agent_profile,
+    default_agent_definition,
+    normalize_prompt_config,
     resolve_context_policy,
-    resolve_goal_template,
     resolve_memory_policy,
 )
 from recruit_agent.services.dashboard import DashboardService
@@ -47,7 +47,7 @@ from recruit_agent.services.events import EventStreamService
 from recruit_agent.services.feature_flags import FeatureFlagService
 from recruit_agent.services.mcp_registry import McpRegistryService
 from recruit_agent.services.scene_context import SceneContextService
-from recruit_agent.repositories.domain import RecruitAgentProfileRepository, SettingsRepository
+from recruit_agent.repositories.domain import AgentDefinitionRepository, SettingsRepository
 from recruit_agent.services.sync import SyncService
 from recruit_agent.services.system_commands import SystemCommandService
 
@@ -87,7 +87,7 @@ class AppContainer:
         with session_factory() as session:
             stored_settings = SettingsRepository(session).load(resolved_settings)
         resolved_settings = AppSettings.model_validate(stored_settings.model_dump())
-        _seed_builtin_agent_profiles(session_factory)
+        _seed_builtin_agent_definitions(session_factory)
 
         plugin_host = PluginHost()
         install_manifest(plugin_host, RecruitPluginManifest(session_factory))
@@ -276,15 +276,15 @@ def _build_sync_service(settings: AppSettings, session_factory: sessionmaker[Ses
 
 def _build_read_memory_handler(store: MemoryFileStore):
     def _handler(arguments: dict[str, Any]) -> dict[str, Any]:
-        scope_kind, scope_ref, agent_profile_id = _memory_tool_scope(arguments)
+        scope_kind, scope_ref, agent_definition_id = _memory_tool_scope(arguments)
         limit = _bounded_int(arguments.get("limit"), default=50, minimum=1, maximum=100)
         query = str(arguments.get("query") or "").strip()
         entries = []
-        for item in store.list_files(scope_kind=scope_kind, scope_ref=scope_ref, agent_profile_id=agent_profile_id):
+        for item in store.list_files(scope_kind=scope_kind, scope_ref=scope_ref, agent_definition_id=agent_definition_id):
             content = store.read_file(
                 scope_kind=scope_kind,
                 scope_ref=scope_ref,
-                agent_profile_id=agent_profile_id,
+                agent_definition_id=agent_definition_id,
                 path=str(item["path"]),
             ).get("content", "")
             if query and query.lower() not in f"{item['path']}\n{content}".lower():
@@ -312,8 +312,8 @@ def _build_memory_file_store(settings: AppSettings) -> MemoryFileStore:
 
 def _build_list_memory_files_handler(store: MemoryFileStore):
     def _handler(arguments: dict[str, Any]) -> dict[str, Any]:
-        scope_kind, scope_ref, agent_profile_id = _memory_tool_scope(arguments)
-        files = store.list_files(scope_kind=scope_kind, scope_ref=scope_ref, agent_profile_id=agent_profile_id)
+        scope_kind, scope_ref, agent_definition_id = _memory_tool_scope(arguments)
+        files = store.list_files(scope_kind=scope_kind, scope_ref=scope_ref, agent_definition_id=agent_definition_id)
         return {"files": files, "count": len(files), "scope_kind": scope_kind, "scope_ref": scope_ref}
 
     return _handler
@@ -321,11 +321,11 @@ def _build_list_memory_files_handler(store: MemoryFileStore):
 
 def _build_read_memory_file_handler(store: MemoryFileStore):
     def _handler(arguments: dict[str, Any]) -> dict[str, Any]:
-        scope_kind, scope_ref, agent_profile_id = _memory_tool_scope(arguments)
+        scope_kind, scope_ref, agent_definition_id = _memory_tool_scope(arguments)
         return store.read_file(
             scope_kind=scope_kind,
             scope_ref=scope_ref,
-            agent_profile_id=agent_profile_id,
+            agent_definition_id=agent_definition_id,
             path=str(arguments.get("path") or "MEMORY.md"),
         )
 
@@ -334,11 +334,11 @@ def _build_read_memory_file_handler(store: MemoryFileStore):
 
 def _build_write_memory_file_handler(store: MemoryFileStore):
     def _handler(arguments: dict[str, Any]) -> dict[str, Any]:
-        scope_kind, scope_ref, agent_profile_id = _memory_tool_scope(arguments)
+        scope_kind, scope_ref, agent_definition_id = _memory_tool_scope(arguments)
         return store.write_file(
             scope_kind=scope_kind,
             scope_ref=scope_ref,
-            agent_profile_id=agent_profile_id,
+            agent_definition_id=agent_definition_id,
             path=str(arguments.get("path") or "MEMORY.md"),
             content=str(arguments.get("content") or ""),
             mode=str(arguments.get("mode") or "overwrite"),
@@ -349,11 +349,11 @@ def _build_write_memory_file_handler(store: MemoryFileStore):
 
 def _build_delete_memory_file_handler(store: MemoryFileStore):
     def _handler(arguments: dict[str, Any]) -> dict[str, Any]:
-        scope_kind, scope_ref, agent_profile_id = _memory_tool_scope(arguments)
+        scope_kind, scope_ref, agent_definition_id = _memory_tool_scope(arguments)
         return store.delete_file(
             scope_kind=scope_kind,
             scope_ref=scope_ref,
-            agent_profile_id=agent_profile_id,
+            agent_definition_id=agent_definition_id,
             path=str(arguments.get("path") or ""),
         )
 
@@ -365,8 +365,13 @@ def _memory_tool_scope(arguments: dict[str, Any]) -> tuple[str, str, str | None]
     scope_ref = str(arguments.get("scope_ref") or arguments.get("scopeRef") or "").strip()
     if not scope_kind or not scope_ref:
         raise ValueError("memory tools require scope_kind and scope_ref")
-    agent_profile_id = arguments.get("agent_profile_id") or arguments.get("agentProfileId")
-    return scope_kind, scope_ref, str(agent_profile_id) if agent_profile_id else None
+    agent_definition_id = (
+        arguments.get("agent_definition_id")
+        or arguments.get("agentDefinitionId")
+        or arguments.get("agent_definition_id")
+        or arguments.get("agentDefinitionId")
+    )
+    return scope_kind, scope_ref, str(agent_definition_id) if agent_definition_id else None
 
 
 def _build_record_learning_handler(session_factory: sessionmaker[Session]):
@@ -472,133 +477,39 @@ def _register_delegate_scene_context_tool(
     tool_registry.register(build_delegate_scene_context_tool(scene_context_service.delegate))
 
 
-def _seed_builtin_agent_profiles(session_factory: sessionmaker[Session]) -> None:
+def _seed_builtin_agent_definitions(session_factory: sessionmaker[Session]) -> None:
     with session_factory() as session:
-        repo = RecruitAgentProfileRepository(session)
-        assistant = repo.by_agent_key("assistant")
-        autonomous = repo.by_agent_key("autonomous")
-        legacy = repo.by_agent_key("recruit-agent")
+        repo = AgentDefinitionRepository(session)
+        definition = repo.primary() or repo.by_definition_key("recruit-agent")
+        if definition is None:
+            repo.create(_default_agent_definition())
+            return
 
-        if autonomous is None and legacy is not None:
-            autonomous = repo.update(
-                legacy,
-                {
-                    "agent_key": "autonomous",
-                    "is_primary": True,
-                    "name": legacy.name or "Autonomous",
-                    "status": legacy.status or "active",
-                    "agent_metadata": _merge_agent_metadata(legacy.agent_metadata, kind="autonomous"),
-                },
-            )
-
-        if autonomous is None:
-            autonomous = repo.create(_default_autonomous_profile())
-        else:
-            autonomous_updates: dict[str, Any] = {}
-            if not autonomous.is_primary:
-                autonomous_updates["is_primary"] = True
-            merged_metadata = _merge_agent_metadata(autonomous.agent_metadata, kind="autonomous")
-            if merged_metadata != dict(autonomous.agent_metadata or {}):
-                autonomous_updates["agent_metadata"] = merged_metadata
-            prompt_config = dict(autonomous.prompt_config or {})
-            resolved_context_policy = resolve_context_policy(prompt_config)
-            resolved_goal_template = resolve_goal_template(prompt_config)
-            if prompt_config.get("context_policy") != resolved_context_policy:
-                prompt_config["context_policy"] = resolved_context_policy
-                autonomous_updates["prompt_config"] = prompt_config
-            if prompt_config.get("goal_template") != resolved_goal_template:
-                prompt_config["goal_template"] = resolved_goal_template
-                autonomous_updates["prompt_config"] = prompt_config
-            resolved_memory_policy = resolve_memory_policy(autonomous.memory_policy)
-            if resolved_memory_policy != dict(autonomous.memory_policy or {}):
-                autonomous_updates["memory_policy"] = resolved_memory_policy
-            if autonomous_updates:
-                autonomous = repo.update(autonomous, autonomous_updates)
-
-        if assistant is None:
-            assistant = repo.create(_default_assistant_profile())
-        else:
-            assistant_updates: dict[str, Any] = {}
-            if assistant.is_primary:
-                assistant_updates["is_primary"] = False
-            merged_metadata = _merge_agent_metadata(assistant.agent_metadata, kind="assistant")
-            if merged_metadata != dict(assistant.agent_metadata or {}):
-                assistant_updates["agent_metadata"] = merged_metadata
-            if assistant_updates:
-                repo.update(assistant, assistant_updates)
-
-        if legacy is not None and autonomous is not None and legacy.id != autonomous.id and legacy.is_primary:
-            repo.update(legacy, {"is_primary": False})
+        updates: dict[str, Any] = {}
+        if not definition.is_primary:
+            updates["is_primary"] = True
+        original_prompt_config = dict(definition.prompt_config or {})
+        prompt_config = normalize_prompt_config(original_prompt_config)
+        resolved_context_policy = resolve_context_policy(prompt_config)
+        if prompt_config != original_prompt_config:
+            updates["prompt_config"] = prompt_config
+        if prompt_config.get("context_policy") != resolved_context_policy:
+            prompt_config["context_policy"] = resolved_context_policy
+            updates["prompt_config"] = prompt_config
+        resolved_memory_policy = resolve_memory_policy(definition.memory_policy)
+        if resolved_memory_policy != dict(definition.memory_policy or {}):
+            updates["memory_policy"] = resolved_memory_policy
+        default_definition = _default_agent_definition()
+        for key in ("product_bindings", "product_config", "product_projections"):
+            if dict(getattr(definition, key) or {}) != dict(default_definition[key]):
+                updates[key] = default_definition[key]
+        metadata = dict(definition.agent_metadata or {})
+        metadata.update({"supports_builtin_agents": True, "current_primary_definition": "recruit-agent"})
+        if metadata != dict(definition.agent_metadata or {}):
+            updates["agent_metadata"] = metadata
+        if updates:
+            repo.update(definition, updates)
 
 
-def _default_autonomous_profile() -> dict[str, Any]:
-    payload = default_recruit_agent_profile()
-    payload["agent_key"] = "autonomous"
-    payload["name"] = "Autonomous"
-    payload["agent_metadata"] = _merge_agent_metadata(payload.get("agent_metadata"), kind="autonomous")
-    return payload
-
-
-def _default_assistant_profile() -> dict[str, Any]:
-    return {
-        "agent_key": "assistant",
-        "name": "Assistant",
-        "status": "active",
-        "description": "面向聊天界面的协作助手，负责解释状态、回答问题，并在需要时等待人工确认。",
-        "is_primary": False,
-        "role_definition": {
-            "identity": "对话协作助手",
-            "positioning": "在聊天窗口中协助用户理解系统状态、执行操作并保持确认意识。",
-            "duties": [
-                "回答用户问题并整理当前上下文。",
-                "在需要时调用工具并解释结果。",
-                "对高风险动作保留确认与暂停意识。",
-            ],
-            "tone": "clear, concise, collaborative",
-            "boundaries": [
-                "不要伪造系统状态或执行结果。",
-                "高风险写入、外部动作、命令执行必须等待确认。",
-                "不要把一个用户会话的上下文泄露到其他会话。",
-            ],
-            "success_criteria": [
-                "回复清晰且可执行。",
-                "工具结果与当前会话上下文一致。",
-                "需要确认时能够显式停住并说明原因。",
-            ],
-            "forbidden_actions": [
-                "未经确认执行高风险外部动作。",
-                "伪造已完成但实际上未发生的操作。",
-            ],
-        },
-        "prompt_config": {
-            "system_prompt": "你是 Assistant 类型的 Recruit Agent。你的职责是在聊天界面中与用户协作，清晰解释状态、回答问题，并在高风险动作前等待确认。",
-            "context_policy": {
-                "memory_scope": "conversation",
-                "share_global_context": True,
-            },
-            "response_policy": {
-                "prefer_structured_output": False,
-                "require_evidence_refs": False,
-                "separate_fact_from_inference": True,
-            },
-        },
-        "playbook_blueprint": {},
-        "memory_policy": resolve_memory_policy({}),
-        "dashboard_config": {"layout": ["chat_sessions", "recent_activity"]},
-        "channel_config": {"chat": {"enabled": True, "requires_confirmation": True}},
-        "agent_metadata": _merge_agent_metadata({}, kind="assistant"),
-    }
-
-
-def _merge_agent_metadata(raw_metadata: Any, *, kind: str) -> dict[str, Any]:
-    metadata = dict(raw_metadata or {})
-    metadata.update(
-        {
-            "kind": kind,
-            "builtin": True,
-            "supports_builtin_agents": True,
-        }
-    )
-    if kind == "autonomous":
-        metadata["current_primary_agent"] = "autonomous"
-    return metadata
+def _default_agent_definition() -> dict[str, Any]:
+    return default_agent_definition()

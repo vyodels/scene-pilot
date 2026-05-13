@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
 from .types import InteractionOutput, LLMMessage, ToolResult
 
@@ -24,6 +25,12 @@ class Transcript:
         raise NotImplementedError
 
     def record_tool_result(self, conversation_id: str, result: ToolResult) -> None:
+        raise NotImplementedError
+
+    def record_pending_permission(self, conversation_id: str, pending: dict[str, Any]) -> None:
+        raise NotImplementedError
+
+    def clear_pending_permission(self, conversation_id: str) -> None:
         raise NotImplementedError
 
     def replace_messages(self, conversation_id: str, messages: list[LLMMessage]) -> None:
@@ -58,6 +65,14 @@ class InMemoryTranscript(Transcript):
 
     def record_tool_result(self, conversation_id: str, result: ToolResult) -> None:
         self.tool_results.setdefault(conversation_id, []).append(result)
+
+    def record_pending_permission(self, conversation_id: str, pending: dict[str, Any]) -> None:
+        state = self.states.setdefault(conversation_id, TranscriptState())
+        state.pending_permissions = [dict(pending)]
+
+    def clear_pending_permission(self, conversation_id: str) -> None:
+        state = self.states.setdefault(conversation_id, TranscriptState())
+        state.pending_permissions = []
 
     def replace_messages(self, conversation_id: str, messages: list[LLMMessage]) -> None:
         state = self.states.setdefault(conversation_id, TranscriptState())

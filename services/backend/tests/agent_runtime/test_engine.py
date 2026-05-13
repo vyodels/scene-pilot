@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from recruit_agent.agent_runtime.engine import InteractionEngine, InteractionEngineConfig
+from recruit_agent.agent_runtime.engine import InteractionEngine, InteractionEngineConfig, transcript_from_checkpoint
 from recruit_agent.agent_runtime.tools import FunctionToolHandler
 from recruit_agent.agent_runtime.transcript import InMemoryTranscript
 from recruit_agent.agent_runtime.types import LLMInvocationResult, LLMMessage, LLMRequest, LLMResponse, TokenUsage, ToolDefinition, ToolSchema, ToolUse
@@ -134,6 +134,61 @@ def test_permission_resolution_continues_same_runtime_turn() -> None:
     assert second_request.messages[-2].tool_uses[0].id == "call-approval"
     assert second_request.messages[-1].role == "tool"
     assert "hello" in str(second_request.messages[-1].content)
+
+
+def test_permission_resolution_can_resume_from_transcript_checkpoint() -> None:
+    tool_use = ToolUse(id="call-approval", name="send_message", input={"text": "hello"})
+    provider = FixtureLLMProvider(
+        responses=[
+            LLMResponse(
+                id="resp-1",
+                request_id="",
+                invocation_id="",
+                assistant_message=LLMMessage(role="assistant", content="", tool_uses=[tool_use]),
+                tool_uses=[tool_use],
+                stop_reason="tool_calls",
+            ),
+            LLMResponse(
+                id="resp-2",
+                request_id="",
+                invocation_id="",
+                assistant_message=LLMMessage(role="assistant", content="sent"),
+            ),
+        ]
+    )
+    tool = ToolDefinition(
+        name="send_message",
+        description="Send a message.",
+        schema=ToolSchema(
+            name="send_message",
+            description="Send a message.",
+            input_schema={"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]},
+        ),
+        handler=FunctionToolHandler(lambda args: {"sent": args["text"]}),
+        metadata={"requires_confirmation": True},
+    )
+    engine = InteractionEngine(InteractionEngineConfig(conversation_id="conv-durable", provider=provider, tools=[tool]))
+
+    first_outputs = list(engine.submitMessage("send hello"))
+    permission = next(item for item in first_outputs if item.type == "permission_requested")
+    checkpoint = engine.checkpoint_state()
+    assert checkpoint["pending_permissions"]
+
+    rebuilt = InteractionEngine(
+        InteractionEngineConfig(
+            conversation_id="conv-durable",
+            provider=provider,
+            tools=[tool],
+            transcript=transcript_from_checkpoint("conv-durable", checkpoint),
+        )
+    )
+    continued_outputs = list(rebuilt.resolvePermission(approved=True))
+
+    assert rebuilt.pending_permission is None
+    assert any(item.type == "assistant_message_completed" and item.data["message"] == "sent" for item in continued_outputs)
+    assert any(item.type == "turn_completed" and item.turn_id == permission.turn_id for item in continued_outputs)
+    assert provider.captured_requests[1].turn_id == permission.turn_id
+    assert provider.captured_requests[1].messages[-1].role == "tool"
 
 
 def test_engine_passes_llm_request_options_to_provider() -> None:

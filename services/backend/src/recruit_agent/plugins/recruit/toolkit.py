@@ -1051,7 +1051,7 @@ def create_candidate_sync_record(
         return {"sync_record": sync_record.model_dump(by_alias=True)}
 
 
-def get_goal_progress(
+def get_jd_progress(
     session_factory: sessionmaker[Session],
     *,
     job_description_id: str,
