@@ -8,7 +8,7 @@
 - 当前产品与架构总入口：看 [README.md](../README.md) 与 `docs/plan/active/`
 - 已完成/已被覆盖的历史方案：看 `docs/plan/completed/` 与 `docs/plan/archive/`
 - 非规范参考资料：看 `docs/reference/`
-- 当前 Agent Runtime refactor 交接：看 `docs/plan/completed/2026-05-11-agent-runtime-refactor-handoff.md`
+- 当前 AgentDefinition / Agent 统一交接：看 `docs/plan/completed/2026-05-13-agent-definition-unification-handoff.md`
 - 旧 plan/spec/reference 路径暂时保留，待迁移使用方切换后再下掉旧文件
 
 ## 当前项目事实
