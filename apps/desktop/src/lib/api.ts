@@ -423,7 +423,7 @@ function asArray<T>(value: unknown): T[] {
 
 const DEFAULT_RECRUITING_POLICY: RecruitingPolicyConfig = {
   jdStandards: "拆解岗位目标、团队阶段、核心职责、硬性门槛、加分项、排除项和交付预期；所有候选人判断必须明确引用对应 JD 要求。",
-  perJdEvaluation: "不同 JD 可以覆盖通用权重、硬性门槛和优先级。评估时先读取当前 JD 的专属标准，再应用通用招聘规则。",
+  perJdEvaluation: "不同 JD 独立维护筛选标准、评分标准、通过阈值和人工复核线。评估时先读取当前 JD 的专属标准，再应用通用招聘规则。",
   onlineResumeCriteria: "在线简历优先判断 JD 匹配度、最近岗位相关性、核心技能证据、项目深度、稳定性和明显风险；不足以判断时进入补充材料环节。",
   offlineResumeCriteria: "离线简历用于补齐在线资料缺失的信息，重点检查项目细节、影响指标、职责边界、联系方式和时间线一致性。",
   communicationEvidence: "沟通记录用于判断候选人意向、可联系性、薪资/城市/到岗约束、简历获取结果和风险信号；不得跨候选人或跨 JD 混用沟通事实。",
@@ -511,6 +511,15 @@ function nullableString(value: unknown): string | null {
 function normalizeAgentDefinitionConfig(raw: unknown): AgentDefinitionConfig {
   const record = asRecord(raw);
   const promptRecord = asRecord(record.prompt ?? record.promptConfig ?? record.prompt_config);
+  const runtimeMetadata = { ...asRecord(record.runtimeMetadata ?? record.runtime_metadata) };
+  const scoringRubric = promptRecord.scoringRubric ?? promptRecord.scoring_rubric;
+  const recruitingPolicy = promptRecord.recruitingPolicy ?? promptRecord.recruiting_policy;
+  if (runtimeMetadata.scoringRubric == null && scoringRubric != null) {
+    runtimeMetadata.scoringRubric = scoringRubric;
+  }
+  if (runtimeMetadata.recruitingPolicy == null && recruitingPolicy != null) {
+    runtimeMetadata.recruitingPolicy = recruitingPolicy;
+  }
   return {
     identity: asRecord(record.identity ?? record.persona),
     systemPrompt: String(record.systemPrompt ?? record.system_prompt ?? promptRecord.systemPrompt ?? promptRecord.system_prompt ?? ""),
@@ -522,7 +531,7 @@ function normalizeAgentDefinitionConfig(raw: unknown): AgentDefinitionConfig {
     outputPolicy: asRecord(record.outputPolicy ?? record.output_policy),
     budgetPolicy: asRecord(record.budgetPolicy ?? record.budget_policy),
     modelConfig: asRecord(record.modelConfig ?? record.model_config),
-    runtimeMetadata: asRecord(record.runtimeMetadata ?? record.runtime_metadata),
+    runtimeMetadata,
   };
 }
 
@@ -530,6 +539,19 @@ function normalizeAgentDefinition(raw: unknown, fallbackKind: AgentKind, fallbac
   const record = asRecord(raw);
   const roleDefinition = asRecord(record.roleDefinition ?? record.role_definition);
   const promptConfig = asRecord(record.promptConfig ?? record.prompt_config);
+  const promptRuntimeMetadata = { ...asRecord(promptConfig.runtimeMetadata ?? promptConfig.runtime_metadata) };
+  if (promptRuntimeMetadata.scoringRubric == null) {
+    promptRuntimeMetadata.scoringRubric = promptConfig.scoringRubric ?? promptConfig.scoring_rubric ?? promptConfig.rubric ?? promptConfig.rubric_text;
+  }
+  if (promptRuntimeMetadata.recruitingPolicy == null) {
+    promptRuntimeMetadata.recruitingPolicy = promptConfig.recruitingPolicy ?? promptConfig.recruiting_policy;
+  }
+  if (promptRuntimeMetadata.contextPolicy == null) {
+    promptRuntimeMetadata.contextPolicy = promptConfig.contextPolicy ?? promptConfig.context_policy;
+  }
+  if (promptRuntimeMetadata.memoryPolicy == null) {
+    promptRuntimeMetadata.memoryPolicy = record.memoryPolicy ?? record.memory_policy;
+  }
   const fallbackConfig = fallbackDefinition?.config ?? {
     identity: roleDefinition.identity ?? roleDefinition.persona,
     systemPrompt: String(promptConfig.systemPrompt ?? promptConfig.system_prompt ?? promptConfig.prompt ?? record.description ?? ""),
@@ -537,11 +559,11 @@ function normalizeAgentDefinition(raw: unknown, fallbackKind: AgentKind, fallbac
     boundaries: stringListFrom(roleDefinition.boundaries ?? roleDefinition.forbiddenActions ?? roleDefinition.forbidden_actions ?? promptConfig.boundaries),
     successCriteria: roleDefinition.successCriteria ?? roleDefinition.success_criteria,
     toolScope: roleDefinition.toolScope ?? roleDefinition.tool_scope,
-    permissionPolicy: promptConfig.permissionPolicy ?? promptConfig.permission_policy,
-    outputPolicy: promptConfig.outputPolicy ?? promptConfig.output_policy,
-    budgetPolicy: promptConfig.budgetPolicy ?? promptConfig.budget_policy,
-    modelConfig: promptConfig.modelConfig ?? promptConfig.model_config,
-    runtimeMetadata: promptConfig.runtimeMetadata ?? promptConfig.runtime_metadata,
+    permissionPolicy: roleDefinition.permissionPolicy ?? roleDefinition.permission_policy ?? promptConfig.permissionPolicy ?? promptConfig.permission_policy,
+    outputPolicy: roleDefinition.outputPolicy ?? roleDefinition.output_policy ?? roleDefinition.outputContract ?? roleDefinition.output_contract ?? promptConfig.outputPolicy ?? promptConfig.output_policy,
+    budgetPolicy: roleDefinition.budgetPolicy ?? roleDefinition.budget_policy ?? promptConfig.budgetPolicy ?? promptConfig.budget_policy,
+    modelConfig: roleDefinition.modelConfig ?? roleDefinition.model_config ?? promptConfig.modelConfig ?? promptConfig.model_config,
+    runtimeMetadata: promptRuntimeMetadata,
   };
   const key = String(record.key ?? record.definitionKey ?? record.definition_key ?? fallbackDefinition?.key ?? `${fallbackKind}-definition`);
   return {
@@ -583,6 +605,7 @@ function normalizeAgentProductBinding(
 
 function agentDefinitionPatchPayload(payload: Partial<AgentDefinitionRecord>): Record<string, unknown> {
   const config = payload.config;
+  const runtimeMetadata = config ? asRecord(config.runtimeMetadata) : {};
   return {
     definition_key: payload.key,
     name: payload.name,
@@ -595,18 +618,21 @@ function agentDefinitionPatchPayload(payload: Partial<AgentDefinitionRecord>): R
           boundaries: config.boundaries,
           success_criteria: config.successCriteria,
           tool_scope: config.toolScope,
+          permission_policy: config.permissionPolicy,
+          output_policy: config.outputPolicy,
+          budget_policy: config.budgetPolicy,
+          model_config: config.modelConfig,
         }
       : undefined,
     prompt_config: config
       ? {
           system_prompt: config.systemPrompt,
-          permission_policy: config.permissionPolicy,
-          output_policy: config.outputPolicy,
-          budget_policy: config.budgetPolicy,
-          model_config: config.modelConfig,
-          runtime_metadata: config.runtimeMetadata,
+          scoringRubric: runtimeMetadata.scoringRubric ?? runtimeMetadata.scoring_rubric,
+          recruitingPolicy: runtimeMetadata.recruitingPolicy ?? runtimeMetadata.recruiting_policy,
+          context_policy: runtimeMetadata.contextPolicy ?? runtimeMetadata.context_policy,
         }
       : undefined,
+    memory_policy: config ? runtimeMetadata.memoryPolicy ?? runtimeMetadata.memory_policy : undefined,
   };
 }
 
@@ -1121,7 +1147,7 @@ function buildProductAdapterConfig(
     triggers: {},
     approvalPolicy: {},
     contextPolicy: asRecord(definition?.config.runtimeMetadata.contextPolicy ?? definition?.config.runtimeMetadata.context_policy),
-    memoryPolicy: {},
+    memoryPolicy: asRecord(definition?.config.runtimeMetadata.memoryPolicy ?? definition?.config.runtimeMetadata.memory_policy),
     adapterMetadata: asRecord(definition?.config.runtimeMetadata),
     providerLabel: config.providerLabel,
     modelLabel: config.modelLabel,
@@ -3640,8 +3666,8 @@ function createFetchClient(baseUrl: string): DesktopApiClient {
           ? [buildAutonomousPrimaryConversation(agentRuns, snapshot, definition)]
           : [buildAssistantConversationSummary(snapshot)];
       const runs = kind === "autonomous" ? agentRuns.slice(0, 8) : queueItems.slice(0, 8).map(queueItemToRun);
-      const tools = servers.flatMap((server) =>
-        server.tools.map((tool) =>
+      const tools = (servers as McpServerRecord[]).flatMap((server: McpServerRecord) =>
+        server.tools.map((tool: McpToolRecord) =>
           normalizeAgentToolSummary({
             id: tool.id,
             server_id: server.id,
@@ -3863,7 +3889,7 @@ function createFetchClient(baseUrl: string): DesktopApiClient {
           instruction: payload.instruction,
           kind: payload.kind,
           jd_id: payload.jdId,
-          candidate_count_target: payload.candidateCountTarget,
+          ...(payload.candidateCountTarget != null ? { candidate_count_target: payload.candidateCountTarget } : {}),
           conversation_id: payload.conversationId,
           constraints: payload.constraints,
           success_criteria: payload.successCriteria,

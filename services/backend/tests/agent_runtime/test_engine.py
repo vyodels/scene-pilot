@@ -40,6 +40,26 @@ def test_submit_message_completes_with_assistant_output() -> None:
     assert provider.captured_requests[0].messages[-1].content == "hi"
 
 
+def test_pre_start_interrupt_is_preserved() -> None:
+    provider = FixtureLLMProvider(
+        responses=[
+            LLMResponse(
+                id="resp-1",
+                request_id="",
+                invocation_id="",
+                assistant_message=LLMMessage(role="assistant", content="should not run"),
+            )
+        ]
+    )
+    engine = InteractionEngine(InteractionEngineConfig(conversation_id="conv-interrupt", provider=provider))
+
+    engine.interrupt()
+    outputs = list(engine.submitMessage("hi"))
+
+    assert [item.type for item in outputs if item.type.startswith("turn_")] == ["turn_started", "turn_interrupted"]
+    assert provider.captured_requests == []
+
+
 def test_tool_loop_uses_injected_business_tool_without_bash() -> None:
     tool_use = ToolUse(id="call-1", name="upsert_candidate", input={"name": "Ada"})
     provider = FixtureLLMProvider(

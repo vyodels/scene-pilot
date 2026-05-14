@@ -91,7 +91,6 @@ class InteractionEngine:
             raise RuntimeError("A turn is already active for this conversation")
         if self.pending_permission is not None:
             raise RuntimeError("The active turn is waiting for a permission decision")
-        self._interrupted = False
         turn_id = f"turn_{uuid4().hex}"
         self.active_turn_id = turn_id
         user_message = LLMMessage(role="user", content=input)
@@ -114,7 +113,6 @@ class InteractionEngine:
             raise RuntimeError("No pending permission for this conversation")
         self.pending_permission = None
         self.transcript.clear_pending_permission(self.config.conversation_id)
-        self._interrupted = False
         self.active_turn_id = pending.turn_id
         try:
             yield self._output(

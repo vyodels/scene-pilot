@@ -458,7 +458,14 @@ export function DesktopWorkspace(): JSX.Element {
           />
         );
       case "agents":
-        return <ChatOverlay transport={transport} workspaceAgent={summary.agent} variant="page" />;
+        return (
+          <ChatOverlay
+            transport={transport}
+            workspaceAgent={summary.agent}
+            jobDescriptions={jobDescriptions}
+            variant="page"
+          />
+        );
       default:
         return <DashboardView summary={summary} stateMachine={stateMachine} />;
     }
