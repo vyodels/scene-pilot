@@ -71,11 +71,9 @@ function resolveBackendCommand(): string[] {
     }
   }
 
-  const preferredPython = process.env.RECRUIT_AGENT_PYTHON
-    ?? process.env.PYTHON3
-    ?? process.env.PYTHON
+  const preferredPython = resolveConfiguredPythonExecutable()
     ?? resolvePythonExecutable();
-  return [preferredPython, "-m", "recruit_agent.server"];
+  return [preferredPython, "-m", "recruit_agent.core.app"];
 }
 
 function resolvePackagedBackendBinary(): string | null {
@@ -90,7 +88,7 @@ function resolvePackagedBackendBinary(): string | null {
 
 function resolveBackendCwd(): string {
   if (isDev) {
-    return path.resolve(__dirname, "../../services/backend/src");
+    return path.resolve(__dirname, "../../../../services/backend/src");
   }
 
   const backendCwd = process.env.RECRUIT_AGENT_BACKEND_CWD;
@@ -103,12 +101,25 @@ function resolveBackendCwd(): string {
 
 function resolvePythonExecutable(): string {
   const candidates = [
-    "/opt/homebrew/bin/python3",
     "/usr/local/bin/python3",
+    "/Library/Frameworks/Python.framework/Versions/3.14/bin/python3",
+    "/opt/homebrew/bin/python3",
     "/usr/bin/python3",
   ];
   const available = candidates.find((candidate) => existsSync(candidate));
   return available ?? "python3";
+}
+
+function resolveConfiguredPythonExecutable(): string | undefined {
+  const configured = [
+    process.env.RECRUIT_AGENT_PYTHON,
+    process.env.PYTHON3,
+    process.env.PYTHON,
+  ].find((candidate): candidate is string => Boolean(candidate?.trim()));
+  if (!configured) {
+    return undefined;
+  }
+  return existsSync(configured) ? configured : undefined;
 }
 
 async function hasFilesystemPath(targetPath: string): Promise<boolean> {

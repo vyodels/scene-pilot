@@ -3,6 +3,8 @@ import {
   FormInput,
   FormSelect,
   FormTextarea,
+  PageToolbar,
+  PageToolbarGroup,
   ToolbarButton,
   ToolbarField,
   ToolbarInput,
@@ -25,6 +27,8 @@ import {
 interface JdManagementViewProps {
   applications: ApplicationViewModel[];
   jobDescriptions: JobDescriptionSummaryRecord[];
+  preferredJobKey?: string | null;
+  preferredFocusToken?: number;
   onRefresh(): Promise<void> | void;
 }
 
@@ -255,8 +259,8 @@ function JdDetailCard({
 }): JSX.Element {
   if (!row) {
     return (
-      <aside className="jd-management-detail">
-        <div className="jd-management-empty">暂无职位数据</div>
+      <aside className="jd-management-detail jd-management-detail--empty">
+        <div className="jd-management-empty">还没有职位数据哦～</div>
       </aside>
     );
   }
@@ -577,6 +581,8 @@ function JdFullDrawer({
 export function JdManagementView({
   applications,
   jobDescriptions,
+  preferredJobKey,
+  preferredFocusToken,
   onRefresh,
 }: JdManagementViewProps): JSX.Element {
   const [serverJobs, setServerJobs] = useState<JobDescriptionSummaryRecord[]>([]);
@@ -739,6 +745,20 @@ export function JdManagementView({
     }
   }, [paginatedRows, selectedKey]);
 
+  useEffect(() => {
+    const key = String(preferredJobKey ?? "").trim();
+    if (!key || preferredFocusToken == null) {
+      return;
+    }
+    const matchingRow = paginatedRows.find((row) => row.key === key || row.job.jobDescriptionId === key || row.job.title === key);
+    if (matchingRow) {
+      setSelectedKey(matchingRow.key);
+      return;
+    }
+    setKeyword(key);
+    setPage(1);
+  }, [paginatedRows, preferredFocusToken, preferredJobKey]);
+
   const selectedRow = paginatedRows.find((row) => row.key === selectedKey) ?? paginatedRows[0] ?? null;
 
   const openDrawer = async (row: JdManagementRow) => {
@@ -798,8 +818,8 @@ export function JdManagementView({
   return (
     <section className="jd-management-page">
       <main className="jd-management-workspace">
-        <div className="jd-management-filterbar">
-          <div className="jd-management-filterbar__group">
+        <PageToolbar className="jd-management-filterbar">
+          <PageToolbarGroup className="jd-management-filterbar__group">
             <ToolbarField label="岗位状态">
               <ToolbarSelect value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as "all" | JdStatusBucket)}>
                 <option value="all">全部</option>
@@ -826,8 +846,8 @@ export function JdManagementView({
                 {ownerOptions.map((owner) => <option key={owner} value={owner}>{owner}</option>)}
               </ToolbarSelect>
             </ToolbarField>
-          </div>
-          <div className="jd-management-filterbar__group jd-management-filterbar__group--search">
+          </PageToolbarGroup>
+          <PageToolbarGroup className="jd-management-filterbar__group jd-management-filterbar__group--search" align="end">
             <ToolbarField label="职位搜索">
               <ToolbarInput
                 className="jd-management-toolbar-input"
@@ -844,8 +864,8 @@ export function JdManagementView({
                 placeholder="姓名 / 手机号"
               />
             </ToolbarField>
-          </div>
-        </div>
+          </PageToolbarGroup>
+        </PageToolbar>
 
         <section className="jd-management-kpis">
           <JdStatCard label="全部职位" value={kpiTotal ?? "—"} icon="briefcase" />
@@ -880,7 +900,7 @@ export function JdManagementView({
                 ) : null}
                 {!serverError && !paginatedRows.length ? (
                   <tr>
-                    <td colSpan={11} className="jd-management-table__empty">{serverLoading ? "加载中" : "暂无职位"}</td>
+                    <td colSpan={11} className="jd-management-table__empty">{serverLoading ? "加载中" : "还没有职位数据哦～"}</td>
                   </tr>
                 ) : null}
                 {paginatedRows.map((row) => (
@@ -966,7 +986,8 @@ export function JdManagementView({
       </main>
 
       <div className="jd-management-side-rail">
-        <div className="jd-management-side-actions">
+        <PageToolbar className="jd-management-side-actions">
+          <PageToolbarGroup align="end">
           <ToolbarButton variant="primary" onClick={() => {
             setCreating(true);
             setDrawerRow(null);
@@ -981,7 +1002,8 @@ export function JdManagementView({
             label="刷新"
             refreshingLabel="刷新中"
           />
-        </div>
+          </PageToolbarGroup>
+        </PageToolbar>
         <JdDetailCard row={selectedRow} onOpenDrawer={(row) => void openDrawer(row)} />
       </div>
 

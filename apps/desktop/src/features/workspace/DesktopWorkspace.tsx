@@ -17,8 +17,8 @@ import type {
   SettingsSnapshot,
   WorkspaceTab,
 } from "../../lib/types";
-import { CandidatesKanbanView, type CandidatesKanbanTab } from "../candidates/CandidatesKanbanView";
-import { DashboardView } from "../dashboard/DashboardView";
+import { CandidatesKanbanView, type ApplicationWorkspaceFilter, type CandidatesKanbanTab } from "../candidates/CandidatesKanbanView";
+import { DashboardView, type DashboardApplicationRoute } from "../dashboard/DashboardView";
 import { buildApplicationViewModels } from "../kanban-shared/kanbanUtils";
 import { JdManagementView } from "../jd-management";
 import { SettingsView } from "../settings/SettingsView";
@@ -44,6 +44,10 @@ const emptySettings: SettingsSnapshot = {
     allowOutboundMessaging: false,
     maxConcurrentRuns: 1,
     minFunnelCandidates: 0,
+  },
+  userProfile: {
+    nickname: "招聘方",
+    avatarUrl: null,
   },
 };
 
@@ -91,9 +95,20 @@ export function DesktopWorkspace(): JSX.Element {
   const [candidateWorkspaceFocus, setCandidateWorkspaceFocus] = useState<{
     applicationId?: string;
     conversationToken: number;
+    filter?: ApplicationWorkspaceFilter;
+    filterToken: number;
   }>({
     applicationId: undefined,
     conversationToken: 0,
+    filter: undefined,
+    filterToken: 0,
+  });
+  const [jdWorkspaceFocus, setJdWorkspaceFocus] = useState<{
+    jobKey?: string | null;
+    focusToken: number;
+  }>({
+    jobKey: undefined,
+    focusToken: 0,
   });
 
   const loadCoreWorkspace = useCallback(async () => {
@@ -163,12 +178,6 @@ export function DesktopWorkspace(): JSX.Element {
     }
   }, [loadSettingsWorkspace, settingsLoaded, tab]);
 
-  useEffect(() => {
-    if (tab === "jdManagement") {
-      setSidebarExpanded(true);
-    }
-  }, [tab]);
-
   const sectionMeta = useMemo(
     (): Record<WorkspaceTab, { eyebrow: string; title: string; description: string }> => ({
       home: {
@@ -204,11 +213,11 @@ export function DesktopWorkspace(): JSX.Element {
         ),
       },
       settings: {
-        eyebrow: copy("Tools and connections", "工具与连接"),
+        eyebrow: copy("Settings", "设置"),
         title: copy("Settings", "设置"),
         description: copy(
-          "Configure model access, external tools, sync preferences, and local review rules.",
-          "配置模型接入、外部工具、同步偏好和本地复核规则。",
+          "Configure model access and the recruiter identity used in candidate conversations.",
+          "配置模型接入和候选人沟通中使用的招聘方身份。",
         ),
       },
       agents: {
@@ -244,10 +253,9 @@ export function DesktopWorkspace(): JSX.Element {
         applicationFunnel: candidateKanbanModels.length,
         applicationFollowUp: followUpCount,
         jdManagement: jobDescriptions.length,
-        settings: mcpServers.filter((server) => !server.enabled || !/healthy/i.test(server.healthStatus)).length,
       } satisfies Partial<Record<WorkspaceTab, number>>;
     },
-    [candidateKanbanModels, jobDescriptions.length, mcpServers],
+    [candidateKanbanModels, jobDescriptions.length],
   );
 
   const handleSaveSettings = async (patch: Partial<SettingsSnapshot>) => {
@@ -353,26 +361,68 @@ export function DesktopWorkspace(): JSX.Element {
       (application) => application.id === normalized || application.applicationId === normalized,
     );
     if (direct) {
-      return direct.applicationId || direct.id;
+      return direct.id;
     }
     const byPerson = summary.applications.find((application) => application.personId === normalized);
-    return byPerson ? byPerson.applicationId || byPerson.id : undefined;
+    return byPerson ? byPerson.id : undefined;
   };
 
-  const openApplicationWorkspace = (statusFilter?: string, applicationIdLike?: string) => {
-    const applicationId = resolveApplicationId(applicationIdLike);
+  const resolveApplicationIds = (ids?: string[]) => {
+    return (ids ?? []).map(resolveApplicationId).filter((id): id is string => Boolean(id));
+  };
+
+  const openApplicationWorkspace = (route?: DashboardApplicationRoute | string, applicationIdLike?: string) => {
+    const legacyRoute = typeof route === "string" ? route : undefined;
+    const routeObject = typeof route === "object" ? route : undefined;
+    const applicationId = resolveApplicationId(routeObject?.applicationId ?? applicationIdLike);
+    const applicationIds = resolveApplicationIds(routeObject?.applicationIds);
+    const filter =
+      routeObject
+        ? ({
+            label: routeObject.label,
+            applicationIds,
+            jobTitle: routeObject.jobTitle,
+            statusId: routeObject.statusId,
+            summaryKey: routeObject.summaryKey,
+            milestoneId: routeObject.milestoneId,
+          } satisfies ApplicationWorkspaceFilter)
+        : legacyRoute && legacyRoute !== "application"
+          ? ({ label: legacyRoute, summaryKey: legacyRoute } satisfies ApplicationWorkspaceFilter)
+          : undefined;
     setCandidateWorkspaceFocus((current) => ({
       applicationId,
       conversationToken: applicationId ? current.conversationToken + 1 : current.conversationToken,
+      filter,
+      filterToken: filter ? current.filterToken + 1 : current.filterToken + 1,
     }));
-    setTab(statusFilter || applicationId ? "applicationFollowUp" : "applicationFunnel");
+    if (routeObject?.surface === "funnel") {
+      setTab("applicationFunnel");
+      return;
+    }
+    if (routeObject?.surface === "followUp" || legacyRoute || applicationId) {
+      setTab("applicationFollowUp");
+      return;
+    }
+    setTab("applicationFunnel");
   };
 
-  const openJdManagement = () => {
+  const openJdManagement = (jobKey?: string | null) => {
+    if (jobKey) {
+      setJdWorkspaceFocus((current) => ({
+        jobKey,
+        focusToken: current.focusToken + 1,
+      }));
+    }
     setTab("jdManagement");
   };
 
   const openApplicationFunnel = () => {
+    setCandidateWorkspaceFocus((current) => ({
+      applicationId: undefined,
+      conversationToken: current.conversationToken,
+      filter: undefined,
+      filterToken: current.filterToken + 1,
+    }));
     setTab("applicationFunnel");
   };
 
@@ -385,17 +435,32 @@ export function DesktopWorkspace(): JSX.Element {
     setTab("agents");
   };
 
+  const handleSidebarChange = (nextTab: WorkspaceTab) => {
+    if (nextTab === "applicationFunnel" || nextTab === "applicationFollowUp") {
+      setCandidateWorkspaceFocus((current) => ({
+        applicationId: undefined,
+        conversationToken: current.conversationToken,
+        filter: undefined,
+        filterToken: current.filterToken + 1,
+      }));
+    }
+    setTab(nextTab);
+  };
+
   const content = (() => {
     switch (tab) {
       case "home":
         return (
           <DashboardView
             summary={summary}
-            onOpenCandidates={openApplicationFunnel}
+            stateMachine={stateMachine}
+            jobDescriptions={jobDescriptions}
+            threads={applicationThreads}
+            onOpenApplications={openApplicationWorkspace}
             onOpenJdWorkspace={openJdManagement}
-            onOpenCommunications={() => openApplicationWorkspace("active")}
             onOpenAgentRuntime={() => openAgents("conversation", "autonomous")}
             onOpenAgentConfig={() => openAgents("config", "assistant")}
+            onOpenSettings={() => setTab("settings")}
           />
         );
       case "applicationFunnel":
@@ -408,11 +473,14 @@ export function DesktopWorkspace(): JSX.Element {
             activeTab={"funnel" satisfies CandidatesKanbanTab}
             preferredApplicationId={candidateWorkspaceFocus.applicationId}
             preferredConversationToken={candidateWorkspaceFocus.conversationToken}
+            preferredFilter={candidateWorkspaceFocus.filter}
+            preferredFilterToken={candidateWorkspaceFocus.filterToken}
             onOpenApplication={(applicationId) => openApplicationWorkspace("application", applicationId)}
             onRefresh={() => void refreshWorkspace()}
             onCreateEntry={handleCreateApplicationEntry}
             onTransition={handleTransitionApplicationState}
             onOpenDashboard={openDashboard}
+            operatorProfile={summary.settings.userProfile}
             jdContent={null}
           />
         );
@@ -426,11 +494,14 @@ export function DesktopWorkspace(): JSX.Element {
             activeTab={"status" satisfies CandidatesKanbanTab}
             preferredApplicationId={candidateWorkspaceFocus.applicationId}
             preferredConversationToken={candidateWorkspaceFocus.conversationToken}
+            preferredFilter={candidateWorkspaceFocus.filter}
+            preferredFilterToken={candidateWorkspaceFocus.filterToken}
             onOpenApplication={(applicationId) => openApplicationWorkspace("application", applicationId)}
             onRefresh={() => void refreshWorkspace()}
             onCreateEntry={handleCreateApplicationEntry}
             onTransition={handleTransitionApplicationState}
             onOpenDashboard={openDashboard}
+            operatorProfile={summary.settings.userProfile}
             jdContent={null}
           />
         );
@@ -439,6 +510,8 @@ export function DesktopWorkspace(): JSX.Element {
           <JdManagementView
             applications={candidateKanbanModels}
             jobDescriptions={jobDescriptions}
+            preferredJobKey={jdWorkspaceFocus.jobKey}
+            preferredFocusToken={jdWorkspaceFocus.focusToken}
             onRefresh={refreshWorkspace}
           />
         );
@@ -446,21 +519,14 @@ export function DesktopWorkspace(): JSX.Element {
         return (
           <SettingsView
             settings={summary.settings}
-            mcpPresets={mcpPresets}
-            mcpServers={mcpServers}
             saving={settingsSaving}
             onSave={handleSaveSettings}
-            onInstallMcpPreset={handleInstallMcpPreset}
-            onCreateMcpServer={handleCreateMcpServer}
-            onUpdateMcpServer={handleUpdateMcpServer}
-            onDeleteMcpServer={handleDeleteMcpServer}
-            onHealthcheckMcpServer={handleHealthcheckMcpServer}
           />
         );
       case "agents":
         return <ChatOverlay transport={transport} workspaceAgent={summary.agent} variant="page" />;
       default:
-        return <DashboardView summary={summary} stateMachine={stateMachine} />;
+        return <DashboardView summary={summary} stateMachine={stateMachine} jobDescriptions={jobDescriptions} threads={applicationThreads} onOpenApplications={openApplicationWorkspace} onOpenJdWorkspace={openJdManagement} />;
     }
   })();
   const applicationSurface =
@@ -476,7 +542,7 @@ export function DesktopWorkspace(): JSX.Element {
         sidebar={
           <Sidebar
             active={tab}
-            onChange={setTab}
+            onChange={handleSidebarChange}
             counts={counts}
             expanded={sidebarExpanded}
             onExpandedChange={setSidebarExpanded}
@@ -487,10 +553,10 @@ export function DesktopWorkspace(): JSX.Element {
         }
         topbar={
           <TopBar
-            settings={summary.settings}
             transport={transport}
             sectionEyebrow={sectionMeta[tab].eyebrow}
             sectionTitle={sectionMeta[tab].title}
+            agentStatus={summary.agent.status}
             hideSectionSummary={applicationSurface}
             onRefresh={() => void refreshWorkspace()}
             refreshing={refreshing}

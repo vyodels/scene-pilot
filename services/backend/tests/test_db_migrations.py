@@ -447,6 +447,114 @@ def test_run_migrations_aligns_agent_run_columns_for_existing_schema(tmp_path):
         assert "ix_agent_runs_agent_kind" in indexes
 
 
+def test_run_migrations_aligns_agent_runtime_subject_columns_after_version_27(tmp_path):
+    engine = _build_engine(tmp_path)
+
+    with engine.begin() as connection:
+        ensure_schema_migrations_table(connection)
+        connection.execute(
+            text(
+                """
+                CREATE TABLE agent_runs (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    session_id TEXT NOT NULL,
+                    candidate_id TEXT,
+                    jd_id TEXT,
+                    platform TEXT NOT NULL DEFAULT 'site',
+                    lane TEXT NOT NULL DEFAULT 'agent',
+                    run_type TEXT NOT NULL DEFAULT 'generic',
+                    status TEXT NOT NULL DEFAULT 'queued',
+                    priority INTEGER NOT NULL DEFAULT 100,
+                    checkpoint_status TEXT NOT NULL DEFAULT 'none',
+                    context_manifest JSON NOT NULL DEFAULT '{}',
+                    runtime_metadata JSON NOT NULL DEFAULT '{}',
+                    created_at BIGINT NOT NULL,
+                    updated_at BIGINT NOT NULL
+                )
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                CREATE TABLE agent_run_checkpoints (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    session_id TEXT NOT NULL,
+                    run_id TEXT NOT NULL,
+                    candidate_id TEXT,
+                    checkpoint_kind TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'open',
+                    title TEXT NOT NULL,
+                    payload JSON NOT NULL DEFAULT '{}',
+                    created_at BIGINT NOT NULL,
+                    updated_at BIGINT NOT NULL
+                )
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                CREATE TABLE agent_runtime_events (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    session_id TEXT NOT NULL,
+                    run_id TEXT,
+                    candidate_id TEXT,
+                    level TEXT NOT NULL DEFAULT 'info',
+                    source TEXT NOT NULL,
+                    event_type TEXT NOT NULL,
+                    message TEXT NOT NULL,
+                    payload JSON NOT NULL DEFAULT '{}',
+                    occurred_at BIGINT NOT NULL,
+                    created_at BIGINT NOT NULL,
+                    updated_at BIGINT NOT NULL
+                )
+                """
+            )
+        )
+        for version in range(1, 28):
+            connection.execute(
+                text(
+                    f"""
+                    INSERT INTO {SCHEMA_MIGRATIONS_TABLE} (version, name, applied_at)
+                    VALUES (:version, :name, :applied_at)
+                    """
+                ),
+                {
+                    "version": version,
+                    "name": f"migration-{version}",
+                    "applied_at": "2026-04-20T00:00:00+00:00",
+                },
+            )
+
+    run_migrations(engine)
+
+    with engine.connect() as connection:
+        run_columns = {
+            row[1]
+            for row in connection.execute(text("PRAGMA table_info(agent_runs)")).fetchall()
+        }
+        checkpoint_columns = {
+            row[1]
+            for row in connection.execute(text("PRAGMA table_info(agent_run_checkpoints)")).fetchall()
+        }
+        event_columns = {
+            row[1]
+            for row in connection.execute(text("PRAGMA table_info(agent_runtime_events)")).fetchall()
+        }
+        indexes = {
+            row[0]
+            for row in connection.execute(text("SELECT name FROM sqlite_master WHERE type='index'")).fetchall()
+        }
+
+        assert current_schema_version(connection) == CURRENT_SCHEMA_VERSION
+        assert {"person_id", "application_id", "jd_id"} <= run_columns
+        assert {"person_id", "application_id"} <= checkpoint_columns
+        assert {"person_id", "application_id"} <= event_columns
+        assert "ix_agent_runs_person_status" in indexes
+        assert "ix_agent_runs_application_status" in indexes
+
+
 def test_run_migrations_aligns_skill_columns_for_runtime_learning(tmp_path):
     engine = _build_engine(tmp_path)
 

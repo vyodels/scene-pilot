@@ -52,6 +52,8 @@ import type {
   McpServerRecord,
   McpToolRecord,
   OperatorInteractionRecord,
+  ProviderConfig,
+  ProviderHealthcheckResult,
   RecruitingPolicyConfig,
   ResumeArtifactRecord,
   RuntimeCapabilityDriver,
@@ -218,6 +220,7 @@ export interface DesktopApiClient {
   deleteMcpServer(serverId: string): Promise<void>;
   healthcheckMcpServer(serverId: string): Promise<McpServerRecord>;
   getSettings(): Promise<SettingsSnapshot>;
+  checkProvider(payload: ProviderConfig): Promise<ProviderHealthcheckResult>;
   getAgentSnapshot(): Promise<AgentSnapshot>;
   listAgentQueue(): Promise<AgentQueueItem[]>;
   approveItem(id: string, reason?: string): Promise<void>;
@@ -676,6 +679,7 @@ function normalizeSettings(raw: unknown): SettingsSnapshot {
   const record = asRecord(raw);
   const platform = asRecord(record.platform);
   const intranetSync = asRecord(record.intranetSync ?? record.intranet_sync);
+  const userProfile = asRecord(record.userProfile ?? record.user_profile);
   return {
     locale: String(record.locale ?? "en-US"),
     timezone: String(record.timezone ?? "Asia/Shanghai"),
@@ -722,6 +726,24 @@ function normalizeSettings(raw: unknown): SettingsSnapshot {
       maxConcurrentRuns: Number(platform.maxConcurrentRuns ?? platform.max_concurrent_runs ?? 1),
       minFunnelCandidates: Number(platform.minFunnelCandidates ?? platform.min_funnel_candidates ?? 0),
     },
+    userProfile: {
+      nickname: String(userProfile.nickname ?? "招聘方"),
+      avatarUrl: userProfile.avatarUrl
+        ? String(userProfile.avatarUrl)
+        : userProfile.avatar_url
+          ? String(userProfile.avatar_url)
+          : null,
+    },
+  };
+}
+
+function normalizeProviderHealthcheck(raw: unknown): ProviderHealthcheckResult {
+  const record = asRecord(raw);
+  return {
+    ok: Boolean(record.ok ?? false),
+    status: String(record.status ?? "unknown"),
+    latencyMs: record.latencyMs != null ? Number(record.latencyMs) : record.latency_ms != null ? Number(record.latency_ms) : null,
+    message: record.message != null ? String(record.message) : null,
   };
 }
 
@@ -3532,6 +3554,22 @@ function createFetchClient(baseUrl: string): DesktopApiClient {
         }),
       ),
     getSettings: async () => normalizeSettings(await requestJson<unknown>(baseUrl, "/api/settings")),
+    checkProvider: async (payload) =>
+      normalizeProviderHealthcheck(
+        await requestJson<unknown>(baseUrl, "/api/settings/providers/check", {
+          method: "POST",
+          body: JSON.stringify({
+            kind: payload.kind,
+            name: payload.name,
+            model: payload.model,
+            enabled: payload.enabled,
+            temperature: payload.temperature,
+            baseUrl: payload.baseUrl,
+            apiKey: payload.apiKey,
+            timeoutSeconds: payload.timeoutSeconds,
+          }),
+        }),
+      ),
     getAgentSnapshot: async () => deriveSnapshotFromDashboard(await createFetchClient(baseUrl).getDashboardSummary()),
     listAgentQueue: async () => asArray(await requestJson<unknown>(baseUrl, "/api/agents/queue")).map(normalizeAgentQueueItem),
     approveItem: async (id, reason) => {

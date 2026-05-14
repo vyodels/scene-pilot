@@ -63,6 +63,17 @@ def _runtime_scene_account(settings: AppSettings) -> str:
     return str(provider_config.get("site_account") or "本机场景 01")
 
 
+def _runtime_user_profile(settings: AppSettings) -> dict[str, str | None]:
+    provider_config = settings.provider_config or {}
+    profile = provider_config.get("user_profile")
+    if not isinstance(profile, dict):
+        profile = {}
+    nickname = str(profile.get("nickname") or provider_config.get("operator_nickname") or "招聘方").strip() or "招聘方"
+    avatar_url = profile.get("avatarUrl") or profile.get("avatar_url") or provider_config.get("operator_avatar_url")
+    avatar_url = str(avatar_url).strip() if avatar_url else None
+    return {"nickname": nickname, "avatarUrl": avatar_url or None}
+
+
 PIPELINE_STAGE_GROUPS: tuple[tuple[str, frozenset[str]], ...] = (
     ("发现与在线简历", frozenset({"A", "B"})),
     ("离线简历评估", frozenset({"D"})),
@@ -485,18 +496,20 @@ class DashboardService:
                         "kind": "openai-compatible",
                         "name": "主 OpenAI 接口",
                         "model": settings.provider_config.get("openai_model", "gpt-5.4"),
-                        "enabled": True,
+                        "enabled": bool(settings.provider_config.get("openai_enabled", True)),
                         "temperature": 0.2,
                         "baseUrl": settings.provider_config.get("openai_base_url", "https://api.openai.com/v1"),
+                        "apiKey": settings.provider_config.get("openai_api_key"),
                         "timeoutSeconds": int(settings.provider_config.get("openai_timeout_seconds", 180) or 180),
                     },
                     {
                         "kind": "anthropic",
                         "name": "备用 Anthropic 接口",
                         "model": settings.provider_config.get("anthropic_model", "claude-sonnet-4"),
-                        "enabled": False,
+                        "enabled": bool(settings.provider_config.get("anthropic_enabled", False)),
                         "temperature": 0.2,
                         "baseUrl": settings.provider_config.get("anthropic_base_url", "https://api.anthropic.com"),
+                        "apiKey": settings.provider_config.get("anthropic_api_key"),
                         "timeoutSeconds": int(settings.provider_config.get("anthropic_timeout_seconds", 180) or 180),
                     },
                 ],
@@ -511,7 +524,10 @@ class DashboardService:
                     "account": _runtime_scene_account(settings),
                     "cooldownDays": settings.provider_config.get("cooldown_days", 30),
                     "allowOutboundMessaging": settings.feature_flags.enable_outbound_messaging,
+                    "maxConcurrentRuns": settings.provider_config.get("max_concurrent_runs", 1),
+                    "minFunnelCandidates": settings.provider_config.get("autonomy_min_funnel_candidates", 0),
                 },
+                "userProfile": _runtime_user_profile(settings),
             },
         }
         return DashboardRead.model_validate(dashboard_payload)

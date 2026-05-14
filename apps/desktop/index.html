@@ -11,12 +11,13 @@
         object-src 'none';
         script-src 'self';
         style-src 'self' 'unsafe-inline';
-        img-src 'self' data: blob:;
+        img-src 'self' data: blob: http: https:;
         font-src 'self' data:;
         connect-src 'self' http://127.0.0.1:* http://localhost:* ws://127.0.0.1:* ws://localhost:*;
         worker-src 'self' blob:;
       "
     />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>Recruit Agent</title>
   </head>
   <body>

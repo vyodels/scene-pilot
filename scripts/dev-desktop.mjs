@@ -7,7 +7,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "..");
 const appDir = path.join(repoRoot, "apps", "desktop");
 const electronEntry = path.join(appDir, "dist-electron", "electron", "main.js");
-const rendererOrigin = process.env.RECRUIT_AGENT_DESKTOP_RENDERER_URL ?? "http://localhost:5174";
+const rendererOrigin = process.env.RECRUIT_AGENT_DESKTOP_RENDERER_URL ?? "http://127.0.0.1:5174";
 const remoteDebugPort = process.env.RECRUIT_AGENT_ELECTRON_REMOTE_DEBUG_PORT ?? "9222";
 const viteCommand = process.platform === "win32" ? "npm.cmd" : "npm";
 const electronCommand = path.join(
@@ -99,7 +99,15 @@ function shutdown(code = 0) {
 process.on("SIGINT", () => shutdown(130));
 process.on("SIGTERM", () => shutdown(143));
 
-const viteProcess = spawnChild(viteCommand, ["--workspace", "apps/desktop", "run", "dev:renderer"]);
+const viteProcess = spawnChild(viteCommand, [
+  "--workspace",
+  "apps/desktop",
+  "run",
+  "dev:renderer",
+  "--",
+  "--host",
+  "127.0.0.1",
+]);
 
 try {
   await waitForRenderer(rendererOrigin);

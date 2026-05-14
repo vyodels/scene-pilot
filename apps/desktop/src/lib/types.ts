@@ -802,6 +802,13 @@ export interface ProviderConfig {
   temperature: number;
 }
 
+export interface ProviderHealthcheckResult {
+  ok: boolean;
+  status: string;
+  latencyMs?: number | null;
+  message?: string | null;
+}
+
 export interface McpToolRecord {
   id: string;
   serverId: string;
@@ -877,6 +884,10 @@ export interface SettingsSnapshot {
     allowOutboundMessaging: boolean;
     maxConcurrentRuns: number;
     minFunnelCandidates: number;
+  };
+  userProfile: {
+    nickname: string;
+    avatarUrl?: string | null;
   };
 }
 

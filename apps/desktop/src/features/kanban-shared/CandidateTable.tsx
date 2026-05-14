@@ -12,7 +12,6 @@ interface CandidateTableProps {
   description?: string;
   applications: ApplicationViewModel[];
   stateMachine: RecruitmentStateMachine;
-  emptyMessage: string;
   onOpenDetail(applicationId: string): void;
   onOpenCommunication(applicationId: string): void;
   onTransition(applicationId: string, payload: ApplicationTransitionPayload): Promise<unknown> | void;
@@ -29,7 +28,6 @@ export function CandidateTable({
   description,
   applications,
   stateMachine,
-  emptyMessage,
   onOpenDetail,
   onOpenCommunication,
   onTransition,
@@ -75,6 +73,14 @@ export function CandidateTable({
     }
   };
 
+  if (!sortedApplications.length) {
+    return (
+      <section className="candidate-table-surface candidate-table-surface--empty">
+        <div className="candidate-table__empty">{copy("No data yet.", "还没有数据哦")}</div>
+      </section>
+    );
+  }
+
   return (
     <section className="candidate-table-surface">
       <header className="candidate-table-surface__header">
@@ -86,25 +92,24 @@ export function CandidateTable({
         </div>
       </header>
 
-      {sortedApplications.length ? (
-        <div className="candidate-table">
-          <div className="candidate-table__header">
-            <span>{copy("Name", "姓名")}</span>
-            <span>{copy("Current title", "当前职位")}</span>
-            <span>{copy("Role", "应聘岗位")}</span>
-            <span>{copy("Online resume", "在线简历")}</span>
-            <span>{copy("Offline resume", "线下简历")}</span>
-            <span>{copy("Contact", "联系方式")}</span>
-            <span>{copy("Current status", "当前状态")}</span>
-            <span>{copy("Actions", "操作")}</span>
-          </div>
+      <div className="candidate-table">
+        <div className="candidate-table__header">
+          <span>{copy("Name", "姓名")}</span>
+          <span>{copy("Current title", "当前职位")}</span>
+          <span>{copy("Role", "应聘岗位")}</span>
+          <span>{copy("Online resume", "在线简历")}</span>
+          <span>{copy("Offline resume", "线下简历")}</span>
+          <span>{copy("Contact", "联系方式")}</span>
+          <span>{copy("Current status", "当前状态")}</span>
+          <span>{copy("Actions", "操作")}</span>
+        </div>
 
-          {sortedApplications.map((record) => {
-            const currentNode = record.currentNode;
-            const actions =
-              currentNode?.executionConfig?.mode === "human_required"
-                ? deriveHumanActionsForNode(currentNode, stateMachine)
-                : [];
+        {sortedApplications.map((record) => {
+          const currentNode = record.currentNode;
+          const actions =
+            currentNode?.executionConfig?.mode === "human_required"
+              ? deriveHumanActionsForNode(currentNode, stateMachine)
+              : [];
 
             return (
               <div
@@ -229,12 +234,9 @@ export function CandidateTable({
                   ) : null}
                 </div>
               </div>
-            );
-          })}
-        </div>
-      ) : (
-        <div className="candidate-table__empty">{emptyMessage}</div>
-      )}
+          );
+        })}
+      </div>
     </section>
   );
 }

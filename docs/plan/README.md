@@ -15,7 +15,7 @@ Implementation plans live here. Plans are not long-term truth; long-term rules l
 
 ## Recent Completed Handoff
 
-- [`completed/2026-05-13-agent-definition-unification-handoff.md`](./completed/2026-05-13-agent-definition-unification-handoff.md)
+- [`completed/2026-05-14-desktop-ui-commercialization-handoff.md`](./completed/2026-05-14-desktop-ui-commercialization-handoff.md)
 
 ## Archive
 

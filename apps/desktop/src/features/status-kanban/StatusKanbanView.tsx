@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import type { ApplicationTransitionPayload, RecruitmentStateMachine, StateNode } from "@recruit-agent/shared";
-import { ToolbarField, ToolbarInput, ToolbarRefreshButton, ToolbarSelect } from "../../components";
+import { PageToolbar, PageToolbarGroup, StatusBadge, ToolbarField, ToolbarInput, ToolbarRefreshButton, ToolbarSelect } from "../../components";
 import {
   CandidateDateRangeControl,
   createApplicationDateRangeState,
@@ -15,6 +15,7 @@ import {
 } from "../kanban-shared/kanbanUtils";
 import type { ApplicationFollowUpSummaryDefinition, ApplicationRecord, ApplicationThreadRecord } from "../../lib/types";
 import { useI18n } from "../../lib/i18n";
+import type { ApplicationWorkspaceFilter } from "../candidates/CandidatesKanbanView";
 import { ApplicationFollowUpWorkspace } from "./ApplicationFollowUpWorkspace";
 
 interface StatusKanbanViewProps {
@@ -24,6 +25,8 @@ interface StatusKanbanViewProps {
   summaryDefinitions?: ApplicationFollowUpSummaryDefinition[];
   preferredApplicationId?: string;
   preferredConversationToken?: number;
+  preferredFilter?: ApplicationWorkspaceFilter;
+  preferredFilterToken?: number;
   onOpenApplication(applicationId: string): void;
   onRefresh?(): Promise<unknown> | void;
   onCreateEntry(
@@ -56,6 +59,8 @@ export function StatusKanbanView({
   summaryDefinitions = [],
   preferredApplicationId,
   preferredConversationToken,
+  preferredFilter,
+  preferredFilterToken,
   onOpenApplication,
   onRefresh,
   onCreateEntry,
@@ -119,6 +124,9 @@ export function StatusKanbanView({
   const baseFilteredModels = useMemo(
     () =>
       models.filter((item) => {
+        if (preferredFilter?.applicationIds && !preferredFilter.applicationIds.includes(item.application.id)) {
+          return false;
+        }
         if (jobFilter !== "all" && item.application.jobDescription.title !== jobFilter) {
           return false;
         }
@@ -145,7 +153,7 @@ export function StatusKanbanView({
         }
         return true;
       }),
-    [effectiveDateFilter, jobFilter, models, topSearch],
+    [effectiveDateFilter, jobFilter, models, preferredFilter?.applicationIds, topSearch],
   );
 
   const filteredModels = useMemo(
@@ -291,9 +299,35 @@ export function StatusKanbanView({
     setSelectedApplicationId(preferredApplicationId);
   }, [models, preferredApplicationId, preferredConversationToken]);
 
+  useEffect(() => {
+    if (!preferredFilter || preferredFilterToken == null) {
+      return;
+    }
+    if (preferredFilter.jobTitle) {
+      setJobFilter(preferredFilter.jobTitle);
+    } else {
+      setJobFilter("all");
+    }
+    if (preferredFilter.summaryKey && summaryDefinitionByKey.has(preferredFilter.summaryKey)) {
+      setStatusFilter(preferredFilter.summaryKey);
+    } else {
+      setStatusFilter("all");
+    }
+    if (preferredFilter.statusId) {
+      setSelectedStatus(preferredFilter.statusId);
+    } else {
+      setSelectedStatus("all");
+    }
+    const targetId = preferredFilter.applicationIds?.[0] ?? preferredApplicationId;
+    if (targetId && models.some((item) => item.application.id === targetId)) {
+      setSelectedApplicationId(targetId);
+    }
+  }, [models, preferredApplicationId, preferredFilter, preferredFilterToken, summaryDefinitionByKey]);
+
   return (
     <div className="application-followup-page">
-      <div className="application-followup-toolbar">
+      <PageToolbar className="application-followup-toolbar">
+        <PageToolbarGroup className="application-followup-toolbar__filters">
         <ToolbarField label={copy("Role", "岗位")}>
           <ToolbarSelect value={jobFilter} onChange={(event) => setJobFilter(event.target.value)}>
             <option value="all">{copy("All roles", "全部")}</option>
@@ -329,6 +363,8 @@ export function StatusKanbanView({
               ))}
           </ToolbarSelect>
         </ToolbarField>
+        </PageToolbarGroup>
+        <PageToolbarGroup className="application-followup-toolbar__actions" align="end">
         <ToolbarField label={copy("Search", "搜索")} className="application-followup-toolbar__search">
           <ToolbarInput
             value={topSearch}
@@ -342,7 +378,13 @@ export function StatusKanbanView({
           label={copy("Refresh", "刷新")}
           refreshingLabel={copy("Refreshing...", "刷新中...")}
         />
-      </div>
+        {preferredFilter?.label ? (
+          <StatusBadge tone="neutral">
+            {copy(`From dashboard: ${preferredFilter.label}`, `首页筛选：${preferredFilter.label}`)}
+          </StatusBadge>
+        ) : null}
+        </PageToolbarGroup>
+      </PageToolbar>
 
       <div
         className="application-followup-stage-strip"

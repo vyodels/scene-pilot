@@ -36,11 +36,16 @@ function messageSemantics(direction: string): ChatMessageSemantics {
 
 interface ChatMessageFeedProps {
   record: ApplicationViewModel;
+  operatorProfile?: {
+    nickname: string;
+    avatarUrl?: string | null;
+  };
 }
 
-export function ChatMessageFeed({ record }: ChatMessageFeedProps): JSX.Element {
+export function ChatMessageFeed({ record, operatorProfile }: ChatMessageFeedProps): JSX.Element {
   const { copy } = useI18n();
   const candidateAvatarUrl = avatarUrlFromContactInfo(record.application.person.contactInfo);
+  const operatorName = operatorProfile?.nickname?.trim() || copy("Recruiter", "招聘方");
   const logs = [...(record.thread?.communicationLogs ?? [])].sort((left, right) => {
     const leftTime = left.timestamp ?? left.id;
     const rightTime = right.timestamp ?? right.id;
@@ -78,7 +83,7 @@ export function ChatMessageFeed({ record }: ChatMessageFeedProps): JSX.Element {
                 <div className="chat-feed__content">{log.content}</div>
               </div>
             </div>
-            {sender === "operator" ? <CandidateAvatar name={copy("Recruiter", "招聘方")} /> : null}
+            {sender === "operator" ? <CandidateAvatar name={operatorName} imageUrl={operatorProfile?.avatarUrl} /> : null}
           </article>
         );
       })}

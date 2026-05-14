@@ -1832,6 +1832,13 @@ class ProviderConfigUpdate(BaseModel):
     timeoutSeconds: int | None = None
 
 
+class ProviderHealthcheckRead(BaseModel):
+    ok: bool
+    status: str
+    latencyMs: int | None = None
+    message: str | None = None
+
+
 class IntranetSyncConfigRead(BaseModel):
     enabled: bool
     baseUrl: str | None = None
@@ -1864,6 +1871,16 @@ class PlatformSettingsUpdate(BaseModel):
     minFunnelCandidates: int | None = None
 
 
+class UserProfileSettingsRead(BaseModel):
+    nickname: str
+    avatarUrl: str | None = None
+
+
+class UserProfileSettingsUpdate(BaseModel):
+    nickname: str | None = None
+    avatarUrl: str | None = None
+
+
 class SettingsSnapshotRead(BaseModel):
     locale: str
     timezone: str
@@ -1874,6 +1891,7 @@ class SettingsSnapshotRead(BaseModel):
     providers: list[ProviderConfigRead]
     intranetSync: IntranetSyncConfigRead
     platform: PlatformSettingsRead
+    userProfile: UserProfileSettingsRead
     approval_source: str | None = None
     feature_flags: FeatureFlags | None = None
     provider_config: dict[str, Any] = Field(default_factory=dict)
@@ -1892,6 +1910,7 @@ class SettingsSnapshotUpdate(BaseModel):
     providers: list[ProviderConfigUpdate] | None = None
     intranetSync: IntranetSyncConfigUpdate | None = None
     platform: PlatformSettingsUpdate | None = None
+    userProfile: UserProfileSettingsUpdate | None = None
 
 
 class McpToolBase(BaseModel):

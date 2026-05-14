@@ -2,6 +2,7 @@ export * from "./AppLayout";
 export * from "./FormControls";
 export * from "./MetricCard";
 export * from "./Panel";
+export * from "./PageToolbar";
 export * from "./ProgressBars";
 export * from "./SectionTabs";
 export * from "./Sidebar";

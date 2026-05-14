@@ -730,6 +730,57 @@ def _align_agent_runtime_control_schema(connection: Connection) -> None:
     connection.execute(text("CREATE INDEX IF NOT EXISTS ix_agent_runs_agent_kind ON agent_runs (agent_kind)"))
 
 
+def _align_agent_runtime_subject_columns(connection: Connection) -> None:
+    tables = {
+        row[0]
+        for row in connection.execute(text("SELECT name FROM sqlite_master WHERE type='table'")).fetchall()
+    }
+
+    if "agent_runs" in tables:
+        run_columns = {
+            row[1]
+            for row in connection.execute(text("PRAGMA table_info(agent_runs)")).fetchall()
+        }
+        run_statements = []
+        if "person_id" not in run_columns:
+            run_statements.append("ALTER TABLE agent_runs ADD COLUMN person_id TEXT")
+        if "application_id" not in run_columns:
+            run_statements.append("ALTER TABLE agent_runs ADD COLUMN application_id TEXT")
+        if "jd_id" not in run_columns:
+            run_statements.append("ALTER TABLE agent_runs ADD COLUMN jd_id TEXT")
+        for statement in run_statements:
+            connection.execute(text(statement))
+
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_agent_runs_person_status ON agent_runs (person_id, status)"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_agent_runs_application_status ON agent_runs (application_id, status)"))
+
+    if "agent_run_checkpoints" in tables:
+        checkpoint_columns = {
+            row[1]
+            for row in connection.execute(text("PRAGMA table_info(agent_run_checkpoints)")).fetchall()
+        }
+        checkpoint_statements = []
+        if "person_id" not in checkpoint_columns:
+            checkpoint_statements.append("ALTER TABLE agent_run_checkpoints ADD COLUMN person_id TEXT")
+        if "application_id" not in checkpoint_columns:
+            checkpoint_statements.append("ALTER TABLE agent_run_checkpoints ADD COLUMN application_id TEXT")
+        for statement in checkpoint_statements:
+            connection.execute(text(statement))
+
+    if "agent_runtime_events" in tables:
+        event_columns = {
+            row[1]
+            for row in connection.execute(text("PRAGMA table_info(agent_runtime_events)")).fetchall()
+        }
+        event_statements = []
+        if "person_id" not in event_columns:
+            event_statements.append("ALTER TABLE agent_runtime_events ADD COLUMN person_id TEXT")
+        if "application_id" not in event_columns:
+            event_statements.append("ALTER TABLE agent_runtime_events ADD COLUMN application_id TEXT")
+        for statement in event_statements:
+            connection.execute(text(statement))
+
+
 def _align_skill_schema_for_runtime_learning(connection: Connection) -> None:
     tables = {
         row[0]
@@ -2197,6 +2248,11 @@ MIGRATIONS: tuple[SchemaMigration, ...] = (
         version=27,
         name="drop_legacy_database_memory_tables",
         apply=_drop_legacy_database_memory_tables,
+    ),
+    SchemaMigration(
+        version=28,
+        name="align_agent_runtime_subject_columns",
+        apply=_align_agent_runtime_subject_columns,
     ),
 )
 

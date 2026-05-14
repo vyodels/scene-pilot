@@ -1,5 +1,16 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { FormCheckbox, FormInput, FormTextarea, StatusBadge } from "../../components";
+import {
+  FormCheckbox,
+  FormInput,
+  FormTextarea,
+  PageToolbar,
+  PageToolbarGroup,
+  StatusBadge,
+  ToolbarButton,
+  ToolbarField,
+  ToolbarInput,
+  ToolbarSelect,
+} from "../../components";
 import { apiClient } from "../../lib/api";
 import { formatDateTime } from "../../lib/format";
 import { useI18n } from "../../lib/i18n";
@@ -3150,48 +3161,51 @@ export function ChatOverlay({ transport, workspaceAgent, variant = "overlay" }: 
     <div className={pageMode ? "agent-management-page" : "chat-overlay-shell"}>
       <section className={pageMode ? "agent-management-surface" : "chat-overlay chat-overlay--drawer"}>
         {pageMode ? (
-          <header className="agent-management-topbar">
-            <label>
-              <span>{copy("Agent type", "Agent 类型")}</span>
-              <select value={activeAgent} onChange={(event) => focusAgent(event.target.value as AgentKind, activePanel)}>
+          <PageToolbar className="agent-management-topbar">
+            <PageToolbarGroup className="agent-management-topbar__filters">
+            <ToolbarField label={copy("Agent type", "Agent 类型")}>
+              <ToolbarSelect value={activeAgent} onChange={(event) => focusAgent(event.target.value as AgentKind, activePanel)}>
                 <option value="autonomous">{copy("Automation recruiting Agent", "自动化招聘 Agent")}</option>
                 <option value="assistant">{copy("Normal Agent", "普通 Agent")}</option>
-              </select>
-            </label>
-            <label>
-              <span>{copy("Instance/status", "实例/状态")}</span>
-              <select value="all" onChange={() => undefined}>
+              </ToolbarSelect>
+            </ToolbarField>
+            <ToolbarField label={copy("Instance/status", "实例/状态")}>
+              <ToolbarSelect value="all" onChange={() => undefined}>
                 <option value="all">{copy("All instances", "全部实例")}</option>
-              </select>
-            </label>
-            <label>
-              <span>{copy("Status", "状态")}</span>
-              <select value={agentListFilter} onChange={(event) => setAgentListFilter(event.target.value as AgentListFilter)}>
+              </ToolbarSelect>
+            </ToolbarField>
+            <ToolbarField label={copy("Status", "状态")}>
+              <ToolbarSelect value={agentListFilter} onChange={(event) => setAgentListFilter(event.target.value as AgentListFilter)}>
                 <option value="all">{copy("All", "全部")}</option>
                 <option value="running">{copy("Running", "运行中")}</option>
                 <option value="waiting">{copy("Waiting", "待确认")}</option>
                 <option value="done">{copy("Done", "已完成")}</option>
                 <option value="failed">{copy("Failed", "失败")}</option>
-              </select>
-            </label>
-            <label>
-              <span>{copy("Time range", "时间范围")}</span>
-              <select value="all" onChange={() => undefined}>
+              </ToolbarSelect>
+            </ToolbarField>
+            <ToolbarField label={copy("Time range", "时间范围")}>
+              <ToolbarSelect value="all" onChange={() => undefined}>
                 <option value="all">{copy("All", "全部")}</option>
-              </select>
-            </label>
+              </ToolbarSelect>
+            </ToolbarField>
+            </PageToolbarGroup>
+            <PageToolbarGroup className="agent-management-topbar__search" align="end">
             <div className="agent-management-search">
               <span aria-hidden="true">⌕</span>
-              <input
+              <ToolbarInput
                 value={agentSearchQuery}
                 onChange={(event) => setAgentSearchQuery(event.target.value)}
                 placeholder={copy("Search conversations, run ID, candidate, or action", "搜索对话、运行 ID、候选人或操作")}
               />
             </div>
-            <button type="button" className="agent-management-icon-button" onClick={() => void loadWorkspaces()}>
-              ↻
-            </button>
-          </header>
+            <ToolbarButton
+              className="agent-management-icon-button"
+              onClick={() => void loadWorkspaces()}
+              aria-label={copy("Refresh", "刷新")}
+              icon={<span className="toolbar-button__icon toolbar-button__icon--refresh" aria-hidden="true" />}
+            />
+            </PageToolbarGroup>
+          </PageToolbar>
         ) : (
           <header className="chat-overlay__header">
             <div className="chat-overlay__brand">

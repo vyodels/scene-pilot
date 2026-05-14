@@ -363,7 +363,7 @@ export function ApplicationFollowUpWorkspace({
   if (!selectedRecord) {
     return (
       <section className="application-followup-workspace application-followup-workspace--empty">
-        {copy("No applications match the current filters.", "当前筛选条件下没有投递记录。")}
+        {copy("No data yet.", "还没有数据哦")}
       </section>
     );
   }

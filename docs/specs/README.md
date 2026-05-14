@@ -13,6 +13,9 @@ This directory contains long-term normative documents only. It must stay small.
 3. `2026-05-11-recruiting-business-capability-data-spec.md`
    Recruiting business capability, skill, business fact, candidate/JD/application data, memory, and UI/API field governance.
 
+4. `2026-05-14-desktop-frontend-component-reuse-spec.md`
+   Desktop frontend shared component, topbar, toolbar, sidebar, and CSS ownership rules.
+
 ## Hard Boundary
 
 `services/backend/src/recruit_agent/agent_runtime/**` must remain business-agnostic.

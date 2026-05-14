@@ -1,15 +1,16 @@
 import React from "react";
 import type { ReactNode } from "react";
 import { useI18n } from "../lib/i18n";
-import type { SettingsSnapshot } from "../lib/types";
+import type { AgentSnapshot } from "../lib/types";
+import { PageToolbar, PageToolbarGroup } from "./PageToolbar";
 import { StatusBadge } from "./StatusBadge";
 import { ToolbarRefreshButton } from "./ToolbarControls";
 
 interface TopBarProps {
-  settings: SettingsSnapshot;
   transport: "http" | "offline";
   sectionEyebrow: string;
   sectionTitle: string;
+  agentStatus: AgentSnapshot["status"];
   hideSectionSummary?: boolean;
   leadingContent?: ReactNode;
   onRefresh(): void;
@@ -17,43 +18,39 @@ interface TopBarProps {
 }
 
 export function TopBar({
-  settings,
   transport,
   sectionEyebrow,
   sectionTitle,
+  agentStatus,
   hideSectionSummary = false,
   leadingContent,
   onRefresh,
   refreshing,
 }: TopBarProps): JSX.Element {
   const { language, setLanguage, copy } = useI18n();
+  const agentRunning = agentStatus === "running";
   const summaryContent = !hideSectionSummary ? (
-    <>
-      <div className="workspace-topbar__eyebrow">{sectionEyebrow}</div>
-      <div className="workspace-topbar__title-row">
-        <h2 className="workspace-topbar__title">{sectionTitle}</h2>
-      </div>
-    </>
+    <div className="workspace-topbar__title-row" aria-label={sectionEyebrow}>
+      <h2 className="workspace-topbar__title">{sectionTitle}</h2>
+    </div>
   ) : null;
 
   return (
-    <header className="workspace-topbar" data-hide-summary={hideSectionSummary ? "true" : undefined}>
+    <PageToolbar className="workspace-topbar" data-hide-summary={hideSectionSummary ? "true" : undefined}>
       {leadingContent || summaryContent ? (
-        <div className="workspace-topbar__summary" data-mode={leadingContent ? "custom" : undefined}>
+        <PageToolbarGroup className="workspace-topbar__summary" data-mode={leadingContent ? "custom" : undefined}>
           {leadingContent ?? summaryContent}
-        </div>
+        </PageToolbarGroup>
       ) : null}
 
-      <div className="workspace-topbar__actions">
+      <PageToolbarGroup className="workspace-topbar__actions" align="end">
         <div className="workspace-topbar__meta">
           <StatusBadge tone={transport === "http" ? "positive" : "critical"}>
             {transport === "http" ? copy("backend connected", "后端已连接") : copy("backend unavailable", "后端不可用")}
           </StatusBadge>
-          <StatusBadge tone="neutral">{settings.platform.account}</StatusBadge>
-          <StatusBadge tone={settings.intranetEnabled ? "positive" : "neutral"}>
-            {settings.intranetEnabled ? copy("intranet sync on", "内网同步开启") : copy("local only", "仅本地")}
+          <StatusBadge tone={agentRunning ? "positive" : "neutral"}>
+            {agentRunning ? copy("Agent running", "Agent 运行中") : copy("Agent idle", "Agent 未运行")}
           </StatusBadge>
-          <StatusBadge tone={settings.desktopApprovalsOnly ? "warning" : "neutral"}>{copy("desktop approvals", "桌面确认")}</StatusBadge>
         </div>
         <div className="workspace-topbar__switch" aria-label={copy("Language switch", "语言切换")}>
           {[
@@ -82,7 +79,7 @@ export function TopBar({
           label={copy("Refresh", "刷新")}
           refreshingLabel={copy("Refreshing...", "刷新中...")}
         />
-      </div>
-    </header>
+      </PageToolbarGroup>
+    </PageToolbar>
   );
 }

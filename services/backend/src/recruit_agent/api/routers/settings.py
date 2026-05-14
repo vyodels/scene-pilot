@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+from time import perf_counter
+
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy.orm import Session
 
+from recruit_agent.agent_runtime.providers import AnthropicProvider, OpenAIProvider, ProviderConfig, ProviderError
+from recruit_agent.agent_runtime.types import LLMMessage, LLMRequest
 from recruit_agent.api.deps import get_container, get_session
 from recruit_agent.core.settings import AppSettings
 from recruit_agent.repositories import SettingsRepository
-from recruit_agent.schemas.domain import SettingsSnapshotRead, SettingsSnapshotUpdate
+from recruit_agent.schemas.domain import ProviderConfigUpdate, ProviderHealthcheckRead, SettingsSnapshotRead, SettingsSnapshotUpdate
 from recruit_agent.services.container import AppContainer
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
@@ -15,6 +19,18 @@ router = APIRouter(prefix="/api/settings", tags=["settings"])
 def _runtime_scene_account(settings: AppSettings) -> str:
     provider_config = settings.provider_config or {}
     return str(provider_config.get("site_account") or "本机场景 01")
+
+
+def _runtime_user_profile(settings: AppSettings) -> dict[str, str | None]:
+    provider_config = settings.provider_config or {}
+    profile = provider_config.get("user_profile")
+    if not isinstance(profile, dict):
+        profile = {}
+    nickname = str(profile.get("nickname") or provider_config.get("operator_nickname") or "招聘方").strip() or "招聘方"
+    avatar_url = _normalize_optional_string(
+        str(profile.get("avatarUrl") or profile.get("avatar_url") or provider_config.get("operator_avatar_url") or "")
+    )
+    return {"nickname": nickname, "avatarUrl": avatar_url}
 
 
 def _normalize_optional_string(value: str | None) -> str | None:
@@ -72,6 +88,7 @@ def _to_desktop_settings(settings: AppSettings) -> SettingsSnapshotRead:
                 "maxConcurrentRuns": settings.provider_config.get("max_concurrent_runs", 1),
                 "minFunnelCandidates": settings.provider_config.get("autonomy_min_funnel_candidates", 0),
             },
+            "userProfile": _runtime_user_profile(settings),
         }
     )
 
@@ -140,6 +157,15 @@ async def update_settings(
             provider_config["max_concurrent_runs"] = max(int(platform_data["maxConcurrentRuns"]), 1)
         if "minFunnelCandidates" in platform_data:
             provider_config["autonomy_min_funnel_candidates"] = max(int(platform_data["minFunnelCandidates"]), 0)
+    if payload.userProfile is not None:
+        profile_data = payload.userProfile.model_dump(exclude_none=True)
+        provider_config = data.setdefault("provider_config", {})
+        user_profile = dict(provider_config.get("user_profile") or {})
+        if "nickname" in profile_data:
+            user_profile["nickname"] = str(profile_data["nickname"]).strip() or "招聘方"
+        if "avatarUrl" in profile_data:
+            user_profile["avatarUrl"] = _normalize_optional_string(profile_data["avatarUrl"])
+        provider_config["user_profile"] = user_profile
     if payload.providers is not None:
         provider_config = data.setdefault("provider_config", {})
         for provider in payload.providers:
@@ -194,3 +220,45 @@ async def replace_settings(
     session: Session = Depends(get_session),
 ) -> SettingsSnapshotRead:
     return await update_settings(payload, request=request, container=container, session=session)
+
+
+@router.post("/providers/check", response_model=ProviderHealthcheckRead)
+def check_provider(payload: ProviderConfigUpdate) -> ProviderHealthcheckRead:
+    provider_config = ProviderConfig(
+        provider_name=payload.kind.replace("-", "_"),
+        model=payload.model,
+        base_url=_normalize_optional_string(payload.baseUrl),
+        api_key=_normalize_optional_string(payload.apiKey),
+        timeout_seconds=max(int(payload.timeoutSeconds or 30), 1),
+    )
+    if not provider_config.base_url:
+        return ProviderHealthcheckRead(ok=False, status="missing_base_url", message="Base URL is required.")
+    if not provider_config.api_key:
+        return ProviderHealthcheckRead(ok=False, status="missing_api_key", message="API key is required.")
+
+    request = LLMRequest(
+        id="settings-provider-healthcheck",
+        turn_id="settings-provider-healthcheck",
+        invocation_id="settings-provider-healthcheck",
+        messages=[LLMMessage(role="user", content="Reply with OK.")],
+        model=payload.model,
+        max_tokens=8,
+        temperature=0,
+    )
+    provider = AnthropicProvider(provider_config) if payload.kind == "anthropic" else OpenAIProvider(provider_config)
+    started = perf_counter()
+    try:
+        provider.invoke(request)
+    except ProviderError as exc:
+        return ProviderHealthcheckRead(
+            ok=False,
+            status="failed",
+            latencyMs=round((perf_counter() - started) * 1000),
+            message=str(exc),
+        )
+    return ProviderHealthcheckRead(
+        ok=True,
+        status="healthy",
+        latencyMs=round((perf_counter() - started) * 1000),
+        message="Provider responded.",
+    )

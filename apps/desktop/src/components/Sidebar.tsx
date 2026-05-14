@@ -1,7 +1,6 @@
 import React from "react";
 import { useI18n } from "../lib/i18n";
 import type { AgentSnapshot, WorkspaceTab } from "../lib/types";
-import { StatusBadge } from "./StatusBadge";
 
 interface SidebarProps {
   active: WorkspaceTab;
@@ -19,10 +18,11 @@ const tabs: Array<{ key: WorkspaceTab; labelEn: string; labelZh: string; shortZh
   { key: "jdManagement", labelEn: "Position management", labelZh: "职位管理", shortZh: "职位" },
   { key: "applicationFollowUp", labelEn: "Application records", labelZh: "投递记录", shortZh: "投递" },
   { key: "applicationFunnel", labelEn: "Funnel board", labelZh: "漏斗看板", shortZh: "漏斗" },
-  { key: "settings", labelEn: "Settings", labelZh: "设置", shortZh: "设置" },
 ];
 
-function SidebarGlyph({ tab }: { tab: WorkspaceTab | "agents" }): JSX.Element {
+const settingsTab = { key: "settings" as const, labelEn: "Settings", labelZh: "设置", shortZh: "设置" };
+
+function SidebarGlyph({ tab, expanded = false }: { tab: WorkspaceTab | "agents" | "toggle"; expanded?: boolean }): JSX.Element {
   const shared = {
     width: 22,
     height: 22,
@@ -82,6 +82,16 @@ function SidebarGlyph({ tab }: { tab: WorkspaceTab | "agents" }): JSX.Element {
           <path d="M7 6l-1.4-1.4" />
         </svg>
       );
+    case "toggle":
+      return expanded ? (
+        <svg {...shared}>
+          <path d="m15 6-6 6 6 6" />
+        </svg>
+      ) : (
+        <svg {...shared}>
+          <path d="m9 6 6 6-6 6" />
+        </svg>
+      );
     default:
       return (
         <svg {...shared}>
@@ -114,15 +124,6 @@ export function Sidebar({
       <div className="workspace-sidebar__brand">
         <div className="workspace-sidebar__logo">RA</div>
         <div className="workspace-sidebar__eyebrow">{copy("Smart recruiting hub", "智能招聘中台")}</div>
-        <button
-          type="button"
-          className="workspace-sidebar__toggle"
-          aria-label={expanded ? copy("Collapse sidebar", "收起侧边栏") : copy("Expand sidebar", "展开侧边栏")}
-          aria-expanded={expanded}
-          onClick={() => onExpandedChange?.(!expanded)}
-        >
-          {expanded ? "‹" : "›"}
-        </button>
       </div>
 
       <nav className="workspace-sidebar__nav" aria-label={copy("Workspace sections", "工作区分区")}>
@@ -159,24 +160,37 @@ export function Sidebar({
           <span className="workspace-sidebar__item-icon">
             <SidebarGlyph tab="agents" />
           </span>
-          <span className="workspace-sidebar__item-label">{copy("Agent management", "Agent管理")}</span>
+          <span className="workspace-sidebar__item-label">{copy("Agent management", "Agent 管理")}</span>
           <span className="workspace-sidebar__status-dot" aria-hidden="true" />
           {agentCount > 0 ? <span className="workspace-sidebar__count">{agentCount > 9 ? "9+" : agentCount}</span> : null}
         </button>
-      </nav>
 
-      <div className="workspace-sidebar__footer">
         <button
           type="button"
-          className="workspace-sidebar__footer-toggle"
+          className="workspace-sidebar__item workspace-sidebar__item--settings"
+          data-active={active === settingsTab.key}
+          aria-label={copy(settingsTab.labelEn, settingsTab.labelZh)}
+          onClick={() => onChange(settingsTab.key)}
+        >
+          <span className="workspace-sidebar__item-icon">
+            <SidebarGlyph tab={settingsTab.key} />
+          </span>
+          <span className="workspace-sidebar__item-label">{copy(settingsTab.labelEn, expanded ? settingsTab.labelZh : settingsTab.shortZh)}</span>
+        </button>
+
+        <button
+          type="button"
+          className="workspace-sidebar__item workspace-sidebar__item--toggle"
           onClick={() => onExpandedChange?.(!expanded)}
           aria-label={expanded ? copy("Collapse sidebar", "收起菜单") : copy("Expand sidebar", "展开菜单")}
+          aria-expanded={expanded}
         >
-          <span aria-hidden="true">{expanded ? "‹" : "›"}</span>
-          <span>{expanded ? copy("Collapse menu", "收起菜单") : copy("Expand menu", "展开菜单")}</span>
+          <span className="workspace-sidebar__item-icon">
+            <SidebarGlyph tab="toggle" expanded={expanded} />
+          </span>
+          <span className="workspace-sidebar__item-label">{expanded ? copy("Collapse menu", "收起菜单") : copy("Expand menu", "展开菜单")}</span>
         </button>
-        <StatusBadge tone="positive">{copy("local", "本地")}</StatusBadge>
-      </div>
+      </nav>
     </aside>
   );
 }

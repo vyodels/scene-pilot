@@ -24,6 +24,10 @@ interface CandidateCommunicationPanelProps {
     payload: { direction: string; content: string; messageType?: string; platform?: string },
   ): Promise<unknown> | void;
   onTransition(applicationId: string, payload: ApplicationTransitionPayload): Promise<unknown> | void;
+  operatorProfile?: {
+    nickname: string;
+    avatarUrl?: string | null;
+  };
 }
 
 function asObject(value: unknown): Record<string, unknown> {
@@ -45,6 +49,7 @@ export function CandidateCommunicationPanel({
   onRefresh,
   onCreateEntry,
   onTransition,
+  operatorProfile,
 }: CandidateCommunicationPanelProps): JSX.Element | null {
   const { copy } = useI18n();
   const [search, setSearch] = useState("");
@@ -171,7 +176,7 @@ export function CandidateCommunicationPanel({
           </header>
 
           <div className="candidate-communication-panel__feed">
-            <ChatMessageFeed record={selectedRecord} />
+            <ChatMessageFeed record={selectedRecord} operatorProfile={operatorProfile} />
           </div>
 
           <ChatInputArea
