@@ -293,9 +293,12 @@ def test_container_build_registers_enabled_browser_mcp_tools(tmp_path: Path, mon
     assert "browser_locate_download" not in reloaded.tool_registry.tools
     assert "browser_wait_for_url" not in reloaded.tool_registry.tools
     assert "browser_get_active_tab" in reloaded.scene_context_tool_registry.tools
-    assert "browser_open_tab" in reloaded.scene_context_tool_registry.tools
-    assert "browser_locate_download" in reloaded.scene_context_tool_registry.tools
+    assert "browser_open_tab" not in reloaded.scene_context_tool_registry.tools
+    assert "browser_get_cookies" not in reloaded.scene_context_tool_registry.tools
+    assert "browser_locate_download" not in reloaded.scene_context_tool_registry.tools
     assert "browser_wait_for_url" in reloaded.scene_context_tool_registry.tools
+    assert "local_download_create_attempt" in reloaded.scene_context_tool_registry.tools
+    assert "local_download_attribute" in reloaded.scene_context_tool_registry.tools
     assert "read_memory" not in reloaded.scene_context_tool_registry.tools
     assert "record_learning" not in reloaded.scene_context_tool_registry.tools
     assert all(tool.resource_target_kind != "skill" for tool in reloaded.scene_context_tool_registry.tools.values())
@@ -370,8 +373,9 @@ def test_browser_mcp_preset_healthcheck_uses_stdio_mcp_server(tmp_path: Path, mo
         checked_payload = checked.json()
         assert checked_payload["health_status"] == "healthy"
         tool_names = {item["name"] for item in checked_payload["tools"]}
-        assert len(tool_names) == 16
-        assert {"browser_get_active_tab", "browser_open_tab", "browser_locate_download", "browser_wait_for_url"}.issubset(tool_names)
+        assert len(tool_names) == 11
+        assert {"browser_get_active_tab", "browser_snapshot", "browser_wait_for_url"}.issubset(tool_names)
+        assert {"browser_open_tab", "browser_screenshot", "browser_get_cookies", "browser_locate_download"}.isdisjoint(tool_names)
 
     assert tool_calls
     assert tool_calls[-1]["server_key"] == "browser"
@@ -421,7 +425,8 @@ def test_mcp_healthcheck_reload_registers_tools_discovered_after_install(tmp_pat
         assert checked.status_code == 200
         assert checked.json()["health_status"] == "healthy"
         assert "browser_get_active_tab" in app.state.container.scene_context_tool_registry.tools
-        assert "browser_open_tab" in app.state.container.scene_context_tool_registry.tools
+        assert "browser_open_tab" not in app.state.container.scene_context_tool_registry.tools
+        assert "browser_snapshot" in app.state.container.scene_context_tool_registry.tools
 
 
 def test_container_build_registers_enabled_virtualhid_mcp_tools(tmp_path: Path, monkeypatch) -> None:

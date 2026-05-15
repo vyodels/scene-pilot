@@ -38,7 +38,6 @@ LEGACY_BROWSER_COMMAND_PROTOCOL = "json_socket_browser_command"
 MCP_PROTOCOL_VERSION = "2025-03-26"
 MCP_STDIO_REQUEST_TIMEOUT_SECONDS = 8.0
 MCP_TRANSIENT_RETRY_DELAY_SECONDS = 0.35
-BROWSER_LOCATE_DOWNLOAD_MAX_WAIT_MS = 5_000
 VIRTUALHID_SOCKET_PRESET_KEY = "virtualhid-json-socket"
 MCP_RESOURCE_TOOL_NAMES = {"list_mcp_resources", "read_mcp_resource"}
 _VIRTUALHID_MCP_SERVER_ENV = "VIRTUALHID_MCP_SERVER"
@@ -49,9 +48,11 @@ _BROWSER_HID_SEQUENCE_STATE: dict[str, str | None] = {
     "last_browser_observation": None,
     "pending_browser_observation_after_hid": None,
 }
-_BROWSER_OBSERVATION_TOOL_NAMES = {
+_BROWSER_TARGET_IDENTIFICATION_TOOL_NAMES = {
     "browser_list_tabs",
     "browser_get_active_tab",
+}
+_BROWSER_OBSERVATION_TOOL_NAMES = {
     "browser_snapshot",
     "browser_query_elements",
     "browser_get_element",
@@ -61,10 +62,8 @@ _BROWSER_OBSERVATION_TOOL_NAMES = {
     "browser_wait_for_navigation",
     "browser_wait_for_disappear",
     "browser_wait_for_url",
-    "browser_screenshot",
-    "browser_get_cookies",
-    "browser_locate_download",
 }
+_BROWSER_READ_ONLY_RUNTIME_TOOL_NAMES = set(_BROWSER_TARGET_IDENTIFICATION_TOOL_NAMES) | set(_BROWSER_OBSERVATION_TOOL_NAMES)
 _HID_BROWSER_SEQUENCE_PRIMITIVE_TYPES = {"click", "drag", "scroll", "type", "pasteText", "key"}
 
 
@@ -470,7 +469,12 @@ def _mcp_read_resource(server: McpServer, uri: str) -> dict[str, Any]:
 
 def _mcp_call_tool(server: McpServer, tool_name: str, arguments: dict[str, Any]) -> Any:
     result = _mcp_session_request(server, "tools/call", {"name": tool_name, "arguments": dict(arguments or {})})
+    structured = result.get("structuredContent")
     if bool(result.get("isError")):
+        if structured is not None:
+            if isinstance(structured, dict):
+                return {**structured, "isError": True}
+            return {"isError": True, "structuredContent": structured}
         content = result.get("content")
         if isinstance(content, list):
             messages = [
@@ -482,7 +486,6 @@ def _mcp_call_tool(server: McpServer, tool_name: str, arguments: dict[str, Any])
         else:
             detail = str(content or "").strip()
         raise McpBridgeError(detail or f"MCP tool failed: {tool_name}")
-    structured = result.get("structuredContent")
     if structured is not None:
         return structured
     content = result.get("content")
@@ -521,27 +524,7 @@ def _is_transient_mcp_error(error: BaseException) -> bool:
 
 
 def _normalize_mcp_tool_arguments(tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-    normalized = dict(arguments or {})
-    if tool_name != "browser_locate_download":
-        return normalized
-    if "waitMs" not in normalized:
-        normalized["waitMs"] = BROWSER_LOCATE_DOWNLOAD_MAX_WAIT_MS
-        return normalized
-    wait_ms = _coerce_number(normalized.get("waitMs"))
-    if wait_ms is None:
-        normalized.pop("waitMs", None)
-        return normalized
-    normalized["waitMs"] = max(0, min(int(wait_ms), BROWSER_LOCATE_DOWNLOAD_MAX_WAIT_MS))
-    return normalized
-
-
-def _coerce_number(value: Any) -> float | None:
-    if value is None or value == "":
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
+    return dict(arguments or {})
 
 
 def _tool_has_zero_argument_schema(parameters: dict[str, Any]) -> bool:
@@ -655,7 +638,7 @@ def _prepare_linear_browser_hid_tool_call(server: McpServer, tool_name: str, arg
     if pending:
         raise McpBridgeError(
             "Browser/HID sequence violation: the previous browser-targeted hid_action has not been followed by a browser observation. "
-            "Call browser_snapshot, browser_wait_for_*, browser_get_active_tab, browser_query_elements, browser_locate_download, or another browser observation tool before the next click/type/scroll HID action."
+            "Call browser_snapshot, browser_wait_for_*, browser_query_elements, or another page observation tool before the next click/type/scroll HID action."
         )
     if _BROWSER_HID_SEQUENCE_STATE["last_browser_observation"] is None:
         raise McpBridgeError(
@@ -664,9 +647,22 @@ def _prepare_linear_browser_hid_tool_call(server: McpServer, tool_name: str, arg
         )
 
 
-def _record_linear_browser_hid_tool_call(server: McpServer, tool_name: str, arguments: dict[str, Any]) -> None:
+def _browser_observation_result_is_valid(result: Any) -> bool:
+    if not isinstance(result, dict):
+        return True
+    if result.get("success") is False or result.get("ok") is False or bool(result.get("isError")):
+        return False
+    if str(result.get("error") or "").strip():
+        return False
+    status = str(result.get("status") or "").strip().lower()
+    return status not in {"blocked", "error", "failed", "failure", "timeout"}
+
+
+def _record_linear_browser_hid_tool_call(server: McpServer, tool_name: str, arguments: dict[str, Any], result: Any) -> None:
     name = str(tool_name or "").strip()
     if _is_browser_observation_tool(server, name):
+        if not _browser_observation_result_is_valid(result):
+            return
         _BROWSER_HID_SEQUENCE_STATE["last_browser_observation"] = name
         _BROWSER_HID_SEQUENCE_STATE["pending_browser_observation_after_hid"] = None
         return
@@ -677,6 +673,8 @@ def _record_linear_browser_hid_tool_call(server: McpServer, tool_name: str, argu
 def _normalize_discovered_tool(server: McpServer, payload: dict[str, Any]) -> dict[str, Any] | None:
     name = str(payload.get("name") or "").strip()
     if not name:
+        return None
+    if _is_browser_mcp_tool(server, name) and name not in _BROWSER_READ_ONLY_RUNTIME_TOOL_NAMES:
         return None
     annotations = payload.get("annotations") if isinstance(payload.get("annotations"), dict) else {}
     parameters = payload.get("inputSchema") if isinstance(payload.get("inputSchema"), dict) else {"type": "object", "properties": {}, "additionalProperties": True}
@@ -919,7 +917,7 @@ class McpRegistryService:
             with _BROWSER_HID_TOOL_LOCK:
                 _prepare_linear_browser_hid_tool_call(server, remote_name, arguments)
                 result = self._invoke_tool_unlocked(server, remote_name, arguments)
-                _record_linear_browser_hid_tool_call(server, remote_name, arguments)
+                _record_linear_browser_hid_tool_call(server, remote_name, arguments, result)
                 return result
         return self._invoke_tool_unlocked(server, remote_name, arguments)
 

@@ -15,19 +15,20 @@ def test_runtime_task_compiler_prompt_mentions_scene_contract_and_skill_distilla
     assert "target_regions" in content
     assert "action_plan" in content
     assert "artifact_expectations" in content
-    assert "browser_locate_download" in content
-    assert "in_progress" in content
+    assert "local_download_create_attempt" in content
+    assert "local_download_attribute" in content
+    assert "completed" in content
+    assert "timeout" in content
+    assert "ambiguous" in content
     assert "page JS" in content
     assert "mock DOM flags" in content
     assert "browser-originated evidence" in content
     assert "source URL" in content
     assert "href" in content
     assert "filename" in content
-    assert "startedAfter" in content
-    assert "waitMs" in content
-    assert "5000" in content
+    assert "startedAt" in content
     assert "business_writeback" in content
-    assert "browser_download" in content
+    assert "download_attribution" in content
     assert "file_path" in content
     assert "finalUrl" in content
     assert "hid_action.target.host" in content

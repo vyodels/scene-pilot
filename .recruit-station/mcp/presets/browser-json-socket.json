@@ -13,6 +13,19 @@
     "read_only": ["search", "document"],
     "mutating": []
   },
+  "runtime_tool_read_only_names": [
+    "browser_list_tabs",
+    "browser_get_active_tab",
+    "browser_snapshot",
+    "browser_query_elements",
+    "browser_get_element",
+    "browser_debug_dom",
+    "browser_wait_for_element",
+    "browser_wait_for_text",
+    "browser_wait_for_navigation",
+    "browser_wait_for_disappear",
+    "browser_wait_for_url"
+  ],
   "metadata_remove_keys": ["managed_browser_bridge", "runtime_endpoint", "upstream_endpoint"],
   "tools": []
 }

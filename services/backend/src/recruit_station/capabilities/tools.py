@@ -467,7 +467,7 @@ def build_delegate_scene_context_tool(
                 "success_criteria": {"type": "object"},
                 "output_contract": {
                     "type": "object",
-                    "description": "Expected structured result. Put artifact_expectations here when local files matter; browser downloads should first be located through browser_locate_download before business path/format verification. For browser-managed downloads, a located complete record with exists/path/fileName/extension or mime/source correlation is valid path/format evidence. If a download affordance is selected, preserve browser-derived sourceUrl/href, expected filename, finalUrl/referrer hints, and startedAfter when available. When a local artifact is located, return it in result_data.artifact plus result_data.browser_download and include business_writeback arguments suitable for the later business tool such as attach_resume_artifact.",
+                    "description": "Expected structured result. Put artifact_expectations here when local files matter; browser-triggered downloads should use local_download_create_attempt before HID and local_download_attribute after HID/browser observation before business path/format verification. A completed local attribution record with file_path/file_name is valid path evidence; timeout or ambiguous is not. If a download affordance is selected, preserve browser-derived sourceUrl/href, expected filename, finalUrl/referrer hints, and startedAt when available. When a local artifact is located, return it in result_data.artifact plus result_data.download_attribution and include business_writeback arguments suitable for the later business tool such as attach_resume_artifact.",
                 },
                 "preferred_capabilities": {
                     "type": "array",
@@ -493,11 +493,11 @@ def build_delegate_scene_context_tool(
                 "action_plan": {
                     "type": "array",
                     "items": {"type": "object"},
-                    "description": "Optional top-level shortcut for intent-level scene actions; equivalent to environment_requirements.action_plan. Download actions may include download_source with source_url/sourceUrl/href, expected_filename/fileName/download, started_after/startedAfter, final_url/finalUrl, or referrer fields copied from browser evidence.",
+                    "description": "Optional top-level shortcut for intent-level scene actions; equivalent to environment_requirements.action_plan. Download actions may include download_source with source_url/sourceUrl/href, expected_filename/fileName/download, started_at/startedAt, final_url/finalUrl, or referrer fields copied from browser evidence.",
                 },
                 "artifact_expectations": {
                     "type": "object",
-                    "description": "Optional top-level shortcut for artifact expectations; equivalent to output_contract.artifact_expectations. For browser downloads, include download_lookup/source_url/expected_filename/started_after when available so browser_locate_download can correlate the local file with the clicked link.",
+                    "description": "Optional top-level shortcut for artifact expectations; equivalent to output_contract.artifact_expectations. For browser downloads, include download_attribution/source_url/expected_filename/started_at when available so the local watcher can correlate a newly created file with the clicked link.",
                 },
                 "approval_policy": {"type": "object"},
                 "input": {"type": "object"},

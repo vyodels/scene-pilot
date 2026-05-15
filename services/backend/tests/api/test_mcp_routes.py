@@ -386,16 +386,15 @@ def test_browser_preset_healthcheck_uses_upstream_stdio_mcp_server(tmp_path, mon
         checked_payload = checked.json()
         assert checked_payload["health_status"] == "healthy"
         tool_names = {tool["name"] for tool in checked_payload["tools"]}
-        assert len(tool_names) == 16
+        assert len(tool_names) == 11
         assert {
             "browser_list_tabs",
             "browser_get_active_tab",
-            "browser_open_tab",
             "browser_snapshot",
             "browser_query_elements",
-            "browser_locate_download",
             "browser_wait_for_url",
         }.issubset(tool_names)
+        assert {"browser_open_tab", "browser_screenshot", "browser_get_cookies", "browser_locate_download"}.isdisjoint(tool_names)
 
         assert any(
             server_key == "browser-managed"

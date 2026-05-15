@@ -28,6 +28,7 @@ from recruit_station.plugins.host import PluginHost
 from recruit_station.plugins.loader import install_manifest
 from recruit_station.plugins.recruit.manifest import RecruitPluginManifest
 from recruit_station.capabilities.tools import (
+    ToolDefinition,
     ToolRegistry,
     build_delegate_scene_context_tool,
     is_approval_tool,
@@ -43,6 +44,7 @@ from recruit_station.services.recruit_station import (
     resolve_memory_policy,
 )
 from recruit_station.services.dashboard import DashboardService
+from recruit_station.services.download_attribution import LocalDownloadAttributionService
 from recruit_station.services.events import EventStreamService
 from recruit_station.services.feature_flags import FeatureFlagService
 from recruit_station.services.mcp_registry import McpRegistryService
@@ -77,6 +79,7 @@ class AppContainer:
     sync: SyncService
     dashboard: DashboardService
     scheduler: SerialScheduler
+    download_attribution: LocalDownloadAttributionService
 
     @classmethod
     def build(cls, settings: AppSettings | None = None) -> "AppContainer":
@@ -95,11 +98,13 @@ class AppContainer:
         memory_file_store = _build_memory_file_store(resolved_settings)
 
         providers, provider = _build_provider_bundle(resolved_settings)
+        download_attribution = LocalDownloadAttributionService(allowed_download_roots=(resolved_settings.resolved_data_dir(),))
         tool_registry, scene_context_tool_registry = _build_runtime_tool_registries(
             settings=resolved_settings,
             session_factory=session_factory,
             plugin_host=plugin_host,
             mcp_registry=mcp_registry,
+            download_attribution=download_attribution,
         )
 
         learning_writer = LearningWriter(session_factory)
@@ -171,6 +176,7 @@ class AppContainer:
             sync=sync,
             dashboard=dashboard,
             scheduler=scheduler,
+            download_attribution=download_attribution,
         )
 
     def reload_settings(self, settings: AppSettings) -> None:
@@ -181,6 +187,7 @@ class AppContainer:
             session_factory=self.session_factory,
             plugin_host=self.plugin_host,
             mcp_registry=self.mcp_registry,
+            download_attribution=self.download_attribution,
         )
         self.scene_context_service = SceneContextService(
             session_factory=self.session_factory,
@@ -433,6 +440,7 @@ def _build_runtime_tool_registries(
     session_factory: sessionmaker[Session],
     plugin_host: PluginHost,
     mcp_registry: McpRegistryService,
+    download_attribution: LocalDownloadAttributionService,
 ) -> tuple[ToolRegistry, ToolRegistry]:
     parent_registry = ToolRegistry()
     scene_registry = ToolRegistry()
@@ -466,7 +474,70 @@ def _build_runtime_tool_registries(
             continue
         parent_registry.register(tool.clone())
 
+    _register_local_download_attribution_tools(scene_registry, download_attribution)
     return parent_registry, scene_registry
+
+
+def _register_local_download_attribution_tools(
+    tool_registry: ToolRegistry,
+    download_attribution: LocalDownloadAttributionService,
+) -> None:
+    if not tool_registry.has("local_download_create_attempt"):
+        tool_registry.register(
+            ToolDefinition(
+                name="local_download_create_attempt",
+                description=(
+                    "Create a local download attribution attempt before HID clicks a download affordance. "
+                    "Records candidate/source evidence, startedAt, and a snapshot of the local download directory."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "candidate": {"type": "object"},
+                        "sourceUrl": {"type": "string"},
+                        "source_url": {"type": "string"},
+                        "href": {"type": "string"},
+                        "download": {"type": "string"},
+                        "expectedFileName": {"type": "string"},
+                        "expected_file_name": {"type": "string"},
+                        "startedAt": {"type": "string"},
+                        "started_at": {"type": "string"},
+                        "downloadDirectory": {"type": "string"},
+                        "download_directory": {"type": "string"},
+                    },
+                    "additionalProperties": True,
+                },
+                handler=download_attribution.create_attempt,
+                category="scene",
+                metadata={"capabilities": ["scene", "download", "document"], "real_environment": True},
+            )
+        )
+    if not tool_registry.has("local_download_attribute"):
+        tool_registry.register(
+            ToolDefinition(
+                name="local_download_attribute",
+                description=(
+                    "Attribute a completed local file to a prior downloadAttemptId after HID triggers a browser download. "
+                    "Returns status completed, timeout, or ambiguous."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "downloadAttemptId": {"type": "string"},
+                        "download_attempt_id": {"type": "string"},
+                        "timeoutMs": {"type": "integer"},
+                        "timeout_ms": {"type": "integer"},
+                        "pollIntervalMs": {"type": "integer"},
+                        "poll_interval_ms": {"type": "integer"},
+                    },
+                    "required": ["downloadAttemptId"],
+                    "additionalProperties": False,
+                },
+                handler=download_attribution.attribute_attempt,
+                category="scene",
+                metadata={"capabilities": ["scene", "download", "document"], "real_environment": True},
+            )
+        )
 
 
 def _register_delegate_scene_context_tool(

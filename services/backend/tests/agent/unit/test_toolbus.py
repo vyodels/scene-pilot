@@ -203,7 +203,8 @@ def test_delegate_scene_context_tool_schema_mentions_browser_computer_contracts(
     properties = tool.parameters["properties"]
 
     assert "artifact_expectations" in properties["output_contract"]["description"]
-    assert "browser_locate_download" in properties["output_contract"]["description"]
+    assert "local_download_create_attempt" in properties["output_contract"]["description"]
+    assert "local_download_attribute" in properties["output_contract"]["description"]
     assert "business_writeback" in properties["output_contract"]["description"]
     assert "attach_resume_artifact" in properties["output_contract"]["description"]
     assert "browser_target" in properties["environment_requirements"]["description"]

@@ -27,6 +27,26 @@ from recruit_station.product_adapters.target_contracts import derive_browser_tar
 from recruit_station.capabilities.tools import ToolRegistry
 
 
+_SCENE_BROWSER_READ_ONLY_TOOL_NAMES = {
+    "browser_list_tabs",
+    "browser_get_active_tab",
+    "browser_snapshot",
+    "browser_query_elements",
+    "browser_get_element",
+    "browser_debug_dom",
+    "browser_wait_for_element",
+    "browser_wait_for_text",
+    "browser_wait_for_navigation",
+    "browser_wait_for_disappear",
+    "browser_wait_for_url",
+}
+_SCENE_BROWSER_TARGET_IDENTIFICATION_TOOL_NAMES = {
+    "browser_list_tabs",
+    "browser_get_active_tab",
+}
+_SCENE_BROWSER_PAGE_OBSERVATION_TOOL_NAMES = _SCENE_BROWSER_READ_ONLY_TOOL_NAMES - _SCENE_BROWSER_TARGET_IDENTIFICATION_TOOL_NAMES
+
+
 @dataclass(slots=True)
 class SceneContextService:
     session_factory: sessionmaker[Session]
@@ -459,11 +479,8 @@ def _build_scene_instruction(request: dict[str, Any]) -> str:
         parts.append(
             "当 browser_target.url 存在时，必须以该 URL 的完整 origin（包含端口）作为目标边界。"
             "不要把同 hostname 但不同端口、不同 origin 或旧测试 tab 当成当前任务目标；"
-            "如果 browser_list_tabs 已有匹配该 origin 的 tab，必须优先复用该 tab，必要时用 browser_open_tab({tabId, newWindow: true}) 拆到独立窗口；"
-            "只有完全没有匹配该 origin 的 tab 时，才允许用 browser_open_tab({url, newWindow: true}) 获取初始目标。"
-            "browser_open_tab({url, newWindow: true}) 本身也应先复用同 URL / 同 origin tab，找不到才创建新窗口。"
-            "browser_open_tab 只用于初始目标获取、恢复目标 URL 或拆窗；进入站内其它路径、点击链接、提交表单、下载等阶段推进必须走 HID 动作。"
-            "browser_reload_extension 属于外部维护/恢复动作，不能在 autonomous scene 内调用。"
+            "browser 侧只允许只读 snapshot/query/wait/target-identification；不得把 browser 工具当作点击、导航、下载、Cookie 或外壳维护执行器。"
+            "若当前只读目标识别无法确认允许的目标页，停止当前动作并返回结构化 blocker 或请求 human 处理。"
         )
     if request["computer_target"] or "computer" in _scene_capabilities(request["preferred_capabilities"]):
         parts.append(
@@ -472,6 +489,7 @@ def _build_scene_instruction(request: dict[str, Any]) -> str:
             "browser 侧只提供页面语义与 viewport/document 坐标；不要让 browser 或 recruit-station 合成 viewportInScreen。"
             "HID 目标窗口、内容视口到屏幕的映射由 VirtualHID 根据 target/geometry 自行解析。"
             "不得只传 target/context 而空缺 primitives；若缺少可执行原语，继续观察或返回结构化 blocker。"
+            "Chrome 外壳遮挡 preflight 由 hid_action options.browserChromeOverlayPolicy 启用，证据来自 result.preflight.browserChromeOverlay；若 preflight 结果为 blocked 或 unknown，停止当前动作，改为重新观察、等待或进入 human handling。"
             "外部执行层负责激活、滚动和最终落点。"
         )
     if request["target_regions"]:
@@ -480,20 +498,15 @@ def _build_scene_instruction(request: dict[str, Any]) -> str:
         parts.append(f"动作意图：{_compact_value(request['action_plan'])}")
     if request["artifact_expectations"]:
         parts.append(
-            "若结果合同要求本地文件或附件，必须先用可用的只读下载/文件定位工具找到 artifact path 和当前状态；"
-            "浏览器触发的下载优先调用 browser_locate_download 读取 Chrome 下载记录、本地路径、下载进度和 state"
-            "（可能是 in_progress、interrupted 或 complete），不要用页面 JS、mock DOM 标记或下载入口本身冒充本地文件。"
-            "对 browser-managed 下载，若 browser_locate_download 返回 located=true、state=complete、exists=true、"
-            "本地 path/fileName、extension 或 mime，并带有 sourceUrl/finalUrl/referrer 关联证据，可把这些只读下载记录字段"
-            "作为本地路径与格式证据；不要因为 scene 内没有本地文件工具而丢弃已定位的 Chrome 下载记录。"
-            "如果 action_plan 或 artifact_expectations 已保存下载入口的 browser-derived href/source_url、download 文件名、"
-            "finalUrl/referrer 线索或点击前 started_after/observed_at 时间戳，必须把这些字段传给 browser_locate_download 做来源关联，"
-            "避免多次下载时误配本地文件。"
+            "若结果合同要求本地文件或附件，不要用页面 JS、mock DOM 标记或下载入口本身冒充本地文件。"
+            "浏览器触发下载前，必须先调用 local_download_create_attempt，记录 downloadAttemptId、candidate、source URL、href/download、startedAt 和下载目录快照。"
+            "HID 点击下载后，必须先进行 browser 观察/等待，再用 local_download_attribute(downloadAttemptId) 归因本地新增文件。"
+            "local_download_attribute 只可接受 completed、timeout 或 ambiguous；timeout/ambiguous 不能当作本地 artifact proof。"
             "只有在业务层确认 path、格式和归档条件后才能结束。"
         )
     if request["output_contract"] or request["artifact_expectations"]:
         parts.append(
-            "若 scene 已拿到可写回业务层的本地 artifact，结构化 result_data 必须保留 artifact/browser_download "
+            "若 scene 已拿到可写回业务层的本地 artifact，结构化 result_data 必须保留 artifact/download_attribution "
             "和 business_writeback 字段；business_writeback.arguments 应直接适配后续业务写入工具（例如 resume artifact "
             "写回时的 attach_resume_artifact），但 scene 内不要绕过合同自行编造 artifact proof。"
         )
@@ -712,13 +725,66 @@ def _scene_tool_registry(
                     request=request,
                     browser_semantics=browser_semantics,
                 )
+                precheck = _validate_scene_hid_action_target(
+                    normalized,
+                    request=request,
+                )
+                if precheck is not None:
+                    return precheck
                 arguments.clear()
                 arguments.update(normalized)
-                return _original_handler(arguments)
+                result = _original_handler(arguments)
+                return _mask_scene_hid_overlay_blocker(result)
 
             cloned.handler = _handler
         registry.register(cloned)
     return registry
+
+
+def _validate_scene_hid_action_target(
+    arguments: dict[str, Any],
+    *,
+    request: dict[str, Any],
+) -> dict[str, Any] | None:
+    allowed_host = _scene_target_host(request)
+    if allowed_host is None:
+        return None
+    target = _as_dict(arguments.get("target"))
+    context = _as_dict(arguments.get("context"))
+    for candidate in (target.get("host"), context.get("host"), _host_from_url(context.get("url")), _host_from_url(target.get("url"))):
+        host = _optional_string(candidate, max_length=255)
+        if host and _normalize_host_boundary(host) != allowed_host:
+            return {
+                "success": False,
+                "error": "scene_browser_host_not_allowed",
+                "message": "hid_action target host is outside the scene single target host allowlist. Stop the current action and re-observe or request human handling.",
+                "allowedHost": allowed_host,
+                "requestedHost": host,
+            }
+    return None
+
+
+def _mask_scene_hid_overlay_blocker(result: Any) -> Any:
+    if not isinstance(result, dict):
+        return result
+    preflight = _as_dict(result.get("preflight")) or _as_dict(_as_dict(result.get("result")).get("preflight"))
+    overlay = _as_dict(preflight.get("browserChromeOverlay"))
+    policy = _as_dict(preflight.get("browserChromeOverlayPolicy"))
+    status = str(overlay.get("status") or overlay.get("state") or policy.get("status") or policy.get("state") or "").strip().lower()
+    decision = str(overlay.get("decision") or policy.get("decision") or "").strip().lower()
+    if status not in {"blocked", "unknown"} and decision not in {"blocked", "unknown"}:
+        return result
+    return {
+        **result,
+        "success": False,
+        "error": "scene_hid_overlay_blocked",
+        "message": "hid_action preflight reported browserChromeOverlayPolicy as blocked or unknown. Stop the current action and re-observe, wait, or enter human handling.",
+        "evidence": {
+            "preflight": preflight,
+            "browserChromeOverlay": overlay,
+            "browserChromeOverlayPolicy": policy,
+        },
+    }
 
 
 def _validate_scene_browser_tool_target(
@@ -728,69 +794,94 @@ def _validate_scene_browser_tool_target(
     request: dict[str, Any],
     browser_semantics: dict[str, Any],
 ) -> dict[str, Any] | None:
-    if tool_name == "browser_reload_extension":
+    if tool_name not in _SCENE_BROWSER_READ_ONLY_TOOL_NAMES:
         return {
             "success": False,
-            "error": "scene_browser_reload_not_allowed",
+            "error": "scene_browser_mutation_not_allowed",
             "message": (
-                "browser_reload_extension is a maintenance/debug action and is not allowed inside autonomous scene execution. "
-                "Restore browser MCP outside the scene, then retry the autonomous run."
+                "Browser tools are read-only in autonomous scene execution. "
+                "Use browser snapshot/query/wait/target-identification for observation and VirtualHID for mutating execution."
             ),
+            "toolName": tool_name,
         }
     target_origin = _scene_target_origin(request)
-    if target_origin is None:
+    host_precheck = _validate_scene_browser_tool_host(arguments, request=request)
+    if host_precheck is not None:
+        return host_precheck
+    if target_origin is None or tool_name not in _SCENE_BROWSER_PAGE_OBSERVATION_TOOL_NAMES:
         return None
-    if tool_name == "browser_open_tab":
-        return _validate_scene_browser_open_tab(arguments, request=request, target_origin=target_origin)
-    if tool_name not in {"browser_select_tab", "browser_snapshot"}:
-        return None
-    tab_id = _optional_int(arguments.get("tabId") or arguments.get("tab_id"))
+    tab_id = _browser_tab_id_from_arguments(arguments)
     if tab_id is None:
         return None
     tab_info = dict((browser_semantics.get("tabs") or {}).get(tab_id) or {})
     tab_url = _optional_string(tab_info.get("url"))
-    if tab_url is None or _scene_url_matches_target_origin(tab_url, target_origin=target_origin):
+    tab_host = _optional_string(tab_info.get("host"), max_length=255)
+    if tab_url and _scene_url_matches_target_origin(tab_url, target_origin=target_origin):
         return None
+    if not tab_url and tab_host and _scene_url_matches_target_origin(tab_host, target_origin=target_origin):
+        return None
+    if not tab_info or (not tab_url and not tab_host):
+        return _scene_browser_tab_blocker(
+            error="scene_browser_target_not_established",
+            message=(
+                "Browser tab target is not known for this scene. Call browser_list_tabs and then "
+                "browser_snapshot on the allowlisted scene target before using query/get/debug/wait tools."
+            ),
+            target_origin=target_origin,
+            tab_id=tab_id,
+            tab_url=tab_url,
+            tab_host=tab_host,
+        )
     return {
         "success": False,
         "error": "scene_browser_target_mismatch",
-        "message": "Selected browser tab does not match the scene browser_target origin. Open or select the target URL from the scene contract before observing or acting.",
+        "message": (
+            "Selected browser tab does not match the scene browser_target origin. Call browser_list_tabs "
+            "and browser_snapshot to establish the allowlisted target before observing or acting."
+        ),
         "targetOrigin": target_origin,
-        "tab": {"tabId": tab_id, "url": tab_url},
+        "tab": {"tabId": tab_id, "url": tab_url, "host": tab_host},
     }
 
 
-def _validate_scene_browser_open_tab(
-    arguments: dict[str, Any],
-    *,
-    request: dict[str, Any],
-    target_origin: str,
-) -> dict[str, Any] | None:
-    requested_url = _optional_string(arguments.get("url"))
-    if requested_url is None:
+def _validate_scene_browser_tool_host(arguments: dict[str, Any], *, request: dict[str, Any]) -> dict[str, Any] | None:
+    allowed_host = _scene_target_host(request)
+    if allowed_host is None:
         return None
-    if not _scene_url_matches_target_origin(requested_url, target_origin=target_origin):
-        return {
-            "success": False,
-            "error": "scene_browser_target_mismatch",
-            "message": "browser_open_tab may only open or detach the current scene browser_target origin.",
-            "targetOrigin": target_origin,
-            "requestedUrl": requested_url,
-        }
+    for candidate in (arguments.get("url"), arguments.get("href"), arguments.get("sourceUrl"), arguments.get("source_url"), arguments.get("pattern")):
+        host = _host_from_url(candidate)
+        if host and _normalize_host_boundary(host) != allowed_host:
+            return {
+                "success": False,
+                "error": "scene_browser_host_not_allowed",
+                "message": "Browser tool target is outside the scene single target host allowlist.",
+                "allowedHost": allowed_host,
+                "requestedHost": host,
+            }
+    return None
 
-    target_url = _scene_target_url(request)
-    if target_url is None or _same_browser_url(requested_url, target_url):
-        return None
+
+def _browser_tab_id_from_arguments(arguments: dict[str, Any]) -> int | None:
+    if "tabId" in arguments:
+        return _optional_int(arguments.get("tabId"))
+    return _optional_int(arguments.get("tab_id"))
+
+
+def _scene_browser_tab_blocker(
+    *,
+    error: str,
+    message: str,
+    target_origin: str,
+    tab_id: int,
+    tab_url: str | None,
+    tab_host: str | None,
+) -> dict[str, Any]:
     return {
         "success": False,
-        "error": "scene_browser_navigation_requires_hid",
-        "message": (
-            "browser_open_tab is only for initial target acquisition or window isolation. "
-            "In-site navigation within the scene target must be performed by selecting an observed element "
-            "and executing hid_action, then confirming the result with browser observation."
-        ),
-        "targetUrl": target_url,
-        "requestedUrl": requested_url,
+        "error": error,
+        "message": message,
+        "targetOrigin": target_origin,
+        "tab": {"tabId": tab_id, "url": tab_url, "host": tab_host},
     }
 
 
@@ -800,7 +891,9 @@ def _mask_scene_browser_target_mismatch(
     result: Any,
     request: dict[str, Any],
 ) -> Any:
-    if tool_name not in {"browser_get_active_tab", "browser_select_tab", "browser_snapshot"} or not isinstance(result, dict):
+    if tool_name not in (_SCENE_BROWSER_PAGE_OBSERVATION_TOOL_NAMES | {"browser_get_active_tab", "browser_select_tab"}) or not isinstance(result, dict):
+        return result
+    if result.get("success") is False or result.get("ok") is False or _optional_string(result.get("error")):
         return result
     target_origin = _scene_target_origin(request)
     if target_origin is None:
@@ -811,7 +904,7 @@ def _mask_scene_browser_target_mismatch(
     return {
         "success": False,
         "error": "scene_browser_target_mismatch",
-        "message": "Observed browser target does not match the scene browser_target origin. Use browser_open_tab or browser navigation to reach the requested target URL before continuing.",
+        "message": "Observed browser target does not match the scene browser_target origin. Stop the current action and re-observe an allowlisted target or request human handling.",
         "targetOrigin": target_origin,
         "observedUrl": observed_url,
     }
@@ -839,34 +932,26 @@ def _scene_target_origin(request: dict[str, Any]) -> str | None:
     return host.lower() if host else None
 
 
-def _scene_target_url(request: dict[str, Any]) -> str | None:
+def _scene_target_host(request: dict[str, Any]) -> str | None:
     browser_target = _as_dict(request.get("browser_target"))
-    return _optional_string(browser_target.get("url"))
+    host = _host_from_url(browser_target.get("url")) or _optional_string(browser_target.get("host"), max_length=255)
+    return _normalize_host_boundary(host) if host else None
 
 
 def _scene_url_matches_target_origin(value: Any, *, target_origin: str) -> bool:
-    observed_origin = _origin_from_url(value) or _host_from_url(value)
-    return observed_origin == target_origin
+    normalized_target = str(target_origin or "").strip().lower()
+    observed_origin = _origin_from_url(value)
+    if "://" in normalized_target:
+        return observed_origin == normalized_target
+    observed_host = _host_from_url(value) or _optional_string(value, max_length=255)
+    return _normalize_host_boundary(observed_host) == _normalize_host_boundary(normalized_target)
 
 
-def _same_browser_url(left: Any, right: Any) -> bool:
-    left_url = _optional_string(left)
-    right_url = _optional_string(right)
-    if not left_url or not right_url:
-        return False
-    parsed_left = urlparse(left_url)
-    parsed_right = urlparse(right_url)
-    return (
-        parsed_left.scheme.lower(),
-        parsed_left.netloc.lower(),
-        parsed_left.path.rstrip("/") or "/",
-        parsed_left.query,
-    ) == (
-        parsed_right.scheme.lower(),
-        parsed_right.netloc.lower(),
-        parsed_right.path.rstrip("/") or "/",
-        parsed_right.query,
-    )
+def _normalize_host_boundary(value: Any) -> str | None:
+    text = _optional_string(value, max_length=255)
+    if not text:
+        return None
+    return text.lower()
 
 
 def _normalize_scene_hid_action_arguments(
@@ -1247,7 +1332,7 @@ def _scene_result_data(outcome: AgentTurnOutcome) -> dict[str, Any]:
 
 def _scene_result_artifacts(result_data: dict[str, Any]) -> list[dict[str, Any]]:
     artifacts: list[dict[str, Any]] = []
-    for key in ("artifact", "resume_artifact", "download_artifact", "resume_download_record", "browser_download"):
+    for key in ("artifact", "resume_artifact", "download_artifact", "resume_download_record", "download_attribution", "browser_download"):
         candidate = _as_dict(result_data.get(key))
         artifact = _normalize_scene_result_artifact(candidate, source_key=key)
         if artifact:
@@ -1697,6 +1782,8 @@ def _normalize_download_lookup(value: Any) -> dict[str, Any]:
         "started_after": _optional_string(
             payload.get("started_after")
             or payload.get("startedAfter")
+            or payload.get("started_at")
+            or payload.get("startedAt")
             or payload.get("observed_at")
             or payload.get("observedAt")
             or payload.get("snapshot_at")

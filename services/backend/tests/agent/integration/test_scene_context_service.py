@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from recruit_station.core.settings import AppSettings
 from recruit_station.db.session import create_engine_from_settings, create_session_factory, initialize_database
 from recruit_station.models.domain import AgentLearning, EnvironmentSnapshot, ExecutionEpisode, ExecutionPlan, TaskSpec
@@ -221,7 +223,7 @@ def test_scene_context_rejects_browser_tab_from_different_target_origin(tmp_path
             if item["type"] == "tool_event"
             and item["payload"]["kind"] == "tool_result_ready"
             and item["payload"]["tool_name"] == "browser_select_tab"
-            and item["payload"]["content"].get("error") == "scene_browser_target_mismatch"
+            and item["payload"]["content"].get("error") == "scene_browser_mutation_not_allowed"
         ]
         assert mismatch_results
 
@@ -288,7 +290,7 @@ def test_scene_context_derives_browser_target_from_instruction_url(tmp_path: Pat
             if item["type"] == "tool_event"
             and item["payload"]["kind"] == "tool_result_ready"
             and item["payload"]["tool_name"] == "browser_open_tab"
-            and item["payload"]["content"].get("error") == "scene_browser_target_mismatch"
+            and item["payload"]["content"].get("error") == "scene_browser_mutation_not_allowed"
         ]
         assert blocked_results
 
@@ -792,6 +794,84 @@ def test_scene_context_passes_browser_semantics_into_hid_action(tmp_path: Path) 
     assert hid_arguments["geometry"]["viewportSize"] == {"x": 0, "y": 0, "width": 1440, "height": 900}
 
 
+@pytest.mark.parametrize(
+    ("tool_name", "arguments"),
+    [
+        ("browser_query_elements", {"tabId": 9, "selector": "a"}),
+        ("browser_get_element", {"tabId": 9, "selector": "a"}),
+        ("browser_debug_dom", {"tabId": 9}),
+        ("browser_wait_for_text", {"tabId": 9, "text": "Ready"}),
+    ],
+)
+def test_scene_context_blocks_wrong_tab_page_observation_tools(
+    tmp_path: Path,
+    tool_name: str,
+    arguments: dict[str, object],
+) -> None:
+    session_factory = _session_factory(tmp_path)
+    called_tools: list[str] = []
+    provider = ScriptedProvider(
+        provider_name="scene-scripted",
+        responses=[
+            LLMResponse(tool_calls=[ToolCall(id="tabs", name="browser_list_tabs", arguments={})], finish_reason="tool_calls"),
+            LLMResponse(tool_calls=[ToolCall(id="observe", name=tool_name, arguments=arguments)], finish_reason="tool_calls"),
+            LLMResponse(content="wrong tab blocked", result_data={"status": "blocked", "summary": "wrong tab blocked"}),
+        ],
+    )
+    tools = ToolRegistry()
+    tools.register(
+        ToolDefinition(
+            name="browser_list_tabs",
+            description="List browser tabs.",
+            parameters={"type": "object", "properties": {}, "additionalProperties": False},
+            handler=lambda arguments: {
+                "tabs": [
+                    {"tabId": 9, "url": "https://other.example.test/jobs", "title": "Other", "active": True},
+                ]
+            },
+            metadata={"capabilities": ["browser", "document"], "external_tool": True, "real_environment": True},
+        )
+    )
+    tools.register(
+        ToolDefinition(
+            name=tool_name,
+            description="Page observation.",
+            parameters={"type": "object", "properties": {}, "additionalProperties": True},
+            handler=lambda arguments: called_tools.append(tool_name) or {"success": True},
+            metadata={"capabilities": ["browser", "document"], "external_tool": True, "real_environment": True},
+        )
+    )
+    service = SceneContextService(
+        session_factory=session_factory,
+        provider=provider,
+        tool_registry=tools,
+        plugin_host=PluginHost(),
+    )
+
+    result = service.delegate(
+        {
+            "title": "wrong tab blocker",
+            "instruction": "Do not observe the wrong tab.",
+            "preferred_capabilities": ["browser"],
+            "browser_target": {"url": "https://recruit.example.test/jobs"},
+        }
+    )
+
+    assert result["status"] == "blocked"
+    assert called_tools == []
+    with session_factory() as session:
+        episode = session.query(ExecutionEpisode).one()
+        blocked_results = [
+            item
+            for item in episode.observations
+            if item["type"] == "tool_event"
+            and item["payload"]["kind"] == "tool_result_ready"
+            and item["payload"]["tool_name"] == tool_name
+            and item["payload"]["content"].get("error") == "scene_browser_target_mismatch"
+        ]
+        assert blocked_results
+
+
 def test_scene_context_treats_virtual_hid_capability_as_computer_execution(tmp_path: Path) -> None:
     session_factory = _session_factory(tmp_path)
     provider = ScriptedProvider(
@@ -931,7 +1011,7 @@ def test_scene_context_blocks_browser_open_tab_for_in_site_navigation(tmp_path: 
             if item["type"] == "tool_event"
             and item["payload"]["kind"] == "tool_result_ready"
             and item["payload"]["tool_name"] == "browser_open_tab"
-            and item["payload"]["content"].get("error") == "scene_browser_navigation_requires_hid"
+            and item["payload"]["content"].get("error") == "scene_browser_mutation_not_allowed"
         ]
         assert blocked_results
 
@@ -995,6 +1075,224 @@ def test_scene_context_blocks_browser_reload_extension(tmp_path: Path) -> None:
             if item["type"] == "tool_event"
             and item["payload"]["kind"] == "tool_result_ready"
             and item["payload"]["tool_name"] == "browser_reload_extension"
-            and item["payload"]["content"].get("error") == "scene_browser_reload_not_allowed"
+            and item["payload"]["content"].get("error") == "scene_browser_mutation_not_allowed"
         ]
         assert blocked_results
+
+
+def test_scene_context_blocks_non_allowlist_hid_host(tmp_path: Path) -> None:
+    session_factory = _session_factory(tmp_path)
+    hid_calls: list[dict[str, object]] = []
+    provider = ScriptedProvider(
+        provider_name="scene-scripted",
+        responses=[
+            LLMResponse(
+                tool_calls=[
+                    ToolCall(
+                        id="tool-1",
+                        name="hid_action",
+                        arguments={
+                            "target": {"host": "evil.example.test", "tabId": 1},
+                            "context": {"host": "evil.example.test"},
+                            "primitives": [{"type": "click", "at": {"x": 20, "y": 30}}],
+                        },
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                content="non-allowlist host blocked",
+                result_data={"status": "blocked", "summary": "non-allowlist host blocked"},
+            ),
+        ],
+    )
+    tools = ToolRegistry()
+    tools.register(
+        ToolDefinition(
+            name="hid_action",
+            description="HID action.",
+            parameters={"type": "object", "properties": {}, "additionalProperties": True},
+            handler=lambda arguments: hid_calls.append(dict(arguments)) or {"success": True},
+            metadata={"capabilities": ["scene", "computer", "computer_write"], "external_tool": True, "real_environment": True},
+        )
+    )
+
+    service = SceneContextService(
+        session_factory=session_factory,
+        provider=provider,
+        tool_registry=tools,
+        plugin_host=PluginHost(),
+    )
+
+    result = service.delegate(
+        {
+            "title": "单 host allowlist",
+            "instruction": "只允许操作招聘目标 host。",
+            "preferred_capabilities": ["browser", "computer"],
+            "browser_target": {"url": "https://recruit.example.test/jobs"},
+        }
+    )
+
+    assert result["status"] == "blocked"
+    assert hid_calls == []
+    with session_factory() as session:
+        episode = session.query(ExecutionEpisode).one()
+        blocked_results = [
+            item
+            for item in episode.observations
+            if item["type"] == "tool_event"
+            and item["payload"]["kind"] == "tool_result_ready"
+            and item["payload"]["tool_name"] == "hid_action"
+            and item["payload"]["content"].get("error") == "scene_browser_host_not_allowed"
+        ]
+        assert blocked_results
+
+
+def test_scene_context_surfaces_hid_overlay_blocker(tmp_path: Path) -> None:
+    session_factory = _session_factory(tmp_path)
+    provider = ScriptedProvider(
+        provider_name="scene-scripted",
+        responses=[
+            LLMResponse(
+                tool_calls=[
+                    ToolCall(
+                        id="tool-1",
+                        name="hid_action",
+                        arguments={
+                            "target": {"host": "recruit.example.test", "tabId": 1},
+                            "context": {"host": "recruit.example.test"},
+                            "primitives": [{"type": "click", "at": {"x": 20, "y": 30}}],
+                        },
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                content="overlay blocked",
+                result_data={"status": "blocked", "summary": "overlay blocked"},
+            ),
+        ],
+    )
+    tools = ToolRegistry()
+    tools.register(
+        ToolDefinition(
+            name="hid_action",
+            description="HID action.",
+            parameters={"type": "object", "properties": {}, "additionalProperties": True},
+            handler=lambda arguments: {
+                "success": True,
+                "preflight": {
+                    "browserChromeOverlayPolicy": {"status": "blocked"},
+                    "browserChromeOverlay": {"status": "blocked"},
+                },
+            },
+            metadata={"capabilities": ["scene", "computer", "computer_write"], "external_tool": True, "real_environment": True},
+        )
+    )
+
+    service = SceneContextService(
+        session_factory=session_factory,
+        provider=provider,
+        tool_registry=tools,
+        plugin_host=PluginHost(),
+    )
+
+    result = service.delegate(
+        {
+            "title": "overlay blocker",
+            "instruction": "overlay blocked should stop the action.",
+            "preferred_capabilities": ["browser", "computer"],
+            "browser_target": {"url": "https://recruit.example.test/jobs"},
+        }
+    )
+
+    assert result["status"] == "blocked"
+    with session_factory() as session:
+        episode = session.query(ExecutionEpisode).one()
+        blocked_results = [
+            item
+            for item in episode.observations
+            if item["type"] == "tool_event"
+            and item["payload"]["kind"] == "tool_result_ready"
+            and item["payload"]["tool_name"] == "hid_action"
+            and item["payload"]["content"].get("error") == "scene_hid_overlay_blocked"
+        ]
+        assert blocked_results
+        assert blocked_results[0]["payload"]["content"]["evidence"]["browserChromeOverlay"]["status"] == "blocked"
+
+
+def test_scene_context_surfaces_nested_hid_overlay_blocker_evidence(tmp_path: Path) -> None:
+    session_factory = _session_factory(tmp_path)
+    provider = ScriptedProvider(
+        provider_name="scene-scripted",
+        responses=[
+            LLMResponse(
+                tool_calls=[
+                    ToolCall(
+                        id="tool-1",
+                        name="hid_action",
+                        arguments={
+                            "target": {"host": "recruit.example.test", "tabId": 1},
+                            "context": {"host": "recruit.example.test"},
+                            "primitives": [{"type": "click", "at": {"x": 20, "y": 30}}],
+                        },
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                content="overlay unknown",
+                result_data={"status": "blocked", "summary": "overlay unknown"},
+            ),
+        ],
+    )
+    tools = ToolRegistry()
+    tools.register(
+        ToolDefinition(
+            name="hid_action",
+            description="HID action.",
+            parameters={"type": "object", "properties": {}, "additionalProperties": True},
+            handler=lambda arguments: {
+                "isError": True,
+                "result": {
+                    "preflight": {
+                        "browserChromeOverlay": {
+                            "status": "unknown",
+                            "reason": "chrome toolbar overlap could not be ruled out",
+                        }
+                    }
+                },
+            },
+            metadata={"capabilities": ["scene", "computer", "computer_write"], "external_tool": True, "real_environment": True},
+        )
+    )
+    service = SceneContextService(
+        session_factory=session_factory,
+        provider=provider,
+        tool_registry=tools,
+        plugin_host=PluginHost(),
+    )
+
+    result = service.delegate(
+        {
+            "title": "nested overlay blocker",
+            "instruction": "overlay evidence should be retained.",
+            "preferred_capabilities": ["browser", "computer"],
+            "browser_target": {"url": "https://recruit.example.test/jobs"},
+        }
+    )
+
+    assert result["status"] == "blocked"
+    with session_factory() as session:
+        episode = session.query(ExecutionEpisode).one()
+        blocked_result = next(
+            item
+            for item in episode.observations
+            if item["type"] == "tool_event"
+            and item["payload"]["kind"] == "tool_result_ready"
+            and item["payload"]["tool_name"] == "hid_action"
+        )
+        content = blocked_result["payload"]["content"]
+        assert content["error"] == "scene_hid_overlay_blocked"
+        assert content["evidence"]["browserChromeOverlay"]["status"] == "unknown"
+        assert content["result"]["preflight"]["browserChromeOverlay"]["reason"] == "chrome toolbar overlap could not be ruled out"
