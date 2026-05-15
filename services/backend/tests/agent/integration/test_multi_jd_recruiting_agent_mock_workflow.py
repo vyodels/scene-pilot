@@ -532,6 +532,351 @@ def test_multi_jd_autonomous_agent_runs_complete_mock_recruiting_workflow(tmp_pa
     assert progress_b["with_resume"] == 2
 
 
+def test_multi_jd_autonomous_agent_covers_five_jds_and_fifty_candidates(tmp_path: Path) -> None:
+    container = _build_container(tmp_path, "bulk-multi-jd-workflow")
+    _definition_id, run_pk = _seed_agent_session(container, run_id="run-bulk-multi-jd-workflow")
+
+    job_specs = [
+        ("backend", "高级后端工程师", "Java/Spring、分布式事务、系统稳定性"),
+        ("data", "数据平台工程师", "Python/ETL、指标治理、数据质量"),
+        ("frontend", "前端平台工程师", "React/TypeScript、工程化、性能优化"),
+        ("algorithm", "推荐算法工程师", "召回/排序、特征工程、实验评估"),
+        ("ops", "SRE 工程师", "Kubernetes、可观测性、故障恢复"),
+    ]
+    _run_phase(
+        container,
+        run_pk=run_pk,
+        provider_name="bulk-jd-sync",
+        instruction="同步 5 个可执行 JD。",
+        responses=[
+            LLMResponse(
+                tool_calls=[
+                    ToolCall(
+                        id=f"bulk-sync-jd-{slug}",
+                        name="upsert_job_description",
+                        arguments={
+                            "title": title,
+                            "company_name": "RecruitStation Lab",
+                            "department": "Commercial Agent",
+                            "location": "上海/远程",
+                            "platform": "boss_mock",
+                            "external_id": f"bulk-jd-{slug}",
+                            "status": "active",
+                            "requirements": requirements,
+                            "sync_metadata": {"sync_agent": "bulk_jd_sync", "source": "mock_site"},
+                        },
+                    )
+                    for slug, title, requirements in job_specs
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(content="5 个 JD 同步完成", result_data={"status": "completed"}),
+        ],
+    )
+    job_ids = {slug: _job_id_by_external_id(container, f"bulk-jd-{slug}") for slug, _title, _requirements in job_specs}
+    constraints = {
+        "plan_kind": "multi_jd_recruiting",
+        "selected_job_description_ids": list(job_ids.values()),
+        "execution_sop": {
+            "name": "批量招聘执行 SOP",
+            "description": "这是业务策略提示词，不是程序化流程编排；Agent 根据 SOP 和事实选择下一步。",
+        },
+        "business_policy_overlay": {
+            "activation_policy_version": "bulk-test-v1",
+            "priority_policy": "balanced",
+            "job_plans": [
+                {
+                    "jobDescriptionId": job_ids[slug],
+                    "title": title,
+                    "screeningCriteria": requirements,
+                    "scoringStandards": {
+                        "onlineResume": {"passThreshold": 70},
+                        "offlineResume": {"passThreshold": 72},
+                        "composite": {"passThreshold": 78},
+                    },
+                }
+                for slug, title, requirements in job_specs
+            ],
+        },
+    }
+
+    candidate_specs: list[dict[str, Any]] = []
+    for job_index, (slug, title, requirements) in enumerate(job_specs, start=1):
+        for candidate_index in range(1, 11):
+            score_base = 66 + candidate_index + job_index
+            candidate_specs.append(
+                {
+                    "slug": slug,
+                    "job_id": job_ids[slug],
+                    "job_title": title,
+                    "requirements": requirements,
+                    "index": candidate_index,
+                    "name": f"{title}候选人{candidate_index:02d}",
+                    "platform_candidate_id": f"bulk-cand-{slug}-{candidate_index:02d}",
+                    "phone": f"139{job_index:02d}{candidate_index:02d}0000",
+                    "email": f"{slug}{candidate_index:02d}@example.com",
+                    "online_score": score_base,
+                    "offline_score": score_base + 2,
+                    "composite_score": score_base + 4,
+                }
+            )
+
+    _agent, discovery_provider, _outcome = _run_phase(
+        container,
+        run_pk=run_pk,
+        provider_name="bulk-candidate-discovery",
+        instruction="同时处理 5 个 JD 的候选人发现，确保每个 JD 10 人。",
+        constraints=constraints,
+        responses=[
+            LLMResponse(
+                tool_calls=[
+                    ToolCall(
+                        id=f"bulk-discover-{item['slug']}-{item['index']}",
+                        name="upsert_candidate",
+                        arguments={
+                            "name": item["name"],
+                            "platform": "boss_mock",
+                            "platform_candidate_id": item["platform_candidate_id"],
+                            "job_description_id": item["job_id"],
+                            "current_status": "online_resume_acquired",
+                            "online_resume_text": (
+                                f"{item['name']}，{item['job_title']}方向 {item['index'] + 3} 年经验，"
+                                f"核心经历包含 {item['requirements']}。手机 {item['phone']} 邮箱 {item['email']}。"
+                            ),
+                            "source_observation": {
+                                "source_jd": item["job_title"],
+                                "latest_status": "active_pool",
+                                "mock_page": item["index"],
+                            },
+                        },
+                    )
+                    for item in candidate_specs
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(content="50 个候选人发现完成", result_data={"status": "completed"}),
+        ],
+    )
+    for item in candidate_specs:
+        item["application_id"] = _application_id(
+            container,
+            platform_candidate_id=item["platform_candidate_id"],
+            job_description_id=item["job_id"],
+        )
+
+    _run_phase(
+        container,
+        run_pk=run_pk,
+        provider_name="bulk-communication-resume",
+        instruction="对 50 个候选人执行沟通、接收回复、归档离线简历和联系方式。",
+        constraints=constraints,
+        responses=[
+            LLMResponse(
+                tool_calls=[
+                    call
+                    for item in candidate_specs
+                    for call in (
+                        ToolCall(
+                            id=f"bulk-out-{item['slug']}-{item['index']}",
+                            name="record_outbound_message",
+                            arguments={
+                                "application_id": item["application_id"],
+                                "content": f"{item['name']}你好，{item['job_title']}岗位匹配度较高，请补充离线简历和联系方式。",
+                                "channel_hint": "boss_mock_chat",
+                                "status": "sent",
+                                "metadata": {"external_sync": "pending", "job_slug": item["slug"]},
+                            },
+                        ),
+                        ToolCall(
+                            id=f"bulk-in-{item['slug']}-{item['index']}",
+                            name="record_candidate_message",
+                            arguments={
+                                "application_id": item["application_id"],
+                                "direction": "inbound",
+                                "content": f"收到，我对{item['job_title']}有兴趣，离线简历、手机和邮箱已提供。",
+                                "channel_hint": "boss_mock_chat",
+                                "status": "received",
+                                "metadata": {"external_event": f"im-{item['slug']}-{item['index']}"},
+                            },
+                        ),
+                        ToolCall(
+                            id=f"bulk-resume-{item['slug']}-{item['index']}",
+                            name="attach_resume_artifact",
+                            arguments={
+                                "application_id": item["application_id"],
+                                "source": "boss_mock",
+                                "artifact_type": "resume",
+                                "file_name": f"{item['platform_candidate_id']}.pdf",
+                                "file_path": f"/tmp/{item['platform_candidate_id']}.pdf",
+                                "extracted_text": (
+                                    f"{item['name']} 离线简历：负责 {item['requirements']}，"
+                                    f"项目结果包含稳定性、效率和业务指标提升。电话 {item['phone']} 邮箱 {item['email']}"
+                                ),
+                                "contact_snapshot": {"phone": item["phone"], "email": item["email"]},
+                                "metadata": {"sync_direction": "external_to_local", "source_event": "resume_uploaded"},
+                            },
+                        ),
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(content="沟通、简历和联系方式同步完成", result_data={"status": "completed"}),
+        ],
+    )
+
+    pending_syncs = list_pending_candidate_message_syncs(container.session_factory, destination="boss_mock_chat", limit=100)
+    assert len(pending_syncs) == 50
+    _run_phase(
+        container,
+        run_pk=run_pk,
+        provider_name="bulk-message-sync-ack",
+        instruction="确认 50 条 outbound IM 已同步到外部招聘网站。",
+        constraints=constraints,
+        responses=[
+            LLMResponse(
+                tool_calls=[
+                    ToolCall(
+                        id=f"bulk-ack-{index}",
+                        name="record_candidate_message_sync_ack",
+                        arguments={
+                            "message_id": item["message_id"],
+                            "destination": "boss_mock_chat",
+                            "status": "synced",
+                            "external_message_id": f"bulk-msg-{index}",
+                            "metadata": {"sync_direction": "local_to_external"},
+                        },
+                    )
+                    for index, item in enumerate(pending_syncs, start=1)
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(content="50 条 outbound IM 同步确认完成", result_data={"status": "completed"}),
+        ],
+    )
+    assert list_pending_candidate_message_syncs(container.session_factory, destination="boss_mock_chat") == []
+
+    _agent, scoring_provider, _outcome = _run_phase(
+        container,
+        run_pk=run_pk,
+        provider_name="bulk-scoring",
+        instruction="对 50 个候选人执行在线、离线、综合评分，并写入多维 scorecard 与复核建议。",
+        constraints=constraints,
+        responses=[
+            LLMResponse(
+                tool_calls=[
+                    call
+                    for item in candidate_specs
+                    for call in (
+                        ToolCall(
+                            id=f"bulk-online-score-{item['slug']}-{item['index']}",
+                            name="score_candidate",
+                            arguments={
+                                "application_id": item["application_id"],
+                                "stage_key": "online_resume",
+                                "score": item["online_score"],
+                                "decision": "advance" if item["online_score"] >= 72 else "review",
+                                "summary": f"在线简历与 {item['job_title']} 要求匹配。",
+                                "dimension_scores": {"jd_match": item["online_score"], "evidence": item["online_score"] - 2},
+                                "evidence_refs": [item["requirements"], "在线简历"],
+                            },
+                        ),
+                        ToolCall(
+                            id=f"bulk-offline-score-{item['slug']}-{item['index']}",
+                            name="score_candidate",
+                            arguments={
+                                "application_id": item["application_id"],
+                                "stage_key": "offline_resume",
+                                "score": item["offline_score"],
+                                "decision": "advance" if item["offline_score"] >= 72 else "review",
+                                "summary": "离线简历补齐项目深度和联系方式。",
+                                "dimension_scores": {"project_depth": item["offline_score"], "contact": 95},
+                                "evidence_refs": ["离线简历", item["email"]],
+                            },
+                        ),
+                        ToolCall(
+                            id=f"bulk-composite-score-{item['slug']}-{item['index']}",
+                            name="score_candidate",
+                            arguments={
+                                "application_id": item["application_id"],
+                                "stage_key": "composite",
+                                "score": item["composite_score"],
+                                "decision": "advance" if item["composite_score"] >= 78 else "review",
+                                "summary": "综合评分包含在线简历、离线简历和沟通证据。",
+                                "dimension_scores": {
+                                    "jd_match": item["online_score"],
+                                    "offline_resume": item["offline_score"],
+                                    "communication": 86,
+                                    "stability": 80,
+                                },
+                                "evidence_refs": ["在线评分", "离线评分", "IM 回复"],
+                            },
+                        ),
+                        ToolCall(
+                            id=f"bulk-scorecard-{item['slug']}-{item['index']}",
+                            name="create_candidate_scorecard",
+                            arguments={
+                                "application_id": item["application_id"],
+                                "stage_key": "composite",
+                                "source": "ai",
+                                "rubric_version": "bulk-recruit-scorecard-v1",
+                                "score_total": item["composite_score"],
+                                "verdict": "pass" if item["composite_score"] >= 78 else "review",
+                                "summary": "多维评分卡：JD 匹配、离线证据、沟通意向、稳定性。",
+                                "dimension_scores": {
+                                    "技能匹配": item["online_score"],
+                                    "项目深度": item["offline_score"],
+                                    "沟通意向": 86,
+                                    "稳定性": 80,
+                                },
+                                "evidence_refs": ["online_resume", "offline_resume", "im_thread"],
+                            },
+                        ),
+                        ToolCall(
+                            id=f"bulk-review-{item['slug']}-{item['index']}",
+                            name="create_candidate_review_decision",
+                            arguments={
+                                "application_id": item["application_id"],
+                                "decision": "proceed" if item["composite_score"] >= 78 else "review",
+                                "decision_source": "agent",
+                                "rationale": f"综合评分 {item['composite_score']}，按 JD 策略进入下一步或复核。",
+                            },
+                        ),
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(content="50 个候选人的评分与复核建议完成", result_data={"status": "completed"}),
+        ],
+    )
+
+    captured_context = "\n".join(
+        str(message.content)
+        for provider in (discovery_provider, scoring_provider)
+        for request in provider.captured_requests
+        for message in request.messages
+    )
+    assert "VirtualHID" not in captured_context
+    assert "browser-mcp" not in captured_context
+
+    for slug, _title, _requirements in job_specs:
+        progress = get_jd_progress(container.session_factory, job_description_id=job_ids[slug])
+        assert progress["candidate_count"] == 10
+        assert progress["with_contact"] == 10
+        assert progress["with_resume"] == 10
+        assert progress["with_ai_score"] == 10
+
+    for item in candidate_specs:
+        thread = get_candidate_thread(container.session_factory, application_id=item["application_id"])
+        communication = " ".join(entry["content"] for entry in thread["communicationLogs"])
+        assert item["job_title"] in communication
+        assert thread["application"]["resumeAvailable"] is True
+        assert thread["application"]["contactSnapshot"]["phone"] == item["phone"]
+        assert thread["application"]["contactSnapshot"]["email"] == item["email"]
+        assert len(thread["assessments"]) >= 3
+        assert thread.get("scorecards") or thread.get("scoreCards")
+        assert thread["reviewDecisions"]
+
+
 def test_application_scoped_memory_stays_isolated_for_same_candidate_across_jds(tmp_path: Path) -> None:
     container = _build_container(tmp_path, "memory-isolation")
     definition_id, run_pk = _seed_agent_session(container, run_id="run-memory-isolation")

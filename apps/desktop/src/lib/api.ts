@@ -29,6 +29,7 @@ import type {
   AgentRunRecord,
   AgentSnapshot,
   AgentToolSummary,
+  AgentWorkspaceControl,
   AgentWorkspaceRecord,
   AgentRunResult,
   AgentTaskEnqueueResult,
@@ -229,6 +230,10 @@ export interface DesktopApiClient {
   runAgentOnce(): Promise<AgentRunResult>;
   queueTask(task: AgentTaskRequest): Promise<AgentTaskEnqueueResult>;
   getAgentWorkspace(kind: AgentKind): Promise<AgentWorkspaceRecord>;
+  controlAutonomousWorkspace(
+    action: "start" | "pause" | "continue" | "terminate",
+    reason?: string,
+  ): Promise<AgentWorkspaceControl>;
   getAgentConversation(kind: AgentKind, conversationId: string): Promise<AgentConversationRecord>;
   cancelAutonomousRun(runId: string, reason?: string): Promise<AgentRunRecord>;
   resumeAutonomousRun(runId: string, reason?: string): Promise<AgentRunRecord>;
@@ -1067,6 +1072,7 @@ function normalizeAgentWorkspace(raw: unknown, fallbackKind: AgentKind): AgentWo
     definition,
     productAdapterConfig,
   );
+  const workspaceControl = normalizeAgentWorkspaceControl(record.workspaceControl ?? record.workspace_control, fallbackKind);
   return {
     agent: {
       ...agent,
@@ -1079,6 +1085,7 @@ function normalizeAgentWorkspace(raw: unknown, fallbackKind: AgentKind): AgentWo
     memories: asArray(record.memories).map(normalizeAgentMemorySummary),
     skills: asArray(record.skills).map(normalizeSkillRecord),
     tools: asArray(record.tools).map(normalizeAgentToolSummary),
+    workspaceControl,
     agentDefinition: definition,
     productBinding,
     definitionConfig: definition.config,
@@ -1091,6 +1098,24 @@ function normalizeAgentWorkspace(raw: unknown, fallbackKind: AgentKind): AgentWo
       providerLabel: productAdapterConfig.providerLabel,
       modelLabel: productAdapterConfig.modelLabel,
     },
+  };
+}
+
+function normalizeAgentWorkspaceControl(raw: unknown, fallbackKind: AgentKind): AgentWorkspaceControl | null {
+  if (fallbackKind !== "autonomous") {
+    return null;
+  }
+  const record = asRecord(raw);
+  const stateValue = String(record.state ?? "stopped").trim().toLowerCase();
+  const state: AgentWorkspaceControl["state"] =
+    stateValue === "running" || stateValue === "paused" || stateValue === "terminating" ? stateValue : "stopped";
+  return {
+    state,
+    reason: nullableString(record.reason),
+    updatedBy: nullableString(record.updatedBy ?? record.updated_by),
+    updatedAt: nullableString(record.updatedAt ?? record.updated_at),
+    autonomousPaused: Boolean(record.autonomousPaused ?? record.autonomous_paused ?? state !== "running"),
+    terminatedRunIds: stringListFrom(record.terminatedRunIds ?? record.terminated_run_ids),
   };
 }
 
@@ -3733,11 +3758,30 @@ function createFetchClient(baseUrl: string): DesktopApiClient {
         memories,
         skills,
         tools,
+        workspaceControl: kind === "autonomous" ? normalizeAgentWorkspaceControl(undefined, "autonomous") : null,
         agentDefinition,
         productBinding,
         definitionConfig: agentDefinition.config,
         productAdapterConfig,
         config: buildAgentConfig(definition, settings, kind),
+      };
+    },
+    controlAutonomousWorkspace: async (action, reason) => {
+      const payload = await requestJson<unknown>(
+        baseUrl,
+        `/api/agents/autonomous/workspace-control/${encodeURIComponent(action)}`,
+        {
+          method: "POST",
+          body: JSON.stringify({ reviewer: "desktop-user", reason }),
+        },
+      );
+      return normalizeAgentWorkspaceControl(payload, "autonomous") ?? {
+        state: "stopped",
+        reason: null,
+        updatedBy: null,
+        updatedAt: null,
+        autonomousPaused: true,
+        terminatedRunIds: [],
       };
     },
     getAgentConversation: async (kind, conversationId) => {
@@ -3831,7 +3875,7 @@ function createFetchClient(baseUrl: string): DesktopApiClient {
     },
     cancelAutonomousRun: async (runId, reason) => {
       const payload = asRecord(
-        await requestJson<unknown>(baseUrl, `/api/agents/autonomous/execution-episodes/${encodeURIComponent(runId)}/cancel`, {
+        await requestJson<unknown>(baseUrl, `/api/agents/autonomous/runs/${encodeURIComponent(runId)}/cancel`, {
           method: "POST",
           body: JSON.stringify({ reviewer: "desktop-user", reason }),
         }),
@@ -3840,7 +3884,7 @@ function createFetchClient(baseUrl: string): DesktopApiClient {
     },
     resumeAutonomousRun: async (runId, reason) => {
       const payload = asRecord(
-        await requestJson<unknown>(baseUrl, `/api/agents/autonomous/execution-episodes/${encodeURIComponent(runId)}/resume`, {
+        await requestJson<unknown>(baseUrl, `/api/agents/autonomous/runs/${encodeURIComponent(runId)}/resume`, {
           method: "POST",
           body: JSON.stringify({ reviewer: "desktop-user", reason }),
         }),

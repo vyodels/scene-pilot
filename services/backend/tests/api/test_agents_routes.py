@@ -25,6 +25,15 @@ def _script_autonomous_provider(client: TestClient, *responses: LLMResponse) -> 
     return provider
 
 
+def _start_workspace(client: TestClient) -> dict:
+    response = client.post(
+        "/api/agents/autonomous/workspace-control/start",
+        json={"reviewer": "api-test", "reason": "test start"},
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
 def _start_autonomous_run(
     client: TestClient,
     *,
@@ -125,6 +134,7 @@ def test_autonomous_run_once_completes_run_and_projects_primary_conversation(tmp
             result_data={"execution_status": "completed"},
         ),
     )
+    _start_workspace(client)
     created = _start_autonomous_run(client)
 
     processed = client.post("/api/agents/run-once")
@@ -174,6 +184,7 @@ def test_autonomous_wait_human_resume_resolves_gate_and_requeues_run(tmp_path, m
             result_data={"execution_status": "waiting_human"},
         ),
     )
+    _start_workspace(client)
     created = _start_autonomous_run(client)
 
     processed = client.post("/api/agents/run-once")
@@ -225,6 +236,7 @@ def test_autonomous_permission_checkpoint_resumes_after_adapter_rebuild(tmp_path
             result_data={"status": "pass", "execution_status": "completed"},
         ),
     )
+    _start_workspace(client)
     client.app.state.container.tool_registry.register(
         ToolDefinition(
             name="external.send",
@@ -277,3 +289,54 @@ def test_legacy_autonomous_goal_routes_are_absent(tmp_path, monkeypatch) -> None
 
     assert client.get("/api/agents/autonomous/goals").status_code == 404
     assert client.post("/api/agents/autonomous/goals", json={"instruction": "Find one candidate"}).status_code == 404
+
+
+def test_autonomous_workspace_control_gates_queue_and_terminates_open_run(tmp_path, monkeypatch) -> None:
+    client = _client(tmp_path, monkeypatch, "workspace-control")
+    _script_autonomous_provider(
+        client,
+        LLMResponse(content="Should only run after workspace start.", result_data={"execution_status": "completed"}),
+    )
+    created = _start_autonomous_run(client)
+
+    stopped = client.get("/api/agents/autonomous/workspace-control")
+    assert stopped.status_code == 200
+    assert stopped.json()["state"] == "stopped"
+    assert stopped.json()["autonomousPaused"] is True
+
+    blocked = client.post("/api/agents/run-once")
+    assert blocked.status_code == 200
+    assert blocked.json()["status"] == "stopped"
+
+    running = _start_workspace(client)
+    assert running["state"] == "running"
+
+    paused = client.post(
+        "/api/agents/autonomous/workspace-control/pause",
+        json={"reviewer": "api-test", "reason": "hold for review"},
+    )
+    assert paused.status_code == 200
+    assert paused.json()["state"] == "paused"
+    assert client.post("/api/agents/run-once").json()["status"] == "paused"
+
+    resumed = client.post(
+        "/api/agents/autonomous/workspace-control/continue",
+        json={"reviewer": "api-test", "reason": "resume queue"},
+    )
+    assert resumed.status_code == 200
+    assert resumed.json()["state"] == "running"
+    assert client.post("/api/agents/run-once").json()["status"] == "processed"
+
+    second = _start_autonomous_run(client, title="Terminate me", instruction="Wait in queue.")
+    terminated = client.post(
+        "/api/agents/autonomous/workspace-control/terminate",
+        json={"reviewer": "api-test", "reason": "operator stop"},
+    )
+    assert terminated.status_code == 200
+    assert terminated.json()["state"] == "stopped"
+    assert second["runId"] in terminated.json()["terminatedRunIds"]
+
+    run_detail = client.get(f"/api/agents/autonomous/runs/{second['runId']}").json()
+    assert run_detail["run"]["status"] == "cancelled"
+    queue = client.get("/api/agents/queue").json()
+    assert any(item["payload"].get("run_id") == second["runId"] and item["status"] == "failed" for item in queue)

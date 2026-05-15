@@ -136,6 +136,11 @@ class RunControlRequest(BaseModel):
     reason: str | None = None
 
 
+class WorkspaceControlRequest(BaseModel):
+    reviewer: str = "desktop-user"
+    reason: str | None = None
+
+
 class AssistantConversationCreateRequest(BaseModel):
     user_id: str = "desktop-user"
     title: str | None = None
@@ -198,6 +203,41 @@ def build_router(container: AppContainer) -> APIRouter:
     def resume_heartbeat() -> dict[str, Any]:
         state = container.heartbeat.resume()
         return {"autonomous_paused": state.autonomous_paused, "pause_reason": state.pause_reason}
+
+    @router.get("/autonomous/workspace-control")
+    def get_autonomous_workspace_control() -> dict[str, Any]:
+        return _workspace_control_payload(container.heartbeat.status())
+
+    @router.post("/autonomous/workspace-control/start")
+    def start_autonomous_workspace(payload: WorkspaceControlRequest) -> dict[str, Any]:
+        container.heartbeat.start(updated_by=payload.reviewer, reason=payload.reason or "manual start")
+        return _workspace_control_payload(container.heartbeat.status())
+
+    @router.post("/autonomous/workspace-control/pause")
+    def pause_autonomous_workspace(payload: WorkspaceControlRequest) -> dict[str, Any]:
+        container.heartbeat.pause(reason=payload.reason or "manual pause", updated_by=payload.reviewer)
+        return _workspace_control_payload(container.heartbeat.status())
+
+    @router.post("/autonomous/workspace-control/continue")
+    def continue_autonomous_workspace(payload: WorkspaceControlRequest) -> dict[str, Any]:
+        container.heartbeat.resume(updated_by=payload.reviewer)
+        return _workspace_control_payload(container.heartbeat.status())
+
+    @router.post("/autonomous/workspace-control/terminate")
+    def terminate_autonomous_workspace(payload: WorkspaceControlRequest) -> dict[str, Any]:
+        container.heartbeat.terminate(reason=payload.reason or "manual terminate", updated_by=payload.reviewer)
+        terminated_run_ids: list[str] = []
+        with container.session_factory() as session:
+            terminated_run_ids = _terminate_open_autonomous_runs(
+                session,
+                reviewer=payload.reviewer,
+                reason=payload.reason or "manual terminate",
+            )
+            session.commit()
+        control = _workspace_control_payload(container.heartbeat.status())
+        control["terminated_run_ids"] = terminated_run_ids
+        control["terminatedRunIds"] = terminated_run_ids
+        return control
 
     @router.get("")
     def list_agents() -> list[dict[str, Any]]:
@@ -973,6 +1013,56 @@ def _cancel_open_queue_tasks(session: Session, *, run: AgentRun, reviewer: str, 
             task.payload = payload
 
 
+def _terminate_open_autonomous_runs(session: Session, *, reviewer: str, reason: str) -> list[str]:
+    stmt = (
+        select(AgentRun)
+        .where(
+            AgentRun.agent_kind == "autonomous",
+            AgentRun.status.in_(AUTONOMOUS_OPEN_RUN_STATUSES),
+        )
+        .order_by(AgentRun.updated_at.desc(), AgentRun.id.desc())
+    )
+    terminated: list[str] = []
+    for run in session.scalars(stmt).all():
+        run.status = "cancelled"
+        run.finished_at = utcnow()
+        run.blocked_reason = reason
+        _cancel_open_queue_tasks(session, run=run, reviewer=reviewer, reason=reason)
+        _resolve_run_gate_records(
+            session,
+            run=run,
+            reviewer=reviewer,
+            reason=reason,
+            approval_status="rejected",
+            interaction_action="terminate",
+        )
+        terminated.append(run.run_id)
+    return terminated
+
+
+def _workspace_control_payload(status: dict[str, Any]) -> dict[str, Any]:
+    control = status.get("workspace_control") or status.get("workspaceControl") or {}
+    if not isinstance(control, dict):
+        control = {}
+    state = str(control.get("state") or "").strip().lower()
+    if state not in {"stopped", "running", "paused", "terminating"}:
+        state = "stopped"
+    reason = control.get("reason") or status.get("pause_reason")
+    updated_by = control.get("updated_by") or control.get("updatedBy")
+    updated_at = control.get("updated_at") or control.get("updatedAt")
+    payload = {
+        "state": state,
+        "reason": reason,
+        "updated_by": updated_by,
+        "updatedBy": updated_by,
+        "updated_at": updated_at,
+        "updatedAt": updated_at,
+        "autonomous_paused": bool(status.get("autonomous_paused")),
+        "autonomousPaused": bool(status.get("autonomous_paused")),
+    }
+    return payload
+
+
 def _resolve_run_gate_records(
     session: Session,
     *,
@@ -1068,6 +1158,8 @@ def _serialize_workspace(
             "skills": _list_workspace_skills(session),
             "tools": _list_workspace_tools(container),
             "config": _workspace_config(definition, kind=kind, provider_label=provider_label, model_label=model_label),
+            "workspace_control": _workspace_control_payload(container.heartbeat.status()) if kind == "autonomous" else None,
+            "workspaceControl": _workspace_control_payload(container.heartbeat.status()) if kind == "autonomous" else None,
         }
 
     runs = _list_workspace_runs(session, definition, kind)
@@ -1094,6 +1186,8 @@ def _serialize_workspace(
         "skills": _list_workspace_skills(session),
         "tools": _list_workspace_tools(container),
         "config": _workspace_config(definition, kind=kind, provider_label=provider_label, model_label=model_label),
+        "workspace_control": _workspace_control_payload(container.heartbeat.status()),
+        "workspaceControl": _workspace_control_payload(container.heartbeat.status()),
     }
 
 

@@ -70,6 +70,7 @@ def test_heartbeat_claims_task_and_runs_autonomous_turn(tmp_path: Path) -> None:
             plugin_host=PluginHost(),
         )
         heartbeat = Heartbeat(session_factory=create_session_factory(session.get_bind()), autonomous_adapter=agent)
+        heartbeat.start(updated_by="api-test", reason="test start")
 
         result = heartbeat.run_once()
 

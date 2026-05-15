@@ -46,6 +46,7 @@ export type HealthStatus = "healthy" | "warning" | "critical";
 export type ApprovalStatus = "pending" | "approved" | "rejected";
 export type ApplicationStatus = string;
 export type AgentKind = "assistant" | "autonomous";
+export type AgentWorkspaceControlState = "stopped" | "running" | "paused" | "terminating";
 export type ChatOverlayPanelKey =
   | "conversation"
   | "config"
@@ -660,6 +661,7 @@ export interface AgentWorkspaceRecord {
   memories: AgentMemorySummary[];
   skills: SkillRecord[];
   tools: AgentToolSummary[];
+  workspaceControl?: AgentWorkspaceControl | null;
   agentDefinition: AgentDefinitionRecord;
   productBinding: AgentProductBindingRecord;
   definitionConfig: AgentDefinitionConfig;
@@ -682,6 +684,15 @@ export interface AgentWorkspaceRecord {
     providerLabel?: string | null;
     modelLabel?: string | null;
   };
+}
+
+export interface AgentWorkspaceControl {
+  state: AgentWorkspaceControlState;
+  reason?: string | null;
+  updatedBy?: string | null;
+  updatedAt?: string | null;
+  autonomousPaused: boolean;
+  terminatedRunIds?: string[];
 }
 
 export interface RecruitingPolicyConfig {

@@ -7,9 +7,7 @@ import {
   PageToolbarGroup,
   StatusBadge,
   ToolbarButton,
-  ToolbarField,
   ToolbarInput,
-  ToolbarSelect,
 } from "../../components";
 import { apiClient } from "../../lib/api";
 import { formatDateTime } from "../../lib/format";
@@ -126,7 +124,7 @@ interface RecruitingPolicyDraft {
 }
 
 type AutomationToolApprovalMode = "auto" | "approval";
-type AutomationConfigPageKey = "jd" | "sop" | "run" | "tools" | "base";
+type AutomationConfigPageKey = "jd" | "sop" | "activation" | "resume" | "sync" | "run" | "tools" | "base";
 
 interface AutomationJobStrategyDraft {
   screeningCriteria: string;
@@ -147,10 +145,32 @@ interface AutomationExecutionSopDraft {
   stopRulesText: string;
 }
 
+interface AutomationActivationPolicyDraft {
+  startConditionsText: string;
+  stopConditionsText: string;
+  priorityPreset: string;
+  priorityWeightsText: string;
+  cooldownRulesText: string;
+}
+
+interface AutomationResumePolicyDraft {
+  resumeSourcesText: string;
+  runtimeInputPreviewText: string;
+}
+
+interface AutomationSyncPolicyDraft {
+  jdSyncText: string;
+  imSyncText: string;
+  resumeContactSyncText: string;
+}
+
 interface AutomationConfigDraft {
   selectedRunJobIds: string[];
   jobStrategies: Record<string, AutomationJobStrategyDraft>;
   executionSop: AutomationExecutionSopDraft;
+  activationPolicy: AutomationActivationPolicyDraft;
+  resumePolicy: AutomationResumePolicyDraft;
+  syncPolicy: AutomationSyncPolicyDraft;
   toolApprovalModes: Record<string, AutomationToolApprovalMode>;
 }
 
@@ -181,7 +201,7 @@ function formatTimelineTime(value: string): string {
 }
 
 const panelItems: Array<{ key: ChatOverlayPanelKey; label: string }> = [
-  { key: "conversation", label: "对话" },
+  { key: "conversation", label: "工作区" },
   { key: "config", label: "配置" },
   { key: "capabilities", label: "能力" },
   { key: "outputs", label: "工作产出" },
@@ -473,6 +493,37 @@ const DEFAULT_AUTOMATION_STOP_RULES = [
   "外联、删除、归档、状态流转等关键业务工具按权限矩阵决定是否先审批。",
 ].join("\n");
 
+const DEFAULT_AUTOMATION_START_CONDITIONS = [
+  "手动开始工作区后允许处理队列。",
+  "定时扫描发现可执行 JD 有候选人池缺口。",
+  "外部招聘网站同步到新候选人、新 IM、新简历或新联系方式。",
+  "未读消息、待在线评分或待离线评分积压超过阈值。",
+].join("\n");
+
+const DEFAULT_AUTOMATION_PRIORITY_WEIGHTS = [
+  "基础任务权重：发现候选人 40，未读消息 55，待评分 45，待审批 70。",
+  "JD 缺口权重：活跃合格候选人距离目标池水位越远，优先级越高。",
+  "消息等待时长权重：超过 SLA 后线性增加。",
+  "人工标记权重：运营标记高优先级时直接上浮。",
+  "冷却/频率限制惩罚：外部网站限频、失败重试冷却时降低优先级。",
+].join("\n");
+
+const DEFAULT_AUTOMATION_RESUME_SOURCES = [
+  "Run checkpoint",
+  "最近关键消息",
+  "历史摘要",
+  "业务事实：JD、候选人、简历、IM、联系方式、评分记录",
+  "已执行 tool call / tool result",
+  "待审批项 / 待执行项",
+  "本次 ActivationEvent / WakeupEvent",
+].join("\n");
+
+const DEFAULT_AUTOMATION_RUNTIME_INPUT_PREVIEW = [
+  "本次运行输入由 Adapter 根据结构化事件编译，不是用户随手输入的自然语言 prompt。",
+  "必须包含：为什么唤醒、恢复哪个 run、当前状态、业务事实、本轮目标、禁止重复动作。",
+  "运行输入进入 runtime user/context 层；高权威业务策略仍来自 developer/system 业务策略区。",
+].join("\n");
+
 function automationConfigDraftTemplate(): AutomationConfigDraft {
   return {
     selectedRunJobIds: [],
@@ -482,6 +533,22 @@ function automationConfigDraftTemplate(): AutomationConfigDraft {
       siteScope: "本次运行所有选中 JD",
       stepsText: DEFAULT_AUTOMATION_SOP_STEPS.join("\n"),
       stopRulesText: DEFAULT_AUTOMATION_STOP_RULES,
+    },
+    activationPolicy: {
+      startConditionsText: DEFAULT_AUTOMATION_START_CONDITIONS,
+      stopConditionsText: DEFAULT_AUTOMATION_STOP_RULES,
+      priorityPreset: "balanced",
+      priorityWeightsText: DEFAULT_AUTOMATION_PRIORITY_WEIGHTS,
+      cooldownRulesText: "外部站点限频、连续异常、审批超时、当前 run 无可推进动作时进入冷却或暂停。",
+    },
+    resumePolicy: {
+      resumeSourcesText: DEFAULT_AUTOMATION_RESUME_SOURCES,
+      runtimeInputPreviewText: DEFAULT_AUTOMATION_RUNTIME_INPUT_PREVIEW,
+    },
+    syncPolicy: {
+      jdSyncText: "同步外部招聘网站 JD 状态、岗位上下架状态和可执行列表；JD 策略仍在本系统独立维护。",
+      imSyncText: "IM 消息双向同步：外部新消息写入本系统，本系统 outbound 消息需要同步确认记录。",
+      resumeContactSyncText: "离线简历、联系方式、附件和沟通证据必须归档到候选人投递事实中，供评分和恢复上下文使用。",
     },
     toolApprovalModes: {},
   };
@@ -575,6 +642,9 @@ function automationConfigDraftFromWorkspace(
     : {};
   const rawConfig = recordField(runtimeMetadata, "automationRecruitingConfig", "automationConfig") ?? {};
   const rawSop = recordField(rawConfig, "executionSop", "execution_sop") ?? {};
+  const rawActivation = recordField(rawConfig, "activationPolicy", "activation_policy") ?? {};
+  const rawResume = recordField(rawConfig, "resumePolicy", "resume_policy") ?? {};
+  const rawSync = recordField(rawConfig, "syncPolicy", "sync_policy") ?? {};
   const rawStrategies = recordField(rawConfig, "jobStrategies", "job_strategies") ?? {};
   const rawToolPolicy = recordField(rawConfig, "toolApprovalPolicy", "tool_approval_policy") ?? {};
   const rawToolOverrides = recordField(rawToolPolicy, "overrides") ?? {};
@@ -613,6 +683,22 @@ function automationConfigDraftFromWorkspace(
       siteScope: stringFromUnknown(rawSop.siteScope ?? rawSop.site_scope, template.executionSop.siteScope),
       stepsText: stringFromUnknown(rawSop.stepsText ?? rawSop.steps_text, template.executionSop.stepsText),
       stopRulesText: stringFromUnknown(rawSop.stopRulesText ?? rawSop.stop_rules_text, template.executionSop.stopRulesText),
+    },
+    activationPolicy: {
+      startConditionsText: stringFromUnknown(rawActivation.startConditionsText ?? rawActivation.start_conditions_text, template.activationPolicy.startConditionsText),
+      stopConditionsText: stringFromUnknown(rawActivation.stopConditionsText ?? rawActivation.stop_conditions_text, template.activationPolicy.stopConditionsText),
+      priorityPreset: stringFromUnknown(rawActivation.priorityPreset ?? rawActivation.priority_preset, template.activationPolicy.priorityPreset),
+      priorityWeightsText: stringFromUnknown(rawActivation.priorityWeightsText ?? rawActivation.priority_weights_text, template.activationPolicy.priorityWeightsText),
+      cooldownRulesText: stringFromUnknown(rawActivation.cooldownRulesText ?? rawActivation.cooldown_rules_text, template.activationPolicy.cooldownRulesText),
+    },
+    resumePolicy: {
+      resumeSourcesText: stringFromUnknown(rawResume.resumeSourcesText ?? rawResume.resume_sources_text, template.resumePolicy.resumeSourcesText),
+      runtimeInputPreviewText: stringFromUnknown(rawResume.runtimeInputPreviewText ?? rawResume.runtime_input_preview_text, template.resumePolicy.runtimeInputPreviewText),
+    },
+    syncPolicy: {
+      jdSyncText: stringFromUnknown(rawSync.jdSyncText ?? rawSync.jd_sync_text, template.syncPolicy.jdSyncText),
+      imSyncText: stringFromUnknown(rawSync.imSyncText ?? rawSync.im_sync_text, template.syncPolicy.imSyncText),
+      resumeContactSyncText: stringFromUnknown(rawSync.resumeContactSyncText ?? rawSync.resume_contact_sync_text, template.syncPolicy.resumeContactSyncText),
     },
     toolApprovalModes,
   };
@@ -665,6 +751,24 @@ function automationConfigPayloadFromDraft(
       siteScope: draft.executionSop.siteScope,
       stepsText: draft.executionSop.stepsText,
       stopRulesText: draft.executionSop.stopRulesText,
+    },
+    activationPolicy: {
+      startConditionsText: draft.activationPolicy.startConditionsText,
+      stopConditionsText: draft.activationPolicy.stopConditionsText,
+      priorityPreset: draft.activationPolicy.priorityPreset,
+      priorityWeightsText: draft.activationPolicy.priorityWeightsText,
+      cooldownRulesText: draft.activationPolicy.cooldownRulesText,
+      programmaticAuthority: true,
+    },
+    resumePolicy: {
+      resumeSourcesText: draft.resumePolicy.resumeSourcesText,
+      runtimeInputPreviewText: draft.resumePolicy.runtimeInputPreviewText,
+      resumeMode: "state_resume_plus_summary_resume",
+    },
+    syncPolicy: {
+      jdSyncText: draft.syncPolicy.jdSyncText,
+      imSyncText: draft.syncPolicy.imSyncText,
+      resumeContactSyncText: draft.syncPolicy.resumeContactSyncText,
     },
     jobStrategies,
     toolApprovalPolicy: {
@@ -735,6 +839,9 @@ function buildAutomationLaunchPayload(
       plan_kind: "multi_jd_recruiting",
       selected_job_description_ids: selectedJobs.map((item) => item.jobId),
       execution_sop: draft.executionSop,
+      activation_policy: draft.activationPolicy,
+      resume_policy: draft.resumePolicy,
+      sync_policy: draft.syncPolicy,
       business_policy_overlay: {
         job_plans: jobPlans,
       },
@@ -756,6 +863,7 @@ function buildAutomationLaunchPayload(
           companyName: plan.companyName,
           status: plan.status,
         })),
+        activationPolicyPreset: draft.activationPolicy.priorityPreset,
       },
     },
   };
@@ -1340,6 +1448,14 @@ function panelEmptyStyle(): React.CSSProperties {
   };
 }
 
+const RAIL_RESTORE_MIN_TOP = 84;
+const RAIL_RESTORE_BOTTOM_GAP = 84;
+
+function clampRailRestoreTop(top: number, containerHeight: number): number {
+  const maxTop = Math.max(RAIL_RESTORE_MIN_TOP, containerHeight - RAIL_RESTORE_BOTTOM_GAP);
+  return Math.min(Math.max(top, RAIL_RESTORE_MIN_TOP), maxTop);
+}
+
 export function ChatOverlay({
   transport,
   workspaceAgent,
@@ -1376,6 +1492,7 @@ export function ChatOverlay({
   const [loadingConversation, setLoadingConversation] = useState(false);
   const [sending, setSending] = useState(false);
   const [railCollapsed, setRailCollapsed] = useState(false);
+  const [railRestoreTop, setRailRestoreTop] = useState(128);
   const [collapsedGroups, setCollapsedGroups] = useState<Record<AgentKind, boolean>>({
     assistant: false,
     autonomous: false,
@@ -1398,6 +1515,7 @@ export function ChatOverlay({
   const [approvalSelections, setApprovalSelections] = useState<Record<string, string>>({});
   const [approvalActionId, setApprovalActionId] = useState<string | null>(null);
   const [runActionBusyId, setRunActionBusyId] = useState<string | null>(null);
+  const [workspaceControlBusyAction, setWorkspaceControlBusyAction] = useState<string | null>(null);
   const [agentListFilter, setAgentListFilter] = useState<AgentListFilter>("all");
   const [agentSearchQuery, setAgentSearchQuery] = useState("");
   const headerDragRef = useRef<{
@@ -1411,6 +1529,13 @@ export function ChatOverlay({
     pointerY: number;
     width: number;
     height: number;
+  } | null>(null);
+  const railRestoreDragRef = useRef<{
+    pointerId: number;
+    pointerY: number;
+    originTop: number;
+    containerHeight: number;
+    moved: boolean;
   } | null>(null);
   const streamShellRef = useRef<HTMLDivElement | null>(null);
   const streamShouldFollowRef = useRef(true);
@@ -2291,6 +2416,17 @@ export function ChatOverlay({
           delete assistantStreamContentRef.current[streamMessageId];
         }
       } else {
+        if ((workspaces.autonomous?.workspaceControl?.state ?? "stopped") !== "running") {
+          setPanelNotice({
+            panel: "conversation",
+            tone: "info",
+            message: copy(
+              "Start the automation workspace before submitting autonomous instructions.",
+              "提交自动化指令前，请先在工作区点击开始。",
+            ),
+          });
+          return;
+        }
         let conversationId = activeConversationId;
         if (!conversationId) {
           conversationId = createDraftConversation(activeAgent);
@@ -2366,6 +2502,17 @@ export function ChatOverlay({
         message: copy(
           "Automation already has an open run. Wait for the current run to finish before starting the next one.",
           "Automation 当前已有未结束的运行，请等待当前运行结束后再启动下一轮。",
+        ),
+      });
+      return;
+    }
+    if ((workspaces.autonomous?.workspaceControl?.state ?? "stopped") !== "running") {
+      setPanelNotice({
+        panel: "config",
+        tone: "info",
+        message: copy(
+          "Start the automation workspace before submitting a run plan.",
+          "提交运行计划前，请先在工作区点击开始。",
         ),
       });
       return;
@@ -2644,6 +2791,40 @@ export function ChatOverlay({
     }
   };
 
+  const handleWorkspaceControl = async (action: "start" | "pause" | "continue" | "terminate") => {
+    setWorkspaceControlBusyAction(action);
+    try {
+      const reasonMap: Record<"start" | "pause" | "continue" | "terminate", string> = {
+        start: copy("Started from agent workspace.", "在工作区手动开始。"),
+        pause: copy("Paused from agent workspace.", "在工作区手动暂停。"),
+        continue: copy("Continued from agent workspace.", "在工作区手动继续。"),
+        terminate: copy("Terminated from agent workspace.", "在工作区手动终止。"),
+      };
+      await apiClient.controlAutonomousWorkspace(action, reasonMap[action]);
+      await loadWorkspaces();
+      setPanelNotice({
+        panel: "runs",
+        tone: "success",
+        message:
+          action === "start"
+            ? copy("Automation workspace started.", "自动化招聘 Agent 已开始。")
+            : action === "pause"
+              ? copy("Automation workspace paused.", "自动化招聘 Agent 已暂停。")
+              : action === "continue"
+                ? copy("Automation workspace continued.", "自动化招聘 Agent 已继续。")
+                : copy("Automation workspace terminated.", "自动化招聘 Agent 已终止。"),
+      });
+    } catch (error) {
+      setPanelNotice({
+        panel: "runs",
+        tone: "error",
+        message: error instanceof Error ? error.message : copy("Workspace control failed.", "工作区控制失败。"),
+      });
+    } finally {
+      setWorkspaceControlBusyAction(null);
+    }
+  };
+
   const startHeaderDrag = (event: React.MouseEvent<HTMLDivElement>) => {
     const target = event.target as HTMLElement;
     if (target.closest("button")) {
@@ -2701,6 +2882,56 @@ export function ChatOverlay({
     };
     window.addEventListener("mousemove", handleMove);
     window.addEventListener("mouseup", handleUp);
+  };
+
+  const startRailRestoreDrag = (event: React.PointerEvent<HTMLButtonElement>) => {
+    if (event.pointerType === "mouse" && event.button !== 0) {
+      return;
+    }
+    event.preventDefault();
+    const button = event.currentTarget;
+    const containerHeight = button.parentElement?.getBoundingClientRect().height ?? window.innerHeight;
+    railRestoreDragRef.current = {
+      pointerId: event.pointerId,
+      pointerY: event.clientY,
+      originTop: railRestoreTop,
+      containerHeight,
+      moved: false,
+    };
+    button.setPointerCapture(event.pointerId);
+
+    const handleMove = (moveEvent: PointerEvent) => {
+      const current = railRestoreDragRef.current;
+      if (!current || moveEvent.pointerId !== current.pointerId) {
+        return;
+      }
+      const deltaY = moveEvent.clientY - current.pointerY;
+      const moved = current.moved || Math.abs(deltaY) > 3;
+      railRestoreDragRef.current = {
+        ...current,
+        moved,
+      };
+      setRailRestoreTop(clampRailRestoreTop(current.originTop + deltaY, current.containerHeight));
+    };
+
+    const handleUp = (upEvent: PointerEvent) => {
+      const current = railRestoreDragRef.current;
+      if (!current || upEvent.pointerId !== current.pointerId) {
+        return;
+      }
+      railRestoreDragRef.current = null;
+      button.releasePointerCapture(upEvent.pointerId);
+      window.removeEventListener("pointermove", handleMove);
+      window.removeEventListener("pointerup", handleUp);
+      window.removeEventListener("pointercancel", handleUp);
+      if (!current.moved) {
+        setRailCollapsed(false);
+      }
+    };
+
+    window.addEventListener("pointermove", handleMove);
+    window.addEventListener("pointerup", handleUp);
+    window.addEventListener("pointercancel", handleUp);
   };
 
   const renderEmptyPanel = (title: string, body: string) => (
@@ -3255,6 +3486,9 @@ export function ChatOverlay({
         const automationConfigPages: Array<{ key: AutomationConfigPageKey; label: string; description: string }> = [
           { key: "jd", label: copy("JD strategy", "JD 策略"), description: copy("Per-JD screening, resume scoring, composite thresholds, and acceptance output.", "逐 JD 配置筛选、简历评分、综合阈值和验收产出。") },
           { key: "sop", label: copy("Execution SOP", "执行 SOP"), description: copy("Shared execution method selected by a run plan.", "运行计划选择的共享执行方法。") },
+          { key: "activation", label: copy("Activation", "激活与优先级"), description: copy("Programmatic start, stop, priority, cooldown, and queue policy.", "程序化启动、停止、优先级、冷却和队列策略。") },
+          { key: "resume", label: copy("Resume", "恢复策略"), description: copy("State resume sources and runtime input preview.", "配置状态恢复来源和本次运行输入预览。") },
+          { key: "sync", label: copy("Sync", "同步策略"), description: copy("External JD, IM, resume, contact, and evidence sync boundaries.", "外部 JD、IM、简历、联系方式和证据同步边界。") },
           { key: "run", label: copy("Run plan", "运行计划"), description: copy("Choose executable JDs for the next autonomous run.", "选择下一次自动化运行的可执行 JD。") },
           { key: "tools", label: copy("Tool permissions", "工具权限"), description: copy("Approval gates bound to business tools.", "绑定业务工具的审批节点。") },
           { key: "base", label: copy("Base capability", "基础能力"), description: copy("Read-only stable system/developer instruction.", "只读查看稳定 system/developer 设定。") },
@@ -3264,6 +3498,33 @@ export function ChatOverlay({
             ...current,
             executionSop: {
               ...current.executionSop,
+              [field]: value,
+            },
+          }));
+        };
+        const updateAutomationActivationPolicy = (field: keyof AutomationActivationPolicyDraft, value: string) => {
+          setAutomationConfigDraft((current) => ({
+            ...current,
+            activationPolicy: {
+              ...current.activationPolicy,
+              [field]: value,
+            },
+          }));
+        };
+        const updateAutomationResumePolicy = (field: keyof AutomationResumePolicyDraft, value: string) => {
+          setAutomationConfigDraft((current) => ({
+            ...current,
+            resumePolicy: {
+              ...current.resumePolicy,
+              [field]: value,
+            },
+          }));
+        };
+        const updateAutomationSyncPolicy = (field: keyof AutomationSyncPolicyDraft, value: string) => {
+          setAutomationConfigDraft((current) => ({
+            ...current,
+            syncPolicy: {
+              ...current.syncPolicy,
               [field]: value,
             },
           }));
@@ -3574,6 +3835,107 @@ export function ChatOverlay({
                     onChange={(event) => updateAutomationSop("stopRulesText", event.target.value)}
                     className="chat-overlay-form-textarea--medium"
                   />
+                </label>
+              </div>
+            </section>
+            ) : null}
+
+            {selectedAutomationConfigPage === "activation" ? (
+            <section className="agent-config-independent-panel">
+              <div className="agent-config-panel-head">
+                <div>
+                  <h4>{copy("Activation and priority policy", "激活与优先级策略")}</h4>
+                  <p>{copy("These rules are programmatic scheduling inputs. Prompt only explains the policy to the agent; it is not the scheduler.", "这些规则是程序化调度输入。Prompt 只解释策略，不承担真正调度裁决。")}</p>
+                </div>
+                <StatusBadge tone="positive">{copy("Programmatic", "程序化")}</StatusBadge>
+              </div>
+              <div className="agent-config-score-grid agent-config-score-grid--four">
+                {[
+                  { key: "balanced", label: copy("Balanced", "平衡推进") },
+                  { key: "discovery_first", label: copy("Discovery first", "发现优先") },
+                  { key: "response_first", label: copy("Response first", "沟通优先") },
+                ].map((preset) => (
+                  <button
+                    key={preset.key}
+                    type="button"
+                    className="agent-config-priority-preset"
+                    data-active={automationConfigDraft.activationPolicy.priorityPreset === preset.key}
+                    onClick={() => updateAutomationActivationPolicy("priorityPreset", preset.key)}
+                  >
+                    {preset.label}
+                  </button>
+                ))}
+              </div>
+              <div className="agent-config-editor__fields agent-config-editor__fields--two">
+                <label className="agent-config-editor__field">
+                  <span>{copy("Start conditions", "启动条件")}</span>
+                  <small>{copy("External events, timers, low JD pool, unread messages, and scoring backlog.", "外部事件、定时、JD 池水位不足、未读消息和评分积压。")}</small>
+                  <FormTextarea value={automationConfigDraft.activationPolicy.startConditionsText} onChange={(event) => updateAutomationActivationPolicy("startConditionsText", event.target.value)} className="chat-overlay-form-textarea--medium" />
+                </label>
+                <label className="agent-config-editor__field">
+                  <span>{copy("Stop conditions", "停止条件")}</span>
+                  <small>{copy("JD taken offline, pool target reached, no valid candidates, budget/frequency limit, approval timeout, or no progress.", "JD 下架、池水位达标、连续无有效候选人、预算/限频、审批超时或无可推进动作。")}</small>
+                  <FormTextarea value={automationConfigDraft.activationPolicy.stopConditionsText} onChange={(event) => updateAutomationActivationPolicy("stopConditionsText", event.target.value)} className="chat-overlay-form-textarea--medium" />
+                </label>
+                <label className="agent-config-editor__field">
+                  <span>{copy("Priority scoring model", "优先级评分模型")}</span>
+                  <small>{copy("Base task weight + JD gap + message wait + interview proximity + operator mark - cooldown penalty.", "基础任务权重 + JD 缺口 + 消息等待 + 面试临近 + 人工标记 - 冷却惩罚。")}</small>
+                  <FormTextarea value={automationConfigDraft.activationPolicy.priorityWeightsText} onChange={(event) => updateAutomationActivationPolicy("priorityWeightsText", event.target.value)} className="chat-overlay-form-textarea--medium" />
+                </label>
+                <label className="agent-config-editor__field">
+                  <span>{copy("Cooldown and frequency limits", "冷却与频率限制")}</span>
+                  <small>{copy("Protect external sites and prevent duplicate actions.", "保护外部站点，避免重复动作。")}</small>
+                  <FormTextarea value={automationConfigDraft.activationPolicy.cooldownRulesText} onChange={(event) => updateAutomationActivationPolicy("cooldownRulesText", event.target.value)} className="chat-overlay-form-textarea--medium" />
+                </label>
+              </div>
+            </section>
+            ) : null}
+
+            {selectedAutomationConfigPage === "resume" ? (
+            <section className="agent-config-independent-panel">
+              <div className="agent-config-panel-head">
+                <div>
+                  <h4>{copy("Run-state resume policy", "运行状态恢复策略")}</h4>
+                  <p>{copy("The agent is resumed by structured ActivationEvent/WakeupEvent plus state and summary, not by a plain 'continue' prompt.", "Agent 通过结构化 ActivationEvent/WakeupEvent 加状态和摘要恢复，不是一句“继续”。")}</p>
+                </div>
+                <StatusBadge tone="neutral">{copy("State + Summary", "状态 + 摘要")}</StatusBadge>
+              </div>
+              <div className="agent-config-editor__fields agent-config-editor__fields--two">
+                <label className="agent-config-editor__field">
+                  <span>{copy("Resume sources", "恢复来源")}</span>
+                  <small>{copy("What the Adapter should load before compiling runtime input.", "Adapter 编译运行输入前需要加载的来源。")}</small>
+                  <FormTextarea value={automationConfigDraft.resumePolicy.resumeSourcesText} onChange={(event) => updateAutomationResumePolicy("resumeSourcesText", event.target.value)} className="chat-overlay-form-textarea--medium" />
+                </label>
+                <label className="agent-config-editor__field">
+                  <span>{copy("Run input preview", "本次运行输入预览")}</span>
+                  <small>{copy("Human-readable preview of the controlled runtime input shape.", "受控运行输入结构的人类可读预览。")}</small>
+                  <FormTextarea value={automationConfigDraft.resumePolicy.runtimeInputPreviewText} onChange={(event) => updateAutomationResumePolicy("runtimeInputPreviewText", event.target.value)} className="chat-overlay-form-textarea--medium" />
+                </label>
+              </div>
+            </section>
+            ) : null}
+
+            {selectedAutomationConfigPage === "sync" ? (
+            <section className="agent-config-independent-panel">
+              <div className="agent-config-panel-head">
+                <div>
+                  <h4>{copy("External data sync policy", "外部数据同步策略")}</h4>
+                  <p>{copy("Defines what is synchronized with recruiting sites and what is retained as local business facts.", "定义外部招聘网站同步内容，以及本系统保留的业务事实。")}</p>
+                </div>
+                <StatusBadge tone="neutral">{copy("Boundary", "边界")}</StatusBadge>
+              </div>
+              <div className="agent-config-editor__fields">
+                <label className="agent-config-editor__field">
+                  <span>{copy("JD sync", "JD 同步")}</span>
+                  <FormTextarea value={automationConfigDraft.syncPolicy.jdSyncText} onChange={(event) => updateAutomationSyncPolicy("jdSyncText", event.target.value)} className="chat-overlay-form-textarea--medium" />
+                </label>
+                <label className="agent-config-editor__field">
+                  <span>{copy("IM bidirectional sync", "IM 双向同步")}</span>
+                  <FormTextarea value={automationConfigDraft.syncPolicy.imSyncText} onChange={(event) => updateAutomationSyncPolicy("imSyncText", event.target.value)} className="chat-overlay-form-textarea--medium" />
+                </label>
+                <label className="agent-config-editor__field">
+                  <span>{copy("Resume and contact sync", "简历与联系方式同步")}</span>
+                  <FormTextarea value={automationConfigDraft.syncPolicy.resumeContactSyncText} onChange={(event) => updateAutomationSyncPolicy("resumeContactSyncText", event.target.value)} className="chat-overlay-form-textarea--medium" />
                 </label>
               </div>
             </section>
@@ -4123,92 +4485,134 @@ export function ChatOverlay({
       const completedRuns = activeWorkspace.runs.filter((run) => run.status === "completed").length;
       const failedRuns = activeWorkspace.runs.filter((run) => run.status === "failed" || run.status === "cancelled").length;
       const totalRuns = activeWorkspace.runs.length;
-      const successRate = totalRuns > 0 ? Math.round((completedRuns / totalRuns) * 1000) / 10 : 0;
-      const progressPercent = totalRuns > 0 ? Math.min(100, Math.round(((completedRuns + failedRuns) / totalRuns) * 100)) : 0;
+      const pendingApprovals = activeWorkspace.approvals.filter((approval) => approval.status === "pending").length;
+      const resolvedApprovals = activeWorkspace.approvals.filter((approval) => approval.status !== "pending").length;
       const enabledTools = activeWorkspace.tools.filter((tool) => tool.enabled).length;
       const healthySkills = activeWorkspace.skills.filter((skill) => skill.health === "healthy").length;
+      const businessTools = activeWorkspace.tools.filter((tool) => tool.businessTool).length;
+      const systemTools = activeWorkspace.tools.filter((tool) => !tool.businessTool).length;
+      const latestRun = [...activeWorkspace.runs].sort(
+        (left, right) => parseConversationSortTime(right.updatedAt) - parseConversationSortTime(left.updatedAt),
+      )[0];
+      const recentRuns = [...activeWorkspace.runs]
+        .sort((left, right) => parseConversationSortTime(right.updatedAt) - parseConversationSortTime(left.updatedAt))
+        .slice(0, 4);
+      const context = (() => {
+        if (activePanel === "config") {
+          return {
+            title: copy("Configuration details", "配置详情"),
+            description: copy("Version, provider, policy and validation signals for the selected agent.", "展示当前 Agent 的版本、模型、策略和校验信号。"),
+            metrics: [
+              { label: copy("Definition", "定义"), value: activeWorkspace.agentDefinition.key },
+              { label: copy("Provider", "Provider"), value: activeWorkspace.config.providerLabel || "-" },
+              { label: copy("Boundaries", "边界"), value: activeWorkspace.config.boundaries.length },
+              { label: copy("Approvals", "审批"), value: pendingApprovals },
+            ],
+            rows: [
+              `${copy("Model", "模型")} · ${activeWorkspace.config.modelLabel || activeWorkspace.agent.defaultModel || "-"}`,
+              `${copy("Adapter", "Adapter")} · ${activeWorkspace.productBinding.productAdapterKey || activeAgent}`,
+              `${copy("Scoring rubric", "评分规则")} · ${activeWorkspace.config.scoringRubric ? copy("Configured", "已配置") : copy("Empty", "未配置")}`,
+            ],
+          };
+        }
+        if (activePanel === "capabilities") {
+          return {
+            title: copy("Capability details", "能力详情"),
+            description: copy("Tool, skill and memory inventory exposed by the current product adapter.", "展示当前产品 adapter 暴露的工具、技能和记忆来源。"),
+            metrics: [
+              { label: copy("Business", "业务工具"), value: businessTools },
+              { label: copy("System", "系统工具"), value: systemTools },
+              { label: "Skills", value: activeWorkspace.skills.length },
+              { label: "Memory", value: activeWorkspace.memories.length },
+            ],
+            rows: [
+              `${copy("Enabled tools", "已启用工具")} · ${enabledTools}`,
+              `${copy("Healthy skills", "健康技能")} · ${healthySkills}`,
+              `${copy("Memory scopes", "记忆条目")} · ${activeWorkspace.memories.length}`,
+            ],
+          };
+        }
+        if (activePanel === "outputs") {
+          return {
+            title: copy("Output details", "产出详情"),
+            description: copy("Output readiness and resolved human decisions from recent runs.", "展示最近运行的产出准备度和人工处理结果。"),
+            metrics: [
+              { label: copy("Completed", "已完成"), value: completedRuns },
+              { label: copy("Resolved", "已处理审批"), value: resolvedApprovals },
+              { label: copy("Failed", "失败"), value: failedRuns },
+              { label: copy("Total", "总运行"), value: totalRuns },
+            ],
+            rows: [
+              latestRun ? `${copy("Latest run", "最近运行")} · ${latestRun.title}` : copy("No recent runs", "暂无运行记录"),
+              latestRun ? `${copy("Status", "状态")} · ${describeConversationStatus(latestRun.status)}` : `${copy("Status", "状态")} · -`,
+              `${copy("Output source", "产出来源")} · ${copy("Run records and approvals", "运行记录与审批")}`,
+            ],
+          };
+        }
+        if (activePanel === "runs") {
+          return {
+            title: copy("Run details", "运行详情"),
+            description: copy("Current queue pressure, terminal outcomes and the latest run references.", "展示当前队列压力、结束态和最近运行引用。"),
+            metrics: [
+              { label: copy("Open", "进行中"), value: openRuns },
+              { label: copy("Completed", "已完成"), value: completedRuns },
+              { label: copy("Failed", "失败"), value: failedRuns },
+              { label: copy("Total", "总数"), value: totalRuns },
+            ],
+            rows: recentRuns.length
+              ? recentRuns.map((run) => `${describeConversationStatus(run.status)} · ${run.title}`)
+              : [copy("No recent runs", "暂无运行记录")],
+          };
+        }
+        return {
+          title: copy("Workspace details", "工作区详情"),
+          description: copy("Live status, pending human decisions and the latest execution signal.", "展示实时状态、待确认事项和最近执行信号。"),
+          metrics: [
+            { label: copy("Open runs", "待处理运行"), value: openRuns },
+            { label: copy("Approvals", "待确认"), value: pendingApprovals },
+            { label: copy("Unread", "未读"), value: activeWorkspace.agent.unreadCount },
+            { label: copy("Failed", "异常"), value: failedRuns },
+          ],
+          rows: [
+            `${copy("Instruction", "指令")} · ${activeWorkspace.agent.activeTask || activeRunStatusText?.title || "-"}`,
+            latestRun ? `${copy("Latest run", "最近运行")} · ${describeConversationStatus(latestRun.status)} · ${formatDateTime(latestRun.updatedAt)}` : copy("No recent runs", "暂无运行记录"),
+            `${copy("Model", "模型")} · ${activeWorkspace.config.modelLabel || activeWorkspace.agent.defaultModel || "-"}`,
+          ],
+        };
+      })();
+
       return (
-        <div className="agent-runtime-stack">
-          <section className="agent-runtime-card agent-runtime-card--hero">
-            <div className="agent-runtime-card__top">
-              <span className="agent-runtime-avatar" aria-hidden="true">AG</span>
-              <div>
-                <h3>{normalizeAgentTitle(activeAgent, activeWorkspace.agent.name)}</h3>
-                <p>{agentModeLabel(activeAgent)}</p>
-              </div>
-              <StatusBadge tone={toneForHealth(activeWorkspace.agent.health)}>
-                {describeConversationStatus(activeWorkspace.agent.status)}
-              </StatusBadge>
+        <div className="agent-context-panel">
+          <div className="agent-context-panel__head">
+            <div>
+              <span>{copy("Details panel", "详情面板")}</span>
+              <h3>{context.title}</h3>
             </div>
-            <button type="button" onClick={() => setActivePanel("config")}>
-              {copy("Manage Agent", "管理 Agent")}
+            <button className="agent-context-panel__collapse" type="button" onClick={() => setRailCollapsed(true)}>
+              <span aria-hidden="true">›</span>
+              <strong>{copy("Collapse", "收起")}</strong>
             </button>
-          </section>
-
-          <section className="agent-runtime-card">
-            <div className="agent-runtime-card__eyebrow">{copy("Conversation summary", "对话摘要")}</div>
-            <div className="agent-runtime-grid">
-              <div><span>{copy("Type", "类型")}</span><strong>{activeAgent === "assistant" ? "Assistant" : "Automation"}</strong></div>
-              <div><span>{copy("Model", "模型")}</span><strong>{activeWorkspace.config.modelLabel || activeWorkspace.agent.defaultModel || "-"}</strong></div>
-              <div><span>{copy("Tools", "工具")}</span><strong>{enabledTools}</strong></div>
-              <div><span>{copy("Skills", "技能")}</span><strong>{healthySkills}</strong></div>
-            </div>
-          </section>
-
-          <section className="agent-runtime-card">
-            <div className="agent-runtime-card__eyebrow">{copy("Current run", "当前运行")}</div>
-            <div className="agent-runtime-list">
-              <span>{copy("Instruction", "指令")} · {activeWorkspace.agent.activeTask || activeRunStatusText?.title || "-"}</span>
-              <span>{copy("Open runs", "待处理运行")} · {openRuns}</span>
-              <span>{copy("Completed", "已完成")} · {completedRuns}</span>
-              <span>{copy("Failed", "失败")} · {failedRuns}</span>
-            </div>
-            <div className="agent-runtime-actions">
-              <button type="button" onClick={() => setActivePanel("runs")}>{copy("View runs", "查看运行")}</button>
-              <button type="button" onClick={() => setActivePanel("conversation")}>{copy("Open conversation", "查看对话")}</button>
-            </div>
-          </section>
-
-          <section className="agent-runtime-card">
-            <div className="agent-runtime-card__title-row">
-              <div className="agent-runtime-card__eyebrow">{copy("Today usage", "今日运行数据")}</div>
-              <span>{copy("Live", "实时")}</span>
-            </div>
-            <div className="agent-runtime-metrics">
-              <div><span>{copy("Runs", "运行")}</span><strong>{totalRuns}</strong></div>
-              <div><span>{copy("Success", "成功率")}</span><strong>{successRate}%</strong></div>
-              <div><span>{copy("Open", "进行中")}</span><strong>{openRuns}</strong></div>
-              <div><span>{copy("Failed", "失败")}</span><strong>{failedRuns}</strong></div>
-            </div>
-          </section>
-
-          <section className="agent-runtime-card">
-            <div className="agent-runtime-card__eyebrow">{copy("Current progress", "当前运行进度")}</div>
-            <div className="agent-runtime-progress">
-              <div>
-                <span>{copy("Resolved steps", "已处理步骤")}</span>
-                <strong>{progressPercent}%</strong>
+          </div>
+          <p>{context.description}</p>
+          <div className="agent-context-panel__metrics">
+            {context.metrics.map((metric) => (
+              <div key={metric.label}>
+                <span>{metric.label}</span>
+                <strong>{metric.value}</strong>
               </div>
-              <span><i style={{ width: `${progressPercent}%` }} /></span>
-              <p>{completedRuns + failedRuns} / {totalRuns || 0} {copy("runs resolved", "个运行已结束")}</p>
-            </div>
-          </section>
-
-          <section className="agent-runtime-card">
-            <div className="agent-runtime-card__title-row">
-              <div className="agent-runtime-card__eyebrow">{copy("Recent runs", "最近运行")}</div>
-              <button type="button" onClick={() => setActivePanel("runs")}>{copy("All", "全部")}</button>
-            </div>
-            <div className="agent-runtime-feed">
-              {activeWorkspace.runs.slice(0, 5).map((run) => (
-                <button key={run.id} type="button" onClick={() => setActivePanel("runs")}>
-                  <strong>{run.title}</strong>
-                  <span>{describeConversationStatus(run.status)} · {formatDateTime(run.updatedAt)}</span>
-                </button>
-              ))}
-              {!activeWorkspace.runs.length ? <p>{copy("No recent runs", "暂无运行记录")}</p> : null}
-            </div>
-          </section>
+            ))}
+          </div>
+          <div className="agent-context-panel__rows">
+            {context.rows.map((row, index) => (
+              <div key={`${index}-${row}`}>
+                {row}
+              </div>
+            ))}
+          </div>
+          <div className="agent-context-panel__actions">
+            <button type="button" onClick={() => setActivePanel("config")}>{copy("Open config", "查看配置")}</button>
+            <button type="button" onClick={() => setActivePanel("runs")}>{copy("View runs", "查看运行")}</button>
+          </div>
         </div>
       );
     }
@@ -4410,7 +4814,9 @@ export function ChatOverlay({
     return (
       <>
         <div className="agent-management-list__title-row">
-          <h3>{copy("Session list", "会话列表")}</h3>
+          <div>
+            <h3>{copy("Run queue", "运行队列")}</h3>
+          </div>
           <button
             type="button"
             onClick={() => {
@@ -4418,21 +4824,8 @@ export function ChatOverlay({
               focusAgent(activeAgent, "conversation");
             }}
           >
-            + {copy("New", "新建")}
+            + {activeAgent === "assistant" ? copy("New chat", "新会话") : copy("New run", "新任务")}
           </button>
-        </div>
-
-        <div className="agent-management-list__agent-tabs">
-          {(["autonomous", "assistant"] as AgentKind[]).map((kind) => (
-            <button
-              key={kind}
-              type="button"
-              data-active={kind === activeAgent}
-              onClick={() => focusAgent(kind, activePanel)}
-            >
-              {kind === "assistant" ? copy("Normal Agent", "普通 Agent") : copy("Automation Agent", "自动化招聘 Agent")}
-            </button>
-          ))}
         </div>
 
         <div className="agent-management-list__filters">
@@ -4465,10 +4858,10 @@ export function ChatOverlay({
               }}
             >
               <div className="agent-management-list__card-main">
-                <span className="agent-management-list__bot" aria-hidden="true">●</span>
+                <span className="agent-management-list__bot" aria-hidden="true">{activeAgent === "assistant" ? "AS" : "AU"}</span>
                 <div>
                   <strong>{normalizeAgentTitle(activeAgent, conversation.title)}</strong>
-                  <span>{copy("Instance ID", "实例 ID")}：{conversation.refId || conversation.id}</span>
+                  <span>{copy("ID", "ID")}：{conversation.refId || conversation.id}</span>
                 </div>
               </div>
               <StatusBadge tone={toneForRunStatus(conversation.status)}>{describeConversationStatus(conversation.status)}</StatusBadge>
@@ -4484,6 +4877,131 @@ export function ChatOverlay({
           ) : null}
         </div>
       </>
+    );
+  };
+
+  const renderAgentWorkspaceHeader = () => {
+    if (!activeWorkspace) {
+      return (
+        <section className="agent-management-workbench-head agent-management-workbench-head--loading">
+          <div>
+            <span>{copy("Loading workspace", "正在加载工作区")}</span>
+            <h2>{agentDisplayName(activeAgent)}</h2>
+          </div>
+        </section>
+      );
+    }
+
+    const openRuns = activeWorkspace.runs.filter((run) => isOpenRunStatus(run.status)).length;
+    const pendingApprovals = activeWorkspace.approvals.filter((approval) => approval.status === "pending").length;
+    const failedRuns = activeWorkspace.runs.filter((run) => run.status === "failed" || run.status === "cancelled").length;
+    const enabledTools = activeWorkspace.tools.filter((tool) => tool.enabled).length;
+    const healthySkills = activeWorkspace.skills.filter((skill) => skill.health === "healthy").length;
+    const workspaceTitle = activeAgent === "assistant" ? "Assistant Agent" : "自动化招聘 Agent";
+    const workspaceControl = activeWorkspace.workspaceControl;
+    const controlState = workspaceControl?.state ?? "stopped";
+    const controlLabel =
+      controlState === "running"
+        ? copy("Running", "运行中")
+        : controlState === "paused"
+          ? copy("Paused", "已暂停")
+          : controlState === "terminating"
+            ? copy("Terminating", "终止中")
+            : copy("Stopped", "未开始");
+    const controlTone =
+      controlState === "running" ? "positive" : controlState === "paused" ? "warning" : "neutral";
+
+    return (
+      <section className="agent-management-workbench-head">
+        <div className="agent-management-workbench-head__main">
+          <div className="agent-management-workbench-head__title-row">
+            <h2>{workspaceTitle}</h2>
+            <StatusBadge tone={toneForHealth(activeWorkspace.agent.health)}>
+              {describeConversationStatus(activeWorkspace.agent.status)}
+            </StatusBadge>
+          </div>
+          {activeAgent === "autonomous" ? (
+            <div className="agent-workspace-control">
+              <div className="agent-workspace-control__status">
+                <StatusBadge tone={controlTone}>{controlLabel}</StatusBadge>
+                <span>{copy("Automation recruiting agent. Configuration is inactive until this workspace is started.", "自动化招聘 Agent；配置完成后必须在这里手动开始才会执行。")}</span>
+              </div>
+              <div className="agent-workspace-control__actions">
+                {controlState === "running" ? (
+                  <>
+                    <button
+                      type="button"
+                      className="agent-workspace-control__button"
+                      disabled={workspaceControlBusyAction !== null}
+                      onClick={() => void handleWorkspaceControl("pause")}
+                    >
+                      {workspaceControlBusyAction === "pause" ? copy("Pausing", "暂停中") : copy("Pause", "暂停")}
+                    </button>
+                    <button
+                      type="button"
+                      className="agent-workspace-control__button agent-workspace-control__button--danger"
+                      disabled={workspaceControlBusyAction !== null}
+                      onClick={() => void handleWorkspaceControl("terminate")}
+                    >
+                      {workspaceControlBusyAction === "terminate" ? copy("Terminating", "终止中") : copy("Terminate", "终止")}
+                    </button>
+                  </>
+                ) : controlState === "paused" ? (
+                  <>
+                    <button
+                      type="button"
+                      className="agent-workspace-control__button agent-workspace-control__button--primary"
+                      disabled={workspaceControlBusyAction !== null}
+                      onClick={() => void handleWorkspaceControl("continue")}
+                    >
+                      {workspaceControlBusyAction === "continue" ? copy("Continuing", "继续中") : copy("Continue", "继续")}
+                    </button>
+                    <button
+                      type="button"
+                      className="agent-workspace-control__button agent-workspace-control__button--danger"
+                      disabled={workspaceControlBusyAction !== null}
+                      onClick={() => void handleWorkspaceControl("terminate")}
+                    >
+                      {workspaceControlBusyAction === "terminate" ? copy("Terminating", "终止中") : copy("Terminate", "终止")}
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    className="agent-workspace-control__button agent-workspace-control__button--primary"
+                    disabled={workspaceControlBusyAction !== null || controlState === "terminating"}
+                    onClick={() => void handleWorkspaceControl("start")}
+                  >
+                    {workspaceControlBusyAction === "start" ? copy("Starting", "开始中") : copy("Start", "开始")}
+                  </button>
+                )}
+              </div>
+            </div>
+          ) : null}
+        </div>
+        <div className="agent-management-workbench-head__metrics">
+          <div>
+            <span>{copy("Open runs", "待处理运行")}</span>
+            <strong>{openRuns}</strong>
+          </div>
+          <div>
+            <span>{copy("Approvals", "待确认")}</span>
+            <strong>{pendingApprovals}</strong>
+          </div>
+          <div>
+            <span>{copy("Failed", "异常")}</span>
+            <strong>{failedRuns}</strong>
+          </div>
+          <div>
+            <span>{copy("Tools", "可用工具")}</span>
+            <strong>{enabledTools}</strong>
+          </div>
+          <div>
+            <span>{copy("Skills", "健康技能")}</span>
+            <strong>{healthySkills}</strong>
+          </div>
+        </div>
+      </section>
     );
   };
 
@@ -4623,34 +5141,27 @@ export function ChatOverlay({
       <section className={pageMode ? "agent-management-surface" : "chat-overlay chat-overlay--drawer"}>
         {pageMode ? (
           <PageToolbar className="agent-management-topbar">
-            <PageToolbarGroup className="agent-management-topbar__filters">
-              <ToolbarField label={copy("Agent type", "Agent 类型")}>
-                <ToolbarSelect value={activeAgent} onChange={(event) => focusAgent(event.target.value as AgentKind, activePanel)}>
-                  <option value="autonomous">{copy("Automation recruiting Agent", "自动化招聘 Agent")}</option>
-                  <option value="assistant">{copy("Normal Agent", "普通 Agent")}</option>
-                </ToolbarSelect>
-              </ToolbarField>
-              <ToolbarField label={copy("Instance/status", "实例/状态")}>
-                <ToolbarSelect value="all" onChange={() => undefined}>
-                  <option value="all">{copy("All instances", "全部实例")}</option>
-                </ToolbarSelect>
-              </ToolbarField>
-              <ToolbarField label={copy("Status", "状态")}>
-                <ToolbarSelect value={agentListFilter} onChange={(event) => setAgentListFilter(event.target.value as AgentListFilter)}>
-                  <option value="all">{copy("All", "全部")}</option>
-                  <option value="running">{copy("Running", "运行中")}</option>
-                  <option value="waiting">{copy("Waiting", "待确认")}</option>
-                  <option value="done">{copy("Done", "已完成")}</option>
-                  <option value="failed">{copy("Failed", "失败")}</option>
-                </ToolbarSelect>
-              </ToolbarField>
-              <ToolbarField label={copy("Time range", "时间范围")}>
-                <ToolbarSelect value="all" onChange={() => undefined}>
-                  <option value="all">{copy("All", "全部")}</option>
-                </ToolbarSelect>
-              </ToolbarField>
+            <PageToolbarGroup className="agent-management-topbar__identity">
+              <div className="agent-management-topbar__title">
+                <span>{copy("RecruitStation", "RecruitStation")}</span>
+                <strong>{copy("Agent management", "Agent 管理")}</strong>
+              </div>
+              <div className="agent-management-agent-switch" role="tablist" aria-label={copy("Agent type", "Agent 类型")}>
+                {(["autonomous", "assistant"] as AgentKind[]).map((kind) => (
+                  <button
+                    key={kind}
+                    type="button"
+                    role="tab"
+                    data-active={kind === activeAgent}
+                    onClick={() => focusAgent(kind, activePanel)}
+                  >
+                    <span>{kind === "assistant" ? "Assistant" : copy("Automation", "自动化招聘")}</span>
+                    <small>{conversationsByAgent[kind].length}</small>
+                  </button>
+                ))}
+              </div>
             </PageToolbarGroup>
-            <PageToolbarGroup className="agent-management-topbar__search" align="end">
+            <PageToolbarGroup className="agent-management-topbar__search">
               <div className="agent-management-search">
                 <span aria-hidden="true">⌕</span>
                 <ToolbarInput
@@ -4659,12 +5170,22 @@ export function ChatOverlay({
                   placeholder={copy("Search sessions, run ID, or preview", "搜索会话、运行 ID 或摘要")}
                 />
               </div>
+            </PageToolbarGroup>
+            <PageToolbarGroup className="agent-management-topbar__actions" align="end">
               <ToolbarButton
                 className="agent-management-icon-button"
                 onClick={() => void loadWorkspaces()}
                 aria-label={copy("Refresh", "刷新")}
                 icon={<span className="toolbar-button__icon toolbar-button__icon--refresh" aria-hidden="true" />}
               />
+              <ToolbarButton
+                onClick={() => {
+                  createDraftConversation(activeAgent);
+                  focusAgent(activeAgent, "conversation");
+                }}
+              >
+                {activeAgent === "assistant" ? copy("New chat", "新建会话") : copy("New run", "新建任务")}
+              </ToolbarButton>
             </PageToolbarGroup>
           </PageToolbar>
         ) : (
@@ -4701,7 +5222,10 @@ export function ChatOverlay({
           </header>
         )}
 
-        <div className={pageMode ? "agent-management-layout" : "chat-overlay__body"}>
+        <div
+          className={pageMode ? "agent-management-layout" : "chat-overlay__body"}
+          data-context-collapsed={pageMode && railCollapsed ? "true" : undefined}
+        >
           <aside className={pageMode ? "agent-management-list-pane" : "chat-overlay__sidebar"}>
             {pageMode ? renderAgentListPane() : (
               <>
@@ -4788,6 +5312,7 @@ export function ChatOverlay({
           </aside>
 
           <main className={pageMode ? "agent-management-main-pane" : "chat-overlay__main"}>
+            {pageMode ? renderAgentWorkspaceHeader() : null}
             <div className="chat-overlay__tabs">
               {panelItems.map((item) => (
                 <button
@@ -4837,7 +5362,7 @@ export function ChatOverlay({
                 contextLabel={
                   activeAgent === "autonomous"
                     ? copy("Automation run", "自动化运行")
-                    : copy("Workspace context", "工作区上下文")
+                    : copy("Current workspace", "当前工作区")
                 }
                 submitLabel={
                   activeAgent === "autonomous"
@@ -4854,6 +5379,23 @@ export function ChatOverlay({
           </main>
 
           {!railCollapsed ? <aside className={pageMode ? "agent-management-runtime-pane" : "chat-overlay__rail"}>{renderRailContent()}</aside> : null}
+          {pageMode && railCollapsed ? (
+            <button
+              type="button"
+              className="agent-context-restore"
+              aria-label={copy("Show details panel", "展开详情面板")}
+              style={{ top: `${railRestoreTop}px` }}
+              onPointerDown={startRailRestoreDrag}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  setRailCollapsed(false);
+                }
+              }}
+            >
+              <span className="agent-context-restore__icon" aria-hidden="true" />
+            </button>
+          ) : null}
         </div>
       </section>
 
