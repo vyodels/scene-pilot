@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import threading
+import time
+
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
@@ -144,7 +147,7 @@ def test_autonomous_run_once_completes_run_and_projects_primary_conversation(tmp
     run_detail = client.get(f"/api/agents/autonomous/runs/{created['runId']}")
     assert run_detail.status_code == 200
     run_payload = run_detail.json()
-    assert run_payload["run"]["status"] == "completed"
+    assert run_payload["run"]["status"] == "idle"
     assert run_payload["turns"][0]["status"] == "completed"
     assert run_payload["turns"][0]["turn_metadata"]["final_output"] == "Completed candidate search."
     assert {event["event_type"] for event in run_payload["events"]} >= {"adapter_turn_started", "turn_completed"}
@@ -173,6 +176,99 @@ def test_autonomous_run_cancel_updates_run_queue_and_allows_new_run(tmp_path, mo
 
     next_run = _start_autonomous_run(client, title="Next run", instruction="Start after cancel.")
     assert next_run["status"] == "queued"
+
+
+def test_autonomous_cancelled_run_envelope_does_not_start_turn(tmp_path, monkeypatch) -> None:
+    client = _client(tmp_path, monkeypatch, "cancel-before-start")
+    provider = _script_autonomous_provider(
+        client,
+        LLMResponse(content="Should not run.", result_data={"execution_status": "completed"}),
+    )
+    created = _start_autonomous_run(client)
+    queued = client.get("/api/agents/queue").json()[0]
+
+    cancelled = client.post(
+        f"/api/agents/autonomous/runs/{created['runId']}/cancel",
+        json={"reviewer": "api-test", "reason": "cancel before worker starts"},
+    )
+    outcome = client.app.state.container.autonomous_adapter.run_turn_from_envelope(dict(queued["payload"]))
+
+    assert cancelled.status_code == 200
+    assert cancelled.json()["run"]["status"] == "cancelled"
+    assert outcome.status == "cancelled"
+    assert outcome.metadata["interrupted_before_start"] is True
+    assert provider.captured_requests == []
+
+    run_detail = client.get(f"/api/agents/autonomous/runs/{created['runId']}").json()
+    assert run_detail["run"]["status"] == "cancelled"
+    assert run_detail["turns"] == []
+
+
+def test_autonomous_run_cancel_interrupts_live_engine_and_preserves_cancelled_status(tmp_path, monkeypatch) -> None:
+    client = _client(tmp_path, monkeypatch, "cancel-live-run")
+    _script_autonomous_provider(
+        client,
+        LLMResponse(
+            tool_calls=[ToolCall(id="slow-1", name="slow.wait", arguments={"seconds": 1})],
+            finish_reason="tool_calls",
+        ),
+        LLMResponse(content="Fresh run completed.", result_data={"execution_status": "completed"}),
+    )
+
+    def _slow_wait(arguments: dict[str, object]) -> dict[str, object]:
+        for _ in range(6):
+            time.sleep(0.03)
+        return {"done": True, "seconds": arguments.get("seconds")}
+
+    client.app.state.container.tool_registry.register(
+        ToolDefinition(
+            name="slow.wait",
+            description="Wait long enough for API cancellation.",
+            parameters={"type": "object", "additionalProperties": True},
+            handler=_slow_wait,
+            category="core",
+            external_target=False,
+        )
+    )
+    _start_workspace(client)
+    created = _start_autonomous_run(client)
+    run_id = created["runId"]
+    adapter = client.app.state.container.autonomous_adapter
+    response_box: dict[str, dict] = {}
+
+    worker = threading.Thread(target=lambda: response_box.setdefault("run_once", client.post("/api/agents/run-once").json()), daemon=True)
+    worker.start()
+    deadline = time.time() + 3
+    while time.time() < deadline:
+        active = adapter.active_turns.get(run_id)
+        if active is not None and active.engine is not None:
+            break
+        time.sleep(0.02)
+    assert run_id in adapter.active_turns
+
+    cancelled = client.post(
+        f"/api/agents/autonomous/runs/{run_id}/cancel",
+        json={"reviewer": "api-test", "reason": "operator cancelled live run"},
+    )
+    worker.join(timeout=5)
+
+    assert cancelled.status_code == 200
+    assert response_box["run_once"]["status"] == "interrupted"
+    assert cancelled.json()["run"]["status"] == "cancelled"
+    assert run_id not in adapter.active_turns
+    run_detail = client.get(f"/api/agents/autonomous/runs/{run_id}").json()
+    assert run_detail["run"]["status"] == "cancelled"
+    assert run_detail["turns"][0]["status"] == "cancelled"
+    assert {event["event_type"] for event in run_detail["events"]} >= {"tool_event", "turn_interrupted"}
+
+    next_run = _start_autonomous_run(client, title="Next after live cancel", instruction="Run after cancellation.")
+    processed = client.post("/api/agents/run-once")
+    assert processed.status_code == 200
+    assert processed.json()["status"] == "processed"
+    next_detail = client.get(f"/api/agents/autonomous/runs/{next_run['runId']}").json()
+    assert next_detail["run"]["status"] == "idle"
+    assert {event["event_type"] for event in next_detail["events"]} >= {"turn_completed"}
+    assert "turn_interrupted" not in {event["event_type"] for event in next_detail["events"]}
 
 
 def test_autonomous_wait_human_resume_resolves_gate_and_requeues_run(tmp_path, monkeypatch) -> None:
@@ -277,7 +373,7 @@ def test_autonomous_permission_checkpoint_resumes_after_adapter_rebuild(tmp_path
     assert processed_after_resume.status_code == 200
     assert processed_after_resume.json()["status"] == "processed"
     run_detail = client.get(f"/api/agents/autonomous/runs/{created['runId']}").json()
-    assert run_detail["run"]["status"] == "completed"
+    assert run_detail["run"]["status"] == "idle"
     assert run_detail["turns"][-1]["turn_metadata"]["final_output"] == "External action completed."
     assert provider.captured_requests[1].turn_id == provider.captured_requests[0].turn_id
     assert provider.captured_requests[1].messages[-1].role == "tool"
@@ -340,3 +436,66 @@ def test_autonomous_workspace_control_gates_queue_and_terminates_open_run(tmp_pa
     assert run_detail["run"]["status"] == "cancelled"
     queue = client.get("/api/agents/queue").json()
     assert any(item["payload"].get("run_id") == second["runId"] and item["status"] == "failed" for item in queue)
+
+
+def test_autonomous_workspace_terminate_interrupts_live_turn_and_reports_terminated_run(tmp_path, monkeypatch) -> None:
+    client = _client(tmp_path, monkeypatch, "workspace-terminate-live")
+    _script_autonomous_provider(
+        client,
+        LLMResponse(
+            tool_calls=[ToolCall(id="slow-terminate", name="slow.wait", arguments={"seconds": 1})],
+            finish_reason="tool_calls",
+        ),
+        LLMResponse(content="Should not complete after terminate.", result_data={"execution_status": "completed"}),
+    )
+
+    def _slow_wait(arguments: dict[str, object]) -> dict[str, object]:
+        for _ in range(20):
+            time.sleep(0.05)
+        return {"done": True}
+
+    client.app.state.container.tool_registry.register(
+        ToolDefinition(
+            name="slow.wait",
+            description="Wait long enough for workspace terminate.",
+            parameters={"type": "object", "additionalProperties": True},
+            handler=_slow_wait,
+            category="core",
+            external_target=False,
+        )
+    )
+    _start_workspace(client)
+    created = _start_autonomous_run(client, title="Terminate active", instruction="Start and wait.")
+    run_id = created["runId"]
+    adapter = client.app.state.container.autonomous_adapter
+
+    response_box: dict[str, dict] = {}
+    worker = threading.Thread(target=lambda: response_box.setdefault("run_once", client.post("/api/agents/run-once").json()), daemon=True)
+    worker.start()
+    deadline = time.time() + 3
+    while time.time() < deadline:
+        active = adapter.active_turns.get(run_id)
+        if active is not None and active.engine is not None:
+            break
+        time.sleep(0.02)
+    assert run_id in adapter.active_turns
+
+    terminated = client.post(
+        "/api/agents/autonomous/workspace-control/terminate",
+        json={"reviewer": "api-test", "reason": "operator terminate active"},
+    )
+    assert terminated.status_code == 200
+    assert terminated.json()["state"] == "stopped"
+    assert run_id in terminated.json()["terminatedRunIds"]
+    queue_after_terminate = client.get("/api/agents/queue").json()
+    assert any(item["payload"].get("run_id") == run_id and item["status"] == "failed" for item in queue_after_terminate)
+
+    worker.join(timeout=5)
+    assert response_box["run_once"]["status"] == "interrupted"
+    assert run_id not in adapter.active_turns
+    run_detail = client.get(f"/api/agents/autonomous/runs/{run_id}").json()
+    assert run_detail["run"]["status"] == "cancelled"
+    assert run_detail["turns"][0]["status"] == "cancelled"
+    assert "turn_interrupted" in {event["event_type"] for event in run_detail["events"]}
+    queue_after_worker = client.get("/api/agents/queue").json()
+    assert any(item["payload"].get("run_id") == run_id and item["status"] == "failed" for item in queue_after_worker)

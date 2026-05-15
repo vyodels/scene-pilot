@@ -2,8 +2,8 @@
 
 > Status: archived
 > Supersedes: -
-> Superseded by: docs/plan/active/2026-04-19-autonomous-e2e-and-chat-overlay-plan.md
-> Distilled into: pending targeted extraction into docs/specs
+> Superseded by: current long-term specs under docs/specs/ and archived implementation plans.
+> Distilled into: historical UX context only; current constraints live under docs/specs/
 > Last reviewed against code: 2026-04-20
 > Legacy path retained: docs/recruiting-workflow-ux-redesign-plan.md
 

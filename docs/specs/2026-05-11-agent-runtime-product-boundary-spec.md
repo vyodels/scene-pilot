@@ -2,11 +2,19 @@
 
 ## 范围
 
-本文是 Agent runtime、AgentDefinition、产品 adapter、Assistant / Autonomous、能力演进和审批治理的合并规范。具体 runtime 类型和协议细节以 [`../design/agent-core/00-agent-runtime-technical-design.md`](../design/agent-core/00-agent-runtime-technical-design.md) 为唯一设计源；AgentDefinition、product adapter 与业务 tool 边界以 [`../design/agent-core/01-agent-types-and-product-adapters.md`](../design/agent-core/01-agent-types-and-product-adapters.md) 为落地设计。
+本文是 Agent runtime、AgentDefinition、产品 adapter、Assistant / Autonomous、能力演进和审批治理的合并规范，也是这些主题的唯一长期规则来源。历史 design 文档已合并进本文并移除，避免 design / specs 双源漂移。
 
 ## 核心原则
 
 `services/backend/src/recruit_station/agent_runtime/**` 必须保持业务无关。
+
+核心系统约束：
+
+- `Turn` 是唯一的 runtime 执行完成 / 中断 / 失败单位；`turn_completed`、`turn_interrupted`、`turn_failed` 不表达 conversation / session / run 容器生命周期。
+- Assistant conversation 与 Autonomous `AgentRun` 都是可复用的 product container / projection。除归档、删除、显式取消或中断这类产品生命周期动作外，普通 Turn 完成后容器必须保持可继续状态。
+- `completed` 可以用于 Turn、objective、workflow artifact、business event 或审计记录；不得作为可复用 conversation / session / run 容器的默认生命周期状态。
+- 如果产品需要表达“目标已完成”，必须写入明确的 objective / workflow / business artifact 或最终消息 / 事件，不得通过 `turn_completed -> AgentRun.status=completed` 隐式推导。
+- `cancelled` / `interrupted` 是不可重入中断态，product adapter 必须阻止迟到 queue envelope、tool result 或 model result 把它们写回 `running`、`waiting_human`、`idle` 或其他可继续状态。
 
 Agent runtime 只负责 Agent 本身的职责：
 
@@ -248,6 +256,21 @@ Assistant 与 Autonomous 是产品类型和 product adapter，用来决定用户
 
 `assistant/autonomous` 不得作为 runtime 分支条件，不得作为 memory scope 的替代，也不得被用来引入两套 assembly、runner、tool loop、context、permission、status、transcript 或 output 实现。
 
+### Product Adapter Core Parity Contract
+
+Assistant 与 Autonomous 的 product adapter 可以在入口、触发方式、持久化 / projection、context construction 上不同；这些差异不得造成 runtime turn lifecycle 能力漂移。二者必须保持以下核心能力等价：
+
+- 通过共享 `run_agent_turn` / `InteractionEngine` 进入同一套 Turn、tool loop、permission、transcript 和 output 语义。
+- `engine_sink` 必须绑定当前 active engine，使 adapter 外层的取消、审批恢复和事件投影都回到同一个等待中的 `InteractionEngine`。
+- 取消 / Esc 的 canonical primitive 是 `InteractionEngine.interrupt`；adapter 只能把产品入口事件映射到该 primitive，不得复制另一套取消状态机。
+- permission resume 必须由当前等待中的 `InteractionEngine` 继续执行原 `ToolCall`、记录 `ToolResult`、追加 tool message 并续跑同一个 Turn；adapter 不得手工拼接 provider history 或伪造工具恢复语义。
+- status、gate signal、tool call / result、runtime event 必须有明确且成对的 Assistant / Autonomous 映射；产品文案和投影可以不同，底层含义不得分叉。
+- `turn_completed` 只能直接表示当前 Turn 完成；不得默认把可复用的 conversation / session / run 容器写成 `completed`。objective / workflow finalization 只能写入明确的 objective / workflow / business artifact、最终消息或事件，不得复用可继续容器的生命周期状态。
+- 产品 adapter 定义的 hard-terminal state writeback 必须有 guard，避免已取消、已中断或其他不可重入状态被迟到事件重新写成 running、waiting 或其他非终态。若 adapter 允许同一个 run / session 承载连续 phase，必须明确哪些状态可重入，不能把可重入的 phase-complete 状态误当成硬终态。
+- 涉及上述 lifecycle 能力的改动必须补 parity tests，覆盖 Assistant 与 Autonomous 两个 adapter 的同类行为。
+
+保持该契约时，runtime 仍必须业务无关：不得为了 parity 把产品入口、`AgentRun` / `AgentTurnRecord`、招聘对象、招聘 workflow、projection 或 UI 状态放入 `agent_runtime/**`。这些概念只能存在于 product adapter、business capability layer、tool、skill、plugin、MCP、prompt 或业务服务中。
+
 ## 业务 tool
 
 招聘业务流转、业务数据创建、处置和读取必须通过 business tool 进入 Agent。
@@ -270,7 +293,7 @@ Assistant 与 Autonomous 是产品类型和 product adapter，用来决定用户
 - `LLMInvocation` 是 Turn 内模型调用。
 - `ToolCall` 是 Turn 内工具调用。
 - `InteractionOutput` 是 runtime 输出流/信封。
-- `AgentRun` 是产品执行历史。
+- `AgentRun` 是 Autonomous product container / projection，用于承载 run/session 级持久化视图、queue/checkpoint/event 聚合和 turn 审计关联；它不是 runtime 执行单位，也不得用普通 Turn 完成隐式写成 `completed`。
 - `AgentTurnRecord` 是产品审计记录。
 
 Autonomous run 的人类意图只使用 canonical `instruction` 表达。不得重新引入旧意图规格、独立工作项表、自动化指令别名或模板化指令字段作为产品或 runtime 契约。

@@ -147,8 +147,12 @@ The `agent_runtime` diff was empty.
 ## Follow-Up Risks
 
 - The configuration UI is now functionally complete for the requested policy shape, but future visual refinement should still keep each module page independent rather than collapsing everything into one form.
-- Workspace `terminate` cancels open runs and queue items. It does not hard-interrupt an already executing model/tool turn inside the same process; hard interruption would require a separate cancellation token design.
 - Activation/priority policy is persisted and passed as structured policy data, but a full external event scanner or scheduler evaluator is outside this pass.
+
+Resolved after this handoff:
+
+- Workspace `terminate` and run `cancel` now route live Autonomous turns through the shared `InteractionEngine.interrupt(...)` path and cooperative runtime abort signal. This is no longer a follow-up risk. The long-term rule lives in [`../../specs/2026-05-11-agent-runtime-product-boundary-spec.md`](../../specs/2026-05-11-agent-runtime-product-boundary-spec.md).
+- Ordinary Turn completion no longer implies `AgentRun.status = completed`; reusable Autonomous run/session containers remain continuable. Completion of an objective/workflow must be represented by explicit product/business artifacts, events, or final messages, not by the reusable run container lifecycle.
 
 ## Resume Instructions
 

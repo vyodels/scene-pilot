@@ -17,7 +17,7 @@ from recruit_station.memory.filesystem import MemoryFileStore
 from recruit_station.models.domain import AgentDefinition, McpServer, Skill
 from recruit_station.product_adapters.limits import TurnLimits
 from recruit_station.product_adapters.context_builder import build_assistant_turn_context
-from recruit_station.product_adapters.agent_runner import AgentRunStatusDefaults, run_agent_turn, runtime_output_payload
+from recruit_station.product_adapters.agent_runner import AgentTurnStatusDefaults, run_agent_turn, runtime_output_payload
 from recruit_station.plugins.host import PluginHost
 from recruit_station.capabilities.tools import ToolRegistry
 from recruit_station.skills.context import build_skill_context_injections
@@ -221,7 +221,7 @@ class AssistantAdapter:
                 max_history_messages=self.max_history_messages,
                 output_sink=lambda output: event_queue.put((output.type, runtime_output_payload(output))),
                 engine_sink=_bind_engine,
-                status_defaults=AgentRunStatusDefaults(completed_status="completed"),
+                status_defaults=AgentTurnStatusDefaults(completed_status="completed"),
                 include_tool_result_metadata=True,
             )
             if result.status == "waiting_human":
@@ -314,7 +314,7 @@ class AssistantAdapter:
             existing_engine=engine,
             resolve_permission=True,
             output_sink=lambda output: event_sink(output.type, runtime_output_payload(output)),
-            status_defaults=AgentRunStatusDefaults(completed_status="completed"),
+            status_defaults=AgentTurnStatusDefaults(completed_status="completed"),
             include_tool_result_metadata=True,
         )
         tool_results.extend(result.tool_results)

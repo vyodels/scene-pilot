@@ -83,6 +83,9 @@ class Heartbeat:
             except Exception as exc:
                 queue.mark_failed(task.id, error=str(exc))
                 raise
+            session.refresh(task)
+            if task.status != "running":
+                return {"status": task.status, "task_id": task.id}
             queue.mark_complete(task.id)
             return {"status": "processed", "task_id": task.id}
 

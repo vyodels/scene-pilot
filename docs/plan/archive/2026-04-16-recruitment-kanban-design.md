@@ -2,8 +2,8 @@
 
 > Status: archived
 > Supersedes: -
-> Superseded by: docs/specs/2026-04-20-agent-system-and-recruiting-capability-architecture.md; docs/plan/active/2026-04-19-autonomous-e2e-and-chat-overlay-plan.md
-> Distilled into: partial: docs/specs/2026-04-20-agent-system-and-recruiting-capability-architecture.md
+> Superseded by: current long-term specs under docs/specs/ and archived follow-up plans.
+> Distilled into: partial historical extraction; current constraints live under docs/specs/
 > Last reviewed against code: 2026-04-20
 > Historical source path: docs/superpowers/specs/2026-04-16-recruitment-kanban-design.md
 

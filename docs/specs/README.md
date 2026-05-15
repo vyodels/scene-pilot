@@ -21,3 +21,5 @@ This directory contains long-term normative documents only. It must stay small.
 `services/backend/src/recruit_station/agent_runtime/**` must remain business-agnostic.
 
 Business enters Agent execution only through adapter-built context, prompt assets, tool schemas, tool results, skills, plugins, MCP capabilities, and product-layer state mapping.
+
+`turn_completed` is a Turn result only. Reusable product containers such as Assistant conversations or Autonomous `AgentRun` records must not be defaulted to `completed`; objective or workflow completion belongs in explicit product/business artifacts, events, or final messages.

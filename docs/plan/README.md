@@ -10,8 +10,9 @@ Implementation plans live here. Plans are not long-term truth; long-term rules l
 
 ## Current Active Plan
 
-- [`active/2026-04-24-recruit-station-browser-computer-runtime-follow-up-plan.md`](./active/2026-04-24-recruit-station-browser-computer-runtime-follow-up-plan.md)
-- [`active/2026-05-11-agent-type-product-adapter-completion-plan.md`](./active/2026-05-11-agent-type-product-adapter-completion-plan.md)
+There is no active implementation plan at the moment.
+
+Long-term Agent runtime, product adapter, and business boundary rules are consolidated in [`../specs/2026-05-11-agent-runtime-product-boundary-spec.md`](../specs/2026-05-11-agent-runtime-product-boundary-spec.md). Do not treat completed handoffs or archived plans as current rules.
 
 ## Recent Completed Handoff
 

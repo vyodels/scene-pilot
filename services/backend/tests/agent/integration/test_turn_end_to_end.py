@@ -70,7 +70,7 @@ def test_autonomous_turn_persists_run_turn_records(tmp_path: Path) -> None:
         refreshed_run = session.get(AgentRun, run.id)
         assert refreshed_run is not None
         assert outcome.status == "complete"
-        assert refreshed_run.status == "completed"
+        assert refreshed_run.status == "idle"
         assert refreshed_run.turns_count == 1
         assert session.scalar(select(func.count()).select_from(AgentTurnRecord).where(AgentTurnRecord.run_pk == run.id)) == 1
     finally:

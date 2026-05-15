@@ -11,7 +11,7 @@ from recruit_station.capabilities.tools import ToolRegistry
 
 
 @dataclass(frozen=True, slots=True)
-class AgentRunStatusDefaults:
+class AgentTurnStatusDefaults:
     completed_status: str
     completed_gate_signal: str | None = None
     failed_status: str = "failed"
@@ -53,10 +53,10 @@ def run_agent_turn(
     output_sink: Callable[[InteractionOutput], None] | None = None,
     engine_sink: Callable[[InteractionEngine], None] | None = None,
     structured_status_resolver: Callable[[Any], tuple[str, str] | None] | None = None,
-    status_defaults: AgentRunStatusDefaults | None = None,
+    status_defaults: AgentTurnStatusDefaults | None = None,
     include_tool_result_metadata: bool = False,
 ) -> AgentEngineResult:
-    defaults = status_defaults or AgentRunStatusDefaults(completed_status="completed")
+    defaults = status_defaults or AgentTurnStatusDefaults(completed_status="completed")
     normalized_system_prompt, normalized_initial_messages = _extract_system_prompt(
         initial_messages,
         explicit_system_prompt=system_prompt,

@@ -9,6 +9,7 @@ from .history import ConversationHistory
 from .tools import ToolRegistry
 from .transcript import InMemoryTranscript, Transcript, TranscriptState
 from .types import (
+    AbortController,
     InteractionOutput,
     LLMMessage,
     LLMProvider,
@@ -68,6 +69,7 @@ class InteractionEngine:
     pending_permission: PendingPermissionState | None = field(default=None, init=False)
     _seq: count = field(default_factory=lambda: count(1), init=False)
     _interrupted: bool = field(default=False, init=False)
+    _abort_controller: AbortController = field(default_factory=AbortController, init=False)
 
     def __post_init__(self) -> None:
         self.transcript = self.config.transcript or InMemoryTranscript()
@@ -83,6 +85,8 @@ class InteractionEngine:
                 conversation_id=self.config.conversation_id,
                 tools=self.config.tools,
             )
+            if self.pending_permission is not None:
+                self.pending_permission.context.abort_signal = self._abort_controller.signal
         elif self.config.initial_seq > 1:
             self._seq = count(self.config.initial_seq)
 
@@ -114,6 +118,7 @@ class InteractionEngine:
         self.pending_permission = None
         self.transcript.clear_pending_permission(self.config.conversation_id)
         self.active_turn_id = pending.turn_id
+        pending.context.abort_signal = self._abort_controller.signal
         try:
             yield self._output(
                 "runtime_event",
@@ -126,9 +131,18 @@ class InteractionEngine:
                     "approved": approved,
                 },
             )
+            if self._abort_requested():
+                yield self._interrupted_output(pending.turn_id)
+                return
             registry = ToolRegistry.from_tools(self.config.tools)
             if approved:
+                if self._abort_requested():
+                    yield self._interrupted_output(pending.turn_id)
+                    return
                 yield from self._run_tool_call(registry, pending.tool_call, pending.context)
+                if self._abort_requested():
+                    yield self._interrupted_output(pending.turn_id)
+                    return
             else:
                 result = ToolResult(
                     tool_call_id=pending.tool_call.id,
@@ -139,6 +153,9 @@ class InteractionEngine:
                     metadata={"permission_denied": True},
                 )
                 yield from self._record_tool_result(result, pending.turn_id)
+                if self._abort_requested():
+                    yield self._interrupted_output(pending.turn_id)
+                    return
             yield from self._run_turn(pending.turn_id, start_invocation_index=pending.next_invocation_index)
         except Exception as exc:
             yield self._output("turn_failed", pending.turn_id, {"error": str(exc)})
@@ -146,8 +163,9 @@ class InteractionEngine:
         finally:
             self.active_turn_id = None
 
-    def interrupt(self) -> None:
+    def interrupt(self, reason: str | None = None) -> None:
         self._interrupted = True
+        self._abort_controller.abort(reason or "interrupted")
 
     def _run_turn(self, turn_id: str, *, start_invocation_index: int = 0) -> Iterator[InteractionOutput]:
         registry = ToolRegistry.from_tools(self.config.tools)
@@ -155,14 +173,18 @@ class InteractionEngine:
             turn_id=turn_id,
             conversation_id=self.config.conversation_id,
             tools=self.config.tools,
+            abort_signal=self._abort_controller.signal,
         )
         for invocation_index in range(start_invocation_index, self.config.max_llm_invocations):
-            if self._interrupted:
-                yield self._output("turn_interrupted", turn_id, {"reason": "interrupted"})
+            if self._abort_requested():
+                yield self._interrupted_output(turn_id)
                 return
             compaction = self._compact_history_if_needed()
             if compaction is not None:
                 yield self._output("runtime_event", turn_id, {"kind": "context_compacted", **compaction})
+            if self._abort_requested():
+                yield self._interrupted_output(turn_id)
+                return
             invocation_id = f"llm_{uuid4().hex}"
             request = LLMRequest(
                 id=f"req_{uuid4().hex}",
@@ -191,10 +213,20 @@ class InteractionEngine:
                 anthropic_payload_overrides=dict(self.config.anthropic_payload_overrides)
                 if self.config.anthropic_payload_overrides is not None
                 else None,
+                abort_signal=self._abort_controller.signal,
             )
             yield self._output("llm_invocation_started", turn_id, {"invocation_id": invocation_id, "index": invocation_index})
+            if self._abort_requested():
+                yield self._interrupted_output(turn_id)
+                return
             result = self.config.provider.invoke(request)
+            if self._abort_requested():
+                yield self._interrupted_output(turn_id)
+                return
             for event in result.events:
+                if self._abort_requested():
+                    yield self._interrupted_output(turn_id)
+                    return
                 yield from self._map_llm_event(turn_id, invocation_id, event.type, event.data)
             response = result.response
             if response.assistant_message is not None:
@@ -226,6 +258,9 @@ class InteractionEngine:
                 yield self._output("turn_completed", turn_id, {"status": "completed"})
                 return
             for tool_use in response.tool_uses:
+                if self._abort_requested():
+                    yield self._interrupted_output(turn_id)
+                    return
                 tool_call = ToolCall(
                     id=f"tool_{uuid4().hex}",
                     turn_id=turn_id,
@@ -244,6 +279,9 @@ class InteractionEngine:
                         "tool_call_id": tool_call.id,
                     },
                 )
+                if self._abort_requested():
+                    yield self._interrupted_output(turn_id)
+                    return
                 if self._requires_permission(registry, tool_call):
                     self.pending_permission = PendingPermissionState(
                         turn_id=turn_id,
@@ -267,7 +305,13 @@ class InteractionEngine:
                         },
                     )
                     return
+                if self._abort_requested():
+                    yield self._interrupted_output(turn_id)
+                    return
                 yield from self._run_tool_call(registry, tool_call, context)
+                if self._abort_requested():
+                    yield self._interrupted_output(turn_id)
+                    return
         yield self._output("turn_failed", turn_id, {"error": "max_llm_invocations_exhausted"})
 
     def _compact_history_if_needed(self) -> dict[str, object] | None:
@@ -358,6 +402,15 @@ class InteractionEngine:
             yield self._output("tool_event", turn_id, {"kind": event_type, **data, "invocation_id": invocation_id})
         elif event_type == "usage_delta":
             yield self._output("runtime_event", turn_id, {"kind": "token_usage", **data})
+
+    def _abort_requested(self) -> bool:
+        return self._interrupted or self._abort_controller.signal.aborted
+
+    def _interrupted_output(self, turn_id: str) -> InteractionOutput:
+        return self._output("turn_interrupted", turn_id, {"reason": self._abort_reason()})
+
+    def _abort_reason(self) -> str:
+        return self._abort_controller.signal.reason or "interrupted"
 
     def _output(self, output_type: str, turn_id: str | None, data: dict[str, object]) -> InteractionOutput:
         output = InteractionOutput(

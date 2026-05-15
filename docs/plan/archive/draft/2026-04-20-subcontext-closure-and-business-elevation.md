@@ -140,7 +140,7 @@
 
 本草案是后续优化待办，不是本轮主线回归的立即交付项。
 
-当前主线曾以 [`docs/plan/archive/2026-04-19-autonomous-ui-e2e-test-plan.md`](../archive/2026-04-19-autonomous-ui-e2e-test-plan.md) 为准推进以下验收；该计划现已归档，后续 browser / HID 口径以 [`docs/plan/active/2026-04-24-recruit-station-browser-computer-runtime-follow-up-plan.md`](../active/2026-04-24-recruit-station-browser-computer-runtime-follow-up-plan.md) 为准：
+当前主线曾以 [`docs/plan/archive/2026-04-19-autonomous-ui-e2e-test-plan.md`](../2026-04-19-autonomous-ui-e2e-test-plan.md) 为准推进以下验收；该计划和本草案均已归档，后续 Agent runtime / product adapter / browser-HID 边界以 [`docs/specs/2026-05-11-agent-runtime-product-boundary-spec.md`](../../../specs/2026-05-11-agent-runtime-product-boundary-spec.md) 为准：
 
 - Autonomous UI 全流程回归
 - 候选人生命周期业务工具补齐后的真实联通性验证

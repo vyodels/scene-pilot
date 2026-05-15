@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from threading import Event
 from typing import Any, Literal, Protocol
 
 
@@ -11,6 +12,42 @@ MessageRole = Literal["system", "user", "assistant", "tool"]
 
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+class AbortSignal:
+    __slots__ = ("_event", "_reason")
+
+    def __init__(self) -> None:
+        self._event = Event()
+        self._reason: str | None = None
+
+    @property
+    def aborted(self) -> bool:
+        return self._event.is_set()
+
+    @property
+    def reason(self) -> str | None:
+        return self._reason
+
+    def _abort(self, reason: str | None = None) -> None:
+        if self._event.is_set():
+            return
+        self._reason = reason or "aborted"
+        self._event.set()
+
+
+class AbortController:
+    __slots__ = ("_signal",)
+
+    def __init__(self) -> None:
+        self._signal = AbortSignal()
+
+    @property
+    def signal(self) -> AbortSignal:
+        return self._signal
+
+    def abort(self, reason: str | None = None) -> None:
+        self._signal._abort(reason)
 
 
 @dataclass(slots=True)
@@ -120,6 +157,7 @@ class LLMRequest:
     truncation: str | None = None
     openai_payload_overrides: dict[str, Any] | None = None
     anthropic_payload_overrides: dict[str, Any] | None = None
+    abort_signal: AbortSignal | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -173,5 +211,5 @@ class TurnContext:
     turn_id: str
     conversation_id: str
     tools: list[ToolDefinition]
-    abort_signal: Any | None = None
+    abort_signal: AbortSignal | None = None
     runtime: dict[str, Any] = field(default_factory=dict)

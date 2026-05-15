@@ -77,7 +77,7 @@ def test_heartbeat_claims_task_and_runs_autonomous_turn(tmp_path: Path) -> None:
         session.expire_all()
         assert result["status"] == "processed"
         assert TaskQueueRepository(session).get("task-1").status == "completed"
-        assert session.get(AgentRun, run.id).status == "completed"
+        assert session.get(AgentRun, run.id).status == "idle"
     finally:
         session.close()
 

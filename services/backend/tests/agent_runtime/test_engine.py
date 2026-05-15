@@ -5,7 +5,19 @@ from dataclasses import dataclass, field
 from recruit_station.agent_runtime.engine import InteractionEngine, InteractionEngineConfig, transcript_from_checkpoint
 from recruit_station.agent_runtime.tools import FunctionToolHandler
 from recruit_station.agent_runtime.transcript import InMemoryTranscript
-from recruit_station.agent_runtime.types import LLMInvocationResult, LLMMessage, LLMRequest, LLMResponse, TokenUsage, ToolDefinition, ToolSchema, ToolUse
+from recruit_station.agent_runtime.types import (
+    LLMInvocationResult,
+    LLMMessage,
+    LLMRequest,
+    LLMResponse,
+    TokenUsage,
+    ToolCall,
+    ToolDefinition,
+    ToolResult,
+    ToolSchema,
+    ToolUse,
+    TurnContext,
+)
 
 
 @dataclass(slots=True)
@@ -101,6 +113,111 @@ def test_tool_loop_uses_injected_business_tool_without_bash() -> None:
     second_request = provider.captured_requests[1]
     assert second_request.messages[-1].role == "tool"
     assert "cand-1" in str(second_request.messages[-1].content)
+
+
+def test_llm_request_and_tool_context_receive_same_abort_signal() -> None:
+    tool_use = ToolUse(id="call-1", name="capture_signal", input={})
+    provider = FixtureLLMProvider(
+        responses=[
+            LLMResponse(
+                id="resp-1",
+                request_id="",
+                invocation_id="",
+                assistant_message=LLMMessage(role="assistant", content="", tool_uses=[tool_use]),
+                tool_uses=[tool_use],
+                stop_reason="tool_calls",
+            ),
+            LLMResponse(
+                id="resp-2",
+                request_id="",
+                invocation_id="",
+                assistant_message=LLMMessage(role="assistant", content="done"),
+            ),
+        ]
+    )
+    seen: dict[str, object] = {}
+
+    class CaptureSignalHandler:
+        def handle(self, call: ToolCall, context: TurnContext) -> ToolResult:
+            seen["abort_signal"] = context.abort_signal
+            return ToolResult(
+                tool_call_id=call.id,
+                tool_use_id=call.tool_use_id,
+                name=call.name,
+                content={"ok": True},
+            )
+
+    tool = ToolDefinition(
+        name="capture_signal",
+        description="Capture the runtime abort signal.",
+        schema=ToolSchema(
+            name="capture_signal",
+            description="Capture the runtime abort signal.",
+            input_schema={"type": "object"},
+        ),
+        handler=CaptureSignalHandler(),
+    )
+    engine = InteractionEngine(InteractionEngineConfig(conversation_id="conv-signal", provider=provider, tools=[tool]))
+
+    outputs = list(engine.submitMessage("run tool"))
+
+    assert any(item.type == "turn_completed" for item in outputs)
+    assert provider.captured_requests[0].abort_signal is not None
+    assert seen["abort_signal"] is provider.captured_requests[0].abort_signal
+    assert provider.captured_requests[1].abort_signal is provider.captured_requests[0].abort_signal
+
+
+def test_interrupt_after_tool_result_prevents_next_llm_invocation() -> None:
+    tool_use = ToolUse(id="call-1", name="stop_after_tool", input={})
+    provider = FixtureLLMProvider(
+        responses=[
+            LLMResponse(
+                id="resp-1",
+                request_id="",
+                invocation_id="",
+                assistant_message=LLMMessage(role="assistant", content="", tool_uses=[tool_use]),
+                tool_uses=[tool_use],
+                stop_reason="tool_calls",
+            ),
+            LLMResponse(
+                id="resp-2",
+                request_id="",
+                invocation_id="",
+                assistant_message=LLMMessage(role="assistant", content="should not run"),
+            ),
+        ]
+    )
+    engine_ref: dict[str, InteractionEngine] = {}
+
+    class InterruptingHandler:
+        def handle(self, call: ToolCall, context: TurnContext) -> ToolResult:
+            engine_ref["engine"].interrupt("stop after tool")
+            return ToolResult(
+                tool_call_id=call.id,
+                tool_use_id=call.tool_use_id,
+                name=call.name,
+                content={"ok": True},
+            )
+
+    tool = ToolDefinition(
+        name="stop_after_tool",
+        description="Interrupt after returning a tool result.",
+        schema=ToolSchema(
+            name="stop_after_tool",
+            description="Interrupt after returning a tool result.",
+            input_schema={"type": "object"},
+        ),
+        handler=InterruptingHandler(),
+    )
+    engine = InteractionEngine(InteractionEngineConfig(conversation_id="conv-tool-interrupt", provider=provider, tools=[tool]))
+    engine_ref["engine"] = engine
+
+    outputs = list(engine.submitMessage("run tool"))
+
+    assert len(provider.captured_requests) == 1
+    assert any(item.type == "tool_event" and item.data["kind"] == "tool_result_ready" for item in outputs)
+    assert any(item.type == "turn_interrupted" and item.data["reason"] == "stop after tool" for item in outputs)
+    assert not any(item.type == "assistant_message_completed" and item.data["message"] == "should not run" for item in outputs)
 
 
 def test_permission_resolution_continues_same_runtime_turn() -> None:

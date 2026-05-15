@@ -2278,6 +2278,18 @@ export function ChatOverlay({
       return;
     }
 
+    if (activeAgent === "autonomous" && (workspaces.autonomous?.workspaceControl?.state ?? "stopped") !== "running") {
+      setPanelNotice({
+        panel: "conversation",
+        tone: "info",
+        message: copy(
+          "Start the automation workspace before submitting autonomous instructions.",
+          "提交自动化指令前，请先在工作区点击开始。",
+        ),
+      });
+      return;
+    }
+
     setPanelNotice(null);
     setErrorMessage(undefined);
     setSending(true);
@@ -2416,17 +2428,6 @@ export function ChatOverlay({
           delete assistantStreamContentRef.current[streamMessageId];
         }
       } else {
-        if ((workspaces.autonomous?.workspaceControl?.state ?? "stopped") !== "running") {
-          setPanelNotice({
-            panel: "conversation",
-            tone: "info",
-            message: copy(
-              "Start the automation workspace before submitting autonomous instructions.",
-              "提交自动化指令前，请先在工作区点击开始。",
-            ),
-          });
-          return;
-        }
         let conversationId = activeConversationId;
         if (!conversationId) {
           conversationId = createDraftConversation(activeAgent);

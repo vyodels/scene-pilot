@@ -11,6 +11,7 @@ from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from recruit_station.agents.autonomous import AutonomousRunInterrupted
 from recruit_station.db.base import utcnow
 from recruit_station.models.domain import (
     AgentRun,
@@ -168,7 +169,10 @@ def build_router(container: AppContainer) -> APIRouter:
 
     @router.post("/run-once")
     def run_once() -> dict[str, Any]:
-        return container.heartbeat.run_once()
+        try:
+            return container.heartbeat.run_once()
+        except AutonomousRunInterrupted as exc:
+            return {"status": "interrupted", "reason": str(exc)}
 
     @router.get("/queue")
     def list_queue() -> list[dict[str, Any]]:
@@ -226,14 +230,10 @@ def build_router(container: AppContainer) -> APIRouter:
     @router.post("/autonomous/workspace-control/terminate")
     def terminate_autonomous_workspace(payload: WorkspaceControlRequest) -> dict[str, Any]:
         container.heartbeat.terminate(reason=payload.reason or "manual terminate", updated_by=payload.reviewer)
-        terminated_run_ids: list[str] = []
-        with container.session_factory() as session:
-            terminated_run_ids = _terminate_open_autonomous_runs(
-                session,
-                reviewer=payload.reviewer,
-                reason=payload.reason or "manual terminate",
-            )
-            session.commit()
+        terminated_run_ids = container.autonomous_adapter.terminate_open_runs(
+            reviewer=payload.reviewer,
+            reason=payload.reason or "manual terminate",
+        )
         control = _workspace_control_payload(container.heartbeat.status())
         control["terminated_run_ids"] = terminated_run_ids
         control["terminatedRunIds"] = terminated_run_ids
@@ -520,32 +520,26 @@ def build_router(container: AppContainer) -> APIRouter:
 
     @router.post("/autonomous/runs/{run_id}/cancel")
     def cancel_run(run_id: str, payload: RunControlRequest) -> dict[str, Any]:
-        with container.session_factory() as session:
-            run = _resolve_run_for_kind(session, "autonomous", run_id)
-            if run.status == "completed":
-                raise HTTPException(status_code=409, detail="Completed run cannot be cancelled.")
-            run.status = "cancelled"
-            run.finished_at = utcnow()
-            run.blocked_reason = payload.reason or run.blocked_reason
-            _cancel_open_queue_tasks(session, run=run, reviewer=payload.reviewer, reason=payload.reason)
-            _resolve_run_gate_records(
-                session,
-                run=run,
+        try:
+            run_pk = container.autonomous_adapter.cancel_run(
+                run_id,
                 reviewer=payload.reviewer,
-                reason=payload.reason or "cancelled",
-                approval_status="rejected",
-                interaction_action="cancel",
+                reason=payload.reason,
             )
-            session.commit()
-            session.refresh(run)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=f"Run not found for agent kind: autonomous") from exc
+        with container.session_factory() as session:
+            run = session.get(AgentRun, run_pk)
+            if run is None:
+                raise HTTPException(status_code=404, detail=f"unknown run: {run_id}")
             return {"run": _serialize_run(run)}
 
     @router.post("/autonomous/runs/{run_id}/resume")
     def resume_run(run_id: str, payload: RunControlRequest) -> dict[str, Any]:
         with container.session_factory() as session:
             run = _resolve_run_for_kind(session, "autonomous", run_id)
-            if run.status == "completed":
-                raise HTTPException(status_code=409, detail="Completed run cannot be resumed.")
             if str(run.status or "").strip().lower() in {"queued", "running", "active"}:
                 raise HTTPException(status_code=409, detail="Active run does not need resume.")
             conflicting_run = _find_open_autonomous_run(session, session_id=run.session_id, exclude_run_id=run.id)
@@ -986,58 +980,6 @@ def _enqueue_run_task(session: Session, *, run: AgentRun, envelope: dict[str, An
     )
     run.queue_task_id = task.id
     return task
-
-
-def _cancel_open_queue_tasks(session: Session, *, run: AgentRun, reviewer: str, reason: str | None) -> None:
-    stmt = select(TaskQueueItem).where(TaskQueueItem.status.in_(("pending", "running")))
-    for task in session.scalars(stmt).all():
-        payload = dict(task.payload or {})
-        if str(payload.get("run_pk") or "") == run.id or str(payload.get("run_id") or "") == str(run.run_id or ""):
-            task.status = "failed"
-            task.locked_at = None
-            task.locked_by = None
-            audit = dict((payload.get("queue_audit") or {})) if isinstance(payload.get("queue_audit"), dict) else {}
-            history = list(audit.get("history") or [])
-            history.append(
-                {
-                    "kind": "cancelled",
-                    "at": utcnow().isoformat(),
-                    "reviewer": reviewer,
-                    "reason": reason,
-                }
-            )
-            audit["history"] = history[-20:]
-            audit["last_event"] = "cancelled"
-            audit["last_event_at"] = history[-1]["at"]
-            payload["queue_audit"] = audit
-            task.payload = payload
-
-
-def _terminate_open_autonomous_runs(session: Session, *, reviewer: str, reason: str) -> list[str]:
-    stmt = (
-        select(AgentRun)
-        .where(
-            AgentRun.agent_kind == "autonomous",
-            AgentRun.status.in_(AUTONOMOUS_OPEN_RUN_STATUSES),
-        )
-        .order_by(AgentRun.updated_at.desc(), AgentRun.id.desc())
-    )
-    terminated: list[str] = []
-    for run in session.scalars(stmt).all():
-        run.status = "cancelled"
-        run.finished_at = utcnow()
-        run.blocked_reason = reason
-        _cancel_open_queue_tasks(session, run=run, reviewer=reviewer, reason=reason)
-        _resolve_run_gate_records(
-            session,
-            run=run,
-            reviewer=reviewer,
-            reason=reason,
-            approval_status="rejected",
-            interaction_action="terminate",
-        )
-        terminated.append(run.run_id)
-    return terminated
 
 
 def _workspace_control_payload(status: dict[str, Any]) -> dict[str, Any]:

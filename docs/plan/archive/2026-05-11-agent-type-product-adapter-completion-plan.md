@@ -1,10 +1,12 @@
 # Agent Type 与 Product Adapter 完成计划
 
+> Archived historical plan. Current Agent runtime / product adapter / Assistant / Autonomous constraints are consolidated in [`../../specs/2026-05-11-agent-runtime-product-boundary-spec.md`](../../specs/2026-05-11-agent-runtime-product-boundary-spec.md). Do not use this file as a current rule source.
+
 ## 背景
 
 当前 Agent runtime 已完成核心收敛：`InteractionEngine`、turn/tool loop、transcript、history compaction、permission output protocol 都应作为既有能力使用。接下来只做产品层收敛，避免再次把 Assistant / Autonomous、MCP、skill、memory 或业务 workflow 写进 runtime。
 
-长期设计以 [`../../design/agent-core/01-agent-types-and-product-adapters.md`](../../design/agent-core/01-agent-types-and-product-adapters.md) 和 [`../../specs/2026-05-11-agent-runtime-product-boundary-spec.md`](../../specs/2026-05-11-agent-runtime-product-boundary-spec.md) 为准。
+长期设计与当前约束以 [`../../specs/2026-05-11-agent-runtime-product-boundary-spec.md`](../../specs/2026-05-11-agent-runtime-product-boundary-spec.md) 为准。历史 agent-core design 文档已合并进该 spec 并移除。
 
 ## 核心思路
 
@@ -71,7 +73,6 @@ runtime
 
 允许改动：
 
-- `docs/design/**`
 - `docs/specs/**`
 - `docs/plan/**`
 

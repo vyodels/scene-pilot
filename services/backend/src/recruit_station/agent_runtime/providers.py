@@ -9,6 +9,7 @@ from urllib.parse import urljoin, urlparse
 from urllib.request import ProxyHandler, Request, build_opener, urlopen
 
 from .types import (
+    AbortSignal,
     LLMInvocationResult,
     LLMMessage,
     LLMProvider,
@@ -26,6 +27,23 @@ class ProviderError(RuntimeError):
 
 
 Transport = Callable[..., Any]
+
+
+def _signal_aborted(abort_signal: AbortSignal | None) -> bool:
+    return bool(abort_signal is not None and abort_signal.aborted)
+
+
+def _aborted_invocation_result(request: LLMRequest) -> LLMInvocationResult:
+    return LLMInvocationResult(
+        events=[],
+        response=LLMResponse(
+            id="",
+            request_id=request.id,
+            invocation_id=request.invocation_id,
+            stop_reason="aborted",
+            raw={"aborted": True, "abort_reason": request.abort_signal.reason if request.abort_signal else None},
+        ),
+    )
 
 
 @dataclass(slots=True)
@@ -80,6 +98,8 @@ class OpenAIProvider:
         return self.config.provider_name
 
     def invoke(self, request: LLMRequest) -> LLMInvocationResult:
+        if _signal_aborted(request.abort_signal):
+            return _aborted_invocation_result(request)
         payload = self._build_payload(request)
         url = urljoin((self.config.base_url or "").rstrip("/") + "/", "responses")
         headers = {
@@ -87,11 +107,15 @@ class OpenAIProvider:
             "Content-Type": "application/json",
             "Accept": "text/event-stream, application/json",
         }
+        if _signal_aborted(request.abort_signal):
+            return _aborted_invocation_result(request)
         raw = (
             self.transport(url, payload, headers, self.config.resolved_timeout_seconds())
             if self.transport is not None
-            else self._post(url, payload, headers)
+            else self._post(url, payload, headers, request.abort_signal)
         )
+        if _signal_aborted(request.abort_signal):
+            return _aborted_invocation_result(request)
         return _parse_openai_result(raw, request)
 
     def _build_payload(self, request: LLMRequest) -> dict[str, Any]:
@@ -133,10 +157,22 @@ class OpenAIProvider:
         payload.update(dict(request.openai_payload_overrides or {}))
         return payload
 
-    def _post(self, url: str, payload: dict[str, Any], headers: dict[str, str]) -> Any:
+    def _post(
+        self,
+        url: str,
+        payload: dict[str, Any],
+        headers: dict[str, str],
+        abort_signal: AbortSignal | None = None,
+    ) -> Any:
         if not self.config.has_http_credentials():
             raise ProviderError("OpenAIProvider has no transport configured")
-        return _post_json(url, payload, headers=headers, timeout_seconds=self.config.resolved_timeout_seconds())
+        return _post_json(
+            url,
+            payload,
+            headers=headers,
+            timeout_seconds=self.config.resolved_timeout_seconds(),
+            abort_signal=abort_signal,
+        )
 
 
 @dataclass(slots=True)
@@ -149,6 +185,8 @@ class AnthropicProvider:
         return self.config.provider_name
 
     def invoke(self, request: LLMRequest) -> LLMInvocationResult:
+        if _signal_aborted(request.abort_signal):
+            return _aborted_invocation_result(request)
         payload = self._build_payload(request)
         base_url = (self.config.base_url or "").rstrip("/") + "/"
         endpoint = "v1/messages" if not urlparse(base_url).path.strip("/") else "messages"
@@ -159,11 +197,15 @@ class AnthropicProvider:
             "Content-Type": "application/json",
             "Accept": "text/event-stream, application/json",
         }
+        if _signal_aborted(request.abort_signal):
+            return _aborted_invocation_result(request)
         raw = (
             self.transport(url, payload, headers, self.config.resolved_timeout_seconds())
             if self.transport is not None
-            else self._post(url, payload, headers)
+            else self._post(url, payload, headers, request.abort_signal)
         )
+        if _signal_aborted(request.abort_signal):
+            return _aborted_invocation_result(request)
         return _parse_anthropic_result(raw, request)
 
     def _build_payload(self, request: LLMRequest) -> dict[str, Any]:
@@ -198,19 +240,40 @@ class AnthropicProvider:
         payload.update(dict(request.anthropic_payload_overrides or {}))
         return payload
 
-    def _post(self, url: str, payload: dict[str, Any], headers: dict[str, str]) -> Any:
+    def _post(
+        self,
+        url: str,
+        payload: dict[str, Any],
+        headers: dict[str, str],
+        abort_signal: AbortSignal | None = None,
+    ) -> Any:
         if not self.config.has_http_credentials():
             raise ProviderError("AnthropicProvider has no transport configured")
-        return _post_json(url, payload, headers=headers, timeout_seconds=self.config.resolved_timeout_seconds())
+        return _post_json(
+            url,
+            payload,
+            headers=headers,
+            timeout_seconds=self.config.resolved_timeout_seconds(),
+            abort_signal=abort_signal,
+        )
 
 
-def _post_json(url: str, payload: dict[str, Any], *, headers: dict[str, str], timeout_seconds: int) -> Any:
+def _post_json(
+    url: str,
+    payload: dict[str, Any],
+    *,
+    headers: dict[str, str],
+    timeout_seconds: int,
+    abort_signal: AbortSignal | None = None,
+) -> Any:
+    if _signal_aborted(abort_signal):
+        return []
     body = json.dumps(payload).encode("utf-8")
     request = Request(url, data=body, headers=headers, method="POST")
     try:
         with _open_url(request, url=url, timeout_seconds=timeout_seconds) as response:  # type: ignore[arg-type]
             if "text/event-stream" in _response_content_type(response):
-                return list(_iter_sse_events(response))
+                return list(_iter_sse_events(response, abort_signal=abort_signal))
             return _read_json_response(response)
     except HTTPError as exc:
         error_body = exc.read().decode("utf-8", errors="replace")
@@ -273,10 +336,12 @@ def _read_json_response(response: Any) -> dict[str, Any]:
     return payload
 
 
-def _iter_sse_events(response: Any) -> Iterable[dict[str, Any]]:
+def _iter_sse_events(response: Any, *, abort_signal: AbortSignal | None = None) -> Iterable[dict[str, Any]]:
     event_name = ""
     data_lines: list[str] = []
     while True:
+        if _signal_aborted(abort_signal):
+            break
         line = response.readline()
         if not line:
             break
@@ -314,7 +379,7 @@ def _decode_sse_event(event_name: str, data: str) -> dict[str, Any]:
 def _parse_openai_result(raw: Any, request: LLMRequest) -> LLMInvocationResult:
     if isinstance(raw, dict):
         return _openai_response_from_final_payload(raw, request, [])
-    events = list(raw or [])
+    events = raw or []
     neutral_events: list[LLMStreamEvent] = []
     text_parts: list[str] = []
     reasoning_parts: list[str] = []
@@ -324,6 +389,8 @@ def _parse_openai_result(raw: Any, request: LLMRequest) -> LLMInvocationResult:
     usage = TokenUsage()
 
     for raw_event in events:
+        if _signal_aborted(request.abort_signal):
+            break
         event = _coerce_event(raw_event)
         event_type = str(event.get("type") or "")
         if event.get("data") == "[DONE]":
@@ -436,7 +503,9 @@ def _parse_anthropic_result(raw: Any, request: LLMRequest) -> LLMInvocationResul
     usage_payload: dict[str, Any] = {}
     response_id = ""
 
-    for raw_event in list(raw or []):
+    for raw_event in raw or []:
+        if _signal_aborted(request.abort_signal):
+            break
         event = _coerce_event(raw_event)
         event_type = str(event.get("type") or "")
         if event_type == "error":

@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 import json
 import re
+from threading import RLock
 from typing import Any
 
 from sqlalchemy import func, select
@@ -33,12 +34,13 @@ from recruit_station.models.domain import (
     OperatorInteraction,
     AgentDefinition,
     Skill,
+    TaskQueueItem,
 )
 from recruit_station.product_adapters.limits import TurnLimits
 from recruit_station.agents.outcome import AgentTurnOutcome
 from recruit_station.plugins.host import PluginHost
 from recruit_station.product_adapters.context_builder import build_autonomous_turn_context
-from recruit_station.product_adapters.agent_runner import AgentRunStatusDefaults, run_agent_turn
+from recruit_station.product_adapters.agent_runner import AgentTurnStatusDefaults, run_agent_turn
 from recruit_station.product_adapters.mcp_resource_context import build_mcp_resource_context, extract_mcp_resource_context_policy
 from recruit_station.product_adapters.result_semantics import extract_execution_status
 from recruit_station.product_adapters.target_contracts import derive_browser_target
@@ -58,6 +60,19 @@ AUTONOMOUS_OPEN_RUN_STATUSES: tuple[str, ...] = (
 
 
 @dataclass(slots=True)
+class ActiveAutonomousTurn:
+    run_pk: str
+    run_id: str | None
+    turn_id: str
+    engine: InteractionEngine | None = None
+    interrupt_reason: str | None = None
+
+
+class AutonomousRunInterrupted(RuntimeError):
+    pass
+
+
+@dataclass(slots=True)
 class AutonomousAdapter:
     session_factory: sessionmaker[Session]
     provider: LLMProvider
@@ -68,10 +83,62 @@ class AutonomousAdapter:
     memory_file_store: MemoryFileStore | None = None
     turn_limits: TurnLimits = field(default_factory=TurnLimits)
     pending_permission_engines: dict[str, InteractionEngine] = field(default_factory=dict)
+    active_turns: dict[str, ActiveAutonomousTurn] = field(default_factory=dict)
+    _active_turns_lock: RLock = field(default_factory=RLock)
+
+    def cancel_run(self, run_id: str, *, reviewer: str, reason: str | None = None) -> str:
+        with self.session_factory() as session:
+            run = _resolve_autonomous_run_for_control(session, run_id)
+            if run.status == "completed":
+                raise ValueError("Completed run cannot be cancelled.")
+            cancel_reason = reason or "cancelled"
+            self._interrupt_active_turn(run=run, reason=cancel_reason)
+            self.pending_permission_engines.pop(run.id, None)
+            _cancel_open_run_for_control(
+                session,
+                run=run,
+                reviewer=reviewer,
+                reason=cancel_reason,
+                interaction_action="cancel",
+            )
+            session.commit()
+            return run.id
+
+    def terminate_open_runs(self, *, reviewer: str, reason: str) -> list[str]:
+        with self.session_factory() as session:
+            stmt = (
+                select(AgentRun)
+                .where(
+                    AgentRun.agent_kind == "autonomous",
+                    AgentRun.status.in_(AUTONOMOUS_OPEN_RUN_STATUSES),
+                )
+                .order_by(AgentRun.updated_at.desc(), AgentRun.id.desc())
+            )
+            terminated: list[str] = []
+            for run in session.scalars(stmt).all():
+                self._interrupt_active_turn(run=run, reason=reason)
+                self.pending_permission_engines.pop(run.id, None)
+                _cancel_open_run_for_control(
+                    session,
+                    run=run,
+                    reviewer=reviewer,
+                    reason=reason,
+                    interaction_action="terminate",
+                )
+                terminated.append(str(run.run_id or run.id))
+            session.commit()
+            return terminated
 
     def run_turn_from_envelope(self, envelope: dict[str, Any]) -> AgentTurnOutcome:
         with self.session_factory() as session:
             run = self._resolve_run(session, envelope)
+            interrupted_status = _terminal_interrupt_status(run.status)
+            if interrupted_status is not None:
+                return AgentTurnOutcome(
+                    status="cancelled",
+                    gate_signal="paused",
+                    metadata={"interrupted_before_start": True, "run_status": interrupted_status},
+                )
             run.status = "running"
             if run.started_at is None:
                 run.started_at = utcnow()
@@ -228,31 +295,44 @@ class AutonomousAdapter:
                         if runtime_checkpoint is None:
                             raise RuntimeError("Pending runtime permission state is not available for this run; durable checkpoint is missing")
                         resume_transcript = transcript_from_checkpoint(runtime_conversation_id, runtime_checkpoint)
-                runner_result = run_agent_turn(
-                    provider=self.provider,
-                    tool_registry=self.tool_registry,
-                    agent_definition_id=agent_definition_id,
-                    conversation_id=runtime_conversation_id,
-                    initial_messages=adapter_context.initial_messages,
-                    turn_input=adapter_context.turn_input,
-                    max_llm_invocations=active_turn_limits.max_llm_invocations or 12,
-                    initial_seq=runtime_event_seq + 1,
-                    transcript=resume_transcript,
-                    existing_engine=existing_engine,
-                    resolve_permission=bool(approved_tool_calls),
-                    output_sink=lambda output: _record_engine_output(session, run=run, turn_id=turn.turn_id, output=output),
-                    structured_status_resolver=_outcome_from_structured_result_data,
-                    status_defaults=AgentRunStatusDefaults(
-                        completed_status="complete",
-                        completed_gate_signal="run_done",
-                        failed_status="error",
-                        failed_gate_signal="escalate",
-                        interrupted_status="cancelled",
-                        interrupted_gate_signal="paused",
-                        permission_status="wait_human",
-                        permission_gate_signal="wait_human",
-                    ),
-                )
+                active_turn = ActiveAutonomousTurn(run_pk=run.id, run_id=run.run_id, turn_id=turn.turn_id)
+                self._register_active_turn(active_turn)
+
+                def _bind_engine(engine: InteractionEngine) -> None:
+                    with self._active_turns_lock:
+                        active_turn.engine = engine
+                    if active_turn.interrupt_reason or self._run_has_terminal_interrupt(run.id):
+                        engine.interrupt(active_turn.interrupt_reason)
+
+                try:
+                    runner_result = run_agent_turn(
+                        provider=self.provider,
+                        tool_registry=self.tool_registry,
+                        agent_definition_id=agent_definition_id,
+                        conversation_id=runtime_conversation_id,
+                        initial_messages=adapter_context.initial_messages,
+                        turn_input=adapter_context.turn_input,
+                        max_llm_invocations=active_turn_limits.max_llm_invocations or 12,
+                        initial_seq=runtime_event_seq + 1,
+                        transcript=resume_transcript,
+                        existing_engine=existing_engine,
+                        resolve_permission=bool(approved_tool_calls),
+                        output_sink=lambda output: _record_engine_output(session, run=run, turn_id=turn.turn_id, output=output),
+                        engine_sink=_bind_engine,
+                        structured_status_resolver=_outcome_from_structured_result_data,
+                        status_defaults=AgentTurnStatusDefaults(
+                            completed_status="complete",
+                            completed_gate_signal="run_done",
+                            failed_status="error",
+                            failed_gate_signal="escalate",
+                            interrupted_status="cancelled",
+                            interrupted_gate_signal="paused",
+                            permission_status="wait_human",
+                            permission_gate_signal="wait_human",
+                        ),
+                    )
+                finally:
+                    self._clear_active_turn(active_turn)
                 runtime_event_seq = max(runtime_event_seq, runner_result.last_seq)
                 engine_output_count = runner_result.engine_output_count
                 last_outcome = AgentTurnOutcome(
@@ -275,14 +355,20 @@ class AutonomousAdapter:
                     self.pending_permission_engines.pop(run.id, None)
             except Exception as exc:
                 self.pending_permission_engines.pop(run.id, None)
-                turn.status = "failed"
+                session.refresh(run)
+                interrupted_status = _terminal_interrupt_status(run.status)
+                turn.status = interrupted_status or "failed"
                 turn.phase = "evaluate"
-                turn.outcome_kind = "error"
+                turn.outcome_kind = interrupted_status or "error"
                 turn.turn_metadata = {"error": str(exc), "engine_output_count": engine_output_count}
                 run.turns_count = int(run.turns_count or 0) + 1
-                run.status = "failed"
-                run.finished_at = utcnow()
-                run.last_error = str(exc)
+                if interrupted_status:
+                    if run.finished_at is None:
+                        run.finished_at = utcnow()
+                else:
+                    run.status = "failed"
+                    run.finished_at = utcnow()
+                    run.last_error = str(exc)
                 _resolve_wait_human_records(session, run=run)
                 _append_runtime_event(
                     session,
@@ -296,19 +382,26 @@ class AutonomousAdapter:
                 session.commit()
                 raise
 
-            turn.status = _turn_status_from_outcome(last_outcome)
+            session.refresh(run)
+            interrupted_status = _terminal_interrupt_status(run.status)
+            outcome_run_status = _run_status_from_outcome(last_outcome)
+            preserve_interrupted_status = interrupted_status is not None
+            turn.status = interrupted_status if preserve_interrupted_status else _turn_status_from_outcome(last_outcome)
             turn.phase = "evaluate"
-            turn.outcome_kind = last_outcome.status
+            turn.outcome_kind = interrupted_status if preserve_interrupted_status else last_outcome.status
             turn.turn_metadata = {
                 "final_output": last_outcome.final_output,
                 "gate_signal": last_outcome.gate_signal,
                 "engine_output_count": engine_output_count,
+                **({"interrupted_before_writeback": True, "run_status": interrupted_status} if preserve_interrupted_status else {}),
             }
             run.turns_count = int(run.turns_count or 0) + 1
-            run.status = _run_status_from_outcome(last_outcome)
-            if run.status in {"completed", "waiting_human", "blocked", "failed", "cancelled"}:
+            if not preserve_interrupted_status:
+                run.status = outcome_run_status
+            if run.status in {"completed", "waiting_human", "blocked", "failed", "cancelled", "interrupted"}:
                 run.finished_at = utcnow()
-            run.last_error = None
+            if not preserve_interrupted_status:
+                run.last_error = None
             if _is_waiting_human(last_outcome):
                 _materialize_wait_human_records(
                     session,
@@ -320,6 +413,8 @@ class AutonomousAdapter:
             else:
                 _resolve_wait_human_records(session, run=run)
             session.commit()
+            if _terminal_interrupt_status(run.status) is not None:
+                raise AutonomousRunInterrupted(f"Autonomous run {run.run_id or run.id} was interrupted.")
             session.refresh(run)
             self._maybe_record_trial_skill(
                 session,
@@ -330,7 +425,7 @@ class AutonomousAdapter:
                 engine_output_count=engine_output_count,
                 agent_definition_id=agent_definition_id,
             )
-            if run.status == "completed":
+            if _is_completed_outcome(last_outcome):
                 _maybe_write_turn_memory(
                     session,
                     provider=self.provider,
@@ -391,6 +486,34 @@ class AutonomousAdapter:
                 session.commit()
             return recovered
 
+    def _register_active_turn(self, active: ActiveAutonomousTurn) -> None:
+        with self._active_turns_lock:
+            self.active_turns[active.run_pk] = active
+            if active.run_id:
+                self.active_turns[active.run_id] = active
+
+    def _clear_active_turn(self, active: ActiveAutonomousTurn) -> None:
+        with self._active_turns_lock:
+            for key in (active.run_pk, active.run_id):
+                if key and self.active_turns.get(key) is active:
+                    self.active_turns.pop(key, None)
+
+    def _interrupt_active_turn(self, *, run: AgentRun, reason: str) -> bool:
+        with self._active_turns_lock:
+            active = self.active_turns.get(run.id) or self.active_turns.get(str(run.run_id or ""))
+            if active is None:
+                return False
+            active.interrupt_reason = reason
+            engine = active.engine
+        if engine is not None:
+            engine.interrupt(reason)
+        return True
+
+    def _run_has_terminal_interrupt(self, run_pk: str) -> bool:
+        with self.session_factory() as session:
+            run = session.get(AgentRun, run_pk)
+            return run is not None and _terminal_interrupt_status(run.status) is not None
+
     def _resolve_run(self, session: Session, envelope: dict[str, Any]) -> AgentRun:
         run_pk = str(envelope.get("run_pk") or "").strip()
         if run_pk:
@@ -449,7 +572,7 @@ class AutonomousAdapter:
         engine_output_count: int,
         agent_definition_id: str | None,
     ) -> None:
-        if run.status != "completed":
+        if not _is_completed_outcome(outcome):
             return
         if self.learning_writer is None:
             return
@@ -539,7 +662,7 @@ class AutonomousAdapter:
 
 def _run_status_from_outcome(outcome: AgentTurnOutcome) -> str:
     if outcome.status == "complete" or outcome.gate_signal == "run_done":
-        return "completed"
+        return "idle"
     if outcome.status == "wait_human" or outcome.gate_signal == "wait_human":
         return "waiting_human"
     if outcome.status == "cancelled" or outcome.gate_signal == "paused":
@@ -551,6 +674,13 @@ def _run_status_from_outcome(outcome: AgentTurnOutcome) -> str:
     if outcome.gate_signal == "budget_exhausted":
         return "blocked"
     return "running"
+
+
+def _terminal_interrupt_status(status: str | None) -> str | None:
+    normalized = str(status or "").strip().lower()
+    if normalized in {"cancelled", "interrupted"}:
+        return normalized
+    return None
 
 
 def _turn_status_from_outcome(outcome: AgentTurnOutcome) -> str:
@@ -571,6 +701,10 @@ def _turn_status_from_outcome(outcome: AgentTurnOutcome) -> str:
 
 def _is_waiting_human(outcome: AgentTurnOutcome) -> bool:
     return outcome.status == "wait_human" or outcome.gate_signal == "wait_human"
+
+
+def _is_completed_outcome(outcome: AgentTurnOutcome) -> bool:
+    return outcome.status == "complete" or outcome.gate_signal == "run_done"
 
 
 def _outcome_from_structured_result_data(value: Any) -> tuple[str, str] | None:
@@ -1354,6 +1488,125 @@ def _interrupt_open_run(session: Session, *, run: AgentRun, reason: str) -> None
 
     run.checkpoint_status = "resolved" if checkpoint is not None else "none"
     run.wakeup_state = {}
+
+
+def _resolve_autonomous_run_for_control(session: Session, run_id: str) -> AgentRun:
+    normalized = str(run_id or "").strip()
+    if not normalized:
+        raise KeyError("unknown run: ")
+    stmt = select(AgentRun).where(
+        AgentRun.agent_kind == "autonomous",
+        (AgentRun.run_id == normalized) | (AgentRun.id == normalized),
+    )
+    run = session.scalars(stmt).first()
+    if run is None:
+        raise KeyError(f"unknown run: {normalized}")
+    return run
+
+
+def _cancel_open_run_for_control(
+    session: Session,
+    *,
+    run: AgentRun,
+    reviewer: str,
+    reason: str,
+    interaction_action: str,
+) -> None:
+    run.status = "cancelled"
+    run.finished_at = utcnow()
+    run.blocked_reason = reason or run.blocked_reason
+    _cancel_open_queue_tasks_for_run(session, run=run, reviewer=reviewer, reason=reason)
+    _resolve_run_gate_records_for_control(
+        session,
+        run=run,
+        reviewer=reviewer,
+        reason=reason,
+        approval_status="rejected",
+        interaction_action=interaction_action,
+    )
+
+
+def _cancel_open_queue_tasks_for_run(session: Session, *, run: AgentRun, reviewer: str, reason: str | None) -> None:
+    stmt = select(TaskQueueItem).where(TaskQueueItem.status.in_(("pending", "running")))
+    for task in session.scalars(stmt).all():
+        payload = dict(task.payload or {})
+        if str(payload.get("run_pk") or "") != run.id and str(payload.get("run_id") or "") != str(run.run_id or ""):
+            continue
+        task.status = "failed"
+        task.locked_at = None
+        task.locked_by = None
+        audit = dict((payload.get("queue_audit") or {})) if isinstance(payload.get("queue_audit"), dict) else {}
+        history = list(audit.get("history") or [])
+        history.append(
+            {
+                "kind": "cancelled",
+                "at": utcnow().isoformat(),
+                "reviewer": reviewer,
+                "reason": reason,
+            }
+        )
+        audit["history"] = history[-20:]
+        audit["last_event"] = "cancelled"
+        audit["last_event_at"] = history[-1]["at"]
+        payload["queue_audit"] = audit
+        task.payload = payload
+
+
+def _resolve_run_gate_records_for_control(
+    session: Session,
+    *,
+    run: AgentRun,
+    reviewer: str,
+    reason: str,
+    approval_status: str,
+    interaction_action: str,
+) -> AgentRunCheckpoint | None:
+    checkpoint = session.scalars(
+        select(AgentRunCheckpoint)
+        .where(AgentRunCheckpoint.run_id == run.id, AgentRunCheckpoint.status == "open")
+        .order_by(AgentRunCheckpoint.created_at.desc(), AgentRunCheckpoint.id.desc())
+    ).first()
+    if checkpoint is None:
+        run.checkpoint_status = "none"
+        run.wakeup_state = {}
+        return None
+
+    checkpoint.status = "resolved"
+    checkpoint.resolved_at = utcnow()
+    checkpoint.resolved_by = reviewer
+
+    if checkpoint.approval_id:
+        approval = session.get(ApprovalItem, checkpoint.approval_id)
+        if approval is not None:
+            approval.status = approval_status
+            approval.reviewed_by = reviewer
+            approval.reviewed_at = utcnow()
+            approval.notes = reason
+            approval_payload = dict(approval.payload or {})
+            approval_payload["resolution"] = {
+                "status": approval_status,
+                "reviewer": reviewer,
+                "reason": reason,
+                "approved": approval_status == "approved",
+                "reviewed_at": approval.reviewed_at.isoformat() if approval.reviewed_at else None,
+            }
+            approval.payload = approval_payload
+
+    interaction = session.scalars(
+        select(OperatorInteraction)
+        .where(OperatorInteraction.checkpoint_id == checkpoint.id, OperatorInteraction.status == "pending")
+        .order_by(OperatorInteraction.created_at.desc(), OperatorInteraction.id.desc())
+    ).first()
+    if interaction is not None:
+        interaction.status = "resolved"
+        interaction.operator_response = {"action": interaction_action, "comment": reason}
+        interaction.effect_summary = reason
+        interaction.resolved_at = utcnow()
+        interaction.resolved_by = reviewer
+
+    run.checkpoint_status = "resolved"
+    run.wakeup_state = {}
+    return checkpoint
 
 
 def _materialize_wait_human_records(

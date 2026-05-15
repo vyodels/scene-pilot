@@ -1,8 +1,8 @@
 # Agent 体系与招聘业务能力建设规范（已确认草案归档）
 
 > Status: archived draft
-> Distilled into: `docs/specs/2026-04-20-agent-system-and-recruiting-capability-architecture.md`
-> Note: 本草案已完成用户确认并转成正式规范，保留在 `docs/plan/active/` 仅用于当前迁移过程中的对照。后续应从 active 中移出。
+> Distilled into: current long-term specs under `docs/specs/`.
+> Note: 本草案已完成用户确认并归档，仅作历史背景；不得作为当前 active plan 或约束来源。
 
 ## 1. 文档目标与适用范围
 
