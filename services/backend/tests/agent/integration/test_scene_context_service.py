@@ -470,6 +470,15 @@ def test_scene_context_returns_structured_result_and_browser_computer_contract(t
                     "startedAfter": "2026-04-25T09:30:00.000Z",
                 },
             },
+            "anti_detection_policy": {"mode": "generic_human_paced", "require_browser_hid_preflight": True},
+            "behavior_budget": {
+                "max_candidates_per_hour": 10,
+                "max_candidates_per_day": 80,
+                "candidate_gap_seconds": 120,
+                "page_dwell_seconds": 25,
+                "max_hid_actions_per_candidate": 30,
+                "retry_backoff_seconds": [30, 120],
+            },
         }
     )
 
@@ -493,6 +502,8 @@ def test_scene_context_returns_structured_result_and_browser_computer_contract(t
     assert result["environment_context"]["artifact_expectations"]["download_lookup"]["source_url"] == "https://recruiting.example.test/downloads/resume-1.pdf"
     assert result["environment_context"]["artifact_expectations"]["download_lookup"]["expected_filename"] == "resume-1.pdf"
     assert result["environment_context"]["artifact_expectations"]["download_lookup"]["started_after"] == "2026-04-25T09:30:00.000Z"
+    assert result["execution_contract"]["anti_detection_policy"]["mode"] == "generic_human_paced"
+    assert result["execution_contract"]["behavior_budget"]["max_hid_actions_per_candidate"] == 30
 
     with session_factory() as session:
         episode = session.query(ExecutionEpisode).one()
@@ -508,6 +519,8 @@ def test_scene_context_returns_structured_result_and_browser_computer_contract(t
         assert execution_contract["target_regions"][0]["signature"] == "sig-download-1"
         assert environment_context["computer_target"]["post_mode"] == "auto"
         assert environment_context["artifact_expectations"]["allowed_extensions"] == ["pdf"]
+        assert runtime_metadata["anti_detection_policy"]["require_browser_hid_preflight"] is True
+        assert runtime_metadata["behavior_budget"]["candidate_gap_seconds"] == 120
 
 
 def test_scene_context_uses_provider_result_data_for_artifacts_and_writeback(tmp_path: Path) -> None:
@@ -794,6 +807,109 @@ def test_scene_context_passes_browser_semantics_into_hid_action(tmp_path: Path) 
     assert hid_arguments["geometry"]["viewportSize"] == {"x": 0, "y": 0, "width": 1440, "height": 900}
 
 
+def test_scene_context_blocks_hid_before_observe_and_second_hid_before_observe(tmp_path: Path) -> None:
+    session_factory = _session_factory(tmp_path)
+    hid_calls: list[dict[str, object]] = []
+    provider = ScriptedProvider(
+        provider_name="scene-scripted",
+        responses=[
+            LLMResponse(
+                tool_calls=[
+                    ToolCall(
+                        id="hid-before-observe",
+                        name="hid_action",
+                        arguments={
+                            "target": {"host": "recruit.example.test", "tabId": 9},
+                            "context": {"host": "recruit.example.test"},
+                            "primitives": [{"type": "click", "at": {"x": 20, "y": 30}}],
+                        },
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                tool_calls=[ToolCall(id="observe", name="browser_snapshot", arguments={"tabId": 9})],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                tool_calls=[
+                    ToolCall(
+                        id="first-hid",
+                        name="hid_action",
+                        arguments={
+                            "target": {"host": "recruit.example.test", "tabId": 9},
+                            "context": {"host": "recruit.example.test"},
+                            "primitives": [{"type": "click", "at": {"x": 22, "y": 32}}],
+                        },
+                    ),
+                    ToolCall(
+                        id="second-hid",
+                        name="hid_action",
+                        arguments={
+                            "target": {"host": "recruit.example.test", "tabId": 9},
+                            "context": {"host": "recruit.example.test"},
+                            "primitives": [{"type": "click", "at": {"x": 24, "y": 34}}],
+                        },
+                    ),
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(content="sequence blocked", result_data={"status": "blocked", "summary": "sequence blocked"}),
+        ],
+    )
+    tools = ToolRegistry()
+    tools.register(
+        ToolDefinition(
+            name="browser_snapshot",
+            description="Snapshot.",
+            parameters={"type": "object", "properties": {}, "additionalProperties": True},
+            handler=lambda arguments: {"success": True, "snapshot": {"url": "https://recruit.example.test/jobs"}, "tabId": arguments.get("tabId")},
+            metadata={"capabilities": ["browser", "document"], "external_tool": True, "real_environment": True},
+        )
+    )
+    tools.register(
+        ToolDefinition(
+            name="hid_action",
+            description="HID action.",
+            parameters={"type": "object", "properties": {}, "additionalProperties": True},
+            handler=lambda arguments: hid_calls.append(dict(arguments)) or {"success": True},
+            metadata={"capabilities": ["scene", "computer", "computer_write"], "external_tool": True, "real_environment": True},
+        )
+    )
+    service = SceneContextService(
+        session_factory=session_factory,
+        provider=provider,
+        tool_registry=tools,
+        plugin_host=PluginHost(),
+    )
+
+    result = service.delegate(
+        {
+            "title": "scene sequence gate",
+            "instruction": "validate observe/hid/observe ordering.",
+            "preferred_capabilities": ["browser", "computer"],
+            "browser_target": {"url": "https://recruit.example.test/jobs", "tabId": 9},
+        }
+    )
+
+    assert result["status"] == "blocked"
+    assert len(hid_calls) == 1
+    with session_factory() as session:
+        episode = session.query(ExecutionEpisode).one()
+        blocked_results = [
+            item["payload"]["content"]
+            for item in episode.observations
+            if item["type"] == "tool_event"
+            and item["payload"]["kind"] == "tool_result_ready"
+            and item["payload"]["tool_name"] == "hid_action"
+            and item["payload"]["content"].get("error") == "scene_browser_hid_sequence_blocked"
+        ]
+        assert [item["sequence_audit"]["reason"] for item in blocked_results] == [
+            "missing_prior_browser_observation",
+            "pending_browser_observation_after_hid",
+        ]
+
+
 @pytest.mark.parametrize(
     ("tool_name", "arguments"),
     [
@@ -853,7 +969,7 @@ def test_scene_context_blocks_wrong_tab_page_observation_tools(
             "title": "wrong tab blocker",
             "instruction": "Do not observe the wrong tab.",
             "preferred_capabilities": ["browser"],
-            "browser_target": {"url": "https://recruit.example.test/jobs"},
+            "browser_target": {"url": "https://recruit.example.test/jobs", "tabId": 1},
         }
     )
 
@@ -954,6 +1070,10 @@ def test_scene_context_blocks_browser_open_tab_for_in_site_navigation(tmp_path: 
         provider_name="scene-scripted",
         responses=[
             LLMResponse(
+                tool_calls=[ToolCall(id="observe", name="browser_snapshot", arguments={"tabId": 1})],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
                 tool_calls=[
                     ToolCall(
                         id="tool-1",
@@ -977,6 +1097,15 @@ def test_scene_context_blocks_browser_open_tab_for_in_site_navigation(tmp_path: 
     tools = ToolRegistry()
     tools.register(
         ToolDefinition(
+            name="browser_snapshot",
+            description="Snapshot.",
+            parameters={"type": "object", "properties": {}, "additionalProperties": True},
+            handler=lambda arguments: {"success": True, "snapshot": {"url": "https://recruit.example.test/jobs"}, "tabId": arguments.get("tabId")},
+            metadata={"capabilities": ["browser", "document"], "external_tool": True, "real_environment": True},
+        )
+    )
+    tools.register(
+        ToolDefinition(
             name="browser_open_tab",
             description="Open or detach tab.",
             parameters={"type": "object", "properties": {"tabId": {"type": "number"}, "url": {"type": "string"}}, "additionalProperties": True},
@@ -997,7 +1126,7 @@ def test_scene_context_blocks_browser_open_tab_for_in_site_navigation(tmp_path: 
             "title": "站内导航必须走 HID",
             "instruction": "不要用 browser_open_tab 进行站内阶段推进。",
             "preferred_capabilities": ["browser", "computer"],
-            "browser_target": {"url": "https://recruit.example.test/jobs"},
+            "browser_target": {"url": "https://recruit.example.test/jobs", "tabId": 1},
         }
     )
 
@@ -1061,7 +1190,7 @@ def test_scene_context_blocks_browser_reload_extension(tmp_path: Path) -> None:
             "title": "scene 内禁止 reload browser extension",
             "instruction": "不要在 autonomous scene 内重载 browser extension。",
             "preferred_capabilities": ["browser", "computer"],
-            "browser_target": {"url": "https://recruit.example.test/jobs"},
+            "browser_target": {"url": "https://recruit.example.test/jobs", "tabId": 1},
         }
     )
 
@@ -1087,6 +1216,10 @@ def test_scene_context_blocks_non_allowlist_hid_host(tmp_path: Path) -> None:
         provider_name="scene-scripted",
         responses=[
             LLMResponse(
+                tool_calls=[ToolCall(id="observe", name="browser_snapshot", arguments={"tabId": 1})],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
                 tool_calls=[
                     ToolCall(
                         id="tool-1",
@@ -1109,6 +1242,15 @@ def test_scene_context_blocks_non_allowlist_hid_host(tmp_path: Path) -> None:
     tools = ToolRegistry()
     tools.register(
         ToolDefinition(
+            name="browser_snapshot",
+            description="Snapshot.",
+            parameters={"type": "object", "properties": {}, "additionalProperties": True},
+            handler=lambda arguments: {"success": True, "snapshot": {"url": "https://recruit.example.test/jobs"}, "tabId": arguments.get("tabId")},
+            metadata={"capabilities": ["browser", "document"], "external_tool": True, "real_environment": True},
+        )
+    )
+    tools.register(
+        ToolDefinition(
             name="hid_action",
             description="HID action.",
             parameters={"type": "object", "properties": {}, "additionalProperties": True},
@@ -1129,7 +1271,7 @@ def test_scene_context_blocks_non_allowlist_hid_host(tmp_path: Path) -> None:
             "title": "单 host allowlist",
             "instruction": "只允许操作招聘目标 host。",
             "preferred_capabilities": ["browser", "computer"],
-            "browser_target": {"url": "https://recruit.example.test/jobs"},
+            "browser_target": {"url": "https://recruit.example.test/jobs", "tabId": 1},
         }
     )
 
@@ -1154,6 +1296,10 @@ def test_scene_context_surfaces_hid_overlay_blocker(tmp_path: Path) -> None:
         provider_name="scene-scripted",
         responses=[
             LLMResponse(
+                tool_calls=[ToolCall(id="observe", name="browser_snapshot", arguments={"tabId": 1})],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
                 tool_calls=[
                     ToolCall(
                         id="tool-1",
@@ -1174,6 +1320,15 @@ def test_scene_context_surfaces_hid_overlay_blocker(tmp_path: Path) -> None:
         ],
     )
     tools = ToolRegistry()
+    tools.register(
+        ToolDefinition(
+            name="browser_snapshot",
+            description="Snapshot.",
+            parameters={"type": "object", "properties": {}, "additionalProperties": True},
+            handler=lambda arguments: {"success": True, "snapshot": {"url": "https://recruit.example.test/jobs"}, "tabId": arguments.get("tabId")},
+            metadata={"capabilities": ["browser", "document"], "external_tool": True, "real_environment": True},
+        )
+    )
     tools.register(
         ToolDefinition(
             name="hid_action",
@@ -1202,7 +1357,7 @@ def test_scene_context_surfaces_hid_overlay_blocker(tmp_path: Path) -> None:
             "title": "overlay blocker",
             "instruction": "overlay blocked should stop the action.",
             "preferred_capabilities": ["browser", "computer"],
-            "browser_target": {"url": "https://recruit.example.test/jobs"},
+            "browser_target": {"url": "https://recruit.example.test/jobs", "tabId": 1},
         }
     )
 
@@ -1227,6 +1382,10 @@ def test_scene_context_surfaces_nested_hid_overlay_blocker_evidence(tmp_path: Pa
         provider_name="scene-scripted",
         responses=[
             LLMResponse(
+                tool_calls=[ToolCall(id="observe", name="browser_snapshot", arguments={"tabId": 1})],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
                 tool_calls=[
                     ToolCall(
                         id="tool-1",
@@ -1247,6 +1406,15 @@ def test_scene_context_surfaces_nested_hid_overlay_blocker_evidence(tmp_path: Pa
         ],
     )
     tools = ToolRegistry()
+    tools.register(
+        ToolDefinition(
+            name="browser_snapshot",
+            description="Snapshot.",
+            parameters={"type": "object", "properties": {}, "additionalProperties": True},
+            handler=lambda arguments: {"success": True, "snapshot": {"url": "https://recruit.example.test/jobs"}, "tabId": arguments.get("tabId")},
+            metadata={"capabilities": ["browser", "document"], "external_tool": True, "real_environment": True},
+        )
+    )
     tools.register(
         ToolDefinition(
             name="hid_action",
@@ -1278,7 +1446,7 @@ def test_scene_context_surfaces_nested_hid_overlay_blocker_evidence(tmp_path: Pa
             "title": "nested overlay blocker",
             "instruction": "overlay evidence should be retained.",
             "preferred_capabilities": ["browser", "computer"],
-            "browser_target": {"url": "https://recruit.example.test/jobs"},
+            "browser_target": {"url": "https://recruit.example.test/jobs", "tabId": 1},
         }
     )
 

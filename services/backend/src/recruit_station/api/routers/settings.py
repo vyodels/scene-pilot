@@ -41,6 +41,7 @@ def _normalize_optional_string(value: str | None) -> str | None:
 
 
 def _to_desktop_settings(settings: AppSettings) -> SettingsSnapshotRead:
+    runtime_settings = settings.provider_runtime_settings()
     return SettingsSnapshotRead.model_validate(
         {
             "locale": "en-US",
@@ -82,11 +83,13 @@ def _to_desktop_settings(settings: AppSettings) -> SettingsSnapshotRead:
             },
             "platform": {
                 "name": "本地执行配置",
-                "account": _runtime_scene_account(settings),
-                "cooldownDays": settings.provider_config.get("cooldown_days", 30),
+                "account": runtime_settings.site_account,
+                "cooldownDays": runtime_settings.cooldown_days,
                 "allowOutboundMessaging": settings.feature_flags.enable_outbound_messaging,
                 "maxConcurrentRuns": settings.provider_config.get("max_concurrent_runs", 1),
-                "minFunnelCandidates": settings.provider_config.get("autonomy_min_funnel_candidates", 0),
+                "minFunnelCandidates": runtime_settings.autonomy_min_funnel_candidates,
+                "behaviorBudget": dict(runtime_settings.behavior_budget),
+                "antiDetectionPolicy": dict(runtime_settings.anti_detection_policy),
             },
             "userProfile": _runtime_user_profile(settings),
         }
@@ -157,6 +160,10 @@ async def update_settings(
             provider_config["max_concurrent_runs"] = max(int(platform_data["maxConcurrentRuns"]), 1)
         if "minFunnelCandidates" in platform_data:
             provider_config["autonomy_min_funnel_candidates"] = max(int(platform_data["minFunnelCandidates"]), 0)
+        if "behaviorBudget" in platform_data:
+            provider_config["behavior_budget"] = dict(platform_data["behaviorBudget"])
+        if "antiDetectionPolicy" in platform_data:
+            provider_config["anti_detection_policy"] = dict(platform_data["antiDetectionPolicy"])
     if payload.userProfile is not None:
         profile_data = payload.userProfile.model_dump(exclude_none=True)
         provider_config = data.setdefault("provider_config", {})

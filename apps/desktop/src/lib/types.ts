@@ -895,6 +895,8 @@ export interface SettingsSnapshot {
     allowOutboundMessaging: boolean;
     maxConcurrentRuns: number;
     minFunnelCandidates: number;
+    behaviorBudget?: Record<string, unknown>;
+    antiDetectionPolicy?: Record<string, unknown>;
   };
   userProfile: {
     nickname: string;

@@ -191,6 +191,8 @@ def build_scene_turn_context(
             "recent_events": recent_events,
             "available_tools": available_tools,
             "available_mcps": available_mcps,
+            "anti_detection_policy": _compact_value(request.get("anti_detection_policy")),
+            "behavior_budget": _compact_value(request.get("behavior_budget")),
         },
     }
     system_prompt = "\n".join(

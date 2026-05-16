@@ -82,6 +82,8 @@ class AutonomousAdapter:
     mcp_registry: Any | None = None
     memory_file_store: MemoryFileStore | None = None
     turn_limits: TurnLimits = field(default_factory=TurnLimits)
+    anti_detection_policy: dict[str, Any] = field(default_factory=dict)
+    behavior_budget: dict[str, Any] = field(default_factory=dict)
     pending_permission_engines: dict[str, InteractionEngine] = field(default_factory=dict)
     active_turns: dict[str, ActiveAutonomousTurn] = field(default_factory=dict)
     _active_turns_lock: RLock = field(default_factory=RLock)
@@ -189,6 +191,20 @@ class AutonomousAdapter:
             run_constraints["success_criteria"] = dict(instruction_snapshot.get("success_criteria") or {})
             run_constraints["context_hints"] = dict(instruction_snapshot.get("context_hints") or {})
             run_constraints["trial_budget"] = dict(instruction_snapshot.get("trial_budget") or {})
+            run_constraints["anti_detection_policy"] = _merge_policy_dicts(
+                self.anti_detection_policy,
+                run_constraints.get("anti_detection_policy"),
+                (run.context_manifest or {}).get("anti_detection_policy"),
+                (run.runtime_metadata or {}).get("anti_detection_policy"),
+                envelope.get("anti_detection_policy"),
+            )
+            run_constraints["behavior_budget"] = _merge_policy_dicts(
+                self.behavior_budget,
+                run_constraints.get("behavior_budget"),
+                (run.context_manifest or {}).get("behavior_budget"),
+                (run.runtime_metadata or {}).get("behavior_budget"),
+                envelope.get("behavior_budget"),
+            )
             run_constraints["global_scope_ref"] = (
                 str(run_constraints.get("global_scope_ref") or "") or agent_definition_id
             )
@@ -1108,6 +1124,14 @@ def _bounded_int(value: Any, *, default: int, minimum: int, maximum: int) -> int
     except (TypeError, ValueError):
         parsed = default
     return max(minimum, min(parsed, maximum))
+
+
+def _merge_policy_dicts(*values: Any) -> dict[str, Any]:
+    merged: dict[str, Any] = {}
+    for value in values:
+        if isinstance(value, dict):
+            merged.update({str(key): item for key, item in value.items() if str(key).strip()})
+    return merged
 
 
 def _skill_environment_scope(*, run: AgentRun, snapshot: dict[str, Any]) -> str:

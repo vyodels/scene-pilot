@@ -12,6 +12,7 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -44,10 +45,7 @@ _VIRTUALHID_MCP_SERVER_ENV = "VIRTUALHID_MCP_SERVER"
 _VIRTUALHID_MCP_COMMAND_ENV = "VIRTUALHID_MCP_COMMAND"
 _KNOWN_STDIO_COMMAND_RESOLVERS = {"browser_mcp_server", "virtualhid_mcp_server"}
 _BROWSER_HID_TOOL_LOCK = threading.RLock()
-_BROWSER_HID_SEQUENCE_STATE: dict[str, str | None] = {
-    "last_browser_observation": None,
-    "pending_browser_observation_after_hid": None,
-}
+_BROWSER_HID_SEQUENCE_STATE: dict[str, dict[str, Any]] = {}
 _BROWSER_TARGET_IDENTIFICATION_TOOL_NAMES = {
     "browser_list_tabs",
     "browser_get_active_tab",
@@ -77,8 +75,7 @@ def default_virtualhid_upstream_endpoint() -> str:
 
 def _reset_browser_hid_sequence_state_for_tests() -> None:
     with _BROWSER_HID_TOOL_LOCK:
-        _BROWSER_HID_SEQUENCE_STATE["last_browser_observation"] = None
-        _BROWSER_HID_SEQUENCE_STATE["pending_browser_observation_after_hid"] = None
+        _BROWSER_HID_SEQUENCE_STATE.clear()
 
 
 def default_virtualhid_mcp_server_command() -> tuple[str, ...] | None:
@@ -631,16 +628,181 @@ def _is_browser_hid_sequence_action(server: McpServer, tool_name: str, arguments
     return _hid_action_targets_browser(arguments) and _hid_action_has_browser_sequence_primitive(arguments)
 
 
+def _browser_hid_sequence_scope_key(arguments: dict[str, Any], result: Any | None = None) -> str | None:
+    target = arguments.get("target") if isinstance(arguments.get("target"), dict) else {}
+    context = arguments.get("context") if isinstance(arguments.get("context"), dict) else {}
+    options = arguments.get("options") if isinstance(arguments.get("options"), dict) else {}
+    metadata = arguments.get("metadata") if isinstance(arguments.get("metadata"), dict) else {}
+    run_id = _first_scope_value(
+        arguments.get("run_id"),
+        arguments.get("runId"),
+        arguments.get("run_pk"),
+        context.get("run_id"),
+        context.get("runId"),
+        context.get("run_pk"),
+        options.get("run_id"),
+        metadata.get("run_id"),
+        _result_path(result, "run_id"),
+        _result_path(result, "runId"),
+    )
+    episode_id = _first_scope_value(
+        arguments.get("episode_id"),
+        arguments.get("episodeId"),
+        arguments.get("taskId"),
+        arguments.get("id"),
+        context.get("episode_id"),
+        context.get("episodeId"),
+        context.get("taskId"),
+        target.get("episode_id"),
+        target.get("episodeId"),
+        options.get("episode_id"),
+        metadata.get("episode_id"),
+        _result_path(result, "episode_id"),
+        _result_path(result, "episodeId"),
+    )
+    account = _first_scope_value(
+        arguments.get("account"),
+        arguments.get("account_id"),
+        arguments.get("site_account"),
+        context.get("account"),
+        context.get("account_id"),
+        context.get("site_account"),
+        target.get("account"),
+        target.get("account_id"),
+        metadata.get("account"),
+        _result_path(result, "account"),
+    )
+    host = _first_scope_value(
+        target.get("host"),
+        context.get("host"),
+        _host_from_url(target.get("url")),
+        _host_from_url(context.get("url")),
+        _host_from_url(arguments.get("url")),
+        _result_host(result),
+    )
+    if not any((run_id, episode_id, account, host)):
+        return None
+    return "|".join(
+        (
+            f"run={run_id or 'unspecified'}",
+            f"episode={episode_id or 'unspecified'}",
+            f"account={account or 'unspecified'}",
+            f"host={_normalize_scope_host(host) or 'unspecified'}",
+        )
+    )
+
+
+def _first_scope_value(*values: Any) -> str | None:
+    for value in values:
+        text = str(value or "").strip()
+        if text:
+            return text
+    return None
+
+
+def _host_from_url(value: Any) -> str | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    parsed = urlparse(text if "://" in text else f"https://{text}")
+    host = parsed.netloc or parsed.path.split("/", 1)[0]
+    return _normalize_scope_host(host)
+
+
+def _normalize_scope_host(value: Any) -> str | None:
+    text = str(value or "").strip().lower()
+    return text or None
+
+
+def _result_path(result: Any, key: str) -> Any:
+    if not isinstance(result, dict):
+        return None
+    if key in result:
+        return result.get(key)
+    for container_key in ("snapshot", "target", "tab", "context", "metadata"):
+        container = result.get(container_key)
+        if isinstance(container, dict) and key in container:
+            return container.get(key)
+    return None
+
+
+def _result_host(result: Any) -> str | None:
+    if not isinstance(result, dict):
+        return None
+    for candidate in (
+        _result_path(result, "host"),
+        _host_from_url(_result_path(result, "url")),
+    ):
+        host = _normalize_scope_host(candidate)
+        if host:
+            return host
+    tabs = result.get("tabs")
+    if isinstance(tabs, list):
+        for tab in [item for item in tabs if isinstance(item, dict) and item.get("active")] or [item for item in tabs if isinstance(item, dict)][:1]:
+            host = _normalize_scope_host(tab.get("host")) or _host_from_url(tab.get("url"))
+            if host:
+                return host
+    return None
+
+
+def _sequence_state_for_scope(scope_key: str) -> dict[str, Any]:
+    return _BROWSER_HID_SEQUENCE_STATE.setdefault(
+        scope_key,
+        {
+            "last_browser_observation": None,
+            "pending_browser_observation_after_hid": None,
+            "audit": [],
+        },
+    )
+
+
+def _append_sequence_audit(scope_key: str, *, event: str, tool_name: str, blocked: bool = False, reason: str | None = None) -> None:
+    state = _sequence_state_for_scope(scope_key)
+    audit = list(state.get("audit") or [])
+    audit.append(
+        {
+            "event": event,
+            "tool_name": tool_name,
+            "blocked": blocked,
+            "reason": reason,
+            "scope": scope_key,
+            "at": utcnow().isoformat(),
+        }
+    )
+    state["audit"] = audit[-50:]
+
+
+def _sequence_audit_summary(scope_key: str) -> dict[str, Any]:
+    state = _sequence_state_for_scope(scope_key)
+    audit = list(state.get("audit") or [])
+    return {
+        "scope": scope_key,
+        "last_browser_observation": state.get("last_browser_observation"),
+        "pending_browser_observation_after_hid": state.get("pending_browser_observation_after_hid"),
+        "event_count": len(audit),
+        "last_events": audit[-5:],
+    }
+
+
 def _prepare_linear_browser_hid_tool_call(server: McpServer, tool_name: str, arguments: dict[str, Any]) -> None:
     if not _is_browser_hid_sequence_action(server, tool_name, arguments):
         return
-    pending = _BROWSER_HID_SEQUENCE_STATE["pending_browser_observation_after_hid"]
+    scope_key = _browser_hid_sequence_scope_key(arguments)
+    if scope_key is None:
+        raise McpBridgeError(
+            "Browser/HID sequence violation: browser-targeted hid_action requires a run, episode, account, or browser host scope. "
+            "Re-observe the browser target and carry the scoped target/context into hid_action."
+        )
+    state = _sequence_state_for_scope(scope_key)
+    pending = state["pending_browser_observation_after_hid"]
     if pending:
+        _append_sequence_audit(scope_key, event="hid_blocked", tool_name=tool_name, blocked=True, reason="pending_observation_after_hid")
         raise McpBridgeError(
             "Browser/HID sequence violation: the previous browser-targeted hid_action has not been followed by a browser observation. "
             "Call browser_snapshot, browser_wait_for_*, browser_query_elements, or another page observation tool before the next click/type/scroll HID action."
         )
-    if _BROWSER_HID_SEQUENCE_STATE["last_browser_observation"] is None:
+    if state["last_browser_observation"] is None:
+        _append_sequence_audit(scope_key, event="hid_blocked", tool_name=tool_name, blocked=True, reason="missing_prior_observation")
         raise McpBridgeError(
             "Browser/HID sequence violation: substantive browser HID actions require a prior browser observation. "
             "Call browser_snapshot or an equivalent browser observation/wait tool before hid_action."
@@ -663,11 +825,25 @@ def _record_linear_browser_hid_tool_call(server: McpServer, tool_name: str, argu
     if _is_browser_observation_tool(server, name):
         if not _browser_observation_result_is_valid(result):
             return
-        _BROWSER_HID_SEQUENCE_STATE["last_browser_observation"] = name
-        _BROWSER_HID_SEQUENCE_STATE["pending_browser_observation_after_hid"] = None
+        scope_key = _browser_hid_sequence_scope_key(arguments, result)
+        if scope_key is None:
+            return
+        state = _sequence_state_for_scope(scope_key)
+        state["last_browser_observation"] = name
+        state["pending_browser_observation_after_hid"] = None
+        _append_sequence_audit(scope_key, event="browser_observed", tool_name=name)
+        if isinstance(result, dict):
+            result.setdefault("sequence_audit", _sequence_audit_summary(scope_key))
         return
     if _is_browser_hid_sequence_action(server, name, arguments):
-        _BROWSER_HID_SEQUENCE_STATE["pending_browser_observation_after_hid"] = name
+        scope_key = _browser_hid_sequence_scope_key(arguments)
+        if scope_key is None:
+            return
+        state = _sequence_state_for_scope(scope_key)
+        state["pending_browser_observation_after_hid"] = name
+        _append_sequence_audit(scope_key, event="hid_action", tool_name=name)
+        if isinstance(result, dict):
+            result.setdefault("sequence_audit", _sequence_audit_summary(scope_key))
 
 
 def _normalize_discovered_tool(server: McpServer, payload: dict[str, Any]) -> dict[str, Any] | None:
@@ -909,6 +1085,68 @@ class McpRegistryService:
                 server = self._refresh_server_from_preset(session, server)
                 if server.protocol == STANDARD_MCP_PROTOCOL:
                     self._best_effort_sync_tools(session, server, tool_repo=tool_repo, replace_existing=True)
+
+    def browser_hid_preflight(self) -> dict[str, Any]:
+        checks: list[dict[str, Any]] = []
+        browser_ok = False
+        hid_ok = False
+        with self.session_factory() as session:
+            server_repo = McpServerRepository(session)
+            tool_repo = McpToolRepository(session)
+            for server in server_repo.enabled():
+                server = self._refresh_server_from_preset(session, server)
+                is_browser = _is_browser_mcp_tool(server, "browser_snapshot")
+                is_hid = _is_virtualhid_mcp_tool(server, "hid_action")
+                if not is_browser and not is_hid:
+                    continue
+                try:
+                    if server.protocol == STANDARD_MCP_PROTOCOL:
+                        self._sync_tools_for_server(session, server, tool_repo=tool_repo, replace_existing=True)
+                    enabled_names = {item.name for item in tool_repo.by_server(server.id, enabled_only=True)}
+                    if is_browser:
+                        missing = sorted({"browser_snapshot"} - enabled_names)
+                        browser_ok = browser_ok or not missing
+                        checks.append(
+                            {
+                                "server_key": server.server_key,
+                                "kind": "browser-mcp",
+                                "status": "healthy" if not missing else "missing_tools",
+                                "missing_tools": missing,
+                            }
+                        )
+                    if is_hid:
+                        missing = sorted({"hid_action", "hid_state"} - enabled_names)
+                        hid_ok = hid_ok or not missing
+                        checks.append(
+                            {
+                                "server_key": server.server_key,
+                                "kind": "VirtualHID",
+                                "status": "healthy" if not missing else "missing_tools",
+                                "missing_tools": missing,
+                            }
+                        )
+                except Exception as exc:
+                    self._mark_server_health(server.id, status="unhealthy", error_message=str(exc))
+                    checks.append(
+                        {
+                            "server_key": server.server_key,
+                            "kind": "browser-mcp" if is_browser else "VirtualHID",
+                            "status": "unhealthy",
+                            "error": str(exc),
+                        }
+                    )
+        status = "healthy" if browser_ok and hid_ok else "blocked"
+        missing_kinds = []
+        if not browser_ok:
+            missing_kinds.append("browser-mcp")
+        if not hid_ok:
+            missing_kinds.append("VirtualHID")
+        return {
+            "status": status,
+            "ok": status == "healthy",
+            "checks": checks,
+            "missing": missing_kinds,
+        }
 
     def invoke_tool(self, server: McpServer, tool: McpTool, arguments: dict[str, Any]) -> Any:
         remote_name = str(tool.remote_name or tool.name).strip()

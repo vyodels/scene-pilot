@@ -756,6 +756,8 @@ function normalizeSettings(raw: unknown): SettingsSnapshot {
       allowOutboundMessaging: Boolean(platform.allowOutboundMessaging ?? platform.allow_outbound_messaging ?? false),
       maxConcurrentRuns: Number(platform.maxConcurrentRuns ?? platform.max_concurrent_runs ?? 1),
       minFunnelCandidates: Number(platform.minFunnelCandidates ?? platform.min_funnel_candidates ?? 0),
+      behaviorBudget: asRecord(platform.behaviorBudget ?? platform.behavior_budget),
+      antiDetectionPolicy: asRecord(platform.antiDetectionPolicy ?? platform.anti_detection_policy),
     },
     userProfile: {
       nickname: String(userProfile.nickname ?? "招聘方"),

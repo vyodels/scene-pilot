@@ -108,11 +108,14 @@ class AppContainer:
         )
 
         learning_writer = LearningWriter(session_factory)
+        runtime_settings = resolved_settings.provider_runtime_settings()
         scene_context_service = SceneContextService(
             session_factory=session_factory,
             provider=provider,
             tool_registry=scene_context_tool_registry,
             plugin_host=plugin_host,
+            anti_detection_policy=dict(runtime_settings.anti_detection_policy),
+            behavior_budget=dict(runtime_settings.behavior_budget),
         )
         _register_delegate_scene_context_tool(tool_registry, scene_context_service=scene_context_service)
         autonomous_adapter = AutonomousAdapter(
@@ -123,6 +126,8 @@ class AppContainer:
             learning_writer=learning_writer,
             mcp_registry=mcp_registry,
             memory_file_store=memory_file_store,
+            anti_detection_policy=dict(runtime_settings.anti_detection_policy),
+            behavior_budget=dict(runtime_settings.behavior_budget),
         )
         heartbeat = Heartbeat(session_factory=session_factory, autonomous_adapter=autonomous_adapter)
 
@@ -182,6 +187,7 @@ class AppContainer:
     def reload_settings(self, settings: AppSettings) -> None:
         self.settings = settings
         self.providers, self.provider = _build_provider_bundle(settings)
+        runtime_settings = settings.provider_runtime_settings()
         self.tool_registry, self.scene_context_tool_registry = _build_runtime_tool_registries(
             settings=settings,
             session_factory=self.session_factory,
@@ -194,10 +200,14 @@ class AppContainer:
             provider=self.provider,
             tool_registry=self.scene_context_tool_registry,
             plugin_host=self.plugin_host,
+            anti_detection_policy=dict(runtime_settings.anti_detection_policy),
+            behavior_budget=dict(runtime_settings.behavior_budget),
         )
         _register_delegate_scene_context_tool(self.tool_registry, scene_context_service=self.scene_context_service)
         self.autonomous_adapter.provider = self.provider
         self.autonomous_adapter.tool_registry = self.tool_registry
+        self.autonomous_adapter.anti_detection_policy = dict(runtime_settings.anti_detection_policy)
+        self.autonomous_adapter.behavior_budget = dict(runtime_settings.behavior_budget)
         self.memory_file_store = _build_memory_file_store(settings)
         self.autonomous_adapter.memory_file_store = self.memory_file_store
         self.assistant_adapter.provider = self.provider

@@ -1860,6 +1860,8 @@ class PlatformSettingsRead(BaseModel):
     allowOutboundMessaging: bool
     maxConcurrentRuns: int = 1
     minFunnelCandidates: int = 0
+    behaviorBudget: dict[str, Any] = Field(default_factory=dict)
+    antiDetectionPolicy: dict[str, Any] = Field(default_factory=dict)
 
 
 class PlatformSettingsUpdate(BaseModel):
@@ -1869,6 +1871,8 @@ class PlatformSettingsUpdate(BaseModel):
     allowOutboundMessaging: bool | None = None
     maxConcurrentRuns: int | None = None
     minFunnelCandidates: int | None = None
+    behaviorBudget: dict[str, Any] | None = None
+    antiDetectionPolicy: dict[str, Any] | None = None
 
 
 class UserProfileSettingsRead(BaseModel):

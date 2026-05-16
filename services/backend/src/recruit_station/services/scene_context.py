@@ -45,6 +45,7 @@ _SCENE_BROWSER_TARGET_IDENTIFICATION_TOOL_NAMES = {
     "browser_get_active_tab",
 }
 _SCENE_BROWSER_PAGE_OBSERVATION_TOOL_NAMES = _SCENE_BROWSER_READ_ONLY_TOOL_NAMES - _SCENE_BROWSER_TARGET_IDENTIFICATION_TOOL_NAMES
+_SCENE_HID_BROWSER_SEQUENCE_PRIMITIVE_TYPES = {"click", "drag", "scroll", "type", "pasteText", "key"}
 
 
 @dataclass(slots=True)
@@ -55,9 +56,16 @@ class SceneContextService:
     plugin_host: PluginHost
     limits: SceneExecutionLimits = field(default_factory=SceneExecutionLimits)
     default_max_llm_invocations: int | None = None
+    anti_detection_policy: dict[str, Any] = field(default_factory=dict)
+    behavior_budget: dict[str, Any] = field(default_factory=dict)
 
     def delegate(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        request = _normalize_scene_request(arguments, default_max_llm_invocations=self.default_max_llm_invocations)
+        request = _normalize_scene_request(
+            arguments,
+            default_max_llm_invocations=self.default_max_llm_invocations,
+            default_anti_detection_policy=self.anti_detection_policy,
+            default_behavior_budget=self.behavior_budget,
+        )
         with self.session_factory() as session:
             task_repo = TaskSpecRepository(session)
             plan_repo = ExecutionPlanRepository(session)
@@ -83,6 +91,8 @@ class SceneContextService:
                         "environment_requirements": dict(request["environment_requirements"]),
                         "approval_policy": dict(request["approval_policy"]),
                         "output_contract": dict(request["output_contract"]),
+                        "anti_detection_policy": dict(request["anti_detection_policy"]),
+                        "behavior_budget": dict(request["behavior_budget"]),
                     },
                     "success_criteria": dict(request["success_criteria"]),
                     "approval_policy": dict(request["approval_policy"]),
@@ -112,6 +122,8 @@ class SceneContextService:
                     "runtime_metadata": {
                         "scene_context": True,
                         "approval_policy": dict(request["approval_policy"]),
+                        "anti_detection_policy": dict(request["anti_detection_policy"]),
+                        "behavior_budget": dict(request["behavior_budget"]),
                     },
                 }
             )
@@ -134,6 +146,8 @@ class SceneContextService:
                         "preferred_capabilities": list(request["preferred_capabilities"]),
                         "execution_contract": _scene_execution_contract(request),
                         "environment_context": _scene_environment_context(request, episode_id=None),
+                        "anti_detection_policy": dict(request["anti_detection_policy"]),
+                        "behavior_budget": dict(request["behavior_budget"]),
                     },
                 }
             )
@@ -171,6 +185,8 @@ class SceneContextService:
                         ),
                         "environment_requirements": _compact_value(request["environment_requirements"]),
                         "context": _compact_value(request["context"]),
+                        "anti_detection_policy": _compact_value(request["anti_detection_policy"]),
+                        "behavior_budget": _compact_value(request["behavior_budget"]),
                     },
                 }
             )
@@ -381,7 +397,13 @@ def _normalize_optional_positive_int(value: Any, *, default: int | None = None) 
     return parsed
 
 
-def _normalize_scene_request(arguments: dict[str, Any], *, default_max_llm_invocations: int | None) -> dict[str, Any]:
+def _normalize_scene_request(
+    arguments: dict[str, Any],
+    *,
+    default_max_llm_invocations: int | None,
+    default_anti_detection_policy: dict[str, Any] | None = None,
+    default_behavior_budget: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     instruction = str(arguments.get("instruction") or "").strip()
     if not instruction:
         raise ValueError("delegate_scene_context requires instruction")
@@ -393,6 +415,18 @@ def _normalize_scene_request(arguments: dict[str, Any], *, default_max_llm_invoc
     approval_policy = _as_dict(arguments.get("approval_policy"))
     context = _as_dict(arguments.get("context"))
     input_payload = _as_dict(arguments.get("input"))
+    anti_detection_policy = _merge_policy_dicts(
+        default_anti_detection_policy,
+        context.get("anti_detection_policy"),
+        environment_requirements.get("anti_detection_policy"),
+        arguments.get("anti_detection_policy"),
+    )
+    behavior_budget = _merge_policy_dicts(
+        default_behavior_budget,
+        context.get("behavior_budget"),
+        environment_requirements.get("behavior_budget"),
+        arguments.get("behavior_budget"),
+    )
     browser_target = _normalize_browser_target(
         derive_browser_target(
             existing=arguments.get("browser_target")
@@ -437,6 +471,12 @@ def _normalize_scene_request(arguments: dict[str, Any], *, default_max_llm_invoc
         context["artifact_expectations"] = artifact_expectations
         environment_requirements["artifact_expectations"] = artifact_expectations
         output_contract["artifact_expectations"] = artifact_expectations
+    if anti_detection_policy:
+        context["anti_detection_policy"] = anti_detection_policy
+        environment_requirements["anti_detection_policy"] = anti_detection_policy
+    if behavior_budget:
+        context["behavior_budget"] = behavior_budget
+        environment_requirements["behavior_budget"] = behavior_budget
     max_llm_invocations = _normalize_optional_positive_int(
         arguments.get("max_llm_invocations"),
         default=default_max_llm_invocations,
@@ -459,6 +499,8 @@ def _normalize_scene_request(arguments: dict[str, Any], *, default_max_llm_invoc
         "target_regions": target_regions,
         "action_plan": action_plan,
         "artifact_expectations": artifact_expectations,
+        "anti_detection_policy": anti_detection_policy,
+        "behavior_budget": behavior_budget,
         "max_llm_invocations": max_llm_invocations,
         "requested_by": requested_by,
     }
@@ -481,6 +523,11 @@ def _build_scene_instruction(request: dict[str, Any]) -> str:
             "不要把同 hostname 但不同端口、不同 origin 或旧测试 tab 当成当前任务目标；"
             "browser 侧只允许只读 snapshot/query/wait/target-identification；不得把 browser 工具当作点击、导航、下载、Cookie 或外壳维护执行器。"
             "若当前只读目标识别无法确认允许的目标页，停止当前动作并返回结构化 blocker 或请求 human 处理。"
+        )
+    if request["anti_detection_policy"] or request["behavior_budget"]:
+        parts.append(
+            "通用反检测与行为预算：必须遵守 anti_detection_policy 与 behavior_budget 中的通用节奏、停留、重试和 HID 动作上限；"
+            "这些字段只允许表达通用 human-paced 执行约束，不允许推导站点专用选择器、站点工作流分支、JS stealth 或 fingerprint 覆盖逻辑。"
         )
     if request["computer_target"] or "computer" in _scene_capabilities(request["preferred_capabilities"]):
         parts.append(
@@ -709,6 +756,12 @@ def _scene_tool_registry(
                 if precheck is not None:
                     return precheck
                 result = _original_handler(arguments)
+                _record_scene_browser_observation(
+                    browser_semantics,
+                    tool_name=_tool_name,
+                    result=result,
+                    request=request,
+                )
                 return _mask_scene_browser_target_mismatch(
                     tool_name=_tool_name,
                     result=result,
@@ -731,14 +784,214 @@ def _scene_tool_registry(
                 )
                 if precheck is not None:
                     return precheck
+                precheck = _validate_scene_browser_hid_sequence(
+                    normalized,
+                    request=request,
+                    browser_semantics=browser_semantics,
+                )
+                if precheck is not None:
+                    return precheck
                 arguments.clear()
                 arguments.update(normalized)
                 result = _original_handler(arguments)
+                _record_scene_hid_action(
+                    browser_semantics,
+                    arguments=normalized,
+                    request=request,
+                    result=result,
+                )
                 return _mask_scene_hid_overlay_blocker(result)
 
             cloned.handler = _handler
         registry.register(cloned)
     return registry
+
+
+def _validate_scene_browser_hid_sequence(
+    arguments: dict[str, Any],
+    *,
+    request: dict[str, Any],
+    browser_semantics: dict[str, Any],
+) -> dict[str, Any] | None:
+    if not _scene_hid_action_targets_browser(arguments):
+        return None
+    scope_key = _scene_sequence_scope_key(arguments, request=request)
+    state = _scene_sequence_state(browser_semantics, scope_key)
+    if state.get("pending_browser_observation_after_hid"):
+        return _scene_sequence_blocker(
+            scope_key=scope_key,
+            reason="pending_browser_observation_after_hid",
+            message="hid_action is blocked because the previous browser-targeted hid_action has not been followed by a browser observation inside this scene_context.",
+        )
+    if not state.get("last_browser_observation"):
+        observed_state = _compatible_scene_observation_state(browser_semantics, scope_key)
+        if observed_state is not None:
+            state["last_browser_observation"] = observed_state.get("last_browser_observation")
+        else:
+            return _scene_sequence_blocker(
+                scope_key=scope_key,
+                reason="missing_prior_browser_observation",
+                message="hid_action is blocked because scene_context requires browser observe/wait/query before browser-targeted HID actions.",
+            )
+    if not state.get("last_browser_observation"):
+        return _scene_sequence_blocker(
+            scope_key=scope_key,
+            reason="missing_prior_browser_observation",
+            message="hid_action is blocked because scene_context requires browser observe/wait/query before browser-targeted HID actions.",
+        )
+    return None
+
+
+def _record_scene_browser_observation(
+    browser_semantics: dict[str, Any],
+    *,
+    tool_name: str,
+    result: Any,
+    request: dict[str, Any],
+) -> None:
+    if tool_name not in _SCENE_BROWSER_PAGE_OBSERVATION_TOOL_NAMES:
+        return
+    if not _scene_observation_result_is_valid(result):
+        return
+    scope_key = _scene_sequence_scope_key({}, request=request, result=result)
+    state = _scene_sequence_state(browser_semantics, scope_key)
+    state["last_browser_observation"] = tool_name
+    state["pending_browser_observation_after_hid"] = None
+    _append_scene_sequence_audit(state, event="browser_observed", tool_name=tool_name, scope_key=scope_key)
+    if isinstance(result, dict):
+        result.setdefault("sequence_audit", _scene_sequence_audit_summary(scope_key, state))
+
+
+def _record_scene_hid_action(
+    browser_semantics: dict[str, Any],
+    *,
+    arguments: dict[str, Any],
+    request: dict[str, Any],
+    result: Any,
+) -> None:
+    if not _scene_hid_action_targets_browser(arguments):
+        return
+    scope_key = _scene_sequence_scope_key(arguments, request=request)
+    state = _scene_sequence_state(browser_semantics, scope_key)
+    state["pending_browser_observation_after_hid"] = "hid_action"
+    _append_scene_sequence_audit(state, event="hid_action", tool_name="hid_action", scope_key=scope_key)
+    if isinstance(result, dict):
+        result.setdefault("sequence_audit", _scene_sequence_audit_summary(scope_key, state))
+
+
+def _scene_hid_action_targets_browser(arguments: dict[str, Any]) -> bool:
+    target = _as_dict(arguments.get("target"))
+    context = _as_dict(arguments.get("context"))
+    geometry = _as_dict(arguments.get("geometry"))
+    primitives = list(arguments.get("primitives") or []) if isinstance(arguments.get("primitives"), list) else []
+    if not any(isinstance(item, dict) and str(item.get("type") or "").strip() in _SCENE_HID_BROWSER_SEQUENCE_PRIMITIVE_TYPES for item in primitives):
+        return False
+    if str(target.get("host") or context.get("host") or "").strip():
+        return True
+    if str(target.get("url") or context.get("url") or "").strip():
+        return True
+    if target.get("tabId") is not None or target.get("tab_id") is not None:
+        return True
+    return str(geometry.get("coordSpace") or geometry.get("coord_space") or "").strip().lower() in {"viewport", "document"}
+
+
+def _scene_sequence_scope_key(arguments: dict[str, Any], *, request: dict[str, Any], result: Any | None = None) -> str:
+    target = _as_dict(arguments.get("target"))
+    context = _as_dict(arguments.get("context"))
+    request_context = _as_dict(request.get("context"))
+    browser_target = _as_dict(request.get("browser_target"))
+    run_id = _first_non_empty(request_context.get("run_id"), request_context.get("runId"), request.get("run_id"))
+    episode_id = _first_non_empty(request_context.get("episode_id"), request_context.get("episodeId"), request.get("episode_id"))
+    account = _first_non_empty(
+        request_context.get("account"),
+        request_context.get("site_account"),
+        _as_dict(request.get("environment_requirements")).get("account"),
+        _as_dict(request.get("environment_requirements")).get("site_account"),
+    )
+    host = _first_non_empty(
+        target.get("host"),
+        context.get("host"),
+        _host_from_url(target.get("url")),
+        _host_from_url(context.get("url")),
+        browser_target.get("host"),
+        _host_from_url(browser_target.get("url")),
+        _browser_result_url(result) if isinstance(result, dict) else None,
+    )
+    return "|".join(
+        (
+            f"run={run_id or 'scene'}",
+            f"episode={episode_id or 'scene'}",
+            f"account={account or 'unspecified'}",
+            f"host={_normalize_host_boundary(_host_from_url(host) or host) or 'unspecified'}",
+        )
+    )
+
+
+def _first_non_empty(*values: Any) -> str | None:
+    for value in values:
+        text = _optional_string(value)
+        if text:
+            return text
+    return None
+
+
+def _scene_sequence_state(browser_semantics: dict[str, Any], scope_key: str) -> dict[str, Any]:
+    states = browser_semantics.setdefault("sequence_state", {})
+    return states.setdefault(scope_key, {"last_browser_observation": None, "pending_browser_observation_after_hid": None, "audit": []})
+
+
+def _compatible_scene_observation_state(browser_semantics: dict[str, Any], scope_key: str) -> dict[str, Any] | None:
+    host_suffix = scope_key.rsplit("|host=", 1)[-1]
+    states = browser_semantics.get("sequence_state")
+    if not isinstance(states, dict) or not host_suffix:
+        return None
+    for key, state in states.items():
+        if not isinstance(state, dict):
+            continue
+        if not str(key).endswith(f"|host={host_suffix}"):
+            continue
+        if state.get("last_browser_observation") and not state.get("pending_browser_observation_after_hid"):
+            return state
+    return None
+
+
+def _append_scene_sequence_audit(state: dict[str, Any], *, event: str, tool_name: str, scope_key: str, reason: str | None = None) -> None:
+    audit = list(state.get("audit") or [])
+    audit.append({"event": event, "tool_name": tool_name, "scope": scope_key, "reason": reason, "at": utcnow().isoformat()})
+    state["audit"] = audit[-50:]
+
+
+def _scene_sequence_audit_summary(scope_key: str, state: dict[str, Any]) -> dict[str, Any]:
+    audit = list(state.get("audit") or [])
+    return {
+        "scope": scope_key,
+        "last_browser_observation": state.get("last_browser_observation"),
+        "pending_browser_observation_after_hid": state.get("pending_browser_observation_after_hid"),
+        "event_count": len(audit),
+        "last_events": audit[-5:],
+    }
+
+
+def _scene_sequence_blocker(*, scope_key: str, reason: str, message: str) -> dict[str, Any]:
+    return {
+        "success": False,
+        "error": "scene_browser_hid_sequence_blocked",
+        "message": message,
+        "sequence_audit": {
+            "scope": scope_key,
+            "reason": reason,
+        },
+    }
+
+
+def _scene_observation_result_is_valid(result: Any) -> bool:
+    if not isinstance(result, dict):
+        return True
+    if result.get("success") is False or result.get("ok") is False or bool(result.get("isError")):
+        return False
+    if _optional_string(result.get("error")):
+        return False
+    return str(result.get("status") or "").strip().lower() not in {"blocked", "error", "failed", "failure", "timeout"}
 
 
 def _validate_scene_hid_action_target(
@@ -1425,6 +1678,14 @@ def _as_dict(value: Any) -> dict[str, Any]:
     return {}
 
 
+def _merge_policy_dicts(*values: Any) -> dict[str, Any]:
+    merged: dict[str, Any] = {}
+    for value in values:
+        if isinstance(value, dict):
+            merged.update({str(key): item for key, item in value.items() if str(key).strip()})
+    return merged
+
+
 def _string_list(value: Any) -> list[str]:
     items: list[str] = []
     raw_values = list(value or []) if isinstance(value, list) else ([value] if value not in (None, "") else [])
@@ -1515,6 +1776,10 @@ def _scene_execution_contract(request: dict[str, Any]) -> dict[str, Any]:
         contract["action_plan"] = [dict(item) for item in request["action_plan"]]
     if request["artifact_expectations"]:
         contract["artifact_expectations"] = dict(request["artifact_expectations"])
+    if request["anti_detection_policy"]:
+        contract["anti_detection_policy"] = dict(request["anti_detection_policy"])
+    if request["behavior_budget"]:
+        contract["behavior_budget"] = dict(request["behavior_budget"])
     return contract
 
 
@@ -1549,6 +1814,8 @@ def _scene_environment_context(request: dict[str, Any], *, episode_id: str | Non
         "target_regions": [dict(item) for item in request["target_regions"]],
         "action_plan": [dict(item) for item in request["action_plan"]],
         "artifact_expectations": dict(request["artifact_expectations"]) if request["artifact_expectations"] else {},
+        "anti_detection_policy": dict(request["anti_detection_policy"]) if request["anti_detection_policy"] else {},
+        "behavior_budget": dict(request["behavior_budget"]) if request["behavior_budget"] else {},
     }
 
 

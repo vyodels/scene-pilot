@@ -30,6 +30,27 @@ class ProviderRuntimeSettings(BaseModel):
     cooldown_days: int = 30
     autonomy_min_funnel_candidates: int = 0
     autonomy_sourcing_cooldown_seconds: int = 60
+    anti_detection_policy: dict[str, Any] = Field(
+        default_factory=lambda: {
+            "mode": "generic_human_paced",
+            "require_browser_hid_preflight": True,
+            "prohibited_runtime_logic": [
+                "site_specific_selectors",
+                "stealth_javascript",
+                "fingerprinting_overrides",
+            ],
+        }
+    )
+    behavior_budget: dict[str, Any] = Field(
+        default_factory=lambda: {
+            "max_candidates_per_hour": 20,
+            "max_candidates_per_day": 120,
+            "candidate_gap_seconds": 90,
+            "page_dwell_seconds": 20,
+            "max_hid_actions_per_candidate": 40,
+            "retry_backoff_seconds": [30, 120, 300],
+        }
+    )
 
     def get(self, name: str, default: Any = None) -> Any:
         return getattr(self, name, default)

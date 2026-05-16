@@ -499,6 +499,14 @@ def build_delegate_scene_context_tool(
                     "type": "object",
                     "description": "Optional top-level shortcut for artifact expectations; equivalent to output_contract.artifact_expectations. For browser downloads, include download_attribution/source_url/expected_filename/started_at when available so the local watcher can correlate a newly created file with the clicked link.",
                 },
+                "anti_detection_policy": {
+                    "type": "object",
+                    "description": "Generic human-paced execution policy. Do not use this for site-specific selectors, site workflow branches, JS stealth, or fingerprinting logic.",
+                },
+                "behavior_budget": {
+                    "type": "object",
+                    "description": "Generic account/run behavior budget such as candidate rate, page dwell, HID action cap, and retry backoff.",
+                },
                 "approval_policy": {"type": "object"},
                 "input": {"type": "object"},
                 "context": {
