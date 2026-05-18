@@ -2366,6 +2366,8 @@ export function ChatOverlay({
     [jdSyncWorkspace],
   );
   const runtimeActiveRun = activeAgent === "jd_sync" ? jdSyncActiveRun : activeAgent === "autonomous" ? autonomousActiveRun : null;
+  const runtimeExecutingRun = runtimeActiveRun && isActivelyExecutingRunStatus(runtimeActiveRun.status) ? runtimeActiveRun : null;
+  const runtimeResumableRun = runtimeActiveRun && isResumableRunStatus(runtimeActiveRun.status) ? runtimeActiveRun : null;
   const activeConversationRun = useMemo(() => {
     if (!activeWorkspace || activeAgent === "assistant") {
       return null;
@@ -3858,6 +3860,14 @@ export function ChatOverlay({
         tone: "error",
         message: `${activeAgent === "jd_sync" ? copy("Complete configuration before starting JD Sync:", "启动 JD 同步前请先补全配置：") : copy("Complete configuration before starting automation:", "启动自动化前请先补全配置：")} ${activeWorkspaceStartBlockers.join("；")}`,
       });
+      return;
+    }
+    if (action === "continue" && runtimeResumableRun) {
+      await handleRunAction(runtimeResumableRun, "resume");
+      if (activeWorkspaceControlState !== "running") {
+        await apiClient.controlRuntimeWorkspace(activeAgent, "continue", copy("Workspace continued for resumed run.", "为恢复运行继续工作区。"));
+        await loadWorkspaces();
+      }
       return;
     }
     if (action === "start" && activeAgent !== "jd_sync" && activeConversationRun && !isOpenRunStatus(activeConversationRun.status)) {
@@ -6632,7 +6642,7 @@ export function ChatOverlay({
     if (activeAgent === "assistant") {
       return null;
     }
-    if (runtimeActiveRun && activeWorkspaceControlState === "running") {
+    if (runtimeExecutingRun && activeWorkspaceControlState === "running") {
       return (
         <button
           type="button"
@@ -6645,7 +6655,7 @@ export function ChatOverlay({
         </button>
       );
     }
-    if (runtimeActiveRun && activeWorkspaceControlState === "paused") {
+    if (runtimeResumableRun || (runtimeActiveRun && activeWorkspaceControlState === "paused")) {
       return (
         <button
           type="button"

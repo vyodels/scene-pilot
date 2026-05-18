@@ -3,7 +3,11 @@ from __future__ import annotations
 from agent_runtime.fixtures import LLMResponse, ScriptedProvider, ToolCall
 
 from recruit_station.capabilities.tools import ToolDefinition, ToolRegistry
-from recruit_station.agents.autonomous import _final_output_continuation_resolver
+from recruit_station.agents.autonomous import (
+    _final_output_continuation_resolver,
+    _jd_sync_recoverable_scene_retry_needed,
+    _outcome_from_final_output_text,
+)
 from recruit_station.product_adapters.agent_runner import run_agent_turn
 from recruit_station.product_adapters.context_builder import build_assistant_turn_context, build_autonomous_turn_context
 from recruit_station.product_adapters.result_semantics import extract_execution_status
@@ -205,6 +209,100 @@ def test_jd_sync_continuation_allows_real_login_boundary_to_stop() -> None:
         "本轮阻塞，未完成全量 JD 同步。目标页面要求重新登录和验证码，无法继续读取剩余详情。",
         [{"tool_name": "delegate_scene_context"}],
         [{"tool_name": "delegate_scene_context", "result": {"status": "blocked"}}],
+        0,
+        {},
+    )
+
+    assert continuation is None
+
+
+def test_jd_sync_continuation_detects_still_needs_continue_output() -> None:
+    resolver = _final_output_continuation_resolver(agent_kind="jd_sync")
+    assert resolver is not None
+
+    final_output = (
+        "仍需继续，但当前没有新的可写回 JD 详情证据。\n"
+        "- 仍未成功确认进入任一职位详情页\n"
+        "- completed_job_details 仍为空\n"
+        "- 还不能调用本地 JD 写回\n"
+        "本轮仍出现 E_NOT_FRONTMOST 和 E_DAEMON_UNREACHABLE。"
+    )
+
+    continuation = resolver(
+        final_output,
+        [{"tool_name": "delegate_scene_context"}],
+        [{"tool_name": "delegate_scene_context", "result": {"status": "blocked"}}],
+        0,
+        {},
+    )
+
+    assert continuation is not None
+    assert _outcome_from_final_output_text(final_output) == ("escalate", "escalate")
+
+
+def test_jd_sync_continuation_reads_recoverable_scene_tool_result_even_with_bland_summary() -> None:
+    resolver = _final_output_continuation_resolver(agent_kind="jd_sync")
+    assert resolver is not None
+
+    continuation = resolver(
+        "已完成。",
+        [{"tool_name": "delegate_scene_context"}],
+        [
+            {
+                "tool_name": "delegate_scene_context",
+                "output": {
+                    "status": "blocked",
+                    "summary": "返回列表时 E_TIMEOUT，但目标站点仍可访问，仍需继续读取剩余职位详情。",
+                    "remaining_work": ["resume_remaining_job_details"],
+                    "completed_job_details": [],
+                },
+            }
+        ],
+        0,
+        {},
+    )
+
+    assert continuation is not None
+    assert "继续同一个 turn" in continuation
+
+
+def test_jd_sync_recoverable_scene_retry_detects_frontmost_blocker_after_repeated_recovery() -> None:
+    assert _jd_sync_recoverable_scene_retry_needed(
+        final_output=(
+            "已按要求继续恢复，但当前未能继续进入职位列表。"
+            "真实 HID 注入仍被前台焦点条件拦截，目标同源页面仍稳定可读。"
+        ),
+        tool_results=[
+            {
+                "tool_name": "delegate_scene_context",
+                "output": {
+                    "status": "blocked",
+                    "summary": "E_NOT_FRONTMOST，目标站点仍可访问，剩余职位未完成详情读取。",
+                    "remaining_work": ["read_remaining_job_details"],
+                },
+            }
+        ],
+        result_data={},
+    )
+
+
+def test_jd_sync_continuation_allows_terminal_login_scene_boundary() -> None:
+    resolver = _final_output_continuation_resolver(agent_kind="jd_sync")
+    assert resolver is not None
+
+    continuation = resolver(
+        "已阻塞，目标站点要求重新登录和验证码，无法继续读取职位详情。",
+        [{"tool_name": "delegate_scene_context"}],
+        [
+            {
+                "tool_name": "delegate_scene_context",
+                "output": {
+                    "status": "blocked",
+                    "summary": "目标站点要求重新登录和验证码，无法继续读取职位详情。",
+                    "blockers": [{"kind": "auth_required", "message": "需要登录和验证码"}],
+                },
+            }
+        ],
         0,
         {},
     )

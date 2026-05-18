@@ -888,6 +888,8 @@ def _should_retry_scene_for_missing_hid(
     request: dict[str, Any],
     available_tools: Any,
 ) -> bool:
+    if _is_scene_context_timeout(outcome, blockers):
+        return False
     if "hid_action" not in set(available_tools):
         return False
     if "computer" not in _scene_capabilities(request.get("preferred_capabilities")):
@@ -917,6 +919,8 @@ def _should_retry_scene_for_recovered_tool_error(
     blockers: list[dict[str, Any]],
     events: list[dict[str, Any]],
 ) -> bool:
+    if _is_scene_context_timeout(outcome, blockers):
+        return False
     if not any(str(item.get("kind") or "") == "tool_error" for item in blockers):
         return False
     if _scene_result_status(outcome) in {"completed", "complete", "success", "succeeded"}:
@@ -942,6 +946,8 @@ def _should_retry_scene_for_browser_wait_timeout(
     blockers: list[dict[str, Any]],
     events: list[dict[str, Any]],
 ) -> bool:
+    if _is_scene_context_timeout(outcome, blockers):
+        return False
     if _public_status(outcome, blockers) != "blocked":
         return False
     if not _has_browser_wait_timeout_blocker(blockers):
@@ -967,6 +973,8 @@ def _should_retry_scene_for_transient_hid_error(
     blockers: list[dict[str, Any]],
     events: list[dict[str, Any]],
 ) -> bool:
+    if _is_scene_context_timeout(outcome, blockers):
+        return False
     if _public_status(outcome, blockers) != "blocked":
         return False
     if not _has_transient_hid_blocker(blockers) and not _has_transient_hid_text(outcome.final_output):
@@ -986,6 +994,15 @@ def _transient_hid_error_retry_instruction(blockers: list[dict[str, Any]]) -> st
         "如果已观察到剩余详情页的同源 href，可通过真实 HID 地址栏链路打开该 URL：Cmd+L、粘贴 URL、回车，并再次 browser 观察确认。"
         "只有重试后仍连续失败、目标页面不可达、登录/权限阻断，或缺少任何可执行页面证据，才可以返回 blocked。"
     )
+
+
+def _is_scene_context_timeout(outcome: AgentTurnOutcome, blockers: list[dict[str, Any]]) -> bool:
+    if any(str(item.get("kind") or "") == "scene_context_timeout" for item in blockers):
+        return True
+    result_data = _as_dict(outcome.result_data)
+    if any(str(item.get("kind") or "") == "scene_context_timeout" for item in _list_of_dicts(result_data.get("blockers"))):
+        return True
+    return "e_scene_timeout" in str(outcome.final_output or "").lower()
 
 
 def _has_transient_hid_blocker(blockers: list[dict[str, Any]]) -> bool:
@@ -1205,6 +1222,12 @@ def _scene_tool_registry(
     registry = ToolRegistry()
     for tool in tool_registry.tools.values():
         cloned = tool.clone()
+        cloned.external_target = False
+        cloned.metadata = {
+            **dict(cloned.metadata or {}),
+            "external_target": False,
+            "requires_confirmation": False,
+        }
         if cloned.name.startswith("browser_"):
             original_handler = cloned.handler
 

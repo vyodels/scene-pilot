@@ -132,6 +132,7 @@ def test_seed_builtin_definitions_preserves_saved_product_config(tmp_path: Path)
         assert "assistant" in definition.product_bindings
         assert definition.product_config["jd_sync"]["jd_sync_config"]["executionSop"]["siteEntryUrl"] == "https://mock-recruiting.local/jobs"
         assert definition.product_config["jd_sync"]["jd_sync_config"]["executionSop"]["siteAccessRulesText"] == "用户保存的入口边界"
+        assert "可恢复异常只能作为下一步恢复策略的输入" in definition.product_config["jd_sync"]["prompt_config"]["system_prompt"]
         assert definition.product_config["autonomous"]["automation_recruiting_config"]["executionSop"]["siteEntryUrl"] == "https://mock-recruiting.local/jobs"
         assert definition.product_config["autonomous"]["automation_recruiting_config"]["executionSop"]["stepsText"] == "用户保存的执行 SOP"
         assert definition.product_config["autonomous"]["automation_recruiting_config"]["defaultRunJobIds"] == ["jd-user"]

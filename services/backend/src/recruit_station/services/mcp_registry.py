@@ -915,11 +915,158 @@ def _result_host(result: Any) -> str | None:
     return None
 
 
+def _result_browser_target_context(result: Any) -> dict[str, Any]:
+    if not isinstance(result, dict):
+        return {}
+    candidates = _browser_result_tab_candidates(result)
+    snapshot = result.get("snapshot") if isinstance(result.get("snapshot"), dict) else {}
+    target = result.get("target") if isinstance(result.get("target"), dict) else {}
+    active = candidates[0] if candidates else {}
+    host = _normalize_scope_host(active.get("host")) or _normalize_scope_host(target.get("host")) or _result_host(result)
+    url = active.get("url") or target.get("url") or snapshot.get("url") or _result_path(result, "url")
+    tab_id = active.get("tabId") or active.get("tab_id") or active.get("id") or target.get("tabId") or target.get("tab_id") or result.get("tabId") or result.get("tab_id")
+    window_id = active.get("windowId") or active.get("window_id") or target.get("windowId") or target.get("window_id") or result.get("windowId") or result.get("window_id")
+    window_title = active.get("windowTitle") or active.get("window_title") or target.get("windowTitle") or target.get("window_title") or active.get("title") or target.get("title") or snapshot.get("title")
+    viewport = _browser_result_viewport(result, active=active, target=target, snapshot=snapshot)
+    bounds = _browser_result_window_bounds(result, active=active, target=target, snapshot=snapshot, viewport=viewport)
+    context = {
+        key: value
+        for key, value in {
+            "host": host,
+            "url": url,
+            "tabId": tab_id,
+            "windowId": window_id,
+            "windowTitle": window_title,
+            "browserWindowBounds": bounds,
+            "viewport": viewport,
+        }.items()
+        if value not in (None, "", {})
+    }
+    return context
+
+
+def _browser_result_tab_candidates(result: dict[str, Any]) -> list[dict[str, Any]]:
+    candidates: list[dict[str, Any]] = []
+    for key in ("target", "tab"):
+        value = result.get(key)
+        if isinstance(value, dict):
+            candidates.append(value)
+    tabs = result.get("tabs")
+    if isinstance(tabs, list):
+        tab_dicts = [item for item in tabs if isinstance(item, dict)]
+        candidates.extend([item for item in tab_dicts if item.get("active")])
+        candidates.extend([item for item in tab_dicts if not item.get("active")])
+    if any(key in result for key in ("id", "tabId", "tab_id", "url", "title", "windowId", "window_id", "host")):
+        candidates.append(result)
+    return candidates
+
+
+def _browser_result_viewport(
+    result: dict[str, Any],
+    *,
+    active: dict[str, Any],
+    target: dict[str, Any],
+    snapshot: dict[str, Any],
+) -> dict[str, Any] | None:
+    for candidate in (
+        active.get("viewport"),
+        target.get("viewport"),
+        snapshot.get("viewport"),
+        result.get("viewport"),
+    ):
+        viewport = candidate if isinstance(candidate, dict) else None
+        if viewport:
+            return viewport
+    return None
+
+
+def _browser_result_window_bounds(
+    result: dict[str, Any],
+    *,
+    active: dict[str, Any],
+    target: dict[str, Any],
+    snapshot: dict[str, Any],
+    viewport: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    for candidate in (
+        active.get("browserWindowBounds"),
+        active.get("browser_window_bounds"),
+        active.get("windowBounds"),
+        active.get("window_bounds"),
+        target.get("browserWindowBounds"),
+        target.get("browser_window_bounds"),
+        target.get("windowBounds"),
+        target.get("window_bounds"),
+        result.get("browserWindowBounds"),
+        result.get("browser_window_bounds"),
+        result.get("windowBounds"),
+        result.get("window_bounds"),
+        _browser_window_bounds_from_window(active.get("window")),
+        _browser_window_bounds_from_window(target.get("window")),
+        _browser_window_bounds_from_window(result.get("window")),
+        _browser_window_bounds_from_viewport(viewport),
+        _browser_window_bounds_from_viewport(snapshot.get("viewport")),
+    ):
+        bounds = _normalize_browser_window_bounds(candidate)
+        if bounds:
+            return bounds
+    return None
+
+
+def _browser_window_bounds_from_window(window: Any) -> dict[str, Any] | None:
+    if not isinstance(window, dict):
+        return None
+    return _normalize_browser_window_bounds(
+        {
+            "x": window.get("left"),
+            "y": window.get("top"),
+            "width": window.get("width"),
+            "height": window.get("height"),
+        }
+    )
+
+
+def _browser_window_bounds_from_viewport(viewport: Any) -> dict[str, Any] | None:
+    if not isinstance(viewport, dict):
+        return None
+    return _normalize_browser_window_bounds(
+        {
+            "x": viewport.get("screenX"),
+            "y": viewport.get("screenY"),
+            "width": viewport.get("outerWidth"),
+            "height": viewport.get("outerHeight"),
+        }
+    )
+
+
+def _normalize_browser_window_bounds(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    x = _optional_float(value.get("x") if value.get("x") is not None else value.get("left"))
+    y = _optional_float(value.get("y") if value.get("y") is not None else value.get("top"))
+    width = _optional_float(value.get("width"))
+    height = _optional_float(value.get("height"))
+    if x is None or y is None or width is None or height is None or width <= 0 or height <= 0:
+        return None
+    return {"x": x, "y": y, "width": width, "height": height}
+
+
+def _optional_float(value: Any) -> float | int | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if number.is_integer():
+        return int(number)
+    return number
+
+
 def _sequence_state_for_scope(scope_key: str) -> dict[str, Any]:
     return _BROWSER_HID_SEQUENCE_STATE.setdefault(
         scope_key,
         {
             "last_browser_observation": None,
+            "last_browser_target_context": None,
             "pending_browser_observation_after_hid": None,
             "audit": [],
         },
@@ -977,6 +1124,30 @@ def _prepare_linear_browser_hid_tool_call(server: McpServer, tool_name: str, arg
             "Browser/HID sequence violation: substantive browser HID actions require a prior browser observation. "
             "Call browser_snapshot or an equivalent browser observation/wait tool before hid_action."
         )
+    _hydrate_browser_hid_target_context(arguments, state)
+
+
+def _hydrate_browser_hid_target_context(arguments: dict[str, Any], state: dict[str, Any]) -> None:
+    observed = state.get("last_browser_target_context")
+    if not isinstance(observed, dict) or not observed:
+        return
+    original_target = arguments.get("target") if isinstance(arguments.get("target"), dict) else {}
+    target = dict(original_target)
+    observed_bounds = _normalize_browser_window_bounds(observed.get("browserWindowBounds"))
+    existing_bounds = _normalize_browser_window_bounds(target.get("browserWindowBounds") or target.get("browser_window_bounds") or target.get("windowBounds") or target.get("window_bounds"))
+    if observed_bounds and not existing_bounds:
+        target["browserWindowBounds"] = observed_bounds
+    for source_key, target_key in (
+        ("host", "host"),
+        ("tabId", "tabId"),
+        ("windowId", "windowId"),
+        ("windowTitle", "windowTitle"),
+    ):
+        value = observed.get(source_key)
+        if value not in (None, "", {}) and target.get(target_key) in (None, "", {}):
+            target[target_key] = value
+    if target != original_target:
+        arguments["target"] = target
 
 
 def _browser_observation_result_is_valid(result: Any) -> bool:
@@ -1000,6 +1171,9 @@ def _record_linear_browser_hid_tool_call(server: McpServer, tool_name: str, argu
             return
         state = _sequence_state_for_scope(scope_key)
         state["last_browser_observation"] = name
+        observed_context = _result_browser_target_context(result)
+        if observed_context:
+            state["last_browser_target_context"] = observed_context
         state["pending_browser_observation_after_hid"] = None
         _append_sequence_audit(scope_key, event="browser_observed", tool_name=name)
         if isinstance(result, dict):

@@ -43,6 +43,7 @@ from recruit_station.services.recruit_station import (
     normalize_prompt_config,
     resolve_context_policy,
     resolve_memory_policy,
+    _refresh_builtin_product_prompt_config,
 )
 from recruit_station.services.dashboard import DashboardService
 from recruit_station.services.download_attribution import LocalDownloadAttributionService
@@ -585,6 +586,8 @@ def _seed_builtin_agent_definitions(session_factory: sessionmaker[Session]) -> N
         for key in ("product_bindings", "product_config", "product_projections"):
             existing_value = dict(getattr(definition, key) or {})
             merged_value = _merge_missing_default_config(existing_value, dict(default_definition[key]))
+            if key == "product_config":
+                merged_value = _refresh_builtin_product_prompt_config(merged_value)
             if merged_value != existing_value:
                 updates[key] = merged_value
         metadata = dict(definition.agent_metadata or {})

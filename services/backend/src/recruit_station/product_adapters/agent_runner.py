@@ -34,6 +34,7 @@ class AgentEngineResult:
     pending_tool_calls: list[dict[str, Any]]
     engine_output_count: int
     last_seq: int
+    continuation_attempts: int
     engine: InteractionEngine
 
 
@@ -202,6 +203,7 @@ def run_agent_turn(
         pending_tool_calls=pending_tool_calls,
         engine_output_count=engine_output_count,
         last_seq=last_seq,
+        continuation_attempts=continuation_attempt,
         engine=engine,
     )
 

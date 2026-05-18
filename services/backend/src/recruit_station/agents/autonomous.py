@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
+from datetime import timedelta
 import json
 import re
 from threading import RLock
@@ -11,6 +12,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from recruit_station.agent_runtime.engine import InteractionEngine, transcript_from_checkpoint
+from recruit_station.agent_runtime.providers import ProviderError
 from recruit_station.agent_runtime.types import InteractionOutput, LLMMessage, LLMProvider, ToolCall, ToolResult, TurnContext
 from recruit_station.db.base import utcnow
 from recruit_station.evolution.learning_writer import LearningWriter
@@ -64,6 +66,8 @@ AUTONOMOUS_OPEN_RUN_STATUSES: tuple[str, ...] = (
 RUNTIME_AGENT_KINDS: tuple[str, ...] = ("autonomous", "jd_sync")
 AUTONOMOUS_PRIMARY_CONVERSATION_ID = "autonomous-primary"
 JD_SYNC_PRIMARY_CONVERSATION_ID = "jd-sync-primary"
+TRANSIENT_PROVIDER_RETRY_MAX_ATTEMPTS = 3
+JD_SYNC_RECOVERABLE_SCENE_RETRY_MAX_ATTEMPTS = 8
 
 
 @dataclass(slots=True)
@@ -401,8 +405,10 @@ class AutonomousAdapter:
                         "tool_calls": runner_result.tool_calls,
                         "pending_tool_calls": runner_result.pending_tool_calls,
                         "tool_results": runner_result.tool_results,
+                        "final_result_data": runner_result.final_result_data,
                         "runtime_checkpoint": runner_result.engine.checkpoint_state(),
                         "interaction_engine": True,
+                        "continuation_attempts": runner_result.continuation_attempts,
                     },
                 )
                 if runner_result.status == "wait_human":
@@ -413,6 +419,20 @@ class AutonomousAdapter:
                 self.pending_permission_engines.pop(run.id, None)
                 session.refresh(run)
                 interrupted_status = _terminal_interrupt_status(run.status)
+                retry_outcome = None
+                if interrupted_status is None and _is_transient_provider_error(exc):
+                    retry_outcome = _queue_transient_provider_retry(
+                        session,
+                        run=run,
+                        turn=turn,
+                        envelope=envelope,
+                        exc=exc,
+                        engine_output_count=engine_output_count,
+                        next_seq=next_seq,
+                    )
+                if retry_outcome is not None:
+                    session.commit()
+                    return retry_outcome
                 turn.status = interrupted_status or "failed"
                 turn.phase = "evaluate"
                 turn.outcome_kind = interrupted_status or "error"
@@ -458,6 +478,18 @@ class AutonomousAdapter:
                 run.finished_at = utcnow()
             if not preserve_interrupted_status:
                 run.last_error = None
+            retry_outcome = _queue_jd_sync_recoverable_scene_retry(
+                session,
+                run=run,
+                turn=turn,
+                envelope=envelope,
+                outcome=last_outcome,
+                engine_output_count=engine_output_count,
+                next_seq=runtime_event_seq + 1,
+            )
+            if retry_outcome is not None:
+                session.commit()
+                return retry_outcome
             if _is_waiting_human(last_outcome):
                 _materialize_wait_human_records(
                     session,
@@ -810,7 +842,288 @@ def _outcome_from_final_output_text(value: str) -> tuple[str, str] | None:
         marker in normalized for marker in ("blocked", "blocker", "blocked reason")
     ):
         return "escalate", "escalate"
+    if any(
+        marker in text
+        for marker in (
+            "仍需继续",
+            "还需要继续",
+            "需要继续",
+            "未成功确认",
+            "还不能调用",
+            "还不能继续",
+            "还不能写回",
+            "不能调用本地 JD 写回",
+            "completed_job_details 仍为空",
+            "没有新的可写回 JD 详情证据",
+        )
+    ):
+        return "escalate", "escalate"
     return None
+
+
+def _is_transient_provider_error(exc: BaseException) -> bool:
+    if isinstance(exc, ProviderError):
+        if exc.retryable:
+            return True
+        if exc.status_code in {408, 409, 425, 429, 500, 502, 503, 504}:
+            return True
+    message = str(exc or "").strip().lower()
+    if not message or "provider unavailable" in message:
+        return False
+    return any(
+        marker in message
+        for marker in (
+            "http 408",
+            "http 409",
+            "http 425",
+            "http 429",
+            "http 500",
+            "http 502",
+            "http 503",
+            "http 504",
+            "server_error",
+            "internal_server_error",
+            "unexpected eof",
+            " eof",
+            "connection reset",
+            "connection aborted",
+            "temporarily unavailable",
+            "timeout",
+            "timed out",
+        )
+    )
+
+
+def _queue_transient_provider_retry(
+    session: Session,
+    *,
+    run: AgentRun,
+    turn: AgentTurnRecord,
+    envelope: dict[str, Any],
+    exc: BaseException,
+    engine_output_count: int,
+    next_seq: int,
+) -> AgentTurnOutcome | None:
+    metadata = dict(envelope.get("metadata") or {}) if isinstance(envelope.get("metadata"), dict) else {}
+    retry_count = _safe_int(metadata.get("provider_retry_count")) or 0
+    if retry_count >= TRANSIENT_PROVIDER_RETRY_MAX_ATTEMPTS:
+        return None
+
+    next_retry_count = retry_count + 1
+    delay_seconds = min(30, 3 * (2 ** retry_count))
+    retry_envelope = dict(envelope or {})
+    retry_envelope["run_pk"] = run.id
+    retry_envelope["run_id"] = run.run_id
+    retry_envelope["trigger_type"] = "provider_retry"
+    retry_metadata = dict(metadata)
+    retry_metadata.update(
+        {
+            "provider_retry_count": next_retry_count,
+            "provider_retry_error": str(exc),
+            "provider_retry_previous_turn_id": turn.turn_id,
+        }
+    )
+    retry_envelope["metadata"] = retry_metadata
+    task = TaskQueueRepository(session).enqueue(
+        task_id=f"run-{run.id}-provider-retry-{uuid4().hex[:8]}",
+        task_type="autonomous_turn",
+        priority=int(run.priority or 100),
+        payload=retry_envelope,
+        scheduled_for=utcnow() + timedelta(seconds=delay_seconds),
+    )
+
+    turn.status = "retrying"
+    turn.phase = "evaluate"
+    turn.outcome_kind = "provider_retry"
+    turn.turn_metadata = {
+        "error": str(exc),
+        "engine_output_count": engine_output_count,
+        "provider_retry_count": next_retry_count,
+        "retry_task_id": task.id,
+        "retry_delay_seconds": delay_seconds,
+    }
+    run.turns_count = int(run.turns_count or 0) + 1
+    run.status = "queued"
+    run.finished_at = None
+    run.queue_task_id = task.id
+    run.last_error = str(exc)
+    wakeup_state = dict(run.wakeup_state or {})
+    wakeup_state.update(
+        {
+            "provider_retry_count": next_retry_count,
+            "provider_retry_task_id": task.id,
+            "provider_retry_scheduled_at": utcnow().isoformat(),
+            "provider_retry_delay_seconds": delay_seconds,
+            "source_turn_id": turn.turn_id,
+        }
+    )
+    run.wakeup_state = wakeup_state
+    _append_runtime_event(
+        session,
+        run=run,
+        turn_id=turn.turn_id,
+        seq=next_seq,
+        event_type="runtime_event",
+        message="provider_retry_scheduled",
+        payload={
+            "data": {
+                "kind": "provider_retry_scheduled",
+                "status": "retrying",
+                "retry_count": next_retry_count,
+                "retry_delay_seconds": delay_seconds,
+                "task_id": task.id,
+                "error": str(exc),
+            }
+        },
+    )
+    return AgentTurnOutcome(
+        status="continue",
+        gate_signal="continue",
+        metadata={
+            "provider_retry_scheduled": True,
+            "provider_retry_count": next_retry_count,
+            "retry_task_id": task.id,
+            "retry_delay_seconds": delay_seconds,
+            "error": str(exc),
+        },
+    )
+
+
+def _queue_jd_sync_recoverable_scene_retry(
+    session: Session,
+    *,
+    run: AgentRun,
+    turn: AgentTurnRecord,
+    envelope: dict[str, Any],
+    outcome: AgentTurnOutcome,
+    engine_output_count: int,
+    next_seq: int,
+) -> AgentTurnOutcome | None:
+    if str(run.agent_kind or "").strip().lower() != "jd_sync":
+        return None
+    if _terminal_interrupt_status(run.status) is not None:
+        return None
+    if _is_waiting_human(outcome):
+        return None
+    metadata = dict(envelope.get("metadata") or {}) if isinstance(envelope.get("metadata"), dict) else {}
+    retry_count = _safe_int(metadata.get("jd_sync_recoverable_scene_retry_count")) or 0
+    if retry_count >= JD_SYNC_RECOVERABLE_SCENE_RETRY_MAX_ATTEMPTS:
+        return None
+
+    outcome_metadata = dict(outcome.metadata or {})
+    tool_results = [dict(item) for item in list(outcome_metadata.get("tool_results") or []) if isinstance(item, dict)]
+    if not _jd_sync_recoverable_scene_retry_needed(
+        final_output=outcome.final_output,
+        tool_results=tool_results,
+        result_data=dict(outcome_metadata.get("final_result_data") or {}),
+    ):
+        return None
+
+    next_retry_count = retry_count + 1
+    retry_envelope = dict(envelope or {})
+    retry_envelope["run_pk"] = run.id
+    retry_envelope["run_id"] = run.run_id
+    retry_envelope["trigger_type"] = "recoverable_scene_retry"
+    retry_metadata = dict(metadata)
+    context_hints = dict(retry_metadata.get("context_hints") or {})
+    context_hints["jd_sync_recovery"] = {
+        "reason": "recoverable_scene_blocker",
+        "retry_count": next_retry_count,
+        "last_output": str(outcome.final_output or "")[:1200],
+        "directive": (
+            "继续同一个 JD 同步任务；不要把同源可访问时的 HID/frontmost/timeout 异常作为终局。"
+            "重新观察后换恢复路径推进剩余职位详情读取、写回和生效 JD 选择。"
+        ),
+    }
+    retry_metadata.update(
+        {
+            "jd_sync_recoverable_scene_retry_count": next_retry_count,
+            "jd_sync_recoverable_scene_previous_turn_id": turn.turn_id,
+            "context_hints": context_hints,
+        }
+    )
+    retry_envelope["metadata"] = retry_metadata
+    task = TaskQueueRepository(session).enqueue(
+        task_id=f"run-{run.id}-jd-sync-recovery-{uuid4().hex[:8]}",
+        task_type="autonomous_turn",
+        priority=int(run.priority or 100),
+        payload=retry_envelope,
+        scheduled_for=utcnow() + timedelta(seconds=min(10, 2 * next_retry_count)),
+    )
+
+    turn.status = "retrying"
+    turn.phase = "evaluate"
+    turn.outcome_kind = "recoverable_scene_retry"
+    turn.turn_metadata = {
+        "final_output": outcome.final_output,
+        "gate_signal": outcome.gate_signal,
+        "engine_output_count": engine_output_count,
+        "recoverable_scene_retry_count": next_retry_count,
+        "retry_task_id": task.id,
+        "tool_results": tool_results[-6:],
+    }
+    run.status = "queued"
+    run.finished_at = None
+    run.blocked_reason = None
+    run.last_error = None
+    run.queue_task_id = task.id
+    wakeup_state = dict(run.wakeup_state or {})
+    wakeup_state.update(
+        {
+            "jd_sync_recoverable_scene_retry_count": next_retry_count,
+            "jd_sync_recoverable_scene_retry_task_id": task.id,
+            "jd_sync_recoverable_scene_retry_scheduled_at": utcnow().isoformat(),
+        }
+    )
+    run.wakeup_state = wakeup_state
+    _append_runtime_event(
+        session,
+        run=run,
+        turn_id=turn.turn_id,
+        seq=next_seq,
+        event_type="runtime_event",
+        message="jd_sync_recoverable_scene_retry_scheduled",
+        payload={
+            "data": {
+                "kind": "jd_sync_recoverable_scene_retry_scheduled",
+                "status": "retrying",
+                "retry_count": next_retry_count,
+                "task_id": task.id,
+            }
+        },
+    )
+    return AgentTurnOutcome(
+        status="continue",
+        gate_signal="continue",
+        metadata={
+            "jd_sync_recoverable_scene_retry_scheduled": True,
+            "jd_sync_recoverable_scene_retry_count": next_retry_count,
+            "retry_task_id": task.id,
+        },
+    )
+
+
+def _jd_sync_recoverable_scene_retry_needed(
+    *,
+    final_output: str,
+    tool_results: list[dict[str, Any]],
+    result_data: dict[str, Any],
+) -> bool:
+    text = str(final_output or "")
+    if _jd_sync_text_has_terminal_scene_boundary(text.lower()):
+        return False
+    return (
+        _jd_sync_final_output_needs_tool_continuation(text)
+        or _jd_sync_result_data_needs_tool_continuation(result_data)
+        or _jd_sync_tool_results_need_continuation(tool_results)
+    )
+
+
+def _safe_int(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _final_output_continuation_resolver(
@@ -827,10 +1140,12 @@ def _final_output_continuation_resolver(
         attempt: int,
         result_data: dict[str, Any] | None = None,
     ) -> str | None:
-        if attempt >= 8:
+        if attempt >= 16:
             return None
-        if not _jd_sync_final_output_needs_tool_continuation(final_output) and not _jd_sync_result_data_needs_tool_continuation(
-            result_data
+        if (
+            not _jd_sync_final_output_needs_tool_continuation(final_output)
+            and not _jd_sync_result_data_needs_tool_continuation(result_data)
+            and not _jd_sync_tool_results_need_continuation(tool_results)
         ):
             return None
         if tool_calls or tool_results:
@@ -877,14 +1192,130 @@ def _jd_sync_result_data_needs_tool_continuation(value: Any) -> bool:
     return False
 
 
+def _jd_sync_tool_results_need_continuation(values: list[dict[str, Any]]) -> bool:
+    for item in values:
+        tool_name = str(item.get("tool_name") or item.get("name") or "").strip()
+        if tool_name != "delegate_scene_context":
+            continue
+        output = item.get("output")
+        if _jd_sync_scene_result_needs_continuation(output):
+            return True
+    return False
+
+
+def _jd_sync_scene_result_needs_continuation(value: Any) -> bool:
+    if not isinstance(value, dict):
+        return False
+    text = json.dumps(value, ensure_ascii=False, default=str).lower()
+    if _jd_sync_text_has_terminal_scene_boundary(text):
+        return False
+
+    status = str(value.get("status") or value.get("execution_status") or value.get("result_status") or "").strip().lower()
+    if status in {"partial", "incomplete", "needs_continuation", "blocked_partial"}:
+        return True
+    if status == "blocked" and _jd_sync_text_has_recoverable_scene_boundary(text):
+        return True
+
+    result_data = value.get("result_data")
+    if isinstance(result_data, dict) and _jd_sync_result_data_needs_tool_continuation(result_data):
+        return True
+
+    for key in (
+        "remaining_jobs",
+        "unread_details",
+        "remaining_items",
+        "pending_jobs",
+        "unfinished_jobs",
+        "remaining_work",
+        "limitations",
+        "unfinished",
+        "pending",
+    ):
+        item = value.get(key)
+        if isinstance(item, (list, tuple, dict, set)) and len(item) > 0:
+            return True
+        if isinstance(item, int) and item > 0:
+            return True
+
+    if "completed_job_details" in text and ("completed_job_details\": []" in text or "completed_job_details': []" in text):
+        if any(marker in text for marker in ("observed_jobs", "职位", "job", "remaining", "未完成", "待继续")):
+            return True
+    return False
+
+
+def _jd_sync_text_has_terminal_scene_boundary(text: str) -> bool:
+    return any(
+        marker in text
+        for marker in (
+            "登录",
+            "验证码",
+            "账号切换",
+            "绕过风控",
+            "权限不足",
+            "permission_requested",
+            "necessary execution tool missing",
+            "必要执行工具缺失",
+            "工具未注册",
+            "hid_action 缺失",
+            "browser-mcp 未注册",
+            "virtualhid 未注册",
+            "目标站点不可达",
+            "页面不可达",
+            "site unreachable",
+        )
+    )
+
+
+def _jd_sync_text_has_recoverable_scene_boundary(text: str) -> bool:
+    return any(
+        marker in text
+        for marker in (
+            "e_timeout",
+            "e_not_frontmost",
+            "e_daemon_unreachable",
+            "scene_context_timeout",
+            "pending_confirmation",
+            "human-only",
+            "virtualhid",
+            "窗口未置前",
+            "前台",
+            "置前",
+            "光标",
+            "按键",
+            "地址栏",
+            "返回列表",
+            "滚动",
+            "click",
+            "hid",
+            "仍需继续",
+            "待继续",
+            "未完成",
+            "剩余",
+        )
+    )
+
+
 def _jd_sync_final_output_needs_tool_continuation(value: str) -> bool:
     text = str(value or "").strip()
     if not text:
         return False
     normalized = text.lower()
     incomplete_markers = (
+        "仍需继续",
+        "还需要继续",
+        "需要继续",
         "未完成全量",
         "未完成",
+            "未成功确认",
+            "未能继续",
+            "无法继续",
+            "无法进入职位列表",
+            "无法完成",
+            "无法把操作",
+            "还不能",
+            "不能调用本地 JD 写回",
+            "completed_job_details 仍为空",
+            "没有新的可写回 JD 详情证据",
         "剩余",
         "remaining_jobs",
         "partial",
@@ -907,6 +1338,10 @@ def _jd_sync_final_output_needs_tool_continuation(value: str) -> bool:
         "按键",
         "地址栏",
         "daemon",
+        "frontmost",
+        "注入",
+        "前台焦点",
+        "执行环境",
         "执行链路",
         "电脑执行链路",
     )
@@ -1175,12 +1610,15 @@ def _append_jd_sync_runtime_invariants(prompt: str) -> str:
         "在完成全量职位发现、全量详情读取、更新/下架识别和生效 JD 选择前，必须继续执行或返回明确的恢复条件。"
         "遇到点击、返回、滚动、光标干扰、按键状态异常或单次注入超时等可恢复执行异常时，不得在第一次失败后结束；"
         "应重新观察、等待稳定、释放异常按键状态、改用页面上的其他同源入口，或通过电脑执行链路打开已经观察到的同源链接后继续。"
+        "恢复执行不是重复同一失败动作；每次恢复都应基于最新观察证据切换路径，例如从页面入口切到地址栏同源链接、"
+        "从返回按钮切到列表 URL、从当前详情切到已观察到的下一个同源详情。"
         "如果列表入口点击后仍无法进入已知同源详情页，应通过电脑执行链路使用地址栏打开已观察到的同源详情 URL 后继续读取，"
         "而不是反复停留在列表页并以 partial 结束。"
         "地址栏恢复必须是真实 HID 键盘链路：Cmd+L 聚焦地址栏，粘贴已观察到的同源 URL，回车，并重新观察确认页面。"
         "单次 HID 或浏览器动作失败不是任务终局；只要目标站点仍可访问且还有职位详情未完整读取，就应在同一轮继续恢复和推进。"
         "如果 delegate_scene_context 返回部分结果且仍包含 blockers、limitations 或未完成项，应把它当作继续执行信号，"
         "继续调用 scene 完成剩余职位；HID 超时、窗口未置前、光标/按键状态干扰、短暂 daemon 无响应或地址栏恢复失败都是可恢复执行异常，"
+        "可恢复异常只能作为下一步恢复策略的输入，不能作为当前 turn 的结束理由；只要目标站点仍可观察且仍有职位未完整读取，就应继续恢复和推进，"
         "不得直接作为终局；scene 摘要里出现 pending_confirmation 或 human-only 字样，不等于 JD 同步主任务已经到达终局人工边界，"
         "除非当前运行真实产生 permission_requested 等待人工确认事件。只有登录、验证码、权限、必要执行工具未注册/缺失、目标页面不可达，才可结束为 blocked。"
     )

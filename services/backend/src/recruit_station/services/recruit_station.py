@@ -664,6 +664,8 @@ def default_agent_definition() -> dict[str, Any]:
                         "如果当前只确认了列表或职位数量，不得把本轮标记为完成；应继续读取详情。只有遇到登录、验证码、权限、必要执行工具未注册或页面不可达等明确硬阻塞时才标记为阻塞。"
                         "进入详情页、翻页、返回列表等网页动作必须按共享执行契约通过 browser-mcp 观察和 VirtualHID 执行链路完成；不得因为 browser 工具只读就放弃页面动作。"
                         "遇到点击、返回、滚动、窗口未置前、短暂执行服务无响应、临时确认状态或光标/按键状态干扰等可恢复执行异常时，不得在第一次失败后结束；应重新观察、等待稳定、释放异常按键状态、选择页面上的其他同源入口，或通过电脑执行链路打开已观察到的同源链接，然后继续完成全量同步。"
+                        "恢复执行不是重复同一失败动作；每次恢复都要基于最新观察证据切换路径，例如从页面入口切到地址栏同源链接、从返回按钮切到列表 URL、从当前详情切到已观察到的下一个同源详情。"
+                        "可恢复异常只能作为下一步恢复策略的输入，不能作为任务总结；只要目标站点仍可访问且还有职位未完整读取，本轮就应继续推进，不得主动结束。"
                         "可以把已经完整读取详情的职位写入本地 JD 库作为进度；但在没有完成全量职位发现、全量详情读取、更新/下架识别和生效 JD 选择前，不得以“已完成部分同步”作为成功终局。"
                         "只能基于已登录浏览器会话中的页面可见信息进行观察和整理；不得处理登录、验证码、账号切换或规避风控。"
                         "如果浏览器会话无法连接、目标站点不可访问或页面证据不足，必须标记为阻塞，并说明需要人工恢复的条件。"
@@ -769,6 +771,7 @@ def ensure_primary_agent_definition(session: Session) -> AgentDefinition:
         prompt_config = normalize_prompt_config(original_prompt_config)
         resolved_context_policy = resolve_context_policy(prompt_config)
         resolved_memory_policy = resolve_memory_policy(existing.memory_policy)
+        refreshed_product_config = _refresh_builtin_product_prompt_config(dict(existing.product_config or {}))
         patch: dict[str, Any] = {}
         if prompt_config != original_prompt_config:
             patch["prompt_config"] = prompt_config
@@ -777,6 +780,8 @@ def ensure_primary_agent_definition(session: Session) -> AgentDefinition:
             patch["prompt_config"] = prompt_config
         if existing.memory_policy != resolved_memory_policy:
             patch["memory_policy"] = resolved_memory_policy
+        if dict(existing.product_config or {}) != refreshed_product_config:
+            patch["product_config"] = refreshed_product_config
         if patch:
             existing = repo.update(existing, patch)
         return existing
@@ -791,6 +796,7 @@ def ensure_primary_agent_definition(session: Session) -> AgentDefinition:
         prompt_config = normalize_prompt_config(original_prompt_config)
         resolved_context_policy = resolve_context_policy(prompt_config)
         resolved_memory_policy = resolve_memory_policy(existing.memory_policy)
+        refreshed_product_config = _refresh_builtin_product_prompt_config(dict(existing.product_config or {}))
         patch: dict[str, Any] = {}
         if prompt_config != original_prompt_config:
             patch["prompt_config"] = prompt_config
@@ -799,9 +805,28 @@ def ensure_primary_agent_definition(session: Session) -> AgentDefinition:
             patch["prompt_config"] = prompt_config
         if existing.memory_policy != resolved_memory_policy:
             patch["memory_policy"] = resolved_memory_policy
+        if dict(existing.product_config or {}) != refreshed_product_config:
+            patch["product_config"] = refreshed_product_config
         if patch:
             existing = repo.update(existing, patch)
         return existing
+
+
+def _refresh_builtin_product_prompt_config(product_config: dict[str, Any]) -> dict[str, Any]:
+    default_product_config = dict(default_agent_definition().get("product_config") or {})
+    for agent_kind in ("jd_sync",):
+        default_kind_config = dict(default_product_config.get(agent_kind) or {})
+        default_prompt_config = dict(default_kind_config.get("prompt_config") or {})
+        if not default_prompt_config:
+            continue
+        kind_config = dict(product_config.get(agent_kind) or {})
+        prompt_config = dict(kind_config.get("prompt_config") or {})
+        for key in ("system_prompt", "context_policy", "response_policy"):
+            if key in default_prompt_config:
+                prompt_config[key] = default_prompt_config[key]
+        kind_config["prompt_config"] = prompt_config
+        product_config[agent_kind] = kind_config
+    return product_config
 
 
 def _default_recruit_station_system_prompt() -> str:

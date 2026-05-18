@@ -12,7 +12,12 @@ from recruit_station.plugins.host import PluginHost
 from agent_runtime.fixtures import LLMResponse, ToolCall
 from agent_runtime.fixtures import ScriptedProvider
 from recruit_station.capabilities.tools import ToolDefinition, ToolRegistry
-from recruit_station.services.scene_context import SceneContextService
+from recruit_station.agents.outcome import AgentTurnOutcome
+from recruit_station.services.scene_context import (
+    SceneContextService,
+    _should_retry_scene_for_missing_hid,
+    _should_retry_scene_for_transient_hid_error,
+)
 
 
 def _session_factory(tmp_path: Path):
@@ -156,6 +161,125 @@ def test_scene_context_canonicalizes_browser_hid_capability_aliases(tmp_path: Pa
     assert "地址栏恢复后 URL 未变化" in task_spec.instruction
     assert 'key(keyCode=37, modifiers=["cmd"])' in task_spec.instruction
     assert "不得把未确认的地址栏尝试当作已进入详情" in task_spec.instruction
+
+
+def test_scene_context_timeout_is_episode_boundary_not_same_engine_retry() -> None:
+    outcome = AgentTurnOutcome(
+        status="escalate",
+        gate_signal="escalate",
+        final_output="E_SCENE_TIMEOUT: scene_context turn exceeded timeoutSeconds=180",
+        result_data={
+            "status": "blocked",
+            "blockers": [{"kind": "scene_context_timeout", "message": "timed out"}],
+        },
+    )
+    events = [
+        {
+            "type": "tool_event",
+            "payload": {
+                "kind": "tool_result_ready",
+                "tool_name": "browser_snapshot",
+                "is_error": False,
+                "content": {
+                    "success": True,
+                    "url": "http://127.0.0.1:50149/",
+                    "affordances": [{"kind": "link", "href": "/jobs/jd-sales-001", "clickPoint": {"x": 10, "y": 10}}],
+                },
+            },
+        }
+    ]
+    blockers = [{"kind": "scene_context_timeout", "message": "timed out"}]
+
+    assert not _should_retry_scene_for_missing_hid(
+        outcome=outcome,
+        blockers=blockers,
+        events=events,
+        request={"preferred_capabilities": ["browser", "computer"]},
+        available_tools=["browser_snapshot", "hid_action"],
+    )
+    assert not _should_retry_scene_for_transient_hid_error(
+        outcome=outcome,
+        blockers=blockers,
+        events=events,
+    )
+
+
+def test_scene_context_executes_hid_without_nested_permission_boundary(tmp_path: Path) -> None:
+    session_factory = _session_factory(tmp_path)
+    provider = ScriptedProvider(
+        provider_name="scene-scripted",
+        responses=[
+            LLMResponse(
+                tool_calls=[
+                    ToolCall(id="snapshot", name="browser_snapshot", arguments={}),
+                    ToolCall(
+                        id="hid",
+                        name="hid_action",
+                        arguments={
+                            "target": {"bundleId": "com.google.Chrome", "host": "127.0.0.1:50149"},
+                            "geometry": {"coordSpace": "viewport", "pageScale": 1},
+                            "context": {"host": "127.0.0.1:50149"},
+                            "primitives": [{"type": "click", "at": {"x": 10, "y": 10}}],
+                        },
+                    ),
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(content="已完成 HID 动作后的页面确认。"),
+        ],
+    )
+    tools = ToolRegistry()
+    tools.register(
+        ToolDefinition(
+            name="browser_snapshot",
+            description="Snapshot.",
+            parameters={"type": "object", "additionalProperties": True},
+            handler=lambda arguments: {
+                "success": True,
+                "snapshot": {
+                    "url": "http://127.0.0.1:50149/",
+                    "title": "职位列表",
+                    "clickables": [{"href": "/jobs/jd-sales-001", "clickPoint": {"viewport": {"x": 10, "y": 10}}}],
+                },
+            },
+            external_target=True,
+            metadata={"capabilities": ["browser"], "requires_confirmation": True},
+        )
+    )
+    tools.register(
+        ToolDefinition(
+            name="hid_action",
+            description="HID.",
+            parameters={"type": "object", "additionalProperties": True},
+            handler=lambda arguments: {"ok": True, "events": [{"type": "leftMouseDown"}, {"type": "leftMouseUp"}]},
+            external_target=True,
+            metadata={"capabilities": ["computer"], "requires_confirmation": True},
+        )
+    )
+    service = SceneContextService(
+        session_factory=session_factory,
+        provider=provider,
+        tool_registry=tools,
+        plugin_host=PluginHost(),
+    )
+
+    result = service.delegate(
+        {
+            "instruction": "观察页面并点击职位入口。",
+            "preferred_capabilities": ["browser", "computer"],
+            "browser_target": {"url": "http://127.0.0.1:50149/"},
+        }
+    )
+
+    assert result["status"] == "completed"
+    with session_factory() as session:
+        episode = session.query(ExecutionEpisode).one()
+    assert any(
+        item["type"] == "tool_event"
+        and item["payload"]["kind"] == "tool_result_ready"
+        and item["payload"]["tool_name"] == "hid_action"
+        for item in episode.actions
+    )
 
 
 def test_scene_context_active_tab_mismatch_is_recoverable_target_identification(tmp_path: Path) -> None:
