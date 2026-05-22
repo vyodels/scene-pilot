@@ -88,7 +88,71 @@ def test_record_skill_draft_uses_llm_contract_body_instead_of_learning_content(t
         assert artifact.artifact_body["skill_contract"]["skill_name"] == "活跃 JD 增量同步"
 
 
-def test_record_skill_draft_blocks_mock_scope_auto_promotion(tmp_path: Path) -> None:
+def test_record_skill_draft_preserves_valid_python_inline_asset(tmp_path: Path) -> None:
+    session_factory = _make_session_factory(tmp_path)
+    writer = LearningWriter(session_factory)
+
+    recorded = writer.record_skill_draft(
+        draft_contract={
+            "skill_name": "JD 差异比对",
+            "description": "基于结构化输入比对远端和本地 JD。",
+            "category": "recruiting",
+            "body": {
+                "summary": "比对 JD 差异。",
+                "artifacts": {
+                    "python_inline": {
+                        "entrypoint": "run",
+                        "code": "def run(payload, context):\n    return {'status': 'completed', 'count': len(payload.get('remote', []))}\n",
+                        "input_contract": {"type": "object"},
+                        "output_contract": {"type": "object"},
+                    }
+                },
+            },
+            "health_check_config": {
+                "preflight": {"required_artifacts": ["python_inline"], "required_executor_mode": "python_inline"},
+                "postconditions": {"required_output_fields": ["status"]},
+            },
+        },
+        tags=["autonomous", "skill_distill", "sync_jd_incremental"],
+        trial_metrics={"runs": 1, "successes": 1},
+    )
+
+    assert recorded["skill_name"] == "JD 差异比对"
+    with session_factory() as session:
+        skill = session.scalars(select(Skill)).first()
+        assert skill is not None
+        assert skill.execution_hints["executor_mode"] == "python_inline"
+        assert skill.body["artifacts"]["python_inline"]["entrypoint"] == "run"
+        assert skill.health_check_config["preflight"]["required_artifacts"] == ["python_inline"]
+
+
+def test_record_skill_draft_rejects_side_effect_python_inline_asset(tmp_path: Path) -> None:
+    session_factory = _make_session_factory(tmp_path)
+    writer = LearningWriter(session_factory)
+
+    try:
+        writer.record_skill_draft(
+            draft_contract={
+                "skill_name": "unsafe asset",
+                "body": {
+                    "artifacts": {
+                        "python_inline": {
+                            "entrypoint": "run",
+                            "code": "import subprocess\n\ndef run(payload, context):\n    return subprocess.run(['echo', 'x'])\n",
+                        }
+                    }
+                },
+            },
+            tags=["autonomous", "skill_distill"],
+            trial_metrics={"runs": 1, "successes": 1},
+        )
+    except ValueError as exc:
+        assert "blocked module" in str(exc)
+    else:
+        raise AssertionError("unsafe python_inline asset should be rejected")
+
+
+def test_record_skill_draft_marks_mock_scope_as_test_skill_when_promoted(tmp_path: Path) -> None:
     session_factory = _make_session_factory(tmp_path)
     writer = LearningWriter(session_factory)
 
@@ -110,43 +174,83 @@ def test_record_skill_draft_blocks_mock_scope_auto_promotion(tmp_path: Path) -> 
         proposed_by="autonomous",
     )
 
-    assert recorded["auto_promoted"] is False
+    assert recorded["auto_promoted"] is True
     assert recorded["environment_scope"] == "mock_only"
-    assert recorded["judgment"]["promotion_blocked_reason"] == "mock_environment_scope"
+    assert recorded["judgment"]["environment_scope"] == "mock_only"
 
     with session_factory() as session:
         skill = session.scalars(select(Skill)).first()
         assert skill is not None
-        assert skill.status == "trial"
+        assert skill.status == "active"
         assert skill.skill_metadata["environment_scope"] == "mock_only"
         assert skill.skill_metadata["not_for_real_site"] is True
         assert skill.skill_metadata["real_site_verified"] is False
+        assert skill.skill_metadata["test_skill"] is True
 
         artifact = session.scalars(select(EvolutionArtifact).where(EvolutionArtifact.artifact_kind == "skill_draft")).first()
         assert artifact is not None
-        assert artifact.status == "pending_review"
+        assert artifact.status == "auto_promoted"
         assert artifact.artifact_body["environment_scope"] == "mock_only"
         assert artifact.artifact_metadata["not_for_real_site"] is True
+        assert artifact.artifact_metadata["test_skill"] is True
 
 
-def test_promote_skill_draft_rejects_mock_scope_contract(tmp_path: Path) -> None:
+def test_record_skill_draft_marks_unspecified_scope_as_test_skill_when_promoted(tmp_path: Path) -> None:
+    session_factory = _make_session_factory(tmp_path)
+    writer = LearningWriter(session_factory)
+
+    recorded = writer.record_skill_draft(
+        draft_contract={
+            "skill_name": "JD 详情补齐",
+            "description": "补齐已发现 JD 的详情字段。",
+            "category": "recruiting",
+            "platform": "runtime-scene",
+            "strategy": {"instruction": "基于已观察到的详情补齐字段。"},
+            "body": {"summary": "补齐 JD 详情。"},
+        },
+        tags=["autonomous", "skill_distill"],
+        trial_metrics={"runs": 5, "successes": 5},
+        source_run_id="run-unspecified",
+        source_turn_id="turn-unspecified",
+        source_kind="autonomous",
+        proposed_by="autonomous",
+    )
+
+    assert recorded["auto_promoted"] is True
+    assert recorded["environment_scope"] == "unspecified"
+    assert recorded["judgment"]["environment_scope"] == "unspecified"
+
+    with session_factory() as session:
+        skill = session.scalars(select(Skill)).first()
+        assert skill is not None
+        assert skill.status == "active"
+        assert skill.trial_metrics["auto_promote"] is True
+        assert skill.skill_metadata["environment_scope"] == "unspecified"
+        assert skill.skill_metadata["real_site_verified"] is False
+        assert skill.skill_metadata["test_skill"] is True
+
+
+def test_promote_skill_draft_allows_mock_scope_contract_with_test_skill_marker(tmp_path: Path) -> None:
     session_factory = _make_session_factory(tmp_path)
 
     with session_factory() as session:
-        try:
-            promote_skill_draft_contract(
-                session,
-                auto_activate=True,
-                draft={
-                    "skill_name": "mock-only skill",
-                    "description": "不能晋升为真实站点 skill。",
-                    "skill_metadata": {"environment_scope": "mock_only"},
-                },
-                reviewer="reviewer",
-                reason="attempted promotion",
-                fallback_title="mock-only skill",
-            )
-        except ValueError as exc:
-            assert "mock-only" in str(exc)
-        else:
-            raise AssertionError("mock-only skill promotion should fail")
+        promoted = promote_skill_draft_contract(
+            session,
+            auto_activate=True,
+            draft={
+                "skill_name": "mock-only skill",
+                "description": "可以晋升，但必须标记为测试 skill。",
+                "skill_metadata": {"environment_scope": "mock_only"},
+            },
+            reviewer="reviewer",
+            reason="attempted promotion",
+            fallback_title="mock-only skill",
+        )
+
+    assert promoted["status"] == "active"
+    with session_factory() as session:
+        skill = session.scalars(select(Skill)).first()
+        assert skill is not None
+        assert skill.skill_metadata["environment_scope"] == "mock_only"
+        assert skill.skill_metadata["not_for_real_site"] is True
+        assert skill.skill_metadata["test_skill"] is True

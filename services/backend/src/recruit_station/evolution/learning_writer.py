@@ -12,6 +12,7 @@ from recruit_station.evolution.promotion import (
     evaluate_trial_metrics,
 )
 from recruit_station.models.domain import AgentLearning, EvolutionArtifact, PromptOverlayRevision, Skill
+from recruit_station.skills.contracts import validate_skill_contract
 
 
 class LearningWriter:
@@ -118,6 +119,7 @@ class LearningWriter:
                 source_kind=source_kind,
                 environment_scope=environment_scope,
             )
+            normalized_contract = validate_skill_contract(normalized_contract)
             resolved_environment_scope = _environment_scope_from_contract(normalized_contract)
             is_mock_scope = _is_mock_environment_scope(resolved_environment_scope)
             skill_name = str(normalized_contract.get("skill_name") or normalized_contract.get("name") or "llm-trial-skill").strip()
@@ -131,13 +133,7 @@ class LearningWriter:
             skill = self._upsert_skill_contract(session, normalized_contract, fallback_name=skill_name)
             merged_metrics = _merge_trial_metrics(dict(skill.trial_metrics or {}), dict(trial_metrics or {}))
             judgment = evaluate_trial_metrics(merged_metrics)
-            if is_mock_scope:
-                judgment = {
-                    **dict(judgment),
-                    "auto_promote": False,
-                    "promotion_blocked_reason": "mock_environment_scope",
-                    "environment_scope": resolved_environment_scope,
-                }
+            judgment = {**dict(judgment), "environment_scope": resolved_environment_scope}
             skill.trial_metrics = judgment
             if bool(judgment["auto_promote"]):
                 activate_skill(skill, reviewer="system")
@@ -169,6 +165,7 @@ class LearningWriter:
                     "llm_generated": True,
                     "environment_scope": resolved_environment_scope,
                     "not_for_real_site": is_mock_scope,
+                    "test_skill": _is_test_skill_environment_scope(resolved_environment_scope),
                 },
             )
             session.add(artifact)
@@ -314,9 +311,14 @@ def _with_environment_scope(
     if _is_mock_environment_scope(resolved):
         metadata["not_for_real_site"] = True
         metadata["real_site_verified"] = False
+        metadata["test_skill"] = True
     elif resolved == "real_site_verified":
         metadata["not_for_real_site"] = False
         metadata["real_site_verified"] = True
+        metadata["test_skill"] = False
+    else:
+        metadata["real_site_verified"] = False
+        metadata["test_skill"] = True
     draft_contract["skill_metadata"] = metadata
     draft_contract["environment_scope"] = resolved
     return draft_contract
@@ -359,6 +361,11 @@ def _is_mock_environment_scope(environment_scope: str) -> bool:
         "test",
         "fixture_contract_regression",
     }
+
+
+def _is_test_skill_environment_scope(environment_scope: str) -> bool:
+    normalized = _normalize_environment_scope(environment_scope)
+    return normalized != "real_site_verified"
 
 
 def _prompt_revision_title(job_description_id: str | None, revision: PromptOverlayRevision | None) -> str | None:

@@ -60,7 +60,13 @@ browser observe/wait -> Agent decision -> hid_action write -> browser observe/wa
 - Chrome 下载气泡、下载列表、菜单和 popover 是浏览器外壳 UI，不属于网页 DOM，也不会稳定出现在 `browser_snapshot`。这类遮挡由 VirtualHID 在浏览器目标 `hid_action` 的 `browserChromeOverlayPolicy` preflight 中处理；Agent 不要写页面 JS、mock fallback 或站点分支来关闭它。
 - 这个约束是通用时序协议，不是站点流程硬编码；Agent 仍然必须根据当前 browser 证据自行判断下一步。
 
-### 1.4 前置条件
+### 1.4 Prompt 与运行状态隔离
+
+Agent 的 prompt / instruction 只能描述稳定规则：角色边界、允许工具、完成标准、恢复策略、输出合同和证据要求。运行时观察到的具体数量、页面摘要、职位名、候选人名、已完成比例、剩余项等动态事实，必须放在结构化 context、tool result、`result_data` 或 evidence refs 中，不得拼回 system prompt、续跑 instruction 或 scene instruction。
+
+因此，恢复执行时不应生成“已完成 1/5、剩余 4 个、继续打开某几个职位”这类由历史摘要推断出的提示词。正确做法是保持规则化 scene instruction，并要求 scene 按 output contract 返回结构化 `observed_*`、`completed_*`、`remaining_work`、`blockers` 和 `evidence` 字段；父 Agent 只能基于这些结构化字段和最新 browser 证据判断下一步。
+
+### 1.5 前置条件
 
 1. Chrome 加载 `mcp-browser-chrome` 的 `dist/` 扩展
 2. macOS 给 VirtualHID 授过 **Accessibility** 和 **Input Monitoring** 权限（`hid_state` 可以查）

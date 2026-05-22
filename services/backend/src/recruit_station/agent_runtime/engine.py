@@ -66,6 +66,7 @@ class InteractionEngineConfig:
     anthropic_payload_overrides: dict[str, object] | None = None
     max_llm_invocations: int = 12
     max_history_messages: int | None = None
+    max_context_chars: int | None = None
     compaction_summary_max_chars: int = 2000
     provider_retry_policy: ProviderRetryPolicy | None = field(default_factory=ProviderRetryPolicy)
     initial_seq: int = 1
@@ -298,6 +299,7 @@ class InteractionEngine:
                     name=tool_use.name,
                     input=dict(tool_use.input or {}),
                 )
+                tool_call = self._normalize_tool_call_input(registry, tool_call, context)
                 yield self._output(
                     "tool_event",
                     turn_id,
@@ -398,6 +400,31 @@ class InteractionEngine:
                 attempt += 1
 
     def _compact_history_if_needed(self) -> dict[str, object] | None:
+        max_context_chars = self.config.max_context_chars
+        if max_context_chars is not None:
+            before_chars = sum(len(str(message.content)) for message in self.history.messages)
+            compacted_for_budget = self.history.compact_for_context_budget(
+                max_chars=max_context_chars,
+                summary_max_chars=self.config.compaction_summary_max_chars,
+                preserve_recent_messages=1,
+            )
+            if compacted_for_budget is not None:
+                self.transcript.replace_messages(self.config.conversation_id, compacted_for_budget)
+                after_chars = sum(len(str(message.content)) for message in compacted_for_budget)
+                summary = next(
+                    (
+                        message
+                        for message in compacted_for_budget
+                        if message.role == "system" and message.metadata.get("kind") == "context_compaction_summary"
+                    ),
+                    None,
+                )
+                return {
+                    "strategy": "context_budget",
+                    "chars_before": before_chars,
+                    "chars_after": after_chars,
+                    "summary": summary.content if summary is not None else "",
+                }
         max_messages = self.config.max_history_messages
         if max_messages is None:
             return None
@@ -442,6 +469,29 @@ class InteractionEngine:
         if configured_mode == "auto":
             return False
         return False
+
+    def _normalize_tool_call_input(self, registry: ToolRegistry, call: ToolCall, context: TurnContext) -> ToolCall:
+        try:
+            tool = registry.get(call.name)
+        except Exception:
+            return call
+        normalizer = getattr(tool.handler, "normalize_call_input", None)
+        if not callable(normalizer):
+            return call
+        try:
+            normalized = normalizer(call, context)
+        except Exception:
+            return call
+        if not isinstance(normalized, dict):
+            return call
+        return ToolCall(
+            id=call.id,
+            turn_id=call.turn_id,
+            llm_invocation_id=call.llm_invocation_id,
+            tool_use_id=call.tool_use_id,
+            name=call.name,
+            input=normalized,
+        )
 
     def _run_tool(self, registry: ToolRegistry, call: ToolCall, context: TurnContext) -> ToolResult:
         try:

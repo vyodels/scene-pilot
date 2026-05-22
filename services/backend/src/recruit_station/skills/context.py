@@ -7,6 +7,7 @@ import json
 from typing import Any
 
 from recruit_station.models.domain import Skill
+from recruit_station.skills.contracts import skill_asset_manifest
 
 _TOKEN_RE = re.compile(r"[a-z0-9]+|[\u4e00-\u9fff]+")
 _ACTIVE_CONTEXT_STATUSES = {"active", "trial"}
@@ -25,6 +26,7 @@ class SkillContextInjection:
     output_schema: dict[str, Any]
     instructions: str | None
     metadata: dict[str, Any]
+    execution: dict[str, Any]
 
     def to_prompt_payload(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -46,6 +48,8 @@ class SkillContextInjection:
             payload["output_schema"] = self.output_schema
         if self.metadata:
             payload["metadata"] = self.metadata
+        if self.execution:
+            payload["execution"] = self.execution
         return payload
 
 
@@ -105,6 +109,7 @@ def _skill_context_injection(
     max_schema_chars: int = 1200,
 ) -> SkillContextInjection:
     body = dict(skill.body or {})
+    execution_hints = dict(skill.execution_hints or {})
     return SkillContextInjection(
         skill_id=str(skill.skill_id or ""),
         name=str(skill.name or ""),
@@ -117,6 +122,7 @@ def _skill_context_injection(
         output_schema=_truncate_mapping(dict(skill.output_schema or {}), max_chars=max_schema_chars),
         instructions=_truncate_text(_skill_instructions(body), max_chars=max_instruction_chars),
         metadata=_context_metadata(skill),
+        execution=_context_execution(skill, body=body, execution_hints=execution_hints),
     )
 
 
@@ -174,10 +180,18 @@ def _context_metadata(skill: Skill) -> dict[str, Any]:
         "environment_scope",
         "not_for_real_site",
         "real_site_verified",
+        "test_skill",
         "source_kind",
         "trigger_examples",
     }
     return {key: metadata[key] for key in sorted(allowed_keys) if key in metadata}
+
+
+def _context_execution(skill: Skill, *, body: dict[str, Any], execution_hints: dict[str, Any]) -> dict[str, Any]:
+    manifest = skill_asset_manifest(body, execution_hints)
+    if skill.last_health_status:
+        manifest["last_health_status"] = str(skill.last_health_status)
+    return manifest
 
 
 @dataclass(frozen=True, slots=True)

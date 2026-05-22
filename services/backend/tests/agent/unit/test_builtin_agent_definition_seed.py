@@ -163,7 +163,8 @@ def test_runtime_system_prompt_uses_product_prompt_config_for_jd_sync() -> None:
     assert "必须进入职位详情" in jd_sync_prompt
     assert "不得把本轮作为成功终局" in jd_sync_prompt
     assert "delegate_scene_context 返回部分结果" in jd_sync_prompt
-    assert "Cmd+L 聚焦地址栏" in jd_sync_prompt
+    assert "不得主动聚焦浏览器地址栏、输入 URL 或粘贴 URL" in jd_sync_prompt
+    assert "Cmd+L 聚焦地址栏" not in jd_sync_prompt
     assert "继续调用 scene 完成剩余职位" in jd_sync_prompt
     assert "必须通过 VirtualHID 做页面动作" in jd_sync_prompt
     assert autonomous_prompt == "默认招聘执行提示词：必须通过 VirtualHID 做页面动作。"

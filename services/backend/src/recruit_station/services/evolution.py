@@ -12,6 +12,7 @@ from recruit_station.db.base import utcnow
 from recruit_station.repositories import SkillRepository
 from recruit_station.agent_runtime.types import LLMMessage, LLMRequest
 from recruit_station.agent_runtime.providers import LLMProvider
+from recruit_station.skills.contracts import validate_skill_contract
 
 
 def _slugify(value: str) -> str:
@@ -180,7 +181,7 @@ def promote_skill_draft_contract(
     source_id: str | None = None,
 ) -> dict[str, object]:
     repo = SkillRepository(session)
-    contract = _normalize_skill_contract(draft, fallback_title=fallback_title)
+    contract = validate_skill_contract(_normalize_skill_contract(draft, fallback_title=fallback_title))
 
     skill_name = str(contract.get("skill_name") or contract.get("name") or fallback_title).strip()
     skill_key = str(contract.get("skill_id") or _slugify(skill_name)).strip("_")
@@ -211,9 +212,6 @@ def promote_skill_draft_contract(
         or contract.get("environment_scope")
         or "unspecified"
     )
-    if _is_mock_environment_scope(environment_scope):
-        raise ValueError("mock-only or simulated skill drafts cannot be promoted into real-site skills")
-
     status = "active" if auto_activate else "approved"
     platform = (
         str(contract.get("platform") or "").strip()
@@ -247,6 +245,15 @@ def promote_skill_draft_contract(
 
     merged_skill_metadata = {**existing_skill_metadata, **incoming_skill_metadata}
     merged_skill_metadata["environment_scope"] = environment_scope
+    merged_skill_metadata["test_skill"] = environment_scope != "real_site_verified"
+    if _is_mock_environment_scope(environment_scope):
+        merged_skill_metadata["not_for_real_site"] = True
+        merged_skill_metadata["real_site_verified"] = False
+    elif environment_scope == "real_site_verified":
+        merged_skill_metadata["not_for_real_site"] = False
+        merged_skill_metadata["real_site_verified"] = True
+    else:
+        merged_skill_metadata["real_site_verified"] = False
     merged_skill_metadata["promotion_source"] = promotion_source
     if source_kind:
         merged_skill_metadata["promotion_source_kind"] = source_kind

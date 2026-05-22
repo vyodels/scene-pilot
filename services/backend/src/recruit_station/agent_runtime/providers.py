@@ -160,6 +160,7 @@ class OpenAIProvider:
             payload["reasoning"] = dict(request.reasoning)
         if request.text_format is not None:
             payload["text"] = {"format": dict(request.text_format)}
+            _ensure_openai_json_object_input_hint(payload, request.text_format)
         if request.parallel_tool_calls is not None:
             payload["parallel_tool_calls"] = request.parallel_tool_calls
         if request.max_tool_calls is not None:
@@ -793,6 +794,32 @@ def _openai_message_payload(message: LLMMessage) -> dict[str, Any]:
     if message.role == "tool":
         return {"type": "function_call_output", "call_id": message.tool_use_id or message.name or "", "output": _content_text(message.content)}
     return {"role": message.role, "content": message.content}
+
+
+def _ensure_openai_json_object_input_hint(payload: dict[str, Any], text_format: dict[str, Any]) -> None:
+    if str(text_format.get("type") or "").strip().lower() != "json_object":
+        return
+    input_payload = payload.get("input")
+    if not isinstance(input_payload, list):
+        return
+    if _openai_user_input_contains_json_keyword(input_payload):
+        return
+    input_payload.insert(
+        0,
+        {
+            "role": "user",
+            "content": "Provider formatting requirement: final response must be a valid json object.",
+        },
+    )
+
+
+def _openai_user_input_contains_json_keyword(input_payload: list[dict[str, Any]]) -> bool:
+    for item in input_payload:
+        if str(item.get("role") or "").lower() != "user":
+            continue
+        if "json" in json.dumps(item.get("content"), ensure_ascii=False, default=str).lower():
+            return True
+    return False
 
 
 def _openai_input_payload(messages: list[LLMMessage]) -> list[dict[str, Any]]:

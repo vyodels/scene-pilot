@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from recruit_station.agent_runtime.engine import InteractionEngine, InteractionEngineConfig
 from recruit_station.agent_runtime.types import InteractionOutput
 from recruit_station.db.base import utcnow
+from recruit_station.models.domain import AgentGlobalState
 from recruit_station.plugins.host import PluginHost
 from recruit_station.repositories.domain import (
     EnvironmentSnapshotRepository,
@@ -26,7 +27,7 @@ from recruit_station.product_adapters.result_semantics import (
     normalize_result_payload,
 )
 from recruit_station.product_adapters.target_contracts import derive_browser_target
-from recruit_station.capabilities.tools import ToolRegistry
+from recruit_station.capabilities.tools import ToolDefinition, ToolRegistry, is_scene_context_tool
 
 
 _SCENE_BROWSER_READ_ONLY_TOOL_NAMES = {
@@ -230,6 +231,7 @@ class SceneContextService:
             self.tool_registry,
             request=request,
             browser_semantics=browser_semantics,
+            workspace_pause_checker=lambda: _workspace_control_paused(self.session_factory),
         )
         max_llm_invocations = int(request["max_llm_invocations"] or self.limits.max_llm_invocations or 8)
         scene_turn_timeout_seconds = int(self.limits.scene_turn_timeout_seconds or 0)
@@ -251,6 +253,9 @@ class SceneContextService:
                 tools=scene_tool_registry.to_agent_runtime_tools(),
                 initial_messages=adapter_context.initial_messages,
                 max_llm_invocations=max_llm_invocations,
+                max_context_chars=90000,
+                compaction_summary_max_chars=6000,
+                text_format=_scene_text_format(request),
             )
         )
         last_outcome = _scene_outcome_from_engine_with_timeout(
@@ -258,10 +263,11 @@ class SceneContextService:
             instruction=adapter_context.turn_input,
             engine_events=engine_events,
             browser_semantics=browser_semantics,
+            workspace_pause_checker=lambda: _workspace_control_paused(self.session_factory),
             timeout_seconds=scene_turn_timeout_seconds,
         )
         blockers = _collect_blockers(last_outcome, engine_events)
-        if _should_retry_scene_for_missing_hid(
+        if not _is_workspace_paused_outcome(last_outcome) and _should_retry_scene_for_missing_hid(
             outcome=last_outcome,
             blockers=blockers,
             events=engine_events,
@@ -273,11 +279,12 @@ class SceneContextService:
                 instruction=_missing_hid_retry_instruction(),
                 engine_events=engine_events,
                 browser_semantics=browser_semantics,
+                workspace_pause_checker=lambda: _workspace_control_paused(self.session_factory),
                 timeout_seconds=scene_turn_timeout_seconds,
             )
             blockers = _collect_blockers(last_outcome, engine_events)
         raw_blockers = _collect_blockers(last_outcome, engine_events, ignore_recovered=False)
-        if _should_retry_scene_for_recovered_tool_error(
+        if not _is_workspace_paused_outcome(last_outcome) and _should_retry_scene_for_recovered_tool_error(
             outcome=last_outcome,
             blockers=raw_blockers,
             events=engine_events,
@@ -287,11 +294,12 @@ class SceneContextService:
                 instruction=_recovered_tool_error_retry_instruction(raw_blockers),
                 engine_events=engine_events,
                 browser_semantics=browser_semantics,
+                workspace_pause_checker=lambda: _workspace_control_paused(self.session_factory),
                 timeout_seconds=scene_turn_timeout_seconds,
             )
             blockers = _collect_blockers(last_outcome, engine_events)
         raw_blockers = _collect_blockers(last_outcome, engine_events, ignore_recovered=False)
-        if _should_retry_scene_for_browser_wait_timeout(
+        if not _is_workspace_paused_outcome(last_outcome) and _should_retry_scene_for_browser_wait_timeout(
             outcome=last_outcome,
             blockers=raw_blockers,
             events=engine_events,
@@ -301,11 +309,12 @@ class SceneContextService:
                 instruction=_browser_wait_timeout_retry_instruction(raw_blockers),
                 engine_events=engine_events,
                 browser_semantics=browser_semantics,
+                workspace_pause_checker=lambda: _workspace_control_paused(self.session_factory),
                 timeout_seconds=scene_turn_timeout_seconds,
             )
             blockers = _collect_blockers(last_outcome, engine_events)
         raw_blockers = _collect_blockers(last_outcome, engine_events, ignore_recovered=False)
-        if _should_retry_scene_for_transient_hid_error(
+        if not _is_workspace_paused_outcome(last_outcome) and _should_retry_scene_for_transient_hid_error(
             outcome=last_outcome,
             blockers=raw_blockers,
             events=engine_events,
@@ -315,6 +324,21 @@ class SceneContextService:
                 instruction=_transient_hid_error_retry_instruction(raw_blockers),
                 engine_events=engine_events,
                 browser_semantics=browser_semantics,
+                workspace_pause_checker=lambda: _workspace_control_paused(self.session_factory),
+                timeout_seconds=scene_turn_timeout_seconds,
+            )
+            blockers = _collect_blockers(last_outcome, engine_events)
+        raw_blockers = _collect_blockers(last_outcome, engine_events, ignore_recovered=False)
+        if not _is_workspace_paused_outcome(last_outcome) and _should_retry_scene_for_incomplete_progress(
+            outcome=last_outcome,
+            blockers=raw_blockers,
+        ):
+            last_outcome = _scene_outcome_from_engine_with_timeout(
+                engine=engine,
+                instruction=_incomplete_progress_retry_instruction(),
+                engine_events=engine_events,
+                browser_semantics=browser_semantics,
+                workspace_pause_checker=lambda: _workspace_control_paused(self.session_factory),
                 timeout_seconds=scene_turn_timeout_seconds,
             )
             blockers = _collect_blockers(last_outcome, engine_events)
@@ -343,6 +367,7 @@ class SceneContextService:
             task_spec=task_spec,
             plan=plan,
             episode=episode,
+            output_contract=dict(request["output_contract"]),
             outcome=last_outcome,
             blockers=blockers,
             snapshot_ids=snapshot_ids,
@@ -355,12 +380,28 @@ class SceneContextService:
         task_spec: Any,
         plan: Any,
         episode: Any,
+        output_contract: dict[str, Any],
         outcome: AgentTurnOutcome,
         blockers: list[dict[str, Any]],
         snapshot_ids: list[str],
     ) -> dict[str, Any]:
-        result_data = _scene_result_data(outcome)
-        public_status = _public_status(outcome, blockers)
+        blockers = list(blockers or [])
+        evidence_blocker = _missing_required_scene_browser_hid_evidence_blocker(episode)
+        if evidence_blocker:
+            blockers.append(evidence_blocker)
+        result_data = _scene_result_data(outcome, output_contract=output_contract)
+        result_data = _normalize_scene_result_contract_data(result_data, output_contract)
+        contract_blockers = _scene_result_contract_blockers(result_data, output_contract)
+        if contract_blockers:
+            blockers.extend(contract_blockers)
+            result_data = {
+                **result_data,
+                "contract_validation": {
+                    "status": "failed",
+                    "blockers": contract_blockers,
+                },
+            }
+        public_status = _public_status(outcome, blockers, result_data=result_data)
         result_data = _align_result_data_status(result_data, public_status)
         stored_status = _stored_status(public_status)
         summary = _public_summary(outcome, blockers)
@@ -574,10 +615,52 @@ def _build_scene_instruction(request: dict[str, Any]) -> str:
         "只使用当前可用的 scene 工具完成任务。",
         "输出必须是业务级摘要，避免复述 DOM、页面按钮、tab 轨迹、资源定位符等环境细节，除非它们是阻塞判断所必需的证据。",
     ]
+    context = _as_dict(request.get("context"))
+    must_target = _dedupe_strings(
+        _string_list(
+            context.get("must_target_remaining")
+            or context.get("remaining_targets")
+            or context.get("remaining_jobs")
+            or context.get("target_jobs")
+            or context.get("known_jobs")
+            or context.get("remaining_job_titles")
+        )
+    )
+    must_ignore = _dedupe_strings(
+        _string_list(
+            context.get("must_ignore_already_synced")
+            or context.get("already_synced_or_verified")
+            or context.get("already_completed_jobs")
+            or context.get("already_verified")
+            or context.get("synced_job_titles")
+            or context.get("synced_job_external_ids")
+        )
+    )
+    if must_target:
+        parts.append(
+            "本 scene 的强制目标集合："
+            f"{_compact_value(must_target)}。必须优先完成这些目标；"
+            "如果 browser_snapshot 返回了目标对应的链接但 inViewport=false，不能点击其他相似职位替代，"
+            "必须先使用 hid_action 执行页面滚动/滚轮使该目标链接进入 viewport，随后重新 browser_snapshot/query 确认，"
+            "再基于新的 in-viewport clickPoint 执行 HID click。"
+            "若只完成目标集合的一部分，overall_status/status 不得为 completed。"
+        )
+    if must_ignore:
+        parts.append(
+            "本 scene 的已完成/禁止重复目标集合："
+            f"{_compact_value(must_ignore)}。除非任务明确要求复核这些目标，否则不要打开、读取、总结或写回这些目标；"
+            "如果当前页面落在已完成目标详情页，应通过页面内返回/列表导航/滚动恢复到列表，并继续强制目标集合。"
+        )
     if request["success_criteria"]:
         parts.append(f"成功标准：{request['success_criteria']}")
     if request["output_contract"]:
         parts.append(f"结果合同：{request['output_contract']}")
+        if request["output_contract"].get("result_data_required"):
+            parts.append(
+                "结果合同要求结构化 result_data：最终回答必须是单个有效 JSON object（json object），不要使用 Markdown 代码块或额外解释。"
+                "JSON/json 必须直接包含 output_contract.required_fields 中列出的字段；不要把这些字段藏在 summary、business_summary、"
+                "current_real_progress 或其他自由文本字段中。若任一必需字段缺失、为空或未被证据支持，status 不得为 completed。"
+            )
     if request["browser_target"]:
         parts.append(f"浏览器目标：{_compact_value(request['browser_target'])}")
         parts.append(
@@ -611,6 +694,8 @@ def _build_scene_instruction(request: dict[str, Any]) -> str:
             "当 scene 可用工具包含 hid_action 时，只读 browser 工具不代表不能点击或导航；"
             "browser 负责观察，hid_action 负责执行点击、滚动、输入、返回等页面动作。"
             "如果任务需要进入详情页、翻页或返回列表，必须先基于 browser 观察到的 link/button/clickPoint 构造 hid_action 尝试执行，"
+            "如果目标 link/button 在 browser 观察中存在但 inViewport=false，必须先用 hid_action 进行页面滚动，"
+            "滚动后重新 browser 观察并使用新的 viewport 内 clickPoint；不得使用 offscreen clickPoint，也不得改点其他已完成目标。"
             "随后再用 browser 观察确认结果。只有 hid_action 缺失、缺少可执行观察证据，或 hid_action 返回明确 blocked/error 后，"
             "才可以把页面交互能力作为 blocker。不得在未尝试 hid_action 的情况下声称当前能力仅支持只读观察。"
         )
@@ -620,18 +705,16 @@ def _build_scene_instruction(request: dict[str, Any]) -> str:
             "至少完成一次重新观察后的重试，仍连续失败时才把它作为 human recovery blocker。"
         )
         parts.append(
-            "如果 hid_action 返回 E_NOT_FRONTMOST、E_TIMEOUT、地址栏恢复后 URL 未变化，或等价的焦点/导航恢复失败，"
+            "如果 hid_action 返回 E_NOT_FRONTMOST、E_TIMEOUT 或等价的焦点/导航恢复失败，"
             "不要把这一次工具失败直接当作业务终局。应先重新观察目标 origin 的页签、确认当前 URL/标题/可点击入口，"
-            "释放异常修饰键状态并重试同一业务动作；可切换为已观察到的同源 href 的地址栏链路，"
-            "也可回到列表页后重新进入详情。只有连续恢复后目标仍不可操作，才返回 human recovery blocker。"
+            "释放异常修饰键状态并基于页面内可见入口、返回、滚动或其他同源页面导航控件重试同一业务动作。"
+            "禁止主动聚焦浏览器地址栏、输入 URL 或粘贴 URL 作为恢复路径；只有页面内连续恢复后目标仍不可操作，才返回 human recovery blocker。"
         )
         parts.append(
             "如果同源站点内的点击、返回、滚动或单次 HID 注入超时失败，不要直接结束场景。"
             "应先重新观察页面状态，释放异常按键状态，等待或滚动到稳定位置，尝试页面上其他同源链接/导航入口，"
-            "或通过电脑执行链路打开 browser 观察到的同源 href；随后继续原始业务目标。"
-            "当需要通过地址栏打开已观察到的同源 href 时，应使用 VirtualHID 键盘原语完成真实用户链路："
-            "key(keyCode=37, modifiers=[\"cmd\"]) 聚焦地址栏，pasteText 写入该同源 URL，key(keyCode=36) 回车，"
-            "再通过 browser 观察确认 URL 和页面上下文；不得把未确认的地址栏尝试当作已进入详情。"
+            "或回到页面内已观察到的列表/详情入口后继续原始业务目标。"
+            "浏览器地址栏、直接输入 URL、粘贴 URL 和浏览器外壳导航不属于招聘网站页面内业务动作，除非用户显式要求，否则不得作为恢复路径。"
             "如果原始目标只完成一部分且仍存在 blockers、limitations 或未完成项，最终 status 不得写 completed；"
             "应继续恢复执行，或返回 blocked 并写明恢复条件。"
         )
@@ -654,6 +737,13 @@ def _build_scene_instruction(request: dict[str, Any]) -> str:
             "写回时的 attach_resume_artifact），但 scene 内不要绕过合同自行编造 artifact proof。"
         )
     return "\n".join(part for part in parts if part)
+
+
+def _scene_text_format(request: dict[str, Any]) -> dict[str, Any] | None:
+    output_contract = _as_dict(request.get("output_contract"))
+    if output_contract.get("result_data_required"):
+        return {"type": "json_object"}
+    return None
 
 
 def _build_checkpoints(request: dict[str, Any]) -> list[dict[str, Any]]:
@@ -718,6 +808,36 @@ def _append_episode_engine_events(
     session.commit()
 
 
+def _missing_required_scene_browser_hid_evidence_blocker(episode: Any) -> dict[str, Any] | None:
+    runtime_metadata = _as_dict(getattr(episode, "runtime_metadata", None))
+    execution_contract = _as_dict(runtime_metadata.get("execution_contract"))
+    browser_target = _as_dict(execution_contract.get("browser_target"))
+    if not browser_target:
+        return None
+    if _episode_has_successful_browser_or_hid_tool_result(episode):
+        return None
+    return {
+        "kind": "missing_browser_hid_evidence",
+        "message": (
+            "scene context has a browser target but produced no successful browser/HID tool result; "
+            "the scene cannot be marked completed without observed browser or computer execution evidence."
+        ),
+    }
+
+
+def _episode_has_successful_browser_or_hid_tool_result(episode: Any) -> bool:
+    for entry in list(getattr(episode, "actions", None) or []) + list(getattr(episode, "observations", None) or []):
+        if not isinstance(entry, dict) or str(entry.get("type") or "") != "tool_event":
+            continue
+        payload = _as_dict(entry.get("payload"))
+        tool_name = str(payload.get("tool_name") or "").strip()
+        if not (tool_name.startswith("browser_") or tool_name.startswith("hid_")):
+            continue
+        if _tool_event_result_succeeded(entry):
+            return True
+    return False
+
+
 def _append_environment_snapshots(
     *,
     session: Session,
@@ -779,7 +899,11 @@ def _scene_outcome_from_engine(
     instruction: str,
     engine_events: list[dict[str, Any]],
     browser_semantics: dict[str, Any],
+    workspace_pause_checker: Any | None = None,
 ) -> AgentTurnOutcome:
+    if callable(workspace_pause_checker) and workspace_pause_checker():
+        engine.interrupt("workspace_paused")
+        return _workspace_paused_scene_outcome(engine_events, engine_output_count=0)
     final_output = ""
     status = "complete"
     gate_signal = "run_done"
@@ -809,6 +933,9 @@ def _scene_outcome_from_engine(
         elif output.type == "turn_interrupted":
             status = "cancelled"
             gate_signal = "paused"
+        if callable(workspace_pause_checker) and workspace_pause_checker():
+            engine.interrupt("workspace_paused")
+            return _workspace_paused_scene_outcome(engine_events, engine_output_count=engine_output_count)
     if status == "complete" and not str(final_output or "").strip() and not result_data:
         status = "escalate"
         gate_signal = "budget_exhausted"
@@ -827,6 +954,7 @@ def _scene_outcome_from_engine_with_timeout(
     instruction: str,
     engine_events: list[dict[str, Any]],
     browser_semantics: dict[str, Any],
+    workspace_pause_checker: Any | None = None,
     timeout_seconds: int | None,
 ) -> AgentTurnOutcome:
     effective_timeout = int(timeout_seconds or 0)
@@ -836,6 +964,7 @@ def _scene_outcome_from_engine_with_timeout(
             instruction=instruction,
             engine_events=engine_events,
             browser_semantics=browser_semantics,
+            workspace_pause_checker=workspace_pause_checker,
         )
 
     executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="scene-context-turn")
@@ -845,6 +974,7 @@ def _scene_outcome_from_engine_with_timeout(
         instruction=instruction,
         engine_events=engine_events,
         browser_semantics=browser_semantics,
+        workspace_pause_checker=workspace_pause_checker,
     )
     try:
         return future.result(timeout=effective_timeout)
@@ -880,6 +1010,43 @@ def _scene_outcome_from_engine_with_timeout(
         executor.shutdown(wait=False, cancel_futures=True)
 
 
+def _workspace_paused_scene_outcome(engine_events: list[dict[str, Any]], *, engine_output_count: int) -> AgentTurnOutcome:
+    message = "workspace is paused; scene execution stopped before issuing another action."
+    blocker = {"kind": "workspace_paused", "message": message}
+    engine_events.append(
+        {
+            "type": "runtime_event",
+            "engine_output_seq": len(engine_events) + 1,
+            "payload": {
+                "kind": "workspace_paused",
+                "status": "blocked",
+                "message": message,
+            },
+            "recorded_at": utcnow().isoformat(),
+        }
+    )
+    return AgentTurnOutcome(
+        status="escalate",
+        gate_signal="paused",
+        final_output=message,
+        result_data={
+            "status": "paused",
+            "blockers": [blocker],
+            "remaining_work": ["continue_workspace_to_resume_scene"],
+        },
+        metadata={"interaction_engine": True, "engine_output_count": engine_output_count},
+    )
+
+
+def _is_workspace_paused_outcome(outcome: AgentTurnOutcome) -> bool:
+    result_data = _as_dict(outcome.result_data)
+    if str(result_data.get("status") or "").strip().lower() == "paused" and any(
+        str(item.get("kind") or "") == "workspace_paused" for item in _list_of_dicts(result_data.get("blockers"))
+    ):
+        return True
+    return any(str(item.get("kind") or "") == "workspace_paused" for item in _list_of_dicts(result_data.get("blockers")))
+
+
 def _should_retry_scene_for_missing_hid(
     *,
     outcome: AgentTurnOutcome,
@@ -888,6 +1055,8 @@ def _should_retry_scene_for_missing_hid(
     request: dict[str, Any],
     available_tools: Any,
 ) -> bool:
+    if _has_terminal_scene_result_data(outcome):
+        return False
     if _is_scene_context_timeout(outcome, blockers):
         return False
     if "hid_action" not in set(available_tools):
@@ -919,6 +1088,8 @@ def _should_retry_scene_for_recovered_tool_error(
     blockers: list[dict[str, Any]],
     events: list[dict[str, Any]],
 ) -> bool:
+    if _has_terminal_scene_result_data(outcome):
+        return False
     if _is_scene_context_timeout(outcome, blockers):
         return False
     if not any(str(item.get("kind") or "") == "tool_error" for item in blockers):
@@ -946,6 +1117,8 @@ def _should_retry_scene_for_browser_wait_timeout(
     blockers: list[dict[str, Any]],
     events: list[dict[str, Any]],
 ) -> bool:
+    if _has_terminal_scene_result_data(outcome):
+        return False
     if _is_scene_context_timeout(outcome, blockers):
         return False
     if _public_status(outcome, blockers) != "blocked":
@@ -967,12 +1140,42 @@ def _browser_wait_timeout_retry_instruction(blockers: list[dict[str, Any]]) -> s
     )
 
 
+def _should_retry_scene_for_incomplete_progress(
+    *,
+    outcome: AgentTurnOutcome,
+    blockers: list[dict[str, Any]],
+) -> bool:
+    result_data = _as_dict(outcome.result_data)
+    status = str(result_data.get("status") or _scene_result_status(outcome)).strip().lower()
+    if status not in {"in_progress", "partial", "incomplete", "continuable", "continue", "pending"}:
+        return False
+    if _is_scene_context_timeout(outcome, blockers):
+        return False
+    if any(str(item.get("kind") or "") in {"login_required", "captcha", "permission_denied"} for item in blockers):
+        return False
+    text = _compact_value(result_data).lower()
+    return any(marker in text for marker in ("滚动", "scroll", "进入详情", "detail", "needs_retry"))
+
+
+def _incomplete_progress_retry_instruction() -> str:
+    return (
+        "你刚才返回的是未完成进度，不是本 scene 的终局。不要把 in_progress/partial 当作最终输出交回。"
+        "如果页面仍可访问、仍有详情入口未进入、或只是需要滚动/重新观察/重试点击，请现在继续执行："
+        "先 browser_snapshot/query 确认当前页面；对 inViewport=false 的目标用 hid_action 执行页面滚动，"
+        "重新观察后再用新的 clickPoint 点击详情入口；进入详情页后读取职责、要求等详情证据。"
+        "只有登录、验证码、权限、目标站点不可达或必要执行工具缺失才可返回 blocked。"
+        "最终只在 completed/partial/blocked 三者中选择 status；没有完成全部强制目标时不得 completed。"
+    )
+
+
 def _should_retry_scene_for_transient_hid_error(
     *,
     outcome: AgentTurnOutcome,
     blockers: list[dict[str, Any]],
     events: list[dict[str, Any]],
 ) -> bool:
+    if _has_terminal_scene_result_data(outcome):
+        return False
     if _is_scene_context_timeout(outcome, blockers):
         return False
     if _public_status(outcome, blockers) != "blocked":
@@ -991,8 +1194,8 @@ def _transient_hid_error_retry_instruction(blockers: list[dict[str, Any]]) -> st
         f"上一轮遇到 {blocker_label}，这类 HID/前台/超时/光标状态问题不能直接作为当前 scene 的终局 blocker。"
         "请继续当前场景而不是总结结束：先用 browser_snapshot 或 browser_list_tabs 重新确认同 origin 页签的 URL、标题、页面内容和可点击入口；"
         "必要时调用 hid_state 或释放异常修饰键状态，然后基于最新 browser 证据重试同一业务动作。"
-        "如果已观察到剩余详情页的同源 href，可通过真实 HID 地址栏链路打开该 URL：Cmd+L、粘贴 URL、回车，并再次 browser 观察确认。"
-        "只有重试后仍连续失败、目标页面不可达、登录/权限阻断，或缺少任何可执行页面证据，才可以返回 blocked。"
+        "禁止主动聚焦浏览器地址栏、输入 URL 或粘贴 URL 作为恢复路径；应只使用页面内可见链接、按钮、滚动、返回或导航控件恢复。"
+        "只有重试后仍连续失败、目标页面不可达、登录/权限阻断，或缺少任何页面内可执行证据，才可以返回 blocked。"
     )
 
 
@@ -1003,6 +1206,21 @@ def _is_scene_context_timeout(outcome: AgentTurnOutcome, blockers: list[dict[str
     if any(str(item.get("kind") or "") == "scene_context_timeout" for item in _list_of_dicts(result_data.get("blockers"))):
         return True
     return "e_scene_timeout" in str(outcome.final_output or "").lower()
+
+
+def _has_terminal_scene_result_data(outcome: AgentTurnOutcome) -> bool:
+    if not isinstance(outcome.result_data, dict) or not outcome.result_data:
+        return False
+    return _scene_result_status(outcome) in {
+        "blocked",
+        "wait_human",
+        "waiting_human",
+        "paused",
+        "error",
+        "failed",
+        "failure",
+        "fail",
+    }
 
 
 def _has_transient_hid_blocker(blockers: list[dict[str, Any]]) -> bool:
@@ -1218,9 +1436,12 @@ def _scene_tool_registry(
     *,
     request: dict[str, Any],
     browser_semantics: dict[str, Any],
+    workspace_pause_checker: Any | None = None,
 ) -> ToolRegistry:
     registry = ToolRegistry()
     for tool in tool_registry.tools.values():
+        if not _is_allowed_scene_tool(tool):
+            continue
         cloned = tool.clone()
         cloned.external_target = False
         cloned.metadata = {
@@ -1263,6 +1484,12 @@ def _scene_tool_registry(
             original_handler = cloned.handler
 
             def _handler(arguments: dict[str, Any], *, _original_handler=original_handler) -> Any:
+                if callable(workspace_pause_checker) and workspace_pause_checker():
+                    return {
+                        "status": "blocked",
+                        "error": "workspace_paused",
+                        "message": "workspace is paused; new HID actions are blocked until the workspace is continued.",
+                    }
                 normalized = _normalize_scene_hid_action_arguments(
                     arguments,
                     request=request,
@@ -1295,6 +1522,23 @@ def _scene_tool_registry(
             cloned.handler = _handler
         registry.register(cloned)
     return registry
+
+
+def _is_allowed_scene_tool(tool: ToolDefinition) -> bool:
+    if tool.name.startswith("browser_") or tool.name == "hid_action":
+        return True
+    return is_scene_context_tool(tool)
+
+
+def _workspace_control_paused(session_factory: sessionmaker[Session]) -> bool:
+    with session_factory() as session:
+        state = session.get(AgentGlobalState, "singleton")
+        if state is None:
+            return False
+        metadata = dict(state.state_metadata or {})
+        control = metadata.get("workspace_control")
+        control_state = str((control or {}).get("state") or "").strip().lower() if isinstance(control, dict) else ""
+        return bool(state.autonomous_paused) or control_state == "paused"
 
 
 def _validate_scene_browser_hid_sequence(
@@ -2138,7 +2382,14 @@ def _apply_browser_viewport_geometry(
     height = _optional_number(viewport.get("innerHeight"))
     geometry.setdefault("scrollOffset", {"x": _optional_number(viewport.get("scrollX")) or 0, "y": _optional_number(viewport.get("scrollY")) or 0})
     if width is not None and height is not None:
-        geometry.setdefault("viewportSize", {"x": 0, "y": 0, "width": width, "height": height})
+        viewport_size = _as_dict(geometry.get("viewportSize") or geometry.get("viewport_size"))
+        geometry["viewportSize"] = {
+            "x": _optional_number(viewport_size.get("x")) or 0,
+            "y": _optional_number(viewport_size.get("y")) or 0,
+            "width": _optional_number(viewport_size.get("width")) or width,
+            "height": _optional_number(viewport_size.get("height")) or height,
+        }
+        geometry.pop("viewport_size", None)
     visual_viewport = _as_dict(viewport.get("visualViewport"))
     if "pageScale" not in geometry and "page_scale" not in geometry:
         geometry["pageScale"] = _optional_number(visual_viewport.get("scale")) or 1
@@ -2286,19 +2537,30 @@ def _should_continue(outcome: AgentTurnOutcome) -> bool:
     return outcome.status == "continue" and outcome.gate_signal == "continue"
 
 
-def _public_status(outcome: AgentTurnOutcome, blockers: list[dict[str, Any]]) -> str:
-    result_status = _scene_result_status(outcome)
+def _public_status(
+    outcome: AgentTurnOutcome,
+    blockers: list[dict[str, Any]],
+    *,
+    result_data: dict[str, Any] | None = None,
+) -> str:
+    result_status = str((_as_dict(result_data).get("status") or "")).strip().lower() or _scene_result_status(outcome)
     if result_status in {"completed", "complete", "success", "succeeded"}:
         if blockers:
             return "blocked"
         return "completed"
+    if result_status in {"partial", "incomplete", "continuable", "continue", "pending"}:
+        if blockers:
+            return "blocked"
+        return "incomplete"
     if result_status in {"blocked", "wait_human", "waiting_human", "paused"} or result_status.startswith("blocked_"):
         return "blocked"
     if result_status in {"error", "failed", "failure", "fail"} or result_status.startswith("failed_") or result_status.startswith("failure_"):
         return "error"
-    if outcome.status in {"error", "cancelled"}:
-        return "error"
     if blockers:
+        return "blocked"
+    if outcome.status == "error":
+        return "error"
+    if outcome.status == "cancelled":
         return "blocked"
     if outcome.status == "complete":
         return "completed"
@@ -2346,10 +2608,172 @@ def _public_summary(outcome: AgentTurnOutcome, blockers: list[dict[str, Any]]) -
     return "scene context finished without a terminal summary"
 
 
-def _scene_result_data(outcome: AgentTurnOutcome) -> dict[str, Any]:
+def _scene_result_data(outcome: AgentTurnOutcome, *, output_contract: dict[str, Any] | None = None) -> dict[str, Any]:
     if isinstance(outcome.result_data, dict) and outcome.result_data:
         return dict(outcome.result_data)
+    contract = _as_dict(output_contract)
+    if contract.get("result_data_required"):
+        final_payload = _scene_final_control_payload(outcome)
+        if isinstance(final_payload, dict) and final_payload:
+            return dict(final_payload)
     return {}
+
+
+def _normalize_scene_result_contract_data(
+    result_data: dict[str, Any],
+    output_contract: dict[str, Any] | None,
+) -> dict[str, Any]:
+    contract = _as_dict(output_contract)
+    if not contract.get("result_data_required") or not result_data:
+        return result_data
+    required_fields = {
+        str(item).strip()
+        for item in contract.get("required_fields") or []
+        if str(item or "").strip()
+    }
+    if not required_fields:
+        return result_data
+
+    normalized = dict(result_data)
+    summary = _as_dict(normalized.get("summary"))
+    result = _as_dict(normalized.get("result"))
+    sources = [normalized, summary, result]
+    synthesized: list[str] = []
+
+    def first_list(*keys: str) -> list[Any]:
+        for source in sources:
+            for key in keys:
+                value = source.get(key)
+                if isinstance(value, list):
+                    return list(value)
+        return []
+
+    completed_details = first_list(
+        "completed_job_details",
+        "completedJobDetails",
+        "job_details",
+        "jobDetails",
+        "active_recruiting_jobs",
+        "activeRecruitingJobs",
+        "verified_jobs",
+        "verifiedJobs",
+        "details",
+    )
+    if "completed_job_details" in required_fields and not normalized.get("completed_job_details") and completed_details:
+        normalized["completed_job_details"] = completed_details
+        synthesized.append("completed_job_details")
+
+    observed_jobs = first_list(
+        "observed_jobs",
+        "observedJobs",
+        "discovered_jobs",
+        "discoveredJobs",
+        "jobs_reviewed",
+        "jobsReviewed",
+        "active_recruiting_jobs",
+        "activeRecruitingJobs",
+        "active_jobs",
+        "activeJobs",
+    )
+    if not observed_jobs and isinstance(normalized.get("completed_job_details"), list):
+        observed_jobs = [
+            {
+                key: item.get(key)
+                for key in ("title", "job_title", "external_id", "external_url", "status")
+                if isinstance(item, dict) and item.get(key) not in (None, "", [], {})
+            }
+            for item in normalized["completed_job_details"]
+            if isinstance(item, dict)
+        ]
+        observed_jobs = [item for item in observed_jobs if item]
+    if "observed_jobs" in required_fields and not normalized.get("observed_jobs") and observed_jobs:
+        normalized["observed_jobs"] = observed_jobs
+        synthesized.append("observed_jobs")
+
+    if "inactive_or_closed_jobs" in required_fields and "inactive_or_closed_jobs" not in normalized:
+        normalized["inactive_or_closed_jobs"] = first_list(
+            "inactive_or_closed_jobs",
+            "inactiveOrClosedJobs",
+            "closed_jobs",
+            "closedJobs",
+            "inactive_jobs",
+            "inactiveJobs",
+        )
+    if "blockers" in required_fields and "blockers" not in normalized:
+        normalized["blockers"] = first_list("blockers")
+    if "limitations" in required_fields and "limitations" not in normalized:
+        normalized["limitations"] = first_list("limitations")
+    if "activation_entry_observed" in required_fields and "activation_entry_observed" not in normalized:
+        activation = None
+        for source in sources:
+            if "activation_entry_observed" in source:
+                activation = source.get("activation_entry_observed")
+                break
+            if "activationEntryObserved" in source:
+                activation = source.get("activationEntryObserved")
+                break
+        normalized["activation_entry_observed"] = bool(activation)
+
+    evidence = first_list("evidence", "evidence_refs", "evidenceRefs", "observations", "notes")
+    if not evidence:
+        for source in sources:
+            value = source.get("evidence") or source.get("blocker") or source.get("limitation")
+            if str(value or "").strip():
+                evidence = [str(value).strip()]
+                break
+    if not evidence and normalized.get("completed_job_details"):
+        evidence = ["scene returned structured job detail data"]
+    if "evidence" in required_fields and not normalized.get("evidence") and evidence:
+        normalized["evidence"] = evidence
+        synthesized.append("evidence")
+
+    status = str(normalized.get("status") or "").strip().lower()
+    if synthesized and status in {"completed", "complete", "success", "succeeded"}:
+        normalized["reported_status"] = normalized.get("status")
+        normalized["status"] = "partial"
+        normalized["contract_normalization"] = {
+            "status": "applied",
+            "synthesized_fields": synthesized,
+            "reason": "scene returned recognizable business fields with non-canonical contract keys",
+        }
+    return normalized
+
+
+def _scene_result_contract_blockers(result_data: dict[str, Any], output_contract: dict[str, Any] | None) -> list[dict[str, Any]]:
+    contract = _as_dict(output_contract)
+    if not contract.get("result_data_required"):
+        return []
+    required_fields = [
+        str(item).strip()
+        for item in contract.get("required_fields") or []
+        if str(item or "").strip()
+    ]
+    missing_fields = [
+        field
+        for field in required_fields
+        if field not in result_data or result_data.get(field) in (None, "", {})
+    ]
+    blockers: list[dict[str, Any]] = []
+    if missing_fields:
+        blockers.append(
+            {
+                "kind": "output_contract_incomplete",
+                "message": "scene result_data is missing required output_contract fields",
+                "missing_fields": missing_fields,
+            }
+        )
+    status = str(result_data.get("status") or "").strip().lower()
+    completed_details = result_data.get("completed_job_details")
+    if "completed_job_details" in required_fields and status in {"completed", "complete", "success", "succeeded"}:
+        if not isinstance(completed_details, list) or not completed_details:
+            blockers.append(
+                {
+                    "kind": "output_contract_incomplete",
+                    "message": "scene cannot be completed without completed_job_details",
+                    "missing_fields": ["completed_job_details"],
+                }
+            )
+    return blockers
 
 
 def _align_result_data_status(result_data: dict[str, Any], public_status: str) -> dict[str, Any]:

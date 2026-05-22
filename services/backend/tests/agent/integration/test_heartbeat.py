@@ -109,6 +109,58 @@ def test_heartbeat_honors_global_pause(tmp_path: Path) -> None:
         session.close()
 
 
+def test_heartbeat_does_not_claim_jd_sync_task_while_paused(tmp_path: Path) -> None:
+    session = _make_session(tmp_path)
+    try:
+        definition = AgentDefinition(definition_key="primary", name="Primary", is_primary=True)
+        session.add(definition)
+        session.flush()
+        agent_session = AgentSession(agent_definition_id=definition.id)
+        session.add(agent_session)
+        session.flush()
+        run = AgentRun(
+            session_id=agent_session.id,
+            run_id="jd-run-paused",
+            agent_kind="jd_sync",
+            status="queued",
+        )
+        session.add(run)
+        session.add(
+            AgentGlobalState(
+                id="singleton",
+                autonomous_paused=True,
+                pause_reason="operator pause",
+                state_metadata={"workspace_control": {"state": "paused", "reason": "operator pause"}},
+            )
+        )
+        session.commit()
+        TaskQueueRepository(session).enqueue(
+            task_id="jd-task-paused",
+            task_type="autonomous_turn",
+            payload={"run_pk": run.id, "run_id": run.run_id, "agent_kind": "jd_sync"},
+        )
+
+        agent = AutonomousAdapter(
+            session_factory=create_session_factory(session.get_bind()),
+            provider=ScriptedProvider(provider_name="scripted", responses=[LLMResponse(content="should not run")]),
+            tool_registry=ToolRegistry(),
+            plugin_host=PluginHost(),
+        )
+        heartbeat = Heartbeat(session_factory=create_session_factory(session.get_bind()), autonomous_adapter=agent)
+
+        result = heartbeat.run_once()
+
+        session.expire_all()
+        task = TaskQueueRepository(session).get("jd-task-paused")
+        assert result == {"status": "paused", "reason": "operator pause"}
+        assert task is not None
+        assert task.status == "pending"
+        assert task.locked_by is None
+        assert session.get(AgentRun, run.id).status == "queued"
+    finally:
+        session.close()
+
+
 def test_autonomous_recover_stale_interrupts_run_and_clears_running_queue_task(tmp_path: Path) -> None:
     session = _make_session(tmp_path)
     try:

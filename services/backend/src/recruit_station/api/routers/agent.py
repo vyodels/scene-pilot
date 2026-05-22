@@ -309,7 +309,14 @@ def build_router(container: AppContainer) -> APIRouter:
     @router.post("/autonomous/workspace-control/pause")
     def pause_autonomous_workspace(payload: WorkspaceControlRequest) -> dict[str, Any]:
         container.heartbeat.pause(reason=payload.reason or "manual pause", updated_by=payload.reviewer)
-        return _workspace_control_payload(container.heartbeat.status())
+        paused_run_ids = container.autonomous_adapter.pause_active_runs(
+            reviewer=payload.reviewer,
+            reason=payload.reason or "manual pause",
+        )
+        control = _workspace_control_payload(container.heartbeat.status())
+        control["paused_active_run_ids"] = paused_run_ids
+        control["pausedActiveRunIds"] = paused_run_ids
+        return control
 
     @router.post("/autonomous/workspace-control/continue")
     def continue_autonomous_workspace(payload: WorkspaceControlRequest) -> dict[str, Any]:
@@ -1465,9 +1472,9 @@ def _build_jd_sync_user_instruction(
         "- 对每个仍在招聘的职位，必须进入或打开职位详情并完整读取岗位详情后，才能同步到本地 JD 库。",
         "- 如果只读到列表但尚未读取详情，应继续执行；只有遇到登录、权限、必要执行工具缺失或页面不可达等明确问题才标记为阻塞。",
         "- 进入详情页、翻页或返回列表等页面动作应使用系统提供的浏览器观察和电脑/HID执行链路；不得因为浏览器观察工具只读就结束任务。",
-        "- 如果页面动作失败但仍处于同源站点，应先恢复后继续：重新观察页面、等待页面稳定、释放异常按键状态、选择页面上的其他同源入口、滚动到稳定位置，或通过电脑执行链路打开已经观察到的同源链接。",
-        "- 恢复执行不是重复同一失败动作；每次恢复都应根据最新页面证据切换路径，例如从页面入口切到地址栏同源链接、从返回按钮切到列表 URL、从当前详情切到已观察到的下一个同源详情。",
-        "- 如果列表入口点击后仍无法进入已知同源详情页，应通过电脑执行链路使用地址栏打开已观察到的同源详情 URL 后继续读取；地址栏恢复必须是真实 HID 键盘链路：Cmd+L 聚焦地址栏，粘贴已观察到的同源 URL，回车，再重新观察确认页面。",
+        "- 如果页面动作失败但仍处于同源站点，应先恢复后继续：重新观察页面、等待页面稳定、释放异常按键状态、选择页面上的其他同源入口、滚动到稳定位置，或使用页面内导航控件继续。",
+        "- 恢复执行不是重复同一失败动作；每次恢复都应根据最新页面证据切换页面内路径，例如从当前详情返回职位列表、滚动到目标职位入口、或选择已观察到的下一个同源详情入口。",
+        "- 不得主动聚焦浏览器地址栏、输入 URL 或粘贴 URL 作为恢复路径；如果缺少页面内可执行证据，应说明 blocker 和需要恢复的页面条件。",
         "- 单次点击、返回、滚动或注入超时不是任务终局；只要目标站点仍可访问且还有职位详情未完整读取，就应在本轮继续恢复和推进。",
         "- 如果已经从列表发现多个职位，但本地写回数量少于发现数量或仍有任一职位缺少详情页证据，应继续打开剩余职位详情，不能输出最终总结。",
         "- 可以先写入已经完整读取详情的职位作为进度；但在没有完成全量职位发现、全量详情读取、更新/下架识别和生效 JD 选择前，不得用“已完成部分同步”结束本轮。",

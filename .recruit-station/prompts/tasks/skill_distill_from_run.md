@@ -10,7 +10,8 @@
 - 不要把浏览器标签、URL、按钮文案、DOM 结构、selector、固定点击路径、站点专用页面分支写进 skill。
 - 优先提炼业务级动作模式、前置条件、工具偏好、风险边界和可观察结果。
 - skill 的命名与摘要必须是招聘业务语义，而不是网页语义。
-- 如果输入不足以形成稳定 skill，也要返回结构完整的 `skill_contract`，并在描述里明确说明局限。
+- 如果输入不足以形成稳定 skill，不要硬造可复用能力；返回 JSON：`{"skill_contract": null, "skip_reason": "evidence_insufficient"}`。
+- 只有当输入明确包含完整成功终局、关键工具结果和可复用业务证据时，才返回结构完整的 `skill_contract`。
 - 只返回 JSON，不要附加解释。
 
 ## 优先蒸馏的招聘业务单元

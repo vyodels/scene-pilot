@@ -9,7 +9,7 @@ import tempfile
 import threading
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -789,6 +789,33 @@ def _hid_action_has_browser_sequence_primitive(arguments: dict[str, Any]) -> boo
     return False
 
 
+def _hid_action_uses_browser_address_bar_navigation(arguments: dict[str, Any]) -> bool:
+    primitives = arguments.get("primitives")
+    if not isinstance(primitives, list):
+        return False
+    return any(_is_address_bar_focus_primitive(primitive) for primitive in primitives if isinstance(primitive, dict))
+
+
+def _is_address_bar_focus_primitive(primitive: dict[str, Any]) -> bool:
+    if str(primitive.get("type") or "").strip() != "key":
+        return False
+    key_code = primitive.get("keyCode")
+    virtual_key = primitive.get("virtualKey")
+    if str(key_code) != "37" and str(virtual_key) != "37":
+        return False
+    return _has_command_modifier(primitive.get("modifiers"))
+
+
+def _has_command_modifier(value: Any) -> bool:
+    if isinstance(value, list):
+        return any(str(item).strip().lower() in {"cmd", "command", "meta"} for item in value)
+    if isinstance(value, str):
+        return value.strip().lower() in {"cmd", "command", "meta"}
+    if isinstance(value, dict):
+        return any(bool(value.get(key)) for key in ("cmd", "command", "meta"))
+    return False
+
+
 def _hid_action_can_use_target_identification(arguments: dict[str, Any]) -> bool:
     primitives = arguments.get("primitives")
     if not isinstance(primitives, list) or not primitives:
@@ -830,10 +857,8 @@ def _browser_hid_sequence_scope_key(arguments: dict[str, Any], result: Any | Non
     episode_id = _first_scope_value(
         arguments.get("episode_id"),
         arguments.get("episodeId"),
-        arguments.get("taskId"),
         context.get("episode_id"),
         context.get("episodeId"),
-        context.get("taskId"),
         target.get("episode_id"),
         target.get("episodeId"),
         options.get("episode_id"),
@@ -853,20 +878,22 @@ def _browser_hid_sequence_scope_key(arguments: dict[str, Any], result: Any | Non
         metadata.get("account"),
         _result_path(result, "account"),
     )
-    host = _first_scope_value(
-        target.get("host"),
-        context.get("host"),
-        _host_from_url(target.get("url")),
-        _host_from_url(context.get("url")),
-        _host_from_url(arguments.get("url")),
-        _host_from_url(arguments.get("expectedOrigin")),
-        _host_from_url(arguments.get("expected_origin")),
-        _host_from_url(arguments.get("targetOrigin")),
-        _host_from_url(arguments.get("target_origin")),
-        arguments.get("expectedHost"),
-        arguments.get("expected_host"),
-        arguments.get("host"),
-        _result_host(result),
+    host = _most_specific_scope_host(
+        [
+            target.get("host"),
+            context.get("host"),
+            _host_from_url(target.get("url")),
+            _host_from_url(context.get("url")),
+            _host_from_url(arguments.get("url")),
+            _host_from_url(arguments.get("expectedOrigin")),
+            _host_from_url(arguments.get("expected_origin")),
+            _host_from_url(arguments.get("targetOrigin")),
+            _host_from_url(arguments.get("target_origin")),
+            arguments.get("expectedHost"),
+            arguments.get("expected_host"),
+            arguments.get("host"),
+            _result_host(result),
+        ]
     )
     if not any((run_id, episode_id, account, host)):
         return None
@@ -886,6 +913,47 @@ def _first_scope_value(*values: Any) -> str | None:
         if text:
             return text
     return None
+
+
+def _most_specific_scope_host(values: list[Any]) -> str | None:
+    selected: str | None = None
+    for value in values:
+        host = _normalize_scope_host(value)
+        if not host:
+            continue
+        if selected is None:
+            selected = host
+            continue
+        if _scope_hostnames_match(selected, host) and _scope_host_has_explicit_port(host) and not _scope_host_has_explicit_port(selected):
+            selected = host
+    return selected
+
+
+def _scope_hostnames_match(left: Any, right: Any) -> bool:
+    left_name = _scope_hostname_part(left)
+    right_name = _scope_hostname_part(right)
+    return bool(left_name and right_name and left_name == right_name)
+
+
+def _scope_hostname_part(value: Any) -> str | None:
+    host = _normalize_scope_host(_host_from_url(value) or value)
+    if not host:
+        return None
+    try:
+        parsed = urlparse(f"//{host}")
+        return parsed.hostname.lower() if parsed.hostname else None
+    except ValueError:
+        return host.split(":", 1)[0].lower() if ":" in host else host.lower()
+
+
+def _scope_host_has_explicit_port(value: Any) -> bool:
+    host = _normalize_scope_host(_host_from_url(value) or value)
+    if not host:
+        return False
+    try:
+        return urlparse(f"//{host}").port is not None
+    except ValueError:
+        return ":" in host
 
 
 def _host_from_url(value: Any) -> str | None:
@@ -1124,6 +1192,11 @@ def _sequence_audit_summary(scope_key: str) -> dict[str, Any]:
 def _prepare_linear_browser_hid_tool_call(server: McpServer, tool_name: str, arguments: dict[str, Any]) -> None:
     if not _is_browser_hid_sequence_action(server, tool_name, arguments):
         return
+    if _hid_action_uses_browser_address_bar_navigation(arguments):
+        raise McpBridgeError(
+            "Browser/HID policy violation: browser address-bar navigation is not an allowed recovery path. "
+            "Use page-internal visible links, buttons, scrolling, back navigation, or return a structured blocker when page-internal evidence is insufficient."
+        )
     scope_key = _browser_hid_sequence_scope_key(arguments)
     if scope_key is None:
         raise McpBridgeError(
@@ -1259,6 +1332,7 @@ def _normalize_discovered_tool(server: McpServer, payload: dict[str, Any]) -> di
 @dataclass(slots=True)
 class McpRegistryService:
     session_factory: sessionmaker[Session]
+    _configured_runtime_state: dict[str, dict[str, Any]] = field(default_factory=dict, init=False, repr=False)
 
     def install_preset(
         self,
@@ -1316,10 +1390,21 @@ class McpRegistryService:
             db_servers = repo.list(limit=500, offset=0)
             db_keys = {str(item.server_key or "").strip() for item in db_servers}
             db_preset_keys = {str(item.preset_key or "").strip() for item in db_servers if str(item.preset_key or "").strip()}
-            configured = [
-                self._serialize_configured_server_payload(_configured_server_from_payload(payload))
-                for payload in _configured_builtin_server_payloads(exclude_keys=db_keys, exclude_preset_keys=db_preset_keys)
-            ]
+            configured = []
+            for payload in _configured_builtin_server_payloads(exclude_keys=db_keys, exclude_preset_keys=db_preset_keys):
+                server = _configured_server_from_payload(payload)
+                state = self._configured_runtime_state.get(server.id)
+                if state is not None and state.get("endpoint") != server.endpoint:
+                    state = None
+                configured.append(
+                    self._serialize_configured_server_payload(
+                        server,
+                        health_status=None if state is None else str(state.get("health_status") or "unknown"),
+                        health_error=None if state is None else state.get("health_error"),
+                        last_health_at=None if state is None else state.get("last_health_at"),
+                        tools=None if state is None else list(state.get("tools") or []),
+                    )
+                )
             return configured + [self._serialize_server_payload(session, item) for item in db_servers]
 
     def create_server(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -1964,6 +2049,7 @@ class McpRegistryService:
         *,
         health_status: str | None = None,
         health_error: str | None = None,
+        last_health_at: int | None = None,
         tools: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         serialized_tools = []
@@ -2001,7 +2087,7 @@ class McpRegistryService:
             "standardConfig": standard_config,
             "health_status": health_status or server.health_status,
             "health_error": health_error if health_error is not None else server.health_error,
-            "last_health_at": unix_seconds_now(),
+            "last_health_at": last_health_at if last_health_at is not None else server.last_health_at,
             "tools": serialized_tools,
             "created_at": server.created_at,
             "updated_at": server.updated_at,
@@ -2028,12 +2114,22 @@ class McpRegistryService:
         except Exception as exc:
             status = "unhealthy"
             error_message = str(exc)
-        return self._serialize_configured_server_payload(
+        now = unix_seconds_now()
+        serialized = self._serialize_configured_server_payload(
             server,
             health_status=status,
             health_error=error_message,
+            last_health_at=now,
             tools=discovered,
         )
+        self._configured_runtime_state[server.id] = {
+            "endpoint": server.endpoint,
+            "health_status": status,
+            "health_error": error_message,
+            "last_health_at": now,
+            "tools": discovered,
+        }
+        return serialized
 
     def _refresh_server_from_preset(self, session: Session, server: McpServer) -> McpServer:
         preset_key = str(server.preset_key or "").strip()

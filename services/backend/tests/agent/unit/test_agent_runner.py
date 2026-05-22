@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from agent_runtime.fixtures import LLMResponse, ScriptedProvider, ToolCall
 
-from recruit_station.capabilities.tools import ToolDefinition, ToolRegistry
+from recruit_station.agent_runtime.types import LLMMessage
+from recruit_station.capabilities.tools import ToolDefinition, ToolRegistry, build_delegate_scene_context_tool
 from recruit_station.agents.autonomous import (
     _final_output_continuation_resolver,
     _jd_sync_recoverable_scene_retry_needed,
@@ -65,6 +66,86 @@ def test_runner_places_adapter_system_prompt_outside_messages_for_both_agent_kin
 
 def test_extract_execution_status_prefers_execution_status_over_business_status() -> None:
     assert extract_execution_status({"status": "pass", "execution_status": "completed"}) == "completed"
+
+
+def test_runner_passes_context_budget_to_runtime_engine() -> None:
+    provider = ScriptedProvider(provider_name="autonomous-scripted", responses=[LLMResponse(content="done")])
+    large_context = "x" * 5000
+
+    run_agent_turn(
+        provider=provider,
+        tool_registry=ToolRegistry(),
+        agent_definition_id=None,
+        conversation_id="autonomous-conv",
+        initial_messages=[
+            LLMMessage(role="system", content="Autonomous prompt."),
+            LLMMessage(
+                role="system",
+                content=large_context,
+                metadata={"kind": "runtime_context", "auto_compact": True},
+            )
+        ],
+        turn_input="run",
+        max_llm_invocations=1,
+        max_context_chars=1000,
+        compaction_summary_max_chars=200,
+    )
+
+    request = provider.captured_requests[0]
+    assert request.system_prompt == "Autonomous prompt."
+    assert len(str(request.messages[0].content)) < len(large_context)
+    assert "Conversation context compacted automatically before provider request" in str(request.messages[0].content)
+
+
+def test_runner_projects_normalized_tool_input_in_tool_started_event() -> None:
+    provider = ScriptedProvider(
+        provider_name="autonomous-scripted",
+        responses=[
+            LLMResponse(
+                tool_calls=[
+                    ToolCall(
+                        id="tool-1",
+                        name="delegate_scene_context",
+                        arguments={
+                            "instruction": "继续刚才同一招聘站点 JD 同步 scene。上一轮只完整读取了 1/5 个，剩余 4 个：国际销售工程师。",
+                        },
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(content="done", result_data={"execution_status": "completed"}),
+        ],
+    )
+    registry = ToolRegistry()
+    registry.register(
+        build_delegate_scene_context_tool(
+            lambda arguments: {"status": "partial", "result_data": {"status": "partial"}},
+        )
+    )
+    events = []
+
+    run_agent_turn(
+        provider=provider,
+        tool_registry=registry,
+        agent_definition_id=None,
+        conversation_id="jd-sync-primary",
+        initial_messages=[],
+        turn_input="run",
+        max_llm_invocations=2,
+        runtime={"constraints": {"plan_kind": "jd_sync"}},
+        output_sink=events.append,
+    )
+
+    started = next(
+        output
+        for output in events
+        if output.type == "tool_event" and output.data.get("kind") == "tool_call_started"
+    )
+    instruction = str(started.data["input"]["instruction"])
+    assert "1/5" not in instruction
+    assert "剩余 4" not in instruction
+    assert "国际销售工程师" not in instruction
+    assert started.data["input"]["output_contract"]["result_data_required"] is True
 
 
 def test_runner_can_resolve_terminal_status_from_final_output_text() -> None:

@@ -8,7 +8,7 @@ class SceneExecutionLimits:
     token_budget: int | None = None
     max_llm_invocations: int = 8
     tool_timeout_seconds: int = 30
-    scene_turn_timeout_seconds: int = 180
+    scene_turn_timeout_seconds: int = 360
     min_wakeup_delay_seconds: int = 60
     max_wakeup_delay_seconds: int = 86_400
 

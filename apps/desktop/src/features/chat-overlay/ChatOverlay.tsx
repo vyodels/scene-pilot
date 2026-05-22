@@ -762,10 +762,10 @@ function automationJobStrategyFromRaw(
       record.screeningCriteria ?? record.screening_criteria,
     ),
     onlineResumeCriteria: stringFromUnknown(
-      record.onlineResumeCriteria ?? record.online_resume_criteria,
+      record.onlineResumeCriteria ?? record.online_resume_criteria ?? onlineResume.criteria,
     ),
     offlineResumeCriteria: stringFromUnknown(
-      record.offlineResumeCriteria ?? record.offline_resume_criteria,
+      record.offlineResumeCriteria ?? record.offline_resume_criteria ?? offlineResume.criteria,
     ),
     compositeScoring: stringFromUnknown(
       record.compositeScoringText ?? record.composite_scoring_text ?? compositeScoringText ?? compositeScoring.criteria,

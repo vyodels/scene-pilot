@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timezone
+import html
+import json
+import re
 from typing import Any, Callable
+from urllib.parse import urlparse
+from urllib.request import urlopen
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
@@ -158,6 +163,19 @@ def upsert_job_description(
     normalized_sync_status = None if sync_status is _UNSET else (_normalize_optional_text(sync_status) or "synced")
     normalized_department = None if department is _UNSET else _normalize_optional_text(department)
     normalized_location = None if location is _UNSET else _normalize_optional_text(location)
+    normalized_sync_metadata = None if sync_metadata is _UNSET else _normalize_mapping(sync_metadata, field_name="sync_metadata")
+
+    _validate_mock_recruiting_site_exact_jd_fields(
+        title=normalized_title,
+        company_name=None if company_name is _UNSET else _normalize_optional_text(company_name),
+        department=normalized_department,
+        location=normalized_location,
+        compensation_text=None if compensation_text is _UNSET else _normalize_optional_text(compensation_text),
+        headcount=None if headcount is _UNSET else headcount,
+        platform=normalized_platform,
+        external_url=normalized_external_url,
+        sync_metadata=normalized_sync_metadata,
+    )
 
     with session_factory() as session:
         repo = JobDescriptionRepository(session)
@@ -168,6 +186,14 @@ def upsert_job_description(
             idx = idx_repo.by_platform_identity(normalized_platform, normalized_external_id)
             if idx is not None:
                 item = repo.get_by_storage_id(idx.job_description_id)
+
+        if item is None and normalized_external_id:
+            item = _find_matching_job_by_external_identity(
+                session,
+                title=normalized_title,
+                external_id=normalized_external_id,
+                external_url=normalized_external_url,
+            )
 
         if item is None:
             item = _find_matching_job(
@@ -227,7 +253,7 @@ def upsert_job_description(
             if idx is None or sync_status is not _UNSET:
                 idx_payload["sync_status"] = normalized_sync_status or "synced"
             if idx is None or sync_metadata is not _UNSET:
-                idx_payload["sync_metadata"] = _normalize_mapping(sync_metadata, field_name="sync_metadata")
+                idx_payload["sync_metadata"] = normalized_sync_metadata or {}
             if idx is None:
                 idx = idx_repo.create(idx_payload)
             else:
@@ -1122,6 +1148,81 @@ def _not_expired(lock: CandidateAutonomousLock) -> bool:
     return lock.expires_at is None or lock.expires_at >= datetime.now(UTC)
 
 
+def _validate_mock_recruiting_site_exact_jd_fields(
+    *,
+    title: str,
+    company_name: str | None,
+    department: str | None,
+    location: str | None,
+    compensation_text: str | None,
+    headcount: Any,
+    platform: str | None,
+    external_url: str | None,
+    sync_metadata: dict[str, Any] | None,
+) -> None:
+    if platform != "mock_recruiting_site":
+        return
+    metadata = sync_metadata or {}
+    if not _metadata_truthy(metadata.get("detail_complete")):
+        return
+    source_url = _normalize_optional_text(metadata.get("observed_detail_url")) or external_url
+    if not source_url:
+        raise ValueError("mock_recruiting_site JD sync requires observed_detail_url or external_url for exact-field validation")
+    expected = _mock_recruiting_site_sync_json(source_url)
+    provided = {
+        "title": title,
+        "company_name": company_name,
+        "department": department,
+        "location": location,
+        "compensation_text": compensation_text,
+        "headcount": headcount,
+    }
+    mismatches: list[str] = []
+    for field_name, actual in provided.items():
+        if actual is None:
+            mismatches.append(f"{field_name}: missing, expected {expected.get(field_name)!r}")
+            continue
+        if str(actual).strip() != str(expected.get(field_name)).strip():
+            mismatches.append(f"{field_name}: got {actual!r}, expected {expected.get(field_name)!r}")
+    expected_path = _normalize_optional_text(expected.get("external_url_path"))
+    if expected_path and external_url:
+        actual_path = urlparse(external_url).path
+        if actual_path != expected_path:
+            mismatches.append(f"external_url_path: got {actual_path!r}, expected {expected_path!r}")
+    if mismatches:
+        raise ValueError(
+            "mock_recruiting_site JD sync fields must exactly match the page sync-json before saving: "
+            + "; ".join(mismatches)
+        )
+
+
+def _metadata_truthy(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    return str(value).strip().lower() in {"1", "true", "yes", "y"}
+
+
+def _mock_recruiting_site_sync_json(source_url: str) -> dict[str, Any]:
+    parsed = urlparse(source_url)
+    if parsed.scheme not in {"http", "https"} or parsed.hostname not in {"127.0.0.1", "localhost"}:
+        raise ValueError("mock_recruiting_site exact-field validation only accepts localhost detail URLs")
+    with urlopen(source_url, timeout=3) as response:
+        body = response.read().decode("utf-8", errors="replace")
+    match = re.search(
+        r"<pre\b[^>]*class=[\"'][^\"']*\bsync-json\b[^\"']*[\"'][^>]*>(.*?)</pre>",
+        body,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if not match:
+        raise ValueError("mock_recruiting_site detail page is missing sync-json exact-field evidence")
+    payload = json.loads(html.unescape(match.group(1)).strip())
+    if not isinstance(payload, dict):
+        raise ValueError("mock_recruiting_site sync-json must be an object")
+    return payload
+
+
 def _serialize_lock(lock: CandidateAutonomousLock) -> dict[str, Any]:
     return {
         "id": lock.id,
@@ -1138,14 +1239,60 @@ def _serialize_lock(lock: CandidateAutonomousLock) -> dict[str, Any]:
     }
 
 
+def _find_matching_job_by_external_identity(
+    session: Session,
+    *,
+    title: str,
+    external_id: str,
+    external_url: str | None,
+) -> JobDescription | None:
+    idx_model = JobDescriptionPlatformIdxRepository.model
+    stmt = (
+        select(idx_model)
+        .where(idx_model.external_id == external_id)
+        .order_by(idx_model.updated_at.desc(), idx_model.id.asc())
+    )
+    for idx in session.scalars(stmt).all():
+        if external_url and idx.external_url and not _external_urls_compatible(idx.external_url, external_url):
+            continue
+        item = session.get(JobDescription, idx.job_description_id)
+        if item is None or item.title != title:
+            continue
+        return item
+    return None
+
+
 def _find_matching_job(session: Session, *, title: str, department: str | None, location: str | None) -> JobDescription | None:
-    stmt = select(JobDescription).where(JobDescription.title == title)
-    if department is not None:
-        stmt = stmt.where(JobDescription.department == department)
-    if location is not None:
-        stmt = stmt.where(JobDescription.location == location)
-    stmt = stmt.order_by(JobDescription.updated_at.desc(), JobDescription.id.asc())
-    return session.scalars(stmt).first()
+    stmt = select(JobDescription).where(JobDescription.title == title).order_by(
+        JobDescription.updated_at.desc(),
+        JobDescription.id.asc(),
+    )
+    candidates = []
+    for item in session.scalars(stmt).all():
+        if department and item.department and item.department != department:
+            continue
+        if location and item.location and item.location != location:
+            continue
+        score = 0
+        if department and item.department == department:
+            score += 2
+        if location and item.location == location:
+            score += 2
+        if item.status == "active":
+            score += 1
+        candidates.append((score, item.updated_at, item.id, item))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda candidate: (-candidate[0], -candidate[1], candidate[2]))
+    return candidates[0][3]
+
+
+def _external_urls_compatible(left: str, right: str) -> bool:
+    if left == right:
+        return True
+    left_host = urlparse(left).netloc
+    right_host = urlparse(right).netloc
+    return bool(left_host and right_host and left_host == right_host)
 
 
 def _serialize_job_description(session: Session, item: JobDescription) -> dict[str, Any]:

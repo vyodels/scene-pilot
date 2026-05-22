@@ -99,6 +99,42 @@ def test_build_skill_context_injections_uses_trigger_relevance_for_selection() -
     assert [item.skill_id for item in injections] == ["resume-parser"]
 
 
+def test_build_skill_context_injections_exposes_asset_manifest_without_code() -> None:
+    skill = Skill(
+        skill_id="jd-diff",
+        name="JD diff",
+        status="active",
+        body={
+            "summary": "Diff remote and local JDs.",
+            "artifacts": {
+                "python_inline": {
+                    "entrypoint": "run",
+                    "code": "def run(payload, context):\n    return {'status': 'completed'}\n",
+                    "input_contract": {"type": "object"},
+                    "output_contract": {"type": "object"},
+                }
+            },
+        },
+        execution_hints={"executor_mode": "python_inline"},
+        last_health_status="healthy",
+    )
+
+    payload = build_skill_context_injections([skill])[0].to_prompt_payload()
+
+    assert payload["execution"] == {
+        "executor_mode": "python_inline",
+        "asset_kinds": ["python_inline"],
+        "tool_name": "execute_skill_asset",
+        "python_inline": {
+            "entrypoint": "run",
+            "input_contract": {"type": "object"},
+            "output_contract": {"type": "object"},
+        },
+        "last_health_status": "healthy",
+    }
+    assert "def run" not in str(payload)
+
+
 def test_build_skill_context_injections_uses_category_relevance_for_ordering() -> None:
     outreach = Skill(
         skill_id="outreach-draft",

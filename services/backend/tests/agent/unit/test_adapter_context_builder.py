@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 from recruit_station.agent_runtime.types import LLMMessage
+from recruit_station.agent_runtime.history import ConversationHistory
 from recruit_station.product_adapters.context_builder import (
     build_agent_turn_context,
     build_assistant_turn_context,
@@ -66,6 +67,53 @@ def test_autonomous_context_renders_payload_and_json_turn_input() -> None:
     assert "skill_contexts" in str(context.initial_messages[0].content)
     assert context.context_payload["scope"] == {"kind": "candidate", "ref": "cand-1"}
     assert context.context_payload["memory_layers"]["long_term"].startswith("memory index")
+
+
+def test_autonomous_context_sanitizes_recent_tool_event_payloads() -> None:
+    context = build_autonomous_turn_context(
+        title="JD Sync",
+        instruction="Continue JD sync",
+        scope_kind="global",
+        scope_ref="workspace:shared",
+        constraints={},
+        world_snapshot={},
+        recent_events=[
+            {
+                "event_type": "tool_event",
+                "source": "runtime",
+                "message": "delegate_scene_context",
+                "turn_id": "turn-1",
+                "conversation_id": "run-1",
+                "seq": 3,
+                "payload": {
+                    "data": {
+                        "kind": "tool_result_ready",
+                        "tool_name": "delegate_scene_context",
+                        "content": {
+                            "status": "blocked",
+                            "summary": "raw scene summary",
+                            "environment_context": {"dom": "<button>detail</button>", "clickPoint": {"x": 1, "y": 2}},
+                            "execution_contract": {"hid": [{"type": "click"}]},
+                            "evidence_refs": [{"kind": "execution_episode", "id": "episode-1"}],
+                        },
+                    }
+                },
+            }
+        ],
+        memory_entries=[],
+        available_tools=["delegate_scene_context"],
+        skill_contexts=[],
+        available_mcps=["browser-mcp", "VirtualHID"],
+    )
+
+    rendered = str(context.initial_messages[0].content)
+    assert "delegate_scene_context" in rendered
+    assert "raw scene summary" not in rendered
+    assert "environment_context" not in rendered
+    assert "execution_contract" not in rendered
+    assert "clickPoint" not in rendered
+    event_payload = context.context_payload["recent_events"][0]["payload"]["data"]
+    assert event_payload["content_summary"] == '{"evidence_ref_count": 1, "status": "blocked"}'
 
 
 def test_runtime_context_preserves_product_agent_kind() -> None:
@@ -174,7 +222,10 @@ def test_scene_context_renders_scene_payload_without_memory_or_skills() -> None:
     )
 
     assert context.turn_input == "Inspect candidate page"
-    assert "scene_request" in str(context.initial_messages[0].content)
+    assert context.context_payload["scene_request"]["instruction"] == "Inspect candidate page"
+    assert context.initial_messages[1].metadata["kind"] == "runtime_context"
+    assert context.initial_messages[1].metadata["auto_compact"] is True
+    assert "scene_request" in str(context.initial_messages[1].content)
     assert "memory_entries" not in str(context.initial_messages[0].content)
     assert "skill_contexts" not in str(context.initial_messages[0].content)
 
@@ -209,3 +260,83 @@ def test_scene_context_prompt_lists_full_available_tools() -> None:
     assert "Available scene tools:" in system_prompt
     assert "hid_action" in system_prompt
     assert "Available MCP capabilities: browser-mcp, VirtualHID" in system_prompt
+
+
+def test_scene_context_does_not_hard_trim_payload_in_adapter() -> None:
+    huge_input = "INPUT_SENTINEL_" + ("x" * 40000) + "_INPUT_TAIL"
+    huge_context = "CONTEXT_SENTINEL_" + ("y" * 40000) + "_CONTEXT_TAIL"
+    huge_environment_note = "ENV_SENTINEL_" + ("z" * 40000) + "_ENV_TAIL"
+
+    context = build_scene_turn_context(
+        request={
+            "instruction": "Inspect",
+            "input": {"resume_blob": huge_input},
+            "context": {"page_snapshot": huge_context},
+            "output_contract": {"summary": True},
+            "environment_requirements": {
+                "browser_target": {
+                    "url": "https://ats.example.test/jobs/123",
+                    "host": "ats.example.test",
+                },
+                "large_note": huge_environment_note,
+            },
+            "anti_detection_policy": {"mode": "humanized"},
+            "behavior_budget": {"max_steps": 8},
+        },
+        episode_id="episode-1",
+        task_spec_id="task-1",
+        max_llm_invocations=4,
+        recent_events=[{"event_type": "scene_started", "payload": "event " * 5000}],
+        available_tools=[
+            "browser_get_active_tab",
+            "browser_snapshot",
+            "browser_query_elements",
+            "hid_action",
+        ],
+        available_mcps=["browser-mcp", "VirtualHID"],
+        instruction="Inspect candidate page",
+    )
+
+    system_prompt = str(context.initial_messages[0].content)
+    runtime_context = str(context.initial_messages[1].content)
+
+    assert "INPUT_TAIL" not in system_prompt
+    assert "CONTEXT_TAIL" not in system_prompt
+    assert "ENV_TAIL" not in system_prompt
+    assert "INPUT_TAIL" in runtime_context
+    assert "CONTEXT_TAIL" in runtime_context
+    assert "ENV_TAIL" in runtime_context
+    assert "omitted by scene adapter pre-send context budget" not in runtime_context
+
+    assert "https://ats.example.test/jobs/123" in system_prompt
+    assert "browser_get_active_tab" in system_prompt
+    assert "browser_snapshot" in system_prompt
+    assert "browser_query_elements" in system_prompt
+    assert "hid_action" in system_prompt
+    assert "Available MCP capabilities: browser-mcp, VirtualHID" in system_prompt
+
+    assert context.context_payload["scene_request"]["instruction"] == "Inspect candidate page"
+    assert system_prompt.count("Inspect candidate page") == 0
+    assert context.turn_input.count("Inspect candidate page") == 1
+
+
+def test_runtime_auto_compacts_scene_runtime_context_without_replacing_current_user_task() -> None:
+    history = ConversationHistory(
+        [
+            LLMMessage(role="system", content="Scene policy and hard boundary."),
+            LLMMessage(
+                role="system",
+                content="Scene runtime context:\n" + ("large context " * 2000),
+                metadata={"kind": "runtime_context", "auto_compact": True},
+            ),
+            LLMMessage(role="user", content="Inspect candidate page"),
+        ]
+    )
+
+    compacted = history.compact_for_context_budget(max_chars=2000, summary_max_chars=600)
+
+    assert compacted is not None
+    assert history.messages[0].content == "Scene policy and hard boundary."
+    assert history.messages[-1].content == "Inspect candidate page"
+    assert any(message.metadata.get("kind") == "context_compaction_summary" for message in history.messages)
+    assert all("large context " * 100 not in str(message.content) for message in history.messages)

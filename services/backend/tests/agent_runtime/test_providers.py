@@ -231,6 +231,7 @@ def test_provider_options_are_mapped_only_when_supported() -> None:
     assert openai_payload["tool_choice"] == "required"
     assert openai_payload["reasoning"] == {"effort": "high"}
     assert openai_payload["text"] == {"format": {"type": "json_object"}}
+    assert "json object" in str(openai_payload["input"][0]["content"])
     assert openai_payload["parallel_tool_calls"] is False
     assert openai_payload["max_tool_calls"] == 3
     assert openai_payload["previous_response_id"] == "resp-prev"

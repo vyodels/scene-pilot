@@ -95,6 +95,8 @@ class AutonomousAdapter:
     turn_limits: TurnLimits = field(default_factory=TurnLimits)
     anti_detection_policy: dict[str, Any] = field(default_factory=dict)
     behavior_budget: dict[str, Any] = field(default_factory=dict)
+    max_context_chars: int | None = 120000
+    compaction_summary_max_chars: int = 6000
     pending_permission_engines: dict[str, InteractionEngine] = field(default_factory=dict)
     active_turns: dict[str, ActiveAutonomousTurn] = field(default_factory=dict)
     _active_turns_lock: RLock = field(default_factory=RLock)
@@ -141,6 +143,24 @@ class AutonomousAdapter:
                 terminated.append(str(run.run_id or run.id))
             session.commit()
             return terminated
+
+    def pause_active_runs(self, *, reviewer: str, reason: str) -> list[str]:
+        with self.session_factory() as session:
+            stmt = (
+                select(AgentRun)
+                .where(
+                    AgentRun.agent_kind.in_(RUNTIME_AGENT_KINDS),
+                    AgentRun.status.in_(("running", "active")),
+                )
+                .order_by(AgentRun.updated_at.desc(), AgentRun.id.desc())
+            )
+            paused: list[str] = []
+            for run in session.scalars(stmt).all():
+                self._interrupt_active_turn(run=run, reason=reason)
+                _pause_active_run_for_control(session, run=run, reviewer=reviewer, reason=reason)
+                paused.append(str(run.run_id or run.id))
+            session.commit()
+            return paused
 
     def run_turn_from_envelope(self, envelope: dict[str, Any]) -> AgentTurnOutcome:
         with self.session_factory() as session:
@@ -362,6 +382,8 @@ class AutonomousAdapter:
                         initial_messages=adapter_context.initial_messages,
                         turn_input=adapter_context.turn_input,
                         max_llm_invocations=active_turn_limits.max_llm_invocations or 12,
+                        max_context_chars=self.max_context_chars,
+                        compaction_summary_max_chars=self.compaction_summary_max_chars,
                         initial_seq=runtime_event_seq + 1,
                         transcript=resume_transcript,
                         existing_engine=existing_engine,
@@ -438,7 +460,7 @@ class AutonomousAdapter:
                 turn.outcome_kind = interrupted_status or "error"
                 turn.turn_metadata = {"error": str(exc), "engine_output_count": engine_output_count}
                 run.turns_count = int(run.turns_count or 0) + 1
-                if interrupted_status:
+                if interrupted_status in {"cancelled", "interrupted"}:
                     if run.finished_at is None:
                         run.finished_at = utcnow()
                 else:
@@ -502,7 +524,8 @@ class AutonomousAdapter:
                 _resolve_wait_human_records(session, run=run)
             session.commit()
             if _terminal_interrupt_status(run.status) is not None:
-                raise AutonomousRunInterrupted(f"Autonomous run {run.run_id or run.id} was interrupted.")
+                if _terminal_interrupt_status(run.status) != "paused":
+                    raise AutonomousRunInterrupted(f"Autonomous run {run.run_id or run.id} was interrupted.")
             session.refresh(run)
             self._maybe_record_trial_skill(
                 session,
@@ -787,7 +810,7 @@ def _run_status_from_outcome(outcome: AgentTurnOutcome) -> str:
 
 def _terminal_interrupt_status(status: str | None) -> str | None:
     normalized = str(status or "").strip().lower()
-    if normalized in {"cancelled", "interrupted"}:
+    if normalized in {"cancelled", "interrupted", "paused"}:
         return normalized
     return None
 
@@ -1154,9 +1177,9 @@ def _final_output_continuation_resolver(
                 "只要仍未完成全量职位发现、全量详情读取、更新/下架识别或生效 JD 选择，就必须继续同一个 turn 的恢复执行，"
                 "不要输出总结或把部分结果当作结束。请基于最近工具结果继续："
                 "若 scene 返回 partial/blocked 但同源站点仍可观察，重新观察页面状态并继续用 VirtualHID 恢复；"
-                "E_TIMEOUT、E_NOT_FRONTMOST、光标/按键干扰、短暂 daemon 无响应或地址栏恢复失败都属于可恢复执行异常，"
+                "E_TIMEOUT、E_NOT_FRONTMOST、光标/按键干扰或短暂 daemon 无响应都属于可恢复执行异常，"
                 "pending_confirmation 只有在当前主运行真实产生 permission_requested 时才是人工确认边界，不得把 scene 摘要里的该字样直接当作终局；"
-                "若已观察到剩余职位的同源 href，使用 Cmd+L 地址栏链路打开详情并确认；"
+                "只能通过页面内可见链接、按钮、滚动、返回或导航控件恢复；不得主动聚焦浏览器地址栏、输入 URL 或粘贴 URL；"
                 "若已有完整详情证据，调用本地 JD 工具写回。"
                 "只有登录、验证码、权限、必要执行工具未注册/缺失或目标站点不可达，才允许最终 blocked。"
             )
@@ -1165,7 +1188,7 @@ def _final_output_continuation_resolver(
             "且本轮没有调用任何 scene 或业务工具。请立即继续执行，不要输出总结；"
             "必须调用 delegate_scene_context 继续读取剩余职位详情，或在已有完整详情证据时调用本地 JD 工具写回。"
             "如果单次点击、返回、滚动、wait 或 HID 注入失败但目标同源站点仍可访问，请继续使用 VirtualHID 恢复，"
-            "包括 Cmd+L 地址栏链路打开已观察到的同源详情 URL，并重新用 browser 观察确认。"
+            "但只能通过页面内可见链接、按钮、滚动、返回或导航控件恢复；不得主动聚焦浏览器地址栏、输入 URL 或粘贴 URL。"
             "pending_confirmation 只有在当前主运行真实产生 permission_requested 时才是人工确认边界。"
             "只有登录、验证码、权限、必要执行工具未注册/缺失或目标站点不可达，才允许最终 blocked。"
         )
@@ -1294,7 +1317,6 @@ def _jd_sync_text_has_recoverable_scene_boundary(text: str) -> bool:
             "置前",
             "光标",
             "按键",
-            "地址栏",
             "返回列表",
             "滚动",
             "click",
@@ -1348,7 +1370,6 @@ def _jd_sync_final_output_needs_tool_continuation(value: str) -> bool:
         "置前",
         "光标",
         "按键",
-        "地址栏",
         "daemon",
         "frontmost",
         "注入",
@@ -1621,15 +1642,13 @@ def _append_jd_sync_runtime_invariants(prompt: str) -> str:
         "JD 同步运行约束：如果只完成部分职位详情读取，可以写入已完整确认的 JD 作为进度，但不得把本轮作为成功终局。"
         "在完成全量职位发现、全量详情读取、更新/下架识别和生效 JD 选择前，必须继续执行或返回明确的恢复条件。"
         "遇到点击、返回、滚动、光标干扰、按键状态异常或单次注入超时等可恢复执行异常时，不得在第一次失败后结束；"
-        "应重新观察、等待稳定、释放异常按键状态、改用页面上的其他同源入口，或通过电脑执行链路打开已经观察到的同源链接后继续。"
-        "恢复执行不是重复同一失败动作；每次恢复都应基于最新观察证据切换路径，例如从页面入口切到地址栏同源链接、"
-        "从返回按钮切到列表 URL、从当前详情切到已观察到的下一个同源详情。"
-        "如果列表入口点击后仍无法进入已知同源详情页，应通过电脑执行链路使用地址栏打开已观察到的同源详情 URL 后继续读取，"
-        "而不是反复停留在列表页并以 partial 结束。"
-        "地址栏恢复必须是真实 HID 键盘链路：Cmd+L 聚焦地址栏，粘贴已观察到的同源 URL，回车，并重新观察确认页面。"
+        "应重新观察、等待稳定、释放异常按键状态、改用页面上的其他同源入口、滚动、返回或页面内导航控件后继续。"
+        "恢复执行不是重复同一失败动作；每次恢复都应基于最新观察证据切换页面内路径，例如从当前详情返回职位列表、"
+        "滚动到目标职位入口、或选择已观察到的下一个同源详情入口。"
+        "不得主动聚焦浏览器地址栏、输入 URL 或粘贴 URL 作为恢复路径；如果缺少页面内可执行证据，应说明 blocker 和恢复条件。"
         "单次 HID 或浏览器动作失败不是任务终局；只要目标站点仍可访问且还有职位详情未完整读取，就应在同一轮继续恢复和推进。"
         "如果 delegate_scene_context 返回部分结果且仍包含 blockers、limitations 或未完成项，应把它当作继续执行信号，"
-        "继续调用 scene 完成剩余职位；HID 超时、窗口未置前、光标/按键状态干扰、短暂 daemon 无响应或地址栏恢复失败都是可恢复执行异常，"
+        "继续调用 scene 完成剩余职位；HID 超时、窗口未置前、光标/按键状态干扰或短暂 daemon 无响应都是可恢复执行异常，"
         "可恢复异常只能作为下一步恢复策略的输入，不能作为当前 turn 的结束理由；只要目标站点仍可观察且仍有职位未完整读取，就应继续恢复和推进，"
         "如果已经从列表发现多个职位，但本地写回数量少于发现数量或仍有任一职位缺少详情页证据，应继续打开剩余职位详情，不能输出最终总结；"
         "不得直接作为终局；scene 摘要里出现 pending_confirmation 或 human-only 字样，不等于 JD 同步主任务已经到达终局人工边界，"
@@ -2485,6 +2504,49 @@ def _cancel_open_run_for_control(
         approval_status="rejected",
         interaction_action=interaction_action,
     )
+
+
+def _pause_active_run_for_control(session: Session, *, run: AgentRun, reviewer: str, reason: str) -> None:
+    run.status = "paused"
+    run.finished_at = None
+    run.blocked_reason = reason or run.blocked_reason
+    _append_open_queue_task_audit_for_run(
+        session,
+        run=run,
+        reviewer=reviewer,
+        reason=reason,
+        kind="paused",
+    )
+
+
+def _append_open_queue_task_audit_for_run(
+    session: Session,
+    *,
+    run: AgentRun,
+    reviewer: str,
+    reason: str | None,
+    kind: str,
+) -> None:
+    stmt = select(TaskQueueItem).where(TaskQueueItem.status.in_(("pending", "running")))
+    for task in session.scalars(stmt).all():
+        payload = dict(task.payload or {})
+        if str(payload.get("run_pk") or "") != run.id and str(payload.get("run_id") or "") != str(run.run_id or ""):
+            continue
+        audit = dict((payload.get("queue_audit") or {})) if isinstance(payload.get("queue_audit"), dict) else {}
+        history = list(audit.get("history") or [])
+        history.append(
+            {
+                "kind": kind,
+                "at": utcnow().isoformat(),
+                "reviewer": reviewer,
+                "reason": reason,
+            }
+        )
+        audit["history"] = history[-20:]
+        audit["last_event"] = kind
+        audit["last_event_at"] = history[-1]["at"]
+        payload["queue_audit"] = audit
+        task.payload = payload
 
 
 def _cancel_open_queue_tasks_for_run(session: Session, *, run: AgentRun, reviewer: str, reason: str | None) -> None:

@@ -130,6 +130,8 @@ class AppContainer:
             memory_file_store=memory_file_store,
             anti_detection_policy=dict(runtime_settings.anti_detection_policy),
             behavior_budget=dict(runtime_settings.behavior_budget),
+            max_context_chars=resolved_settings.autonomous_max_context_chars,
+            compaction_summary_max_chars=resolved_settings.autonomous_compaction_summary_max_chars,
         )
         heartbeat = Heartbeat(session_factory=session_factory, autonomous_adapter=autonomous_adapter)
 
@@ -469,12 +471,11 @@ def _build_runtime_tool_registries(
     )
 
     for tool in plugin_host.tool_registry.tools.values():
-        if is_approval_tool(tool):
-            parent_registry.register(tool.clone())
-            scene_registry.register(tool.clone())
-            continue
         if is_scene_context_tool(tool):
             scene_registry.register(tool.clone())
+            continue
+        if is_approval_tool(tool):
+            parent_registry.register(tool.clone())
             continue
         parent_registry.register(tool.clone())
 

@@ -27,6 +27,7 @@ class SkillRecord:
     strategy: dict[str, Any] = field(default_factory=dict)
     execution_hints: dict[str, Any] = field(default_factory=dict)
     health_check_config: dict[str, Any] = field(default_factory=dict)
+    body: dict[str, Any] = field(default_factory=dict)
     last_health_check: datetime | None = None
     last_health_status: str | None = None
     confirmed_by: str | None = None
@@ -119,6 +120,8 @@ class SkillHealthCheckService:
         issues: list[str] = []
         config = skill.health_check_config or {}
         strategy = skill.strategy or {}
+        execution_hints = skill.execution_hints or {}
+        body = skill.body or {}
 
         required_strategy_keys = config.get("required_strategy_keys") or []
         for key in required_strategy_keys:
@@ -128,10 +131,38 @@ class SkillHealthCheckService:
         if not strategy:
             issues.append("missing_strategy")
 
+        stale_after_seconds = config.get("stale_after_seconds")
+        if stale_after_seconds is not None and skill.last_health_check is not None:
+            age_seconds = (checked_at - skill.last_health_check).total_seconds()
+            if age_seconds > float(stale_after_seconds):
+                issues.append("stale_health_check")
+
+        preflight = config.get("preflight") if isinstance(config.get("preflight"), dict) else {}
+        required_executor_mode = preflight.get("required_executor_mode") if isinstance(preflight, dict) else None
+        if required_executor_mode and str(execution_hints.get("executor_mode") or "") != str(required_executor_mode):
+            issues.append(f"unexpected_executor_mode:{execution_hints.get('executor_mode') or 'missing'}")
+        required_artifacts = preflight.get("required_artifacts") if isinstance(preflight, dict) else None
+        if isinstance(required_artifacts, list):
+            artifacts = body.get("artifacts") if isinstance(body, dict) else {}
+            if not isinstance(artifacts, dict):
+                artifacts = {}
+            for artifact_kind in required_artifacts:
+                name = str(artifact_kind or "").strip()
+                if name and not isinstance(artifacts.get(name), dict):
+                    issues.append(f"missing_artifact:{name}")
+
         expected_status = config.get("expected_result_status")
         observed_status = observed_result.get("status") if observed_result else None
         if expected_status and observed_status and observed_status != expected_status:
             issues.append(f"unexpected_result_status:{observed_status}")
+
+        postconditions = config.get("postconditions") if isinstance(config.get("postconditions"), dict) else {}
+        required_output_fields = postconditions.get("required_output_fields") if isinstance(postconditions, dict) else None
+        if isinstance(required_output_fields, list) and observed_result is not None:
+            for field_name in required_output_fields:
+                key = str(field_name or "").strip()
+                if key and key not in observed_result:
+                    issues.append(f"missing_output_field:{key}")
 
         score_threshold = config.get("minimum_overall_score")
         if score_threshold is not None and observed_result:

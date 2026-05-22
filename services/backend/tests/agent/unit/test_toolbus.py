@@ -107,6 +107,55 @@ def test_register_core_tools_do_not_expose_skill_execution_tool() -> None:
     assert all(tool.metadata.get("resource_target_kind") != "skill" for tool in registry.to_agent_runtime_tools())
 
 
+def test_jd_sync_scene_delegate_instruction_is_rule_only_and_structured() -> None:
+    captured_arguments: dict[str, object] = {}
+
+    registry = ToolRegistry()
+    registry.register(
+        build_delegate_scene_context_tool(
+            lambda arguments: captured_arguments.update(arguments)
+            or {
+                "status": "completed",
+                "summary": "自然语言摘要里可能包含 1/5 和 国际销售工程师，但父上下文不应依赖它。",
+                "result_data": {"status": "partial", "completed_job_details": []},
+            }
+        )
+    )
+    runtime_tool = next(tool for tool in registry.to_agent_runtime_tools() if tool.name == "delegate_scene_context")
+
+    result = runtime_tool.handler.handle(
+        ToolCall(
+            id="tool-call-1",
+            turn_id="turn-1",
+            llm_invocation_id="llm-1",
+            tool_use_id="use-1",
+            name="delegate_scene_context",
+            input={
+                "instruction": "继续刚才同一招聘站点 JD 同步 scene。上一轮只完整读取了 1/5 个，剩余 4 个：国际销售工程师、客户成功经理。",
+                "preferred_capabilities": ["browser", "computer"],
+                "output_contract": {"format": "json"},
+            },
+        ),
+        TurnContext(
+            turn_id="turn-1",
+            conversation_id="jd-sync-primary",
+            tools=[],
+            runtime={"constraints": {"plan_kind": "jd_sync"}},
+        ),
+    )
+
+    instruction = str(captured_arguments["instruction"])
+    assert "output_contract" in captured_arguments
+    assert "completed_job_details" in captured_arguments["output_contract"]["required_fields"]
+    assert "1/5" not in instruction
+    assert "剩余 4" not in instruction
+    assert "国际销售工程师" not in instruction
+    assert "客户成功经理" not in instruction
+    assert "规则" in instruction
+    assert result.content["business_result"] == {"status": "partial", "completed_job_details": []}
+    assert "business_summary" not in result.content
+
+
 def test_core_read_memory_tool_uses_memory_files(tmp_path: Path) -> None:
     store = MemoryFileStore(tmp_path / "memory-files")
     store.write_file(
@@ -254,6 +303,59 @@ def test_delegate_scene_context_tool_inherits_runtime_browser_target() -> None:
     }
     assert captured["environment_requirements"] == {"browser_target": captured["browser_target"]}
     assert captured["context"] == {"browser_target": captured["browser_target"]}
+
+
+def test_delegate_scene_context_tool_projects_scene_capsule_for_parent_context() -> None:
+    registry = ToolRegistry()
+
+    def _handler(arguments: dict[str, object]) -> dict[str, object]:
+        return {
+            "status": "blocked",
+            "summary": "已读取职位列表，但详情页仍需继续打开。",
+            "result_data": {"found_jobs": 5, "completed_jobs": 1},
+            "environment_context": {"dom": "<button>raw detail</button>", "clickPoint": {"x": 10, "y": 20}},
+            "execution_contract": {"raw_hid": [{"type": "click", "at": {"x": 10, "y": 20}}]},
+            "artifacts": [{"kind": "environment_snapshot", "snapshot_id": "snap-1"}],
+            "metrics": {"tool_call_count": 12},
+            "blockers": [{"kind": "continuable", "message": "需要继续读取详情", "raw": {"dom": "hidden"}}],
+            "episode_id": "episode-1",
+        }
+
+    registry.register(build_delegate_scene_context_tool(_handler))
+    runtime_tool = registry.to_agent_runtime_tools()[0]
+    context = TurnContext(turn_id="turn-1", conversation_id="conversation-1", tools=[], runtime={})
+    call = ToolCall(
+        id="tool-1",
+        turn_id="turn-1",
+        llm_invocation_id="llm-1",
+        tool_use_id="use-1",
+        name="delegate_scene_context",
+        input={"instruction": "读取招聘站点职位列表与详情。"},
+    )
+
+    result = runtime_tool.handler.handle(call, context)
+
+    assert result.is_error is False
+    assert result.metadata["scene_result_projection"] is True
+    assert result.content == {
+        "status": "blocked",
+        "business_result": {"found_jobs": 5, "completed_jobs": 1},
+        "blockers": [{"kind": "continuable", "message": "需要继续读取详情"}],
+        "evidence_refs": [
+            {"kind": "execution_episode", "id": "episode-1"},
+            {"kind": "environment_snapshot", "id": "snap-1"},
+        ],
+        "projection": {
+            "kind": "scene_result_summary",
+            "raw_scene_context_stored": True,
+            "raw_scene_context_access": "Use evidence_refs to inspect ExecutionEpisode, EnvironmentSnapshot, and runtime events when debugging or distilling skills.",
+        },
+    }
+    projected_text = str(result.content)
+    assert "environment_context" not in projected_text
+    assert "execution_contract" not in projected_text
+    assert "clickPoint" not in projected_text
+    assert "raw_hid" not in projected_text
 
 
 def test_jd_sync_delegate_scene_context_defaults_to_browser_and_computer_capabilities() -> None:

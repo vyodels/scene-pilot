@@ -463,6 +463,69 @@ def test_browser_preset_healthcheck_uses_upstream_stdio_mcp_server(tmp_path, mon
         client.__exit__(None, None, None)
 
 
+def test_builtin_mcp_healthcheck_state_is_reflected_in_server_list(tmp_path, monkeypatch) -> None:
+    def fake_mcp_session_request(server, method: str, params: dict[str, object] | None = None, *, timeout_seconds: float = 8.0) -> dict[str, object]:
+        if method == "tools/list":
+            if server.server_key == "browser-mcp":
+                return {"tools": _browser_tool_payloads()}
+            if server.server_key == "virtualhid":
+                return {"tools": _virtualhid_tool_payloads()}
+        if method == "tools/call":
+            return {
+                "content": [{"type": "text", "text": '{"ok": true}'}],
+                "structuredContent": {"ok": True},
+                "isError": False,
+            }
+        return {}
+
+    monkeypatch.setattr(
+        "recruit_station.services.mcp_registry.default_browser_mcp_server_command",
+        lambda: ("node", "/virtual/browser-mcp/server.mjs"),
+    )
+    monkeypatch.setattr(
+        "recruit_station.services.mcp_registry.default_browser_upstream_endpoint",
+        lambda: "/virtual/default-browser.sock",
+    )
+    monkeypatch.setattr(
+        "recruit_station.services.mcp_registry.default_virtualhid_mcp_server_command",
+        lambda: ("node", "/virtual/VirtualHID/mcp/server.mjs"),
+    )
+    monkeypatch.setattr(
+        "recruit_station.services.mcp_registry.default_virtualhid_upstream_endpoint",
+        lambda: "/virtual/default-virtualhid.sock",
+    )
+    monkeypatch.setattr(
+        "recruit_station.services.mcp_registry._mcp_session_request",
+        fake_mcp_session_request,
+    )
+
+    settings = AppSettings(
+        data_dir=str(tmp_path / "data"),
+        database_url=f"sqlite:///{tmp_path / 'builtin-mcp-state.db'}",
+        provider_config={},
+    )
+
+    app = create_app(settings)
+    with TestClient(app) as client:
+        browser_check = client.post("/api/mcp/servers/builtin:browser-mcp/healthcheck")
+        assert browser_check.status_code == 200
+        assert browser_check.json()["health_status"] == "healthy"
+
+        virtualhid_check = client.post("/api/mcp/servers/builtin:virtualhid/healthcheck")
+        assert virtualhid_check.status_code == 200
+        assert virtualhid_check.json()["health_status"] == "healthy"
+
+        servers = client.get("/api/mcp/servers")
+        assert servers.status_code == 200
+        by_key = {item["server_key"]: item for item in servers.json()}
+        assert by_key["browser-mcp"]["health_status"] == "healthy"
+        assert by_key["virtualhid"]["health_status"] == "healthy"
+        assert by_key["browser-mcp"]["last_health_at"] is not None
+        assert by_key["virtualhid"]["last_health_at"] is not None
+        assert "browser_snapshot" in {tool["name"] for tool in by_key["browser-mcp"]["tools"]}
+        assert {"hid_action", "hid_state"}.issubset({tool["name"] for tool in by_key["virtualhid"]["tools"]})
+
+
 def test_virtualhid_preset_healthcheck_uses_upstream_stdio_mcp_server(tmp_path, monkeypatch) -> None:
     runtime_requests: list[tuple[str, str, str, dict[str, object]]] = []
 

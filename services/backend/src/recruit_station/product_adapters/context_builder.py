@@ -6,6 +6,8 @@ from typing import Any
 
 from recruit_station.agent_runtime.types import LLMMessage
 
+_SCENE_RUNTIME_CONTEXT_KIND = "runtime_context"
+
 
 @dataclass(frozen=True, slots=True)
 class RenderedAdapterInput:
@@ -53,7 +55,7 @@ def build_agent_turn_context(
             ),
             "constraints": constraints,
             "world_snapshot": world_snapshot,
-            "recent_events": recent_events,
+            "recent_events": _sanitize_recent_events(recent_events),
             "memory_layers": memory_layers,
             "memory_entries": memory_entries,
             "available_tools": available_tools,
@@ -177,13 +179,14 @@ def build_scene_turn_context(
     available_mcps: list[str],
     instruction: str,
 ) -> RenderedAdapterInput:
-    payload = {
+    browser_target = _find_key_recursive(request.get("environment_requirements"), {"browser_target", "browserTarget"})
+    raw_payload = {
         "scene_request": {
-            "instruction": request["instruction"],
-            "input": _compact_value(request["input"]),
-            "context": _compact_value(request["context"]),
-            "output_contract": _compact_value(request["output_contract"]),
-            "environment_requirements": _compact_value(request["environment_requirements"]),
+            "instruction": instruction,
+            "input": request["input"],
+            "context": request["context"],
+            "output_contract": request["output_contract"],
+            "environment_requirements": request["environment_requirements"],
         },
         "scene_execution": {
             "episode_id": episode_id,
@@ -192,8 +195,8 @@ def build_scene_turn_context(
             "recent_events": recent_events,
             "available_tools": available_tools,
             "available_mcps": available_mcps,
-            "anti_detection_policy": _compact_value(request.get("anti_detection_policy")),
-            "behavior_budget": _compact_value(request.get("behavior_budget")),
+            "anti_detection_policy": request.get("anti_detection_policy"),
+            "behavior_budget": request.get("behavior_budget"),
         },
     }
     system_prompt = "\n".join(
@@ -202,14 +205,43 @@ def build_scene_turn_context(
             "Use only scene tools and return a business-level summary. Avoid DOM, tab, click path, or raw environment details unless they are required blocker evidence.",
             f"Available scene tools: {', '.join(available_tools) if available_tools else '(none)'}",
             f"Available MCP capabilities: {', '.join(available_mcps) if available_mcps else '(none)'}",
-            f"Context: {_compact_value(payload)}",
+            "Browser target boundary: "
+            + (json.dumps(browser_target, ensure_ascii=False, default=str) if browser_target is not None else "(not provided)"),
         ]
     )
     return RenderedAdapterInput(
-        initial_messages=[LLMMessage(role="system", content=system_prompt)],
+        initial_messages=[
+            LLMMessage(role="system", content=system_prompt),
+            LLMMessage(
+                role="system",
+                content="Scene runtime context:\n" + json.dumps(raw_payload, ensure_ascii=False, default=str),
+                metadata={"kind": _SCENE_RUNTIME_CONTEXT_KIND, "auto_compact": True},
+            ),
+        ],
         turn_input=instruction,
-        context_payload=payload,
+        context_payload=raw_payload,
     )
+
+
+def _json_len(value: Any) -> int:
+    return len(json.dumps(value, ensure_ascii=False, default=str))
+
+
+def _find_key_recursive(value: Any, keys: set[str]) -> Any:
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if str(key) in keys:
+                return item
+        for item in value.values():
+            found = _find_key_recursive(item, keys)
+            if found is not None:
+                return found
+    if isinstance(value, list):
+        for item in value:
+            found = _find_key_recursive(item, keys)
+            if found is not None:
+                return found
+    return None
 
 
 def _compact_value(value: Any, *, depth: int = 0) -> Any:
@@ -294,6 +326,68 @@ def _has_browser_target(value: Any) -> bool:
     if isinstance(value, list):
         return any(_has_browser_target(item) for item in value)
     return False
+
+
+def _sanitize_recent_events(events: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    sanitized: list[dict[str, Any]] = []
+    for event in events or []:
+        if not isinstance(event, dict):
+            continue
+        item = {
+            key: event.get(key)
+            for key in ("event_type", "source", "message", "turn_id", "conversation_id", "seq")
+            if event.get(key) not in (None, "", [], {})
+        }
+        payload = event.get("payload")
+        if isinstance(payload, dict):
+            projected_payload = _project_recent_event_payload(payload)
+            if projected_payload:
+                item["payload"] = projected_payload
+        sanitized.append(item)
+    return sanitized
+
+
+def _project_recent_event_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    data = payload.get("data")
+    if not isinstance(data, dict):
+        return {}
+    kind = str(data.get("kind") or "").strip()
+    tool_name = str(data.get("tool_name") or data.get("name") or "").strip()
+    projected_data = {
+        key: value
+        for key, value in {
+            "kind": kind or None,
+            "tool_name": tool_name or None,
+            "is_error": data.get("is_error") if "is_error" in data else None,
+            "tool_call_id": data.get("tool_call_id"),
+            "tool_use_id": data.get("tool_use_id"),
+        }.items()
+        if value not in (None, "", [], {})
+    }
+    content = data.get("content")
+    if isinstance(content, dict) and str(content.get("projection", {}).get("kind") if isinstance(content.get("projection"), dict) else "") == "scene_result_summary":
+        projected_data["content"] = content
+    elif tool_name == "delegate_scene_context" or kind == "tool_result_ready":
+        projected_data["content_summary"] = _compact_recent_event_content(content)
+    return {"data": projected_data} if projected_data else {}
+
+
+def _compact_recent_event_content(value: Any, *, max_chars: int = 400) -> str | None:
+    if value in (None, "", [], {}):
+        return None
+    if isinstance(value, dict):
+        safe = {
+            key: value.get(key)
+            for key in ("status", "business_result")
+            if value.get(key) not in (None, "", [], {})
+        }
+        refs = value.get("evidence_refs")
+        if isinstance(refs, list):
+            safe["evidence_ref_count"] = len(refs)
+        if safe:
+            return json.dumps(safe, ensure_ascii=False, sort_keys=True, default=str)[:max_chars]
+    text = str(value).strip()
+    return text[:max_chars] if text else None
 
 
 def _without_empty(payload: dict[str, Any]) -> dict[str, Any]:

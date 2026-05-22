@@ -73,12 +73,12 @@ class Heartbeat:
             control_state = _control_state(state)
             if control_state == "terminating":
                 return {"status": control_state, "reason": _control_metadata(state).get("reason")}
+            if control_state == "paused" or (state is not None and state.autonomous_paused):
+                return {"status": "paused", "reason": _control_metadata(state).get("reason") or (state.pause_reason if state is not None else None)}
             task = None
-            if control_state in {"stopped", "paused"} or (state is not None and state.autonomous_paused):
+            if control_state == "stopped":
                 task = queue.claim_next_for_agent_kind("jd_sync", locked_by=self.worker_id)
                 if task is None:
-                    if control_state == "paused" or (state is not None and state.autonomous_paused):
-                        return {"status": "paused", "reason": _control_metadata(state).get("reason") or (state.pause_reason if state is not None else None)}
                     return {"status": control_state, "reason": _control_metadata(state).get("reason")}
             if task is None:
                 task = queue.claim_next(locked_by=self.worker_id)
