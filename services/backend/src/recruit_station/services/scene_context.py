@@ -2342,6 +2342,8 @@ def _browser_item_click_point(item: dict[str, Any]) -> tuple[float, float] | Non
     height = _optional_number(region.get("height"))
     if x is not None and y is not None and width is not None and height is not None:
         return (x + width / 2, y + height / 2)
+    if x is not None and y is not None:
+        return (x, y)
     return None
 
 
@@ -2590,19 +2592,19 @@ def _is_job_page_click_item(item: dict[str, Any]) -> bool:
     return False
 
 
-def _job_page_click_binding(item: dict[str, Any], all_items: list[dict[str, Any]]) -> dict[str, Any] | None:
+def _job_page_click_binding(item: dict[str, Any], all_items: list[dict[str, Any]], *, page: dict[str, Any] | None = None) -> dict[str, Any] | None:
     if _is_blocked_recruiting_site_click_item(item):
         return None
     if _is_jd_sync_non_job_navigation_item(item):
         return None
-    if _is_job_row_or_title_item(item):
+    if _is_job_row_or_title_item(item, page=page):
         return item
     if not _is_job_detail_or_edit_entry(item):
         return None
-    return _find_bound_job_row(item, all_items)
+    return _find_bound_job_row(item, all_items, page=page)
 
 
-def _is_job_row_or_title_item(item: dict[str, Any]) -> bool:
+def _is_job_row_or_title_item(item: dict[str, Any], *, page: dict[str, Any] | None = None) -> bool:
     if _is_blocked_recruiting_site_click_item(item):
         return False
     if _is_jd_sync_non_job_navigation_item(item):
@@ -2618,7 +2620,114 @@ def _is_job_row_or_title_item(item: dict[str, Any]) -> bool:
         return True
     if label and any(marker in kind_role for marker in ("link", "button")) and any(marker in href for marker in ("/job", "job/", "jobs", "position", "jd")):
         return True
+    if _is_boss_job_title_link_item(item, page=page):
+        return True
     return False
+
+
+def _is_boss_job_title_link_item(item: dict[str, Any], *, page: dict[str, Any] | None) -> bool:
+    if not page or not _is_boss_job_list_page_semantics(page):
+        return False
+    label = _normalize_ui_text(_browser_item_label(item))
+    if not _looks_like_boss_job_title(label):
+        return False
+    role = str(item.get("role") or "").strip().lower()
+    tag = str(item.get("tag") or "").strip().lower()
+    if role != "link" and tag != "a":
+        return False
+    href = _optional_string(item.get("href") or item.get("url"))
+    href_host = _host_from_url(href)
+    if href_host and not _host_matches_target_domain(href_host, "zhipin.com"):
+        return False
+    point = _browser_item_click_point(item)
+    if point is None:
+        return False
+    if point[0] < 180 or point[1] < 120:
+        return False
+    return _browser_item_is_visible(item)
+
+
+def _is_boss_job_list_page_semantics(page: dict[str, Any]) -> bool:
+    url = _optional_string(page.get("url"))
+    parsed = urlparse(url or "")
+    if _host_matches_target_domain(parsed.hostname, "zhipin.com") and parsed.path.rstrip("/") == "/web/chat/job/list":
+        return True
+    text = _normalize_ui_text(" ".join(str(item) for item in (page.get("title"), page.get("text")) if item))
+    return "职位管理" in text and any(marker in text for marker in ("全部职位", "开放中", "待开放", "审核不通过", "已关闭"))
+
+
+def _looks_like_boss_job_title(label: str) -> bool:
+    text = _normalize_ui_text(label)
+    if not text or len(text) > 80:
+        return False
+    lowered = text.lower()
+    blocked_exact = {
+        "职位管理",
+        "推荐牛人",
+        "搜索",
+        "沟通",
+        "招聘规范",
+        "我的客服",
+        "全部职位",
+        "开放中",
+        "待开放",
+        "审核不通过",
+        "已关闭",
+        "查看详情",
+        "详情",
+        "编辑",
+        "关闭",
+        "关闭职位",
+        "发布职位",
+        "刷新职位",
+        "曝光刷新",
+        "北京",
+        "上海",
+        "广州",
+        "深圳",
+        "杭州",
+        "本科",
+        "大专",
+        "硕士",
+        "博士",
+        "经验不限",
+        "全职",
+        "兼职",
+    }
+    if text in blocked_exact:
+        return False
+    if any(marker in text for marker in ("候选人", "牛人", "简历", "沟通", "聊天", "会话", "打招呼", "求简历", "换电话", "换微信")):
+        return False
+    if any(char.isdigit() for char in text) and any(marker in lowered for marker in ("k", "薪", "元", "-")):
+        return False
+    title_markers = (
+        "实习",
+        "工程师",
+        "经理",
+        "产品",
+        "运营",
+        "开发",
+        "设计",
+        "销售",
+        "顾问",
+        "专家",
+        "总监",
+        "主管",
+        "助理",
+        "分析师",
+        "架构师",
+        "算法",
+        "前端",
+        "后端",
+        "测试",
+        "java",
+        "python",
+        "golang",
+        "hrbp",
+    )
+    if any(marker in lowered for marker in title_markers):
+        return True
+    return " " not in text and 2 <= len(text) <= 30 and any("\u4e00" <= char <= "\u9fff" for char in text)
 
 
 def _is_jd_sync_non_job_navigation_item(item: dict[str, Any]) -> bool:
@@ -2641,9 +2750,9 @@ def _is_job_detail_or_edit_entry(item: dict[str, Any]) -> bool:
     return any(marker in label for marker in ("职位详情", "岗位详情", "编辑职位", "查看详情", "编辑", "详情"))
 
 
-def _find_bound_job_row(item: dict[str, Any], all_items: list[dict[str, Any]]) -> dict[str, Any] | None:
+def _find_bound_job_row(item: dict[str, Any], all_items: list[dict[str, Any]], *, page: dict[str, Any] | None = None) -> dict[str, Any] | None:
     parent_ref = _optional_string(item.get("parentRef") or item.get("parent_ref") or item.get("containerRef") or item.get("container_ref"))
-    candidates = [candidate for candidate in all_items if isinstance(candidate, dict) and candidate is not item and _is_job_row_or_title_item(candidate)]
+    candidates = [candidate for candidate in all_items if isinstance(candidate, dict) and candidate is not item and _is_job_row_or_title_item(candidate, page=page)]
     if parent_ref:
         for candidate in candidates:
             if parent_ref == _optional_string(candidate.get("ref") or candidate.get("id")):
@@ -2937,8 +3046,11 @@ def _boss_recruiting_tab_priority(url: str) -> int | None:
 
 
 def _browser_result_url(result: dict[str, Any]) -> str | None:
+    browser_snapshot = _as_dict(result.get("browser_snapshot") or result.get("browserSnapshot"))
     for candidate in (
         _as_dict(result.get("snapshot")).get("url"),
+        _as_dict(browser_snapshot.get("snapshot")).get("url"),
+        browser_snapshot.get("url"),
         _as_dict(result.get("tab")).get("url"),
         _as_dict(result.get("target")).get("url"),
         result.get("url"),
@@ -3254,7 +3366,7 @@ def _remember_browser_semantics(browser_semantics: dict[str, Any], *, tool_name:
 
 
 def _browser_page_semantics_from_output(output: dict[str, Any]) -> dict[str, Any]:
-    snapshot = _as_dict(output.get("snapshot"))
+    snapshot = _browser_snapshot_source_from_output(output)
     source = snapshot or output
     items = _browser_action_items_from_value(source)
     page = {
@@ -3264,6 +3376,17 @@ def _browser_page_semantics_from_output(output: dict[str, Any]) -> dict[str, Any
         "items": items,
     }
     return {key: value for key, value in page.items() if value not in (None, "", [], {})}
+
+
+def _browser_snapshot_source_from_output(output: dict[str, Any]) -> dict[str, Any]:
+    snapshot = _as_dict(output.get("snapshot"))
+    if snapshot:
+        return snapshot
+    browser_snapshot = _as_dict(output.get("browser_snapshot") or output.get("browserSnapshot"))
+    if browser_snapshot:
+        nested_snapshot = _as_dict(browser_snapshot.get("snapshot"))
+        return nested_snapshot or browser_snapshot
+    return {}
 
 
 def _browser_action_items_from_value(value: Any) -> list[dict[str, Any]]:
@@ -3283,6 +3406,9 @@ def _browser_action_items_from_value(value: Any) -> list[dict[str, Any]]:
         snapshot = value.get("snapshot")
         if isinstance(snapshot, dict):
             items.extend(_browser_action_items_from_value(snapshot))
+        browser_snapshot = value.get("browser_snapshot") or value.get("browserSnapshot")
+        if isinstance(browser_snapshot, dict):
+            items.extend(_browser_action_items_from_value(browser_snapshot))
     elif isinstance(value, list):
         for raw in value:
             item = _normalize_browser_action_item(raw)
@@ -3300,6 +3426,7 @@ def _normalize_browser_action_item(value: Any) -> dict[str, Any]:
         "text": _optional_string(payload.get("text") or payload.get("label") or payload.get("name") or payload.get("title") or payload.get("innerText") or payload.get("inner_text"), max_length=512),
         "label": _optional_string(payload.get("label") or payload.get("ariaLabel") or payload.get("aria_label"), max_length=512),
         "role": _optional_string(payload.get("role"), max_length=128),
+        "tag": _optional_string(payload.get("tag") or payload.get("tagName") or payload.get("tag_name"), max_length=128),
         "kind": _optional_string(payload.get("kind") or payload.get("type") or payload.get("dataKind") or payload.get("entity_kind") or payload.get("entityKind"), max_length=128),
         "href": _optional_string(payload.get("href") or payload.get("url")),
         "clickPoint": payload.get("clickPoint") or payload.get("click_point") or payload.get("point"),
@@ -3309,6 +3436,8 @@ def _normalize_browser_action_item(value: Any) -> dict[str, Any]:
         "parentRef": _optional_string(payload.get("parentRef") or payload.get("parent_ref") or payload.get("containerRef") or payload.get("container_ref"), max_length=128),
         "container": _optional_string(payload.get("container") or payload.get("section") or payload.get("location") or payload.get("nav"), max_length=128),
         "inViewport": payload.get("inViewport") if "inViewport" in payload else payload.get("in_viewport"),
+        "disabled": payload.get("disabled"),
+        "detectedBy": _optional_string(payload.get("detectedBy") or payload.get("detected_by"), max_length=128),
     }
     return {key: item for key, item in normalized.items() if item not in (None, "", [], {})}
 
@@ -4098,11 +4227,11 @@ def _jd_sync_browser_evidence_delta_from_snapshot(content: dict[str, Any]) -> di
     for item in items:
         if _is_blocked_recruiting_site_click_item(item):
             continue
-        if _is_job_row_or_title_item(item):
+        if _is_job_row_or_title_item(item, page=page):
             job = _jd_sync_job_from_browser_item(item, page_url=page_url, content=content)
             if job:
                 observed_jobs.append(job)
-        binding = _job_page_click_binding(item, items)
+        binding = _job_page_click_binding(item, items, page=page)
         if binding is not None:
             candidate = _jd_sync_action_candidate_from_browser_item(item, binding=binding, page_url=page_url, content=content)
             if candidate:
@@ -4129,20 +4258,26 @@ def _jd_sync_job_from_browser_item(item: dict[str, Any], *, page_url: str | None
     if not title:
         return {}
     href = _optional_string(item.get("href") or item.get("url"))
+    external_url = href if _is_jd_sync_external_job_url(href) else None
     ref = _optional_string(item.get("ref") or item.get("id"))
-    key = _optional_string(item.get("external_id") or item.get("externalId") or href or ref or title)
+    key = _optional_string(item.get("external_id") or item.get("externalId") or external_url or ref or title)
     status = _jd_sync_status_from_text(label)
     job = {
         "job_key": key,
         "title": title,
         "raw_text": label,
         "status": status,
-        "external_url": href,
+        "external_url": external_url,
         "source_url": page_url,
         "source": "browser_snapshot",
         "evidence_ref": _jd_sync_evidence_ref(content=content, page_url=page_url, ref=ref),
     }
     return {field: value for field, value in job.items() if value not in (None, "", [], {})}
+
+
+def _is_jd_sync_external_job_url(href: str | None) -> bool:
+    value = str(href or "").strip().lower()
+    return bool(value and not value.startswith("javascript:") and value not in {"#"})
 
 
 def _jd_sync_action_candidate_from_browser_item(
@@ -4525,7 +4660,7 @@ def _browser_result_tab_candidates(value: Any) -> list[dict[str, Any]]:
                     if candidate.get(source_key) is not None:
                         target[target_key] = candidate.get(source_key)
                 candidates.append(target)
-            for key in ("snapshot", "tab", "target", "tabs", "items", "results", "observed_entities"):
+            for key in ("snapshot", "browser_snapshot", "browserSnapshot", "tab", "target", "tabs", "items", "results", "observed_entities"):
                 nested = candidate.get(key)
                 if isinstance(nested, (dict, list)):
                     collect(nested)

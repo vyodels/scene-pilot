@@ -2247,6 +2247,114 @@ def test_jd_sync_snapshot_keeps_real_boss_job_card_and_safe_detail_action() -> N
     assert "main-job-management" not in json.dumps(delta["action_candidates"], ensure_ascii=False)
 
 
+def test_jd_sync_snapshot_extracts_live_boss_title_link_and_bound_edit_from_clickables() -> None:
+    delta = _jd_sync_browser_evidence_delta_from_snapshot(
+        {
+            "success": True,
+            "tabId": 1136767565,
+            "snapshot": {
+                "url": "https://www.zhipin.com/web/chat/job/list",
+                "title": "职位管理",
+                "text": "职位管理 全部职位 开放中 待开放 审核不通过 已关闭",
+                "clickables": [
+                    {
+                        "ref": "main-job-management",
+                        "tag": "a",
+                        "role": "link",
+                        "text": "职位管理",
+                        "href": "https://www.zhipin.com/web/chat/job/list?ka=menu-manager-job",
+                        "viewport": {"top": 203, "left": 64, "width": 64, "height": 22},
+                        "inViewport": True,
+                        "detectedBy": "selector",
+                    },
+                    {
+                        "ref": "@e23",
+                        "tag": "a",
+                        "role": "link",
+                        "text": "产品实习生",
+                        "href": "javascript:;",
+                        "viewport": {"top": 187, "left": 287, "width": 88, "height": 22},
+                        "inViewport": True,
+                        "detectedBy": "selector",
+                    },
+                    {
+                        "ref": "@e27",
+                        "tag": "a",
+                        "role": "link",
+                        "text": "编辑",
+                        "href": "javascript:;",
+                        "viewport": {"top": 201, "left": 1283.21875, "width": 28, "height": 20},
+                        "inViewport": True,
+                        "detectedBy": "selector",
+                    },
+                    {
+                        "ref": "@e28",
+                        "tag": "button",
+                        "role": "button",
+                        "text": "关闭",
+                        "viewport": {"top": 201, "left": 1320, "width": 28, "height": 20},
+                        "inViewport": True,
+                        "detectedBy": "selector",
+                    },
+                ],
+            },
+        }
+    )
+
+    assert [item["title"] for item in delta["observed_jobs"]] == ["产品实习生"]
+    assert [item["title"] for item in delta["pending_jobs"]] == ["产品实习生"]
+    assert delta["observed_jobs"][0]["job_key"] == "@e23"
+    assert any(
+        item["label"] == "编辑" and item.get("bound_ref") == "@e23"
+        for item in delta["action_candidates"]
+    )
+    action_dump = json.dumps(delta["action_candidates"], ensure_ascii=False)
+    assert "关闭" not in action_dump
+    assert "main-job-management" not in action_dump
+
+
+@pytest.mark.parametrize("url,title", [
+    ("https://www.zhipin.com/web/geek/recommend", "推荐牛人"),
+    ("https://www.zhipin.com/web/geek/search", "搜索"),
+])
+def test_jd_sync_snapshot_does_not_treat_candidate_search_or_recommend_clickables_as_jobs(url: str, title: str) -> None:
+    delta = _jd_sync_browser_evidence_delta_from_snapshot(
+        {
+            "success": True,
+            "tabId": 1136767565,
+            "snapshot": {
+                "url": url,
+                "title": title,
+                "text": f"{title} 产品实习生_北京 2-4K 候选人 沟通",
+                "clickables": [
+                    {
+                        "ref": "@candidate-title",
+                        "tag": "a",
+                        "role": "link",
+                        "text": "产品实习生",
+                        "href": "javascript:;",
+                        "viewport": {"top": 187, "left": 287, "width": 88, "height": 22},
+                        "inViewport": True,
+                    },
+                    {
+                        "ref": "@candidate-card",
+                        "tag": "a",
+                        "role": "link",
+                        "text": "候选人 王同学 产品实习生",
+                        "href": "javascript:;",
+                        "viewport": {"top": 226, "left": 287, "width": 180, "height": 28},
+                        "inViewport": True,
+                    },
+                ],
+            },
+        }
+    )
+
+    assert delta.get("observed_jobs") in (None, [])
+    assert delta.get("pending_jobs") in (None, [])
+    assert delta.get("action_candidates") in (None, [])
+
+
 def test_scene_context_recovers_jd_sync_snapshot_from_existing_zhipin_tab_when_active_tab_is_local(
     tmp_path: Path,
 ) -> None:
