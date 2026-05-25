@@ -7,7 +7,7 @@ import pytest
 
 from recruit_station.core.settings import AppSettings
 from recruit_station.db.session import create_engine_from_settings, create_session_factory, initialize_database
-from recruit_station.models.domain import AgentGlobalState, AgentLearning, Candidate, EnvironmentSnapshot, ExecutionEpisode, ExecutionPlan, TaskSpec
+from recruit_station.models.domain import AgentGlobalState, AgentLearning, Candidate, CandidateApplication, ConversationSession, ConversationTurn, EnvironmentSnapshot, ExecutionEpisode, ExecutionPlan, JobDescription, TaskSpec
 from recruit_station.plugins.host import PluginHost
 from agent_runtime.fixtures import LLMResponse, ToolCall
 from agent_runtime.fixtures import ScriptedProvider
@@ -1635,6 +1635,74 @@ def test_scene_context_normalizes_contract_aliases_without_marking_complete(tmp_
     assert result["result_data"]["evidence"] == ["已完成 1 个 JD 的详情核验。"]
 
 
+def test_scene_context_normalizes_jd_sync_partial_output_to_complete_contract(tmp_path: Path) -> None:
+    session_factory = _session_factory(tmp_path)
+    final_payload = {
+        "status": "in_progress",
+        "summary": "职位管理列表已观察，下一步进入产品实习生详情。",
+    }
+    provider = ScriptedProvider(
+        provider_name="scene-scripted",
+        responses=[LLMResponse(content=json.dumps(final_payload, ensure_ascii=False), finish_reason="stop")],
+    )
+    service = SceneContextService(
+        session_factory=session_factory,
+        provider=provider,
+        tool_registry=ToolRegistry(),
+        plugin_host=PluginHost(),
+    )
+
+    result = service.delegate(
+        {
+            "instruction": "Return JD sync scene result JSON.",
+            "context": {"plan_kind": "jd_sync"},
+            "output_contract": {
+                "contract_kind": "jd_sync",
+                "result_data_required": True,
+                "required_fields": [
+                    "status",
+                    "scene_status",
+                    "observed_jobs",
+                    "pending_jobs",
+                    "completed_job_details",
+                    "inactive_or_closed_jobs",
+                    "action_candidates",
+                    "recovery",
+                    "terminal_blockers",
+                    "policy_violations",
+                    "evidence_refs",
+                    "writeback_candidates",
+                ],
+            },
+        }
+    )
+
+    assert result["status"] == "incomplete"
+    assert result["blockers"] == []
+    assert result["result_data"]["status"] == "in_progress"
+    assert result["result_data"]["scene_status"] == "in_progress"
+    for field in (
+        "observed_jobs",
+        "pending_jobs",
+        "completed_job_details",
+        "inactive_or_closed_jobs",
+        "action_candidates",
+        "terminal_blockers",
+        "policy_violations",
+        "evidence_refs",
+        "writeback_candidates",
+    ):
+        assert result["result_data"][field] == []
+    assert result["result_data"]["recovery"] == {}
+    assert "output_contract_incomplete" not in json.dumps(result["blockers"], ensure_ascii=False)
+    with session_factory() as session:
+        assert session.query(JobDescription).count() == 0
+        assert session.query(Candidate).count() == 0
+        assert session.query(CandidateApplication).count() == 0
+        assert session.query(ConversationSession).count() == 0
+        assert session.query(ConversationTurn).count() == 0
+
+
 def test_scene_context_blocks_jd_sync_candidate_chat_result_without_job_evidence(tmp_path: Path) -> None:
     session_factory = _session_factory(tmp_path)
     final_payload = {
@@ -1693,8 +1761,16 @@ def test_scene_context_blocks_jd_sync_candidate_chat_result_without_job_evidence
     assert result["result_data"]["reported_status"] == "completed"
     assert result["result_data"]["completed_job_details"] == []
     assert result["result_data"]["observed_jobs"] == []
+    assert result["result_data"]["pending_jobs"] == []
     assert result["result_data"]["jd_sync_boundary_guard"]["reason"] == "jd_sync_wrong_page_candidate_context"
+    assert result["result_data"]["policy_violations"][0]["kind"] == "jd_sync_candidate_chat_contamination"
     assert result["blockers"][0]["kind"] == "jd_sync_wrong_page_candidate_context"
+    with session_factory() as session:
+        assert session.query(JobDescription).count() == 0
+        assert session.query(Candidate).count() == 0
+        assert session.query(CandidateApplication).count() == 0
+        assert session.query(ConversationSession).count() == 0
+        assert session.query(ConversationTurn).count() == 0
 
 
 def test_scene_context_recovers_jd_sync_from_chat_page_visible_job_management_nav(tmp_path: Path) -> None:
@@ -2238,6 +2314,76 @@ def test_scene_context_blocks_jd_sync_list_only_completed_details(tmp_path: Path
     assert result["result_data"]["reported_status"] == "completed"
     assert result["result_data"]["contract_validation"]["status"] == "failed"
     assert result["blockers"][0]["kind"] == "jd_sync_completed_details_require_detail_evidence"
+
+
+def test_scene_context_blocks_jd_sync_completion_when_pending_jobs_remain(tmp_path: Path) -> None:
+    session_factory = _session_factory(tmp_path)
+    final_payload = {
+        "status": "completed",
+        "observed_jobs": [{"title": "产品实习生", "external_id": "boss-product-intern-1"}, {"title": "销售工程师", "external_id": "boss-sales-1"}],
+        "pending_jobs": [{"title": "销售工程师", "external_id": "boss-sales-1"}],
+        "completed_job_details": [
+            {
+                "title": "产品实习生",
+                "external_id": "boss-product-intern-1",
+                "external_url": "https://www.zhipin.com/web/chat/job/edit?encryptId=product",
+                "description": "负责产品需求分析、原型设计和跨团队协作。",
+                "requirements": "要求本科以上，具备产品实习经验和沟通能力。",
+            }
+        ],
+        "inactive_or_closed_jobs": [],
+        "activation_entry_observed": False,
+        "blockers": [],
+        "limitations": [],
+        "evidence": ["产品实习生详情页展示岗位职责和任职要求。"],
+    }
+    provider = ScriptedProvider(
+        provider_name="scene-scripted",
+        responses=[LLMResponse(content=json.dumps(final_payload, ensure_ascii=False), finish_reason="stop")],
+    )
+    service = SceneContextService(
+        session_factory=session_factory,
+        provider=provider,
+        tool_registry=ToolRegistry(),
+        plugin_host=PluginHost(),
+    )
+
+    result = service.delegate(
+        {
+            "instruction": "Return JD sync scene result JSON.",
+            "context": {"plan_kind": "jd_sync"},
+            "output_contract": {
+                "contract_kind": "jd_sync",
+                "result_data_required": True,
+                "required_fields": [
+                    "status",
+                    "scene_status",
+                    "observed_jobs",
+                    "pending_jobs",
+                    "completed_job_details",
+                    "inactive_or_closed_jobs",
+                    "action_candidates",
+                    "recovery",
+                    "terminal_blockers",
+                    "policy_violations",
+                    "evidence_refs",
+                    "writeback_candidates",
+                    "blockers",
+                    "limitations",
+                    "evidence",
+                ],
+            },
+        }
+    )
+
+    assert result["status"] == "incomplete"
+    assert result["result_data"]["status"] == "partial"
+    assert result["result_data"]["scene_status"] == "partial"
+    assert result["result_data"]["reported_status"] == "completed"
+    assert result["result_data"]["pending_jobs"] == [{"title": "销售工程师", "external_id": "boss-sales-1"}]
+    assert "jd_sync_pending_jobs_not_complete" not in json.dumps(result["blockers"], ensure_ascii=False)
+    with session_factory() as session:
+        assert session.query(JobDescription).count() == 0
 
 
 def test_scene_context_uses_blocked_final_json_for_public_status_without_writeback(tmp_path: Path) -> None:

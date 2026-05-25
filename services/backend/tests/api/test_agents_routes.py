@@ -231,6 +231,9 @@ def test_jd_sync_run_requires_only_saved_entry_url(tmp_path, monkeypatch) -> Non
     constraints = runtime_metadata["constraints"]
     assert constraints["plan_kind"] == "jd_sync"
     assert constraints["target_recruiting_site"]["entry_url"] == "https://mock-recruiting.local/"
+    assert runtime_metadata["jd_sync_state"]["version"] == 1
+    assert runtime_metadata["jd_sync_state"]["jobs_by_key"] == {}
+    assert runtime_metadata["jd_sync_state"]["pending_job_keys"] == []
     assert "任务范围：" in runtime_metadata["instruction"]
     assert "- 从配置的招聘网站目标网页出发，目标网页可以是该网站任意可访问页面。" in runtime_metadata["instruction"]
     assert "- 根据页面可见导航和内容自行找到职位列表与职位详情。" in runtime_metadata["instruction"]

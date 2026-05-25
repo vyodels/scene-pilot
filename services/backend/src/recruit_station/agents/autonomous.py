@@ -51,6 +51,7 @@ from recruit_station.product_adapters.mcp_resource_context import build_mcp_reso
 from recruit_station.product_adapters.result_semantics import extract_execution_status
 from recruit_station.product_adapters.target_contracts import derive_browser_target
 from recruit_station.capabilities.tools import ToolRegistry
+from recruit_station.services.jd_sync_state import reduce_agent_run_jd_sync_state
 from recruit_station.skills.context import build_skill_context_injections
 
 MCP_RESOURCE_RUNTIME_TOOL_NAMES: frozenset[str] = frozenset({"list_mcp_resources", "read_mcp_resource"})
@@ -283,6 +284,8 @@ class AutonomousAdapter:
                 str(run_constraints.get("global_scope_ref") or "") or agent_definition_id
             )
             run_constraints["source_kind"] = run.agent_kind or "autonomous"
+            if str(run.agent_kind or "").strip().lower() == "jd_sync":
+                run_constraints["jd_sync_state"] = dict((run.runtime_metadata or {}).get("jd_sync_state") or {})
             if resolved_application_id:
                 run_constraints["application_id"] = resolved_application_id
             browser_target = derive_browser_target(
@@ -502,6 +505,12 @@ class AutonomousAdapter:
                     envelope=envelope,
                     outcome=last_outcome,
                 )
+                if str(run.agent_kind or "").strip().lower() == "jd_sync":
+                    reduce_agent_run_jd_sync_state(
+                        run,
+                        tool_results=runner_result.tool_results,
+                        final_result_data=runner_result.final_result_data,
+                    )
                 last_outcome = _block_single_jd_probe_if_continuation_budget_exhausted(
                     session,
                     run=run,

@@ -28,6 +28,10 @@ from recruit_station.product_adapters.result_semantics import (
 )
 from recruit_station.product_adapters.target_contracts import derive_browser_target
 from recruit_station.capabilities.tools import ToolDefinition, ToolRegistry, is_scene_context_tool
+from recruit_station.services.jd_sync_contract import (
+    is_jd_sync_contract,
+    normalize_jd_sync_scene_result,
+)
 
 
 _SCENE_BROWSER_READ_ONLY_TOOL_NAMES = {
@@ -420,6 +424,7 @@ class SceneContextService:
                 output_contract,
                 jd_sync_snapshot_blocker,
             )
+        result_data = normalize_jd_sync_scene_result(result_data, output_contract)
         contract_blockers = _scene_result_contract_blockers(result_data, output_contract)
         if contract_blockers:
             blockers.extend(contract_blockers)
@@ -3745,7 +3750,7 @@ def _public_status(
         if blockers:
             return "blocked"
         return "completed"
-    if result_status in {"partial", "incomplete", "continuable", "continue", "pending"}:
+    if result_status in {"partial", "incomplete", "in_progress", "continuable", "continue", "pending", "needs_continuation"}:
         if blockers:
             return "blocked"
         return "incomplete"
@@ -3822,14 +3827,14 @@ def _normalize_scene_result_contract_data(
 ) -> dict[str, Any]:
     contract = _as_dict(output_contract)
     if not contract.get("result_data_required") or not result_data:
-        return result_data
+        return normalize_jd_sync_scene_result(result_data, contract)
     required_fields = {
         str(item).strip()
         for item in contract.get("required_fields") or []
         if str(item or "").strip()
     }
     if not required_fields:
-        return result_data
+        return normalize_jd_sync_scene_result(result_data, contract)
 
     normalized = dict(result_data)
     summary = _as_dict(normalized.get("summary"))
@@ -3925,6 +3930,7 @@ def _normalize_scene_result_contract_data(
         synthesized.append("evidence")
 
     normalized = _apply_jd_sync_candidate_context_guard(normalized, contract)
+    normalized = normalize_jd_sync_scene_result(normalized, contract)
 
     status = str(normalized.get("status") or "").strip().lower()
     if synthesized and status in {"completed", "complete", "success", "succeeded"}:
@@ -3950,7 +3956,8 @@ def _scene_result_contract_blockers(result_data: dict[str, Any], output_contract
     missing_fields = [
         field
         for field in required_fields
-        if field not in result_data or result_data.get(field) in (None, "", {})
+        if field not in result_data or result_data.get(field) in (None, "")
+        or (result_data.get(field) == {} and not (_is_jd_sync_result_contract(contract) and field == "recovery"))
     ]
     blockers: list[dict[str, Any]] = []
     if _is_jd_sync_wrong_page_candidate_context(result_data, contract):
@@ -3965,6 +3972,16 @@ def _scene_result_contract_blockers(result_data: dict[str, Any], output_contract
         )
     status = str(result_data.get("status") or "").strip().lower()
     completed_details = result_data.get("completed_job_details")
+    pending_jobs = result_data.get("pending_jobs")
+    if _is_jd_sync_result_contract(contract) and status in {"completed", "complete", "success", "succeeded"}:
+        if isinstance(pending_jobs, list) and pending_jobs:
+            blockers.append(
+                {
+                    "kind": "jd_sync_pending_jobs_not_complete",
+                    "message": "JD sync cannot be completed while pending_jobs still require detail extraction, validation, or writeback.",
+                    "missing_fields": ["pending_jobs_empty"],
+                }
+            )
     if "completed_job_details" in required_fields and status in {"completed", "complete", "success", "succeeded"}:
         if not isinstance(completed_details, list) or not completed_details:
             blockers.append(
@@ -4362,12 +4379,23 @@ def _apply_jd_sync_candidate_context_guard(result_data: dict[str, Any], contract
     blockers = list(result_data.get("blockers") or []) if isinstance(result_data.get("blockers"), list) else []
     if not any(isinstance(item, dict) and item.get("kind") == blocker["kind"] for item in blockers):
         blockers.append(blocker)
+    policy_violations = list(result_data.get("policy_violations") or []) if isinstance(result_data.get("policy_violations"), list) else []
+    violation = {
+        "kind": "jd_sync_candidate_chat_contamination",
+        "message": "Candidate/chat context cannot be used as JD sync progress or writeback evidence.",
+    }
+    if not any(isinstance(item, dict) and item.get("kind") == violation["kind"] for item in policy_violations):
+        policy_violations.append(violation)
     guarded = {
         **result_data,
         "status": "blocked",
+        "scene_status": "blocked",
         "completed_job_details": [],
         "observed_jobs": [],
+        "pending_jobs": [],
         "blockers": blockers,
+        "terminal_blockers": blockers,
+        "policy_violations": policy_violations,
         "jd_sync_boundary_guard": {
             "status": "blocked",
             "reason": blocker["kind"],
@@ -4384,16 +4412,18 @@ def _is_jd_sync_wrong_page_candidate_context(result_data: dict[str, Any], contra
         return False
     if _contains_jd_sync_job_management_context(result_data):
         return False
-    if not _contains_candidate_or_chat_context(result_data):
+    contamination_probe = {
+        key: value
+        for key, value in result_data.items()
+        if key not in {"action_candidates", "writeback_candidates"}
+    }
+    if not _contains_candidate_or_chat_context(contamination_probe):
         return False
     return not _contains_jd_sync_job_detail_evidence(result_data)
 
 
 def _is_jd_sync_result_contract(contract: dict[str, Any]) -> bool:
-    if str(contract.get("contract_kind") or "").strip().lower() == "jd_sync":
-        return True
-    required = {str(item).strip() for item in contract.get("required_fields") or [] if str(item or "").strip()}
-    return {"observed_jobs", "completed_job_details", "inactive_or_closed_jobs"}.issubset(required)
+    return is_jd_sync_contract(contract)
 
 
 def _contains_candidate_or_chat_context(value: Any) -> bool:

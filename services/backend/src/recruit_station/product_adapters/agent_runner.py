@@ -9,6 +9,7 @@ from recruit_station.agent_runtime.engine import InteractionEngine, InteractionE
 from recruit_station.agent_runtime.transcript import Transcript
 from recruit_station.agent_runtime.types import InteractionOutput, LLMMessage, LLMProvider, ToolCall, ToolResult, TurnContext
 from recruit_station.capabilities.tools import ToolRegistry
+from recruit_station.services.jd_sync_contract import JD_SYNC_ALLOWED_RUNTIME_TOOLS
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,11 +75,15 @@ def run_agent_turn(
         explicit_system_prompt=system_prompt,
     )
     engine_initial_messages = [] if resolve_permission and transcript is not None else normalized_initial_messages
+    runtime_payload = dict(runtime or {})
+    runtime_tool_registry = scoped_tool_registry(tool_registry, agent_definition_id)
+    if _runtime_is_jd_sync(runtime_payload):
+        runtime_tool_registry = jd_sync_scoped_tool_registry(runtime_tool_registry)
     engine = existing_engine or InteractionEngine(
         InteractionEngineConfig(
             conversation_id=conversation_id,
             provider=provider,
-            tools=scoped_tool_registry(tool_registry, agent_definition_id).to_agent_runtime_tools(),
+            tools=runtime_tool_registry.to_agent_runtime_tools(),
             transcript=transcript,
             initial_messages=engine_initial_messages,
             system_prompt=normalized_system_prompt,
@@ -87,7 +92,7 @@ def run_agent_turn(
             max_context_chars=max_context_chars,
             compaction_summary_max_chars=compaction_summary_max_chars,
             initial_seq=initial_seq,
-            runtime=dict(runtime or {}),
+            runtime=runtime_payload,
             pending_user_input_after_next_tool_call_provider=pending_user_input_after_next_tool_call_provider,
         )
     )
@@ -256,6 +261,32 @@ def scoped_tool_registry(registry: ToolRegistry, agent_definition_id: str | None
             cloned.handler = _handler
         scoped.register(cloned)
     return scoped
+
+
+def jd_sync_scoped_tool_registry(registry: ToolRegistry) -> ToolRegistry:
+    scoped = ToolRegistry()
+    for tool in registry.tools.values():
+        if tool.name in JD_SYNC_ALLOWED_RUNTIME_TOOLS:
+            scoped.register(tool.clone())
+    return scoped
+
+
+def _runtime_is_jd_sync(runtime: dict[str, Any]) -> bool:
+    constraints = runtime.get("constraints")
+    if not isinstance(constraints, dict):
+        constraints = {}
+    context_hints = runtime.get("context_hints")
+    if not isinstance(context_hints, dict):
+        context_hints = {}
+    plan_kind = str(
+        runtime.get("plan_kind")
+        or constraints.get("plan_kind")
+        or context_hints.get("plan_kind")
+        or runtime.get("run_kind")
+        or constraints.get("run_kind")
+        or ""
+    ).strip().lower()
+    return plan_kind in {"jd_sync", "job_description_sync", "recruiting_jd_sync"}
 
 
 def _permission_payload(data: dict[str, Any]) -> dict[str, Any]:

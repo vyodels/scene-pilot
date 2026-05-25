@@ -10,6 +10,11 @@ from datetime import datetime, timezone
 import json
 from typing import Any, Awaitable, Callable, Protocol, TypeVar
 
+from recruit_station.services.jd_sync_contract import (
+    jd_sync_scene_instruction,
+    jd_sync_scene_output_contract,
+)
+
 _T = TypeVar("_T")
 
 _RUNTIME_CONSTRAINT_AWARE_TOOL_NAMES: frozenset[str] = frozenset(
@@ -388,6 +393,7 @@ def _merge_runtime_jd_sync_context(arguments: dict[str, Any], runtime: dict[str,
         "scope_kind",
         "scope_ref",
         "browser_target",
+        "jd_sync_state",
     ):
         if key not in context and key in runtime_constraints:
             context[key] = runtime_constraints[key]
@@ -695,10 +701,7 @@ def _positive_int(value: Any) -> int | None:
 
 
 def _jd_sync_scene_instruction(*, sync_mode: str, max_job_descriptions: int | None) -> str:
-    if sync_mode == "single_jd_probe" or max_job_descriptions == 1:
-        return _JD_SYNC_SINGLE_PROBE_SCENE_INSTRUCTION
-    instruction = _JD_SYNC_SCENE_INSTRUCTION
-    return instruction
+    return jd_sync_scene_instruction(sync_mode=sync_mode, max_job_descriptions=max_job_descriptions)
 
 
 _JD_SYNC_SCENE_INSTRUCTION = (
@@ -738,70 +741,11 @@ _JD_SYNC_SINGLE_PROBE_SCENE_INSTRUCTION = (
 
 
 def _jd_sync_scene_output_contract(*, sync_mode: str = "", max_job_descriptions: int | None = None) -> dict[str, Any]:
-    if sync_mode == "single_jd_probe" or max_job_descriptions == 1:
-        return _single_jd_probe_scene_output_contract()
-    return {
-        "contract_kind": "jd_sync",
-        "format": "json",
-        "result_data_required": True,
-        "status_values": ["completed", "partial", "blocked"],
-        "required_fields": [
-            "status",
-            "observed_jobs",
-            "completed_job_details",
-            "inactive_or_closed_jobs",
-            "activation_entry_observed",
-            "blockers",
-            "limitations",
-            "evidence",
-        ],
-        "field_contract": {
-            "observed_jobs": "Jobs actually observed in this scene turn; use stable current-host page-visible identifiers when available. If the list shows a total count, observed_jobs must account for every listed/open job, including entries below the viewport.",
-            "completed_job_details": "Only jobs whose current-host detail page was opened/read in this scene turn or whose full detail evidence is present. Each item must include title, department, location, status, external_id or external_url, summary/description, requirements when visible, and detail evidence from the current detail URL. New/draft/publish forms, including BOSS/Zhipin URLs with encryptId=0, are not completed job details.",
-            "inactive_or_closed_jobs": "Jobs observed as inactive, closed, unavailable, or removed.",
-            "activation_entry_observed": "Whether the scene observed a page entry for choosing active/effective JD.",
-            "blockers": "Hard blockers only: login, captcha, permission, missing required tools, or unreachable target site.",
-            "limitations": "Recoverable or incomplete conditions; include any offscreen details not yet opened and any mismatch between listed open jobs and completed detail pages.",
-            "evidence": "Short current-host evidence references or page facts that justify each completed job detail.",
-        },
-        "completion_rule": (
-            "status may be completed only when the scene has returned all currently required complete JD details in completed_job_details "
-            "and no required detail is missing. If only list summaries, partial details, offscreen links, stale-host evidence, or inferred jobs are available, status must be partial or blocked."
-        ),
-    }
+    return jd_sync_scene_output_contract(sync_mode=sync_mode, max_job_descriptions=max_job_descriptions)
 
 
 def _single_jd_probe_scene_output_contract() -> dict[str, Any]:
-    return {
-        "contract_kind": "jd_sync",
-        "format": "json",
-        "result_data_required": True,
-        "status_values": ["completed", "partial", "blocked"],
-        "required_fields": [
-            "status",
-            "observed_jobs",
-            "completed_job_details",
-            "inactive_or_closed_jobs",
-            "activation_entry_observed",
-            "blockers",
-            "limitations",
-            "evidence",
-        ],
-        "field_contract": {
-            "observed_jobs": "Jobs actually observed or selected in this scene turn. For single_jd_probe, this may contain only the visible/selected candidate job entries needed to choose one published or currently recruiting JD; it does not need to account for every listed/open job or page counter.",
-            "completed_job_details": "Exactly the published/current-host job detail page opened/read in this scene turn, or one full detail evidence object when complete. At least one item is required for completed status. Each item must include title, department when visible, location, status, external_id or external_url, summary/description, requirements when visible, and detail evidence from the current detail/edit URL. New/draft/publish/review-failed forms, including BOSS/Zhipin URLs with encryptId=0, are not completed job details.",
-            "inactive_or_closed_jobs": "Jobs observed as inactive, closed, unavailable, removed, draft, pending publish, or review failed.",
-            "activation_entry_observed": "Whether the scene observed a page entry for choosing active/effective JD.",
-            "blockers": "Hard blockers only: login, captcha, permission, missing required tools, unreachable target site, or no visible same-origin path from the current page to a published/current JD detail.",
-            "limitations": "Recoverable or incomplete conditions; include failed entry attempts, pages such as review-failed/pending-publish, and why no published/current JD detail was reached.",
-            "evidence": "Short current-host evidence references or page facts that justify the selected job detail or blocker.",
-        },
-        "completion_rule": (
-            "For single_jd_probe, status may be completed when one published/current recruiting JD detail has been opened/read and returned "
-            "in completed_job_details with current-host evidence. Do not require all listed jobs, page counters, or offscreen jobs to be covered. "
-            "If only list summaries, review-failed/pending-publish pages, draft/new forms, stale-host evidence, or inferred jobs are available, status must be partial or blocked."
-        ),
-    }
+    return jd_sync_scene_output_contract(sync_mode="single_jd_probe", max_job_descriptions=1)
 
 
 def _merge_dicts(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:

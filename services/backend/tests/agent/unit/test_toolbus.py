@@ -8,6 +8,7 @@ from recruit_station.capabilities.tools import ToolDefinition, ToolRegistry, bui
 from recruit_station.core.settings import AppSettings
 from recruit_station.db.session import create_engine_from_settings, create_session_factory, initialize_database
 from recruit_station.models.domain import Candidate
+from recruit_station.product_adapters.agent_runner import jd_sync_scoped_tool_registry
 from recruit_station.plugins.host import PluginHost
 from recruit_station.plugins.recruit.manifest import RecruitPluginManifest
 from recruit_station.memory.filesystem import MemoryFileStore
@@ -196,6 +197,40 @@ def test_jd_sync_scene_delegate_instruction_is_rule_only_and_structured() -> Non
     assert "规则" in instruction
     assert result.content["business_result"] == {"status": "partial", "completed_job_details": []}
     assert "business_summary" not in result.content
+
+
+def test_jd_sync_tool_allowlist_excludes_candidate_tools() -> None:
+    registry = ToolRegistry()
+    for name in (
+        "delegate_scene_context",
+        "list_job_descriptions",
+        "upsert_job_description",
+        "get_jd_progress",
+        "request_human_approval",
+        "list_candidates",
+        "upsert_candidate",
+        "transition_application",
+        "attach_resume_artifact",
+        "read_memory",
+    ):
+        registry.register(
+            ToolDefinition(
+                name=name,
+                description=f"{name} tool",
+                parameters={"type": "object"},
+                handler=lambda arguments: {"ok": True},
+            )
+        )
+
+    scoped = jd_sync_scoped_tool_registry(registry)
+
+    assert set(scoped.tools) == {
+        "delegate_scene_context",
+        "list_job_descriptions",
+        "upsert_job_description",
+        "get_jd_progress",
+        "request_human_approval",
+    }
 
 
 def test_core_read_memory_tool_uses_memory_files(tmp_path: Path) -> None:

@@ -51,6 +51,8 @@ from recruit_station.schemas.domain import (
     SkillRead,
 )
 from recruit_station.services.container import AppContainer
+from recruit_station.services.jd_sync_contract import JD_SYNC_STATE_MACHINE
+from recruit_station.services.jd_sync_state import ensure_jd_sync_state
 from recruit_station.services.recruit_station import normalize_prompt_config, resolve_context_policy, resolve_memory_policy
 
 
@@ -1362,6 +1364,11 @@ def _create_autonomous_run(
         run_id=uuid4().hex,
         agent_kind=agent_kind,
     )
+    if agent_kind == "jd_sync":
+        run.runtime_metadata = ensure_jd_sync_state(
+            dict(run.runtime_metadata or {}),
+            target=dict((run.runtime_metadata or {}).get("browser_target") or constraints.get("browser_target") or {}),
+        )
     session.add(run)
     session.flush()
 
@@ -1598,6 +1605,7 @@ def _build_jd_sync_user_instruction(
         "",
         "任务范围：",
         "- 从配置的招聘网站目标网页出发，目标网页可以是该网站任意可访问页面。",
+        "- JD Sync 状态机：" + " -> ".join(JD_SYNC_STATE_MACHINE) + "。",
         "- 根据页面可见导航和内容自行找到职位列表与职位详情。",
         "- 职位列表只用于发现待同步职位，不能把列表页摘要或职位数量当作完成。",
         "- 对每个仍在招聘的职位，必须进入或打开职位详情并完整读取岗位详情后，才能同步到本地 JD 库。",
