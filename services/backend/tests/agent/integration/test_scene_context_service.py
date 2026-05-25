@@ -1004,6 +1004,108 @@ def test_scene_context_allows_jd_sync_job_page_entries_after_job_management_reco
     assert len(hid_calls) == 1
 
 
+@pytest.mark.parametrize(
+    ("entry", "click_point", "expected_at"),
+    [
+        (
+            {"ref": "job-row-1", "text": "产品实习生 北京 2-4K", "role": "link", "kind": "job_row", "clickPoint": {"x": 360, "y": 300}, "region": {"x": 250, "y": 260, "width": 620, "height": 120}},
+            {"x": 520, "y": 310},
+            {"x": 360, "y": 300},
+        ),
+        (
+            {"ref": "job-title-1", "text": "产品实习生", "role": "link", "href": "https://www.zhipin.com/web/chat/job/edit?encryptId=job-1", "clickPoint": {"x": 330, "y": 294}, "region": {"x": 285, "y": 278, "width": 120, "height": 32}},
+            {"x": 330, "y": 294},
+            {"x": 330, "y": 294},
+        ),
+        (
+            {"ref": "job-edit-1", "text": "编辑", "role": "button", "kind": "job_management_action", "parentRef": "job-row-1", "clickPoint": {"x": 760, "y": 306}, "region": {"x": 735, "y": 288, "width": 56, "height": 34}},
+            {"x": 760, "y": 306},
+            {"x": 760, "y": 306},
+        ),
+        (
+            {"ref": "job-detail-1", "text": "查看详情", "role": "button", "parentRef": "job-row-1", "hitTestState": "covered", "clickPoint": {"x": 830, "y": 306}, "region": {"x": 800, "y": 288, "width": 74, "height": 34}},
+            {"x": 830, "y": 306},
+            {"x": 360, "y": 300},
+        ),
+    ],
+)
+def test_scene_context_allows_bound_jd_sync_job_list_entries(
+    tmp_path: Path,
+    entry: dict[str, object],
+    click_point: dict[str, int],
+    expected_at: dict[str, int],
+) -> None:
+    job_row = {
+        "ref": "job-row-1",
+        "text": "产品实习生 北京 2-4K 开放中",
+        "role": "link",
+        "kind": "job_row",
+        "clickPoint": {"x": 360, "y": 300},
+        "region": {"x": 250, "y": 260, "width": 620, "height": 120},
+    }
+    elements = [job_row]
+    if entry["ref"] != "job-row-1":
+        elements.append(entry)
+    result, hid_calls, _session_factory_ref = _run_recruiting_site_hid_click_scene(
+        tmp_path,
+        plan_kind="jd_sync",
+        instruction="JD sync: enter the visible BOSS job detail/edit page for the open job.",
+        page_url="https://www.zhipin.com/web/chat/job/list",
+        page_text="职位管理 全部职位 开放中 产品实习生 北京 2-4K 查看详情 编辑",
+        elements=elements,
+        click_point=click_point,
+        final_status="completed",
+    )
+
+    assert result["status"] == "completed"
+    assert len(hid_calls) == 1
+    primitive = hid_calls[0]["primitives"][0]
+    assert primitive["at"] == expected_at
+    assert primitive["targetKind"] == "boss_job_list_entry"
+    assert primitive.get("boundRef") in {None, "job-row-1", "job-title-1"}
+
+
+@pytest.mark.parametrize(
+    ("element", "click_point"),
+    [
+        ({"ref": "open-jobs-tab", "text": "开放中", "role": "tab", "clickPoint": {"x": 360, "y": 180}}, {"x": 360, "y": 180}),
+        ({"ref": "close-job-1", "text": "关闭职位", "role": "button", "kind": "job_management_action", "parentRef": "job-row-1", "clickPoint": {"x": 820, "y": 306}}, {"x": 820, "y": 306}),
+    ],
+)
+def test_scene_context_blocks_jd_sync_filters_tabs_and_destructive_job_actions(
+    tmp_path: Path,
+    element: dict[str, object],
+    click_point: dict[str, int],
+) -> None:
+    result, hid_calls, session_factory = _run_recruiting_site_hid_click_scene(
+        tmp_path,
+        plan_kind="jd_sync",
+        instruction="JD sync: only enter job detail/edit pages; do not mutate job state.",
+        page_url="https://www.zhipin.com/web/chat/job/list",
+        page_text="职位管理 全部职位 开放中 待开放 审核不通过 已关闭 产品实习生",
+        elements=[
+            {"ref": "job-row-1", "text": "产品实习生 北京 2-4K 开放中", "role": "link", "kind": "job_row", "clickPoint": {"x": 360, "y": 300}, "region": {"x": 250, "y": 260, "width": 620, "height": 120}},
+            element,
+        ],
+        click_point=click_point,
+        final_status="blocked",
+    )
+
+    assert result["status"] == "blocked"
+    assert hid_calls == []
+    with session_factory() as session:
+        episode = session.query(ExecutionEpisode).one()
+        blocked_results = [
+            item["payload"]["content"]
+            for item in episode.observations
+            if item["type"] == "tool_event"
+            and item["payload"]["kind"] == "tool_result_ready"
+            and item["payload"]["tool_name"] == "hid_action"
+            and item["payload"]["content"].get("error") == "scene_recruiting_navigation_target_blocked"
+        ]
+    assert blocked_results
+
+
 def test_scene_context_matches_recruiting_navigation_with_document_wrapped_bounds(tmp_path: Path) -> None:
     result, hid_calls, _session_factory_ref = _run_recruiting_site_hid_click_scene(
         tmp_path,
@@ -1916,6 +2018,65 @@ def test_scene_context_allows_jd_sync_completed_job_detail_result(tmp_path: Path
     assert result["blockers"] == []
     assert result["result_data"]["completed_job_details"][0]["external_id"] == "boss-jd-1"
     assert "jd_sync_boundary_guard" not in result["result_data"]
+
+
+def test_scene_context_blocks_jd_sync_list_only_completed_details(tmp_path: Path) -> None:
+    session_factory = _session_factory(tmp_path)
+    final_payload = {
+        "status": "completed",
+        "observed_jobs": [{"title": "产品实习生", "status": "开放中", "external_id": "boss-product-intern-1"}],
+        "completed_job_details": [
+            {
+                "title": "产品实习生",
+                "status": "开放中",
+                "external_id": "boss-product-intern-1",
+                "external_url": "https://www.zhipin.com/web/chat/job/list",
+                "detail_evidence": "not full JD detail; only the job management list card was visible",
+            }
+        ],
+        "inactive_or_closed_jobs": [],
+        "activation_entry_observed": True,
+        "blockers": [],
+        "limitations": ["未进入职位详情/编辑页"],
+        "evidence": ["职位管理列表卡片显示 产品实习生。"],
+    }
+    provider = ScriptedProvider(
+        provider_name="scene-scripted",
+        responses=[LLMResponse(content=json.dumps(final_payload, ensure_ascii=False), finish_reason="stop")],
+    )
+    service = SceneContextService(
+        session_factory=session_factory,
+        provider=provider,
+        tool_registry=ToolRegistry(),
+        plugin_host=PluginHost(),
+    )
+
+    result = service.delegate(
+        {
+            "instruction": "Return JD sync scene result JSON.",
+            "context": {"plan_kind": "jd_sync"},
+            "output_contract": {
+                "contract_kind": "jd_sync",
+                "result_data_required": True,
+                "required_fields": [
+                    "status",
+                    "observed_jobs",
+                    "completed_job_details",
+                    "inactive_or_closed_jobs",
+                    "activation_entry_observed",
+                    "blockers",
+                    "limitations",
+                    "evidence",
+                ],
+            },
+        }
+    )
+
+    assert result["status"] == "blocked"
+    assert result["result_data"]["status"] == "blocked"
+    assert result["result_data"]["reported_status"] == "completed"
+    assert result["result_data"]["contract_validation"]["status"] == "failed"
+    assert result["blockers"][0]["kind"] == "jd_sync_completed_details_require_detail_evidence"
 
 
 def test_scene_context_uses_blocked_final_json_for_public_status_without_writeback(tmp_path: Path) -> None:

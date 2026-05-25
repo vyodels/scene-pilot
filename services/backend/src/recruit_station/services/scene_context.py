@@ -2034,6 +2034,13 @@ def _validate_recruiting_site_hid_click_target(
         )
         if decision is not None:
             return decision
+        _bind_recruiting_site_hid_click_primitive(
+            primitive,
+            evidence=evidence,
+            page_context=page_context,
+            scene_kind=scene_kind,
+            all_items=items,
+        )
     return None
 
 
@@ -2250,10 +2257,14 @@ def _browser_item_matches_hint(item: dict[str, Any], hint: dict[str, Any]) -> bo
 
 
 def _nearest_browser_item_for_point(items: list[dict[str, Any]], *, point: tuple[float, float]) -> dict[str, Any] | None:
+    exact = [item for item in items if _browser_item_click_point(item) is not None and _point_distance(_browser_item_click_point(item), point) <= 2]
+    if exact:
+        return _best_containing_browser_item(exact, point=point)
+    containing = [item for item in items if _point_inside_browser_item(item, point)]
+    if containing:
+        return _best_containing_browser_item(containing, point=point)
     best: tuple[float, dict[str, Any]] | None = None
     for item in items:
-        if _point_inside_browser_item(item, point):
-            return item
         item_point = _browser_item_click_point(item)
         if item_point is None:
             continue
@@ -2263,6 +2274,34 @@ def _nearest_browser_item_for_point(items: list[dict[str, Any]], *, point: tuple
     if best is not None and best[0] <= 24:
         return best[1]
     return None
+
+
+def _point_distance(left: tuple[float, float] | None, right: tuple[float, float]) -> float:
+    if left is None:
+        return 1_000_000.0
+    return ((left[0] - right[0]) ** 2 + (left[1] - right[1]) ** 2) ** 0.5
+
+
+def _best_containing_browser_item(items: list[dict[str, Any]], *, point: tuple[float, float]) -> dict[str, Any]:
+    def priority(item: dict[str, Any]) -> tuple[int, float, float]:
+        hit_test = str(item.get("hitTestState") or item.get("hit_test_state") or "").strip().lower()
+        hit_priority = {"top": 0, "partial": 1, "covered": 2}.get(hit_test, 1)
+        item_point = _browser_item_click_point(item)
+        distance = 0.0
+        if item_point is not None:
+            distance = ((item_point[0] - point[0]) ** 2 + (item_point[1] - point[1]) ** 2) ** 0.5
+        return (hit_priority, _browser_item_area(item) or 1_000_000.0, distance)
+
+    return sorted(items, key=priority)[0]
+
+
+def _browser_item_area(item: dict[str, Any]) -> float | None:
+    region = _browser_item_region(item)
+    width = _optional_number(region.get("width"))
+    height = _optional_number(region.get("height"))
+    if width is None or height is None:
+        return None
+    return max(width, 0) * max(height, 0)
 
 
 def _point_from_primitive(primitive: dict[str, Any]) -> tuple[float, float] | None:
@@ -2280,7 +2319,7 @@ def _browser_item_click_point(item: dict[str, Any]) -> tuple[float, float] | Non
         point = _point_from_value(candidate)
         if point is not None:
             return point
-    region = _as_dict(item.get("region") or item.get("bounds") or item.get("rect"))
+    region = _browser_item_region(item)
     x = _optional_number(region.get("x") if region.get("x") is not None else region.get("left"))
     y = _optional_number(region.get("y") if region.get("y") is not None else region.get("top"))
     width = _optional_number(region.get("width"))
@@ -2300,7 +2339,7 @@ def _point_from_value(value: Any) -> tuple[float, float] | None:
 
 
 def _point_inside_browser_item(item: dict[str, Any], point: tuple[float, float]) -> bool:
-    region = _coordinate_payload(_as_dict(item.get("region") or item.get("bounds") or item.get("rect") or item.get("boundingBox") or item.get("box")))
+    region = _browser_item_region(item)
     x = _optional_number(region.get("x") if region.get("x") is not None else region.get("left"))
     y = _optional_number(region.get("y") if region.get("y") is not None else region.get("top"))
     width = _optional_number(region.get("width"))
@@ -2308,6 +2347,20 @@ def _point_inside_browser_item(item: dict[str, Any], point: tuple[float, float])
     if x is None or y is None or width is None or height is None:
         return False
     return x <= point[0] <= x + width and y <= point[1] <= y + height
+
+
+def _browser_item_region(item: dict[str, Any]) -> dict[str, Any]:
+    return _coordinate_payload(
+        _as_dict(
+            item.get("region")
+            or item.get("bounds")
+            or item.get("rect")
+            or item.get("boundingBox")
+            or item.get("box")
+            or item.get("viewport")
+            or item.get("document")
+        )
+    )
 
 
 def _coordinate_payload(value: dict[str, Any]) -> dict[str, Any]:
@@ -2343,8 +2396,6 @@ def _recruiting_site_click_evidence_decision(
             page_context=page_context,
             evidence=evidence,
         )
-    if scene_kind == "jd_sync" and bool(page_context.get("in_job_page")) and _is_job_page_click_item(evidence):
-        return None
     if _is_blocked_recruiting_site_click_item(evidence):
         return _recruiting_site_click_blocker(
             reason="non_recruiting_navigation_target",
@@ -2352,6 +2403,8 @@ def _recruiting_site_click_evidence_decision(
             page_context=page_context,
             evidence=evidence,
         )
+    if scene_kind == "jd_sync" and bool(page_context.get("in_job_page")) and _job_page_click_binding(evidence, all_items) is not None:
+        return None
     if not bool(page_context.get("in_recruiting_work_page")):
         return _recruiting_site_click_blocker(
             reason="requires_allowed_boss_main_navigation_entry",
@@ -2369,6 +2422,42 @@ def _recruiting_site_click_evidence_decision(
             evidence=evidence,
         )
     return None
+
+
+def _bind_recruiting_site_hid_click_primitive(
+    primitive: dict[str, Any],
+    *,
+    evidence: dict[str, Any],
+    page_context: dict[str, Any],
+    scene_kind: str,
+    all_items: list[dict[str, Any]],
+) -> None:
+    if scene_kind != "jd_sync" or not bool(page_context.get("in_job_page")):
+        return
+    binding = _job_page_click_binding(evidence, all_items)
+    if binding is None:
+        return
+    evidence_label = _browser_item_label(evidence)
+    binding_label = _browser_item_label(binding)
+    if evidence_label:
+        primitive.setdefault("label", evidence_label)
+    evidence_ref = _optional_string(evidence.get("ref") or evidence.get("id"))
+    if evidence_ref:
+        primitive.setdefault("ref", evidence_ref)
+    binding_ref = _optional_string(binding.get("ref") or binding.get("id"))
+    if binding_ref:
+        primitive.setdefault("boundRef", binding_ref)
+    if binding_label:
+        primitive.setdefault("boundText", binding_label)
+    primitive.setdefault("targetKind", "boss_job_list_entry")
+    if binding is evidence and _is_job_row_or_title_item(evidence):
+        evidence_point = _browser_item_click_point(evidence)
+        if evidence_point is not None:
+            primitive["at"] = {"x": evidence_point[0], "y": evidence_point[1]}
+    elif _is_covered_browser_item(evidence) and binding is not evidence:
+        binding_point = _browser_item_click_point(binding)
+        if binding_point is not None:
+            primitive["at"] = {"x": binding_point[0], "y": binding_point[1]}
 
 
 def _is_blocked_recruiting_site_click_item(item: dict[str, Any]) -> bool:
@@ -2413,13 +2502,24 @@ def _is_blocked_recruiting_site_click_item(item: dict[str, Any]) -> bool:
             "换微信",
             "约面试",
             "不合适",
+            "发布职位",
+            "关闭职位",
+            "停止招聘",
+            "下线职位",
+            "删除职位",
+            "刷新职位",
+            "曝光刷新",
         )
     ):
+        return True
+    if any(marker in label for marker in ("关闭", "停止招聘", "下线", "删除", "发布职位", "曝光", "刷新", "升级")):
         return True
     if label in {"添加分组", "创建分组"}:
         return True
     if label == "+" and any(marker in f"{kind} {role} {href}" for marker in ("group", "chat", "conversation")):
         return True
+    if any(marker in f"{kind} {href}" for marker in ("job", "jd", "position", "职位", "岗位", "/web/chat/job")):
+        return False
     return any(marker in f"{kind} {role} {href}" for marker in ("candidate", "chat", "conversation", "customer_service", "group"))
 
 
@@ -2472,6 +2572,61 @@ def _is_job_page_click_item(item: dict[str, Any]) -> bool:
     if any(marker in label for marker in ("职位详情", "岗位详情", "编辑职位", "查看详情", "编辑", "详情", "职位名称", "岗位名称")):
         return True
     return False
+
+
+def _job_page_click_binding(item: dict[str, Any], all_items: list[dict[str, Any]]) -> dict[str, Any] | None:
+    if _is_blocked_recruiting_site_click_item(item):
+        return None
+    if _is_job_row_or_title_item(item):
+        return item
+    if not _is_job_detail_or_edit_entry(item):
+        return None
+    return _find_bound_job_row(item, all_items)
+
+
+def _is_job_row_or_title_item(item: dict[str, Any]) -> bool:
+    if _is_blocked_recruiting_site_click_item(item):
+        return False
+    if _is_job_detail_or_edit_entry(item):
+        return False
+    label = _normalize_ui_text(_browser_item_label(item))
+    href = str(item.get("href") or item.get("url") or "").lower()
+    kind_role = _normalize_ui_text(" ".join(str(item.get(key) or "") for key in ("kind", "role", "type", "dataKind", "entity_kind", "entityKind"))).lower()
+    if any(marker in kind_role for marker in ("job_row", "job-card", "job_card", "job_title", "job-title", "position", "职位", "岗位")):
+        return bool(label or href or _browser_item_click_point(item) is not None)
+    if any(marker in href for marker in ("/web/chat/job/edit", "/web/chat/job/detail", "/job_detail/", "encryptid=")):
+        return True
+    if label and any(marker in kind_role for marker in ("link", "button")) and any(marker in href for marker in ("/job", "job/", "jobs", "position", "jd")):
+        return True
+    return False
+
+
+def _is_job_detail_or_edit_entry(item: dict[str, Any]) -> bool:
+    label = _normalize_ui_text(_browser_item_label(item))
+    if not label:
+        return False
+    return any(marker in label for marker in ("职位详情", "岗位详情", "编辑职位", "查看详情", "编辑", "详情"))
+
+
+def _find_bound_job_row(item: dict[str, Any], all_items: list[dict[str, Any]]) -> dict[str, Any] | None:
+    parent_ref = _optional_string(item.get("parentRef") or item.get("parent_ref") or item.get("containerRef") or item.get("container_ref"))
+    candidates = [candidate for candidate in all_items if isinstance(candidate, dict) and candidate is not item and _is_job_row_or_title_item(candidate)]
+    if parent_ref:
+        for candidate in candidates:
+            if parent_ref == _optional_string(candidate.get("ref") or candidate.get("id")):
+                return candidate
+    item_point = _browser_item_click_point(item)
+    if item_point is not None:
+        containing = [candidate for candidate in candidates if _point_inside_browser_item(candidate, item_point)]
+        if containing:
+            return _best_containing_browser_item(containing, point=item_point)
+    if len(candidates) == 1:
+        return candidates[0]
+    return None
+
+
+def _is_covered_browser_item(item: dict[str, Any]) -> bool:
+    return str(item.get("hitTestState") or item.get("hit_test_state") or "").strip().lower() == "covered"
 
 
 def _has_browser_target_identity(item: dict[str, Any]) -> bool:
@@ -3039,7 +3194,10 @@ def _normalize_browser_action_item(value: Any) -> dict[str, Any]:
         "kind": _optional_string(payload.get("kind") or payload.get("type") or payload.get("dataKind") or payload.get("entity_kind") or payload.get("entityKind"), max_length=128),
         "href": _optional_string(payload.get("href") or payload.get("url")),
         "clickPoint": payload.get("clickPoint") or payload.get("click_point") or payload.get("point"),
-        "region": payload.get("region") or payload.get("bounds") or payload.get("rect"),
+        "region": payload.get("region") or payload.get("bounds") or payload.get("rect") or payload.get("viewport") or payload.get("document"),
+        "hitTestState": _optional_string(payload.get("hitTestState") or payload.get("hit_test_state"), max_length=32),
+        "framePath": payload.get("framePath") or payload.get("frame_path"),
+        "parentRef": _optional_string(payload.get("parentRef") or payload.get("parent_ref") or payload.get("containerRef") or payload.get("container_ref"), max_length=128),
         "container": _optional_string(payload.get("container") or payload.get("section") or payload.get("location") or payload.get("nav"), max_length=128),
         "inViewport": payload.get("inViewport") if "inViewport" in payload else payload.get("in_viewport"),
     }
@@ -3730,6 +3888,14 @@ def _scene_result_contract_blockers(result_data: dict[str, Any], output_contract
                     "missing_fields": ["completed_job_details"],
                 }
             )
+        elif _is_jd_sync_result_contract(contract) and not _contains_jd_sync_job_detail_evidence(result_data):
+            blockers.append(
+                {
+                    "kind": "jd_sync_completed_details_require_detail_evidence",
+                    "message": "JD sync completed_job_details only contain list/card identity data; read a job detail/edit page before writeback.",
+                    "missing_fields": ["job_detail_text"],
+                }
+            )
     return blockers
 
 
@@ -3780,7 +3946,9 @@ def _apply_jd_sync_visible_entry_recovery_guard(
         return result_data
     if str(repair.get("status") or "").strip().lower() != "completed":
         return result_data
-    if not _is_jd_sync_wrong_page_candidate_context(result_data, _as_dict(contract)):
+    if not _is_jd_sync_result_contract(_as_dict(contract)):
+        return result_data
+    if not _contains_candidate_or_chat_context(result_data) or _contains_jd_sync_job_detail_evidence(result_data):
         return result_data
     required_fields = {
         str(item).strip()
@@ -4128,6 +4296,8 @@ def _apply_jd_sync_candidate_context_guard(result_data: dict[str, Any], contract
 def _is_jd_sync_wrong_page_candidate_context(result_data: dict[str, Any], contract: dict[str, Any]) -> bool:
     if not _is_jd_sync_result_contract(contract):
         return False
+    if _contains_jd_sync_job_management_context(result_data):
+        return False
     if not _contains_candidate_or_chat_context(result_data):
         return False
     return not _contains_jd_sync_job_detail_evidence(result_data)
@@ -4170,6 +4340,22 @@ def _contains_candidate_or_chat_context(value: Any) -> bool:
     return any(marker in text for marker in markers)
 
 
+def _contains_jd_sync_job_management_context(value: Any) -> bool:
+    text = _contract_guard_text(value)
+    markers = (
+        "/web/chat/job",
+        "/job_detail/",
+        "职位管理",
+        "职位列表",
+        "岗位列表",
+        "开放中",
+        "待开放",
+        "审核不通过",
+        "已关闭",
+    )
+    return any(marker in text for marker in markers)
+
+
 def _contains_jd_sync_job_detail_evidence(result_data: dict[str, Any]) -> bool:
     completed = result_data.get("completed_job_details")
     if not isinstance(completed, list) or not completed:
@@ -4180,16 +4366,14 @@ def _contains_jd_sync_job_detail_evidence(result_data: dict[str, Any]) -> bool:
         keys = {str(key).strip().lower() for key in item}
         has_title = any(key in keys for key in ("title", "job_title", "jobtitle", "position_title", "职位名称"))
         has_detail = any(
-            key in keys
+            _has_concrete_jd_detail_text(item.get(key))
             for key in (
                 "description",
                 "summary",
                 "responsibilities",
                 "requirements",
-                "external_id",
-                "external_url",
-                "detail_url",
-                "detail_evidence",
+                "job_description",
+                "jobDescription",
                 "职责",
                 "要求",
             )
@@ -4197,6 +4381,34 @@ def _contains_jd_sync_job_detail_evidence(result_data: dict[str, Any]) -> bool:
         if has_title and has_detail:
             return True
     return False
+
+
+def _has_concrete_jd_detail_text(value: Any) -> bool:
+    if isinstance(value, list):
+        return any(_has_concrete_jd_detail_text(item) for item in value)
+    text = _normalize_ui_text(value)
+    if len(text) < 8:
+        return False
+    lowered = text.lower()
+    weak_markers = (
+        "not full",
+        "not complete",
+        "list only",
+        "list-only",
+        "card only",
+        "card-only",
+        "列表",
+        "卡片",
+        "非完整",
+        "不是完整",
+        "未进入详情",
+        "未读取详情",
+        "仅",
+    )
+    if any(marker in lowered for marker in weak_markers):
+        return False
+    concrete_markers = ("负责", "职责", "要求", "任职", "熟悉", "经验", "能力", "本科", "沟通", "协作", "responsib", "require", "experience")
+    return any(marker in lowered for marker in concrete_markers)
 
 
 def _contract_guard_text(value: Any) -> str:
