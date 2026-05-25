@@ -28,6 +28,11 @@ from recruit_station.models.domain import (
 from recruit_station.server import create_app
 
 
+_LEGACY_JD_SELECTION_PHRASE = "生效 " + "JD 选择"
+_LEGACY_CONFIG_PAGE_PHRASE = "配置页" + "选择"
+_LEGACY_CONFIG_PAGE_ACTIVE_JD_PHRASE = "在配置页" + "选择生效 JD"
+
+
 def _client(tmp_path, monkeypatch, db_name: str) -> TestClient:
     monkeypatch.setenv("RECRUIT_STATION_DATA_DIR", str(tmp_path / f"{db_name}-data"))
     monkeypatch.setenv("RECRUIT_STATION_DATABASE_URL", f"sqlite:///{tmp_path / f'{db_name}.db'}")
@@ -258,6 +263,10 @@ def test_jd_sync_run_requires_only_saved_entry_url(tmp_path, monkeypatch) -> Non
     assert "不得用“已完成部分同步”结束本轮" in runtime_metadata["instruction"]
     assert "- 只发现和同步 JD。" in runtime_metadata["instruction"]
     assert "- 不处理候选人筛选、评分、外联或投递推进。" in runtime_metadata["instruction"]
+    assert "真实职位详情文本已观察，本地 JD 写回已由工具返回或本地二次读取确认，且 pending_jobs 为空" in runtime_metadata["instruction"]
+    assert _LEGACY_JD_SELECTION_PHRASE not in runtime_metadata["instruction"]
+    assert _LEGACY_CONFIG_PAGE_PHRASE not in runtime_metadata["instruction"]
+    assert _LEGACY_CONFIG_PAGE_ACTIVE_JD_PHRASE not in runtime_metadata["instruction"]
     assert "目标网页：" in runtime_metadata["instruction"]
     assert "站点访问规则：" in runtime_metadata["instruction"]
     assert "- 复用人工提前登录好的浏览器会话" in runtime_metadata["instruction"]
@@ -504,8 +513,8 @@ def test_single_jd_probe_stops_after_first_successful_jd_write(tmp_path, monkeyp
                         "source": "jd_sync",
                         "platform": "zhipin",
                         "external_id": "job-strategy-pm",
-                        "description": "负责交易策略产品设计。",
-                        "requirements": "具备交易策略或 AI 产品经验。",
+                        "description": "负责交易策略产品需求调研、竞品分析、策略配置页面设计，并跟进研发测试上线。",
+                        "requirements": "本科及以上，熟悉交易策略或 AI 产品，有数据分析能力和跨团队沟通经验。",
                         "sync_metadata": {
                             "detail_complete": True,
                             "observed_detail_url": "https://mock-recruiting.local/jobs/1",
@@ -649,6 +658,119 @@ def test_jd_sync_process_next_task_when_autonomous_workspace_is_stopped(tmp_path
     run_detail = client.get(f"/api/agents/jd_sync/runs/{run_id}")
     assert run_detail.status_code == 200
     assert run_detail.json()["turns"][0]["turn_metadata"]["final_output"] == "JD sync completed."
+
+
+def test_jd_sync_turn_persists_scene_state_after_refresh_and_continues_with_action_candidate(tmp_path, monkeypatch) -> None:
+    client = _client(tmp_path, monkeypatch, "jd-sync-state-refresh")
+    provider = _script_autonomous_provider(
+        client,
+        LLMResponse(
+            tool_calls=[ToolCall(id="scene-1", name="delegate_scene_context", arguments={"instruction": "observe jobs"})],
+            finish_reason="tool_calls",
+        ),
+        LLMResponse(content="当前还需要进入详情，不能调用本地 JD 写回。"),
+        LLMResponse(
+            tool_calls=[ToolCall(id="scene-2", name="delegate_scene_context", arguments={"instruction": "enter detail"})],
+            finish_reason="tool_calls",
+        ),
+        LLMResponse(content="JD sync completed.", result_data={"execution_status": "completed"}),
+    )
+    scene_outputs = [
+        {
+            "status": "incomplete",
+            "result_data": {
+                "status": "incomplete",
+                "observed_jobs": [{"external_id": "e23", "title": "产品实习生"}],
+                "pending_jobs": [{"external_id": "e23", "title": "产品实习生"}],
+                "action_candidates": [
+                    {
+                        "kind": "open_job_detail_or_safe_edit",
+                        "tool_name": "hid_action",
+                        "ref": "e23",
+                        "label": "产品实习生",
+                    }
+                ],
+                "evidence_refs": ["episode:scene-1"],
+                "recovery": {"next_action": {"tool_name": "hid_action", "ref": "e23"}},
+                "jd_sync_evidence_extraction": {"status": "applied"},
+            },
+        },
+        {
+            "status": "completed",
+            "result_data": {
+                "status": "completed",
+                "completed_job_details": [
+                    {
+                        "external_id": "e23",
+                        "title": "产品实习生",
+                        "description": "负责产品需求分析和跨团队协作。",
+                        "requirements": "要求本科以上，具备产品实习经验。",
+                    }
+                ],
+                "evidence_refs": ["episode:scene-2"],
+            },
+        },
+    ]
+
+    def _delegate_scene_context(_arguments: dict[str, object]) -> dict[str, object]:
+        assert scene_outputs
+        return scene_outputs.pop(0)
+
+    client.app.state.container.tool_registry.tools["delegate_scene_context"] = ToolDefinition(
+        name="delegate_scene_context",
+        description="Test scene delegate.",
+        parameters={"type": "object", "additionalProperties": True},
+        handler=_delegate_scene_context,
+        category="scene",
+        external_target=False,
+        resource_target_kind="execution_episode",
+        metadata={"capabilities": ["scene", "scene_delegate"]},
+    )
+    patched = client.patch(
+        "/api/agents/jd_sync",
+        json={
+            "product_config": {
+                "jd_sync": {
+                    "jd_sync_config": {
+                        "executionSop": {
+                            "siteEntryUrl": "https://www.zhipin.com/web/chat/index",
+                            "siteAccessRulesText": "复用已登录浏览器会话；不得新开标签或地址栏导航。",
+                        },
+                    }
+                }
+            }
+        },
+    )
+    assert patched.status_code == 200, patched.text
+    created = client.post("/api/agents/jd_sync/runs", json={"title": "Sync JD", "instruction": "sync jobs"})
+    assert created.status_code == 201, created.text
+
+    processed = client.post("/api/agents/task-queue/process-next")
+
+    assert processed.status_code == 200, processed.text
+    assert processed.json()["status"] == "processed"
+    with client.app.state.session_factory() as session:
+        run = session.scalars(select(AgentRun).where(AgentRun.run_id == created.json()["runId"])).one()
+        jd_sync_state = (run.runtime_metadata or {})["jd_sync_state"]
+        assert jd_sync_state["jobs_by_key"]["e23"]["title"] == "产品实习生"
+        assert jd_sync_state["pending_job_keys"] == []
+        assert jd_sync_state["completed_job_keys"] == ["e23"]
+        assert jd_sync_state["evidence_refs"] == ["episode:scene-1", "episode:scene-2"]
+        assert jd_sync_state["action_candidates"][0]["ref"] == "e23"
+        assert jd_sync_state["last_safe_action_candidates"][0]["ref"] == "e23"
+        assert jd_sync_state["last_recovery_next_action"] == {"tool_name": "hid_action", "ref": "e23"}
+        assert any(
+            item.get("label") == "产品实习生"
+            for item in jd_sync_state["pending_actions_by_job_key"]["e23"]
+        )
+        assert session.query(JobDescription).filter(JobDescription.source == "jd_sync").count() == 0
+
+    continuation_message = str(provider.captured_requests[2].messages[-1].content)
+    assert "安全 action_candidates" in continuation_message
+    assert "structured_action_plan" in continuation_message
+    assert "VirtualHID/HID 页面内操作进入 JD 详情" in continuation_message
+    assert "assistant-only" in continuation_message
+    assert "e23" in continuation_message
 
 
 def test_jd_sync_resume_with_message_reuses_failed_run_and_injects_pending_input(tmp_path, monkeypatch) -> None:

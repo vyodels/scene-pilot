@@ -285,7 +285,12 @@ class AutonomousAdapter:
             )
             run_constraints["source_kind"] = run.agent_kind or "autonomous"
             if str(run.agent_kind or "").strip().lower() == "jd_sync":
-                run_constraints["jd_sync_state"] = dict((run.runtime_metadata or {}).get("jd_sync_state") or {})
+                jd_sync_state = dict((run.runtime_metadata or {}).get("jd_sync_state") or {})
+                run_constraints["jd_sync_state"] = jd_sync_state
+                jd_sync_action_plan = _jd_sync_action_plan_from_state(jd_sync_state)
+                if jd_sync_action_plan:
+                    run_constraints["jd_sync_action_plan"] = jd_sync_action_plan
+                    run_constraints["context_hints"]["jd_sync_action_plan"] = jd_sync_action_plan
             if resolved_application_id:
                 run_constraints["application_id"] = resolved_application_id
             browser_target = derive_browser_target(
@@ -505,12 +510,6 @@ class AutonomousAdapter:
                     envelope=envelope,
                     outcome=last_outcome,
                 )
-                if str(run.agent_kind or "").strip().lower() == "jd_sync":
-                    reduce_agent_run_jd_sync_state(
-                        run,
-                        tool_results=runner_result.tool_results,
-                        final_result_data=runner_result.final_result_data,
-                    )
                 last_outcome = _block_single_jd_probe_if_continuation_budget_exhausted(
                     session,
                     run=run,
@@ -567,6 +566,12 @@ class AutonomousAdapter:
                 raise
 
             session.refresh(run)
+            if str(run.agent_kind or "").strip().lower() == "jd_sync":
+                reduce_agent_run_jd_sync_state(
+                    run,
+                    tool_results=runner_result.tool_results,
+                    final_result_data=runner_result.final_result_data,
+                )
             interrupted_status = _terminal_interrupt_status(run.status)
             outcome_run_status = _run_status_from_outcome(last_outcome)
             preserve_interrupted_status = interrupted_status is not None
@@ -1153,7 +1158,7 @@ def _queue_jd_sync_recoverable_scene_retry(
         "last_output": str(outcome.final_output or "")[:1200],
         "directive": (
             "继续同一个 JD 同步任务；不要把同源可访问时的 HID/frontmost/timeout 异常作为终局。"
-            "重新观察后换恢复路径推进剩余职位详情读取、写回和生效 JD 选择。"
+            "重新观察后换恢复路径推进剩余职位详情读取、本地 JD 写回验证，并确认 pending_jobs 为空。"
         ),
     }
     retry_metadata.update(
@@ -1266,7 +1271,7 @@ def _complete_single_jd_probe_if_satisfied(
     final_output = str(outcome.final_output or "").strip()
     completion_note = (
         f"单 JD 同步试跑已达到本阶段目标：已写入 {synced_count} 个 JD，目标 {target} 个。"
-        "本运行模式不要求继续完成全量职位发现、全量详情读取、更新/下架识别或生效 JD 选择。"
+        "本运行模式不要求继续完成全量职位发现、全量详情读取或更新/下架识别。"
     )
     return AgentTurnOutcome(
         status="complete",
@@ -1418,6 +1423,44 @@ def _jd_sync_synced_job_count(session: Session, *, run: AgentRun) -> int:
     return int(session.scalar(stmt) or 0)
 
 
+def _jd_sync_action_plan_from_state(state: dict[str, Any]) -> list[dict[str, Any]]:
+    if not isinstance(state, dict) or not state:
+        return []
+    jobs_by_key = dict(state.get("jobs_by_key") or {})
+    actions_by_key = dict(state.get("pending_actions_by_job_key") or {})
+    pending_keys = [
+        str(key)
+        for key in list(state.get("pending_job_keys") or [])
+        if str(key).strip()
+    ]
+    recovery_next_action = state.get("last_recovery_next_action")
+    plan: list[dict[str, Any]] = []
+    for key in pending_keys:
+        item: dict[str, Any] = {"job_key": key}
+        job = jobs_by_key.get(key)
+        if isinstance(job, dict) and job:
+            item["job"] = job
+        actions = [dict(action) for action in list(actions_by_key.get(key) or []) if isinstance(action, dict)]
+        if actions:
+            item["safe_action_candidates"] = actions[:3]
+        if isinstance(recovery_next_action, dict) and recovery_next_action:
+            item["recovery_next_action"] = dict(recovery_next_action)
+        if "safe_action_candidates" in item or "recovery_next_action" in item:
+            plan.append(item)
+    if plan:
+        return plan
+    last_candidates = [
+        dict(action)
+        for action in list(state.get("last_safe_action_candidates") or [])
+        if isinstance(action, dict)
+    ]
+    if last_candidates:
+        return [{"safe_action_candidates": last_candidates[:3]}]
+    if isinstance(recovery_next_action, dict) and recovery_next_action:
+        return [{"recovery_next_action": dict(recovery_next_action)}]
+    return []
+
+
 def _jd_sync_recoverable_scene_retry_needed(
     *,
     final_output: str,
@@ -1466,10 +1509,15 @@ def _final_output_continuation_resolver(
         ):
             return None
         if tool_calls or tool_results:
+            action_candidate_directive = _jd_sync_action_candidate_continuation_directive(
+                tool_results=tool_results,
+                result_data=result_data,
+            )
             return (
                 "上一条回复仍不能作为 JD 同步终局：即使本轮已经调用过 scene 或业务工具，"
-                "只要仍未完成全量职位发现、全量详情读取、更新/下架识别或生效 JD 选择，就必须继续同一个 turn 的恢复执行，"
+                "只要仍未完成真实详情读取、本地 JD 写回验证，或 pending_jobs 仍非空，就必须继续同一个 turn 的恢复执行，"
                 "不要输出总结或把部分结果当作结束。请基于最近工具结果继续："
+                f"{action_candidate_directive}"
                 "若 scene 返回 partial/blocked 但同源站点仍可观察，重新观察页面状态并继续用 VirtualHID 恢复；"
                 "E_TIMEOUT、E_NOT_FRONTMOST、光标/按键干扰或短暂 daemon 无响应都属于可恢复执行异常，"
                 "pending_confirmation 只有在当前主运行真实产生 permission_requested 时才是人工确认边界，不得把 scene 摘要里的该字样直接当作终局；"
@@ -1478,7 +1526,7 @@ def _final_output_continuation_resolver(
                 "只有登录、验证码、权限、必要执行工具未注册/缺失或目标站点不可达，才允许最终 blocked。"
             )
         return (
-            "上一条回复不能作为 JD 同步终局：当前仍未完成全量职位发现、全量详情读取、更新/下架识别或生效 JD 选择，"
+            "上一条回复不能作为 JD 同步终局：当前仍未完成真实详情读取、本地 JD 写回验证，或 pending_jobs 仍非空，"
             "且本轮没有调用任何 scene 或业务工具。请立即继续执行，不要输出总结；"
             "必须调用 delegate_scene_context 继续读取剩余职位详情，或在已有完整详情证据时调用本地 JD 工具写回。"
             "如果单次点击、返回、滚动、wait 或 HID 注入失败但目标同源站点仍可访问，请继续使用 VirtualHID 恢复，"
@@ -1488,6 +1536,63 @@ def _final_output_continuation_resolver(
         )
 
     return _resolver
+
+
+def _jd_sync_action_candidate_continuation_directive(
+    *,
+    tool_results: list[dict[str, Any]],
+    result_data: dict[str, Any] | None,
+) -> str:
+    candidates = _jd_sync_recent_action_candidates(tool_results=tool_results, result_data=result_data)
+    if not candidates:
+        return ""
+    structured_action_plan = [{"safe_action_candidates": candidates[:2]}]
+    action_plan_payload = json.dumps(structured_action_plan, ensure_ascii=False, default=str)[:1200]
+    return (
+        "最近 scene 已返回安全 action_candidates；下一步必须调用 delegate_scene_context，"
+        "让 scene 使用这些同页 action candidate 通过 browser 观察 + VirtualHID/HID 页面内操作进入 JD 详情，"
+        "不要 assistant-only 复述 blocked 或“需要进入详情”。"
+        f"structured_action_plan={action_plan_payload}。"
+    )
+
+
+def _jd_sync_recent_action_candidates(
+    *,
+    tool_results: list[dict[str, Any]],
+    result_data: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    candidates: list[dict[str, Any]] = []
+    _extend_jd_sync_action_candidates(candidates, result_data)
+    for item in tool_results:
+        if str(item.get("tool_name") or item.get("name") or "").strip() != "delegate_scene_context":
+            continue
+        payload = _jd_sync_tool_result_output(item)
+        _extend_jd_sync_action_candidates(candidates, payload)
+    return candidates
+
+
+def _extend_jd_sync_action_candidates(target: list[dict[str, Any]], value: Any) -> None:
+    if not isinstance(value, dict):
+        return
+    for item in value.get("action_candidates") or []:
+        if isinstance(item, dict) and not _jd_sync_action_candidate_seen(target, item):
+            target.append(dict(item))
+    for key in ("result_data", "business_result", "content"):
+        nested = value.get(key)
+        if isinstance(nested, dict):
+            _extend_jd_sync_action_candidates(target, nested)
+
+
+def _jd_sync_action_candidate_seen(items: list[dict[str, Any]], candidate: dict[str, Any]) -> bool:
+    comparable = json.dumps(candidate, ensure_ascii=False, sort_keys=True, default=str)
+    return any(json.dumps(item, ensure_ascii=False, sort_keys=True, default=str) == comparable for item in items)
+
+
+def _jd_sync_tool_result_output(item: dict[str, Any]) -> Any:
+    for key in ("output", "result", "content"):
+        if key in item:
+            return item.get(key)
+    return None
 
 
 def _jd_sync_result_data_needs_tool_continuation(value: Any) -> bool:
@@ -1501,6 +1606,7 @@ def _jd_sync_result_data_needs_tool_continuation(value: Any) -> bool:
         "unread_details",
         "remaining_items",
         "pending_jobs",
+        "action_candidates",
         "unfinished_jobs",
         "remaining_work",
     ):
@@ -1521,7 +1627,7 @@ def _jd_sync_tool_results_need_continuation(values: list[dict[str, Any]]) -> boo
         tool_name = str(item.get("tool_name") or item.get("name") or "").strip()
         if tool_name != "delegate_scene_context":
             continue
-        output = item.get("output")
+        output = _jd_sync_tool_result_output(item)
         if _jd_sync_scene_result_needs_continuation(output):
             return True
     return False
@@ -1543,12 +1649,19 @@ def _jd_sync_scene_result_needs_continuation(value: Any) -> bool:
     result_data = value.get("result_data")
     if isinstance(result_data, dict) and _jd_sync_result_data_needs_tool_continuation(result_data):
         return True
+    business_result = value.get("business_result")
+    if isinstance(business_result, dict) and _jd_sync_result_data_needs_tool_continuation(business_result):
+        return True
+    content = value.get("content")
+    if isinstance(content, dict) and _jd_sync_scene_result_needs_continuation(content):
+        return True
 
     for key in (
         "remaining_jobs",
         "unread_details",
         "remaining_items",
         "pending_jobs",
+        "action_candidates",
         "unfinished_jobs",
         "remaining_work",
         "limitations",
@@ -1944,7 +2057,7 @@ def _append_jd_sync_runtime_invariants(prompt: str) -> str:
         "本轮第一次动作必须进入 scene/browser/HID 链路：查找已有 zhipin 页签、同页恢复到职位管理、观察职位列表；"
         "在没有当前 run 的 scene/browser 证据前，不得只用 assistant 回复无法继续。"
         "JD 同步运行约束：如果只完成部分职位详情读取，可以写入已完整确认的 JD 作为进度，但不得把本轮作为成功终局。"
-        "在完成全量职位发现、全量详情读取、更新/下架识别和生效 JD 选择前，必须继续执行或返回明确的恢复条件。"
+        "在完成真实详情读取、本地 JD 写回验证，且 pending_jobs 为空前，必须继续执行或返回明确的恢复条件。"
         "遇到点击、返回、滚动、光标干扰、按键状态异常或单次注入超时等可恢复执行异常时，不得在第一次失败后结束；"
         "应重新观察、等待稳定、释放异常按键状态、改用页面上的其他同源入口、滚动、返回或页面内导航控件后继续。"
         "恢复执行不是重复同一失败动作；每次恢复都应基于最新观察证据切换页面内路径，例如从当前详情返回职位列表、"

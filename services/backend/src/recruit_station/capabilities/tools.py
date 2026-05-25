@@ -394,9 +394,12 @@ def _merge_runtime_jd_sync_context(arguments: dict[str, Any], runtime: dict[str,
         "scope_ref",
         "browser_target",
         "jd_sync_state",
+        "jd_sync_action_plan",
     ):
         if key not in context and key in runtime_constraints:
             context[key] = runtime_constraints[key]
+    if "action_plan" not in context and "jd_sync_action_plan" in runtime_constraints:
+        context["action_plan"] = runtime_constraints["jd_sync_action_plan"]
     normalized["context"] = context
     return normalized
 

@@ -1690,6 +1690,12 @@ def _force_jd_sync_job_management_visible_entry_recovery(
     engine_events: list[dict[str, Any]],
 ) -> dict[str, Any]:
     click_action = _jd_sync_job_management_visible_entry_click_action(target)
+    if click_action.get("tool_name") != "hid_action" or not _as_dict(click_action.get("arguments")):
+        return {
+            "status": "requires_next_action",
+            "reason": "visible_job_management_entry_missing_executable_click_point",
+            "next_action": click_action,
+        }
     if "hid_action" not in scene_tool_registry.tools:
         return {
             "status": "requires_next_action",
@@ -1766,7 +1772,13 @@ def _force_jd_sync_job_management_visible_entry_recovery(
 def _jd_sync_job_management_visible_entry_click_action(target: dict[str, Any]) -> dict[str, Any]:
     entry = _as_dict(target.get("entry"))
     click_point = _browser_item_click_point(entry)
-    at = {"x": click_point[0], "y": click_point[1]} if click_point is not None else {"x": 88, "y": 240}
+    if click_point is None:
+        return {
+            "tool_name": "browser_snapshot",
+            "reason": "missing_browser_snapshot_click_point_for_job_management_entry",
+            "arguments": _jd_sync_job_management_snapshot_next_action(target)["arguments"],
+        }
+    at = {"x": click_point[0], "y": click_point[1]}
     tab_id = target.get("tabId")
     if tab_id is None:
         tab_id = target.get("tab_id")
@@ -2515,6 +2527,12 @@ def _is_blocked_recruiting_site_click_item(item: dict[str, Any]) -> bool:
         "换微信",
         "约面试",
         "不合适",
+        "更多",
+        "发布",
+        "刷新",
+        "升级",
+        "关闭",
+        "删除",
     }
     if label in blocked_exact:
         return True
@@ -2538,16 +2556,20 @@ def _is_blocked_recruiting_site_click_item(item: dict[str, Any]) -> bool:
             "约面试",
             "不合适",
             "发布职位",
+            "发布",
             "关闭职位",
             "停止招聘",
             "下线职位",
             "删除职位",
+            "删除",
             "刷新职位",
+            "刷新",
             "曝光刷新",
+            "更多",
         )
     ):
         return True
-    if any(marker in label for marker in ("关闭", "停止招聘", "下线", "删除", "发布职位", "曝光", "刷新", "升级")):
+    if any(marker in label for marker in ("关闭", "停止招聘", "下线", "删除", "发布", "曝光", "刷新", "升级", "更多")):
         return True
     if label in {"添加分组", "创建分组"}:
         return True
@@ -3059,7 +3081,7 @@ def _boss_recruiting_tab_priority(url: str) -> int | None:
         return 2
     if path == "/web/geek/search":
         return 3
-    return None
+    return 99
 
 
 def _browser_result_url(result: dict[str, Any]) -> str | None:
@@ -4478,19 +4500,29 @@ def _apply_jd_sync_visible_entry_recovery_guard(
         for key in ("status", "reason", "tool_name", "next_action")
         if repair.get(key) not in (None, "", [], {})
     }
+    next_action = repair.get("next_action")
     guarded: dict[str, Any] = {
-        "status": "blocked",
+        "status": "in_progress",
+        "scene_status": "in_progress",
         "observed_jobs": [],
         "completed_job_details": [],
         "inactive_or_closed_jobs": [],
+        "action_candidates": [next_action] if isinstance(next_action, dict) else [],
+        "recovery": {
+            "status": "recovered_to_job_management",
+            "next_action": next_action,
+        }
+        if isinstance(next_action, dict)
+        else {"status": "recovered_to_job_management"},
         "activation_entry_observed": True,
-        "blockers": [blocker],
-        "limitations": [],
+        "blockers": [],
+        "terminal_blockers": [],
+        "limitations": [blocker],
         "evidence": ["已通过 BOSS 主导航 职位管理 可见入口恢复并观察到职位管理页面；仍需读取职位列表或职位详情。"],
         "remaining_work": ["read_job_list_or_detail_after_job_management_recovery"],
         "jd_sync_observation_repair": public_repair,
         "jd_sync_recovery_guard": {
-            "status": "blocked",
+            "status": "in_progress",
             "reason": blocker["kind"],
         },
     }
@@ -4718,6 +4750,8 @@ def _jd_sync_observation_content_has_job_list_or_detail(content: Any) -> bool:
             return True
     if isinstance(content, dict):
         page = _browser_page_semantics_from_output(content)
+        if _is_boss_job_list_page_semantics(page):
+            return True
         text = _normalize_ui_text(
             " ".join(
                 str(item)
@@ -4727,15 +4761,11 @@ def _jd_sync_observation_content_has_job_list_or_detail(content: Any) -> bool:
         ).lower()
     else:
         text = _contract_guard_text(content)
+    if any(marker in text for marker in ("candidate", "resume", "候选人", "牛人", "简历", "打招呼", "求简历", "换电话", "换微信", "约面试")):
+        return False
     return any(
         marker in text
         for marker in (
-            "职位管理",
-            "全部职位",
-            "开放中",
-            "待开放",
-            "审核不通过",
-            "已关闭",
             "岗位职责",
             "职位描述",
             "任职要求",

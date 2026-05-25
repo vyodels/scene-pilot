@@ -15,7 +15,10 @@ from recruit_station.capabilities.tools import ToolDefinition, ToolRegistry
 from recruit_station.agents.outcome import AgentTurnOutcome
 from recruit_station.services.scene_context import (
     SceneContextService,
+    _force_jd_sync_job_management_visible_entry_recovery,
     _jd_sync_browser_evidence_delta_from_snapshot,
+    _jd_sync_job_management_visible_entry_click_action,
+    _preferred_existing_boss_recruiting_tab,
     _scene_tool_registry,
     _should_retry_scene_for_missing_hid,
     _should_retry_scene_for_transient_hid_error,
@@ -35,6 +38,84 @@ def _session_factory(tmp_path: Path):
     engine = create_engine_from_settings(settings)
     initialize_database(engine)
     return create_session_factory(engine)
+
+
+def test_preferred_existing_boss_tab_accepts_any_zhipin_path_as_recovery_fallback() -> None:
+    target = _preferred_existing_boss_recruiting_tab(
+        {
+            "tabs": {
+                1: {
+                    "tabId": 1,
+                    "url": "https://www.zhipin.com/beijing/",
+                    "title": "北京招聘",
+                },
+                2: {
+                    "tabId": 2,
+                    "url": "https://example.com/",
+                    "title": "Other",
+                },
+            }
+        },
+        request={"browser_target": {"url": "https://www.zhipin.com/"}},
+    )
+
+    assert target is not None
+    assert target["tabId"] == 1
+
+
+def test_job_management_visible_entry_click_action_requires_browser_observed_point() -> None:
+    action = _jd_sync_job_management_visible_entry_click_action(
+        {
+            "tabId": 9,
+            "url": "https://www.zhipin.com/web/chat/index",
+            "entry": {
+                "ref": "nav-jobs",
+                "text": "职位管理",
+                "role": "link",
+                "href": "https://www.zhipin.com/web/chat/job/list",
+            },
+        }
+    )
+
+    assert action["tool_name"] == "browser_snapshot"
+    assert action["reason"] == "missing_browser_snapshot_click_point_for_job_management_entry"
+    action_json = json.dumps(action, ensure_ascii=False)
+    assert "primitives" not in action_json
+    assert '"x": 88' not in action_json
+    assert '"y": 240' not in action_json
+
+
+def test_forced_job_management_recovery_waits_when_visible_entry_has_no_executable_point() -> None:
+    hid_calls: list[dict[str, object]] = []
+    registry = ToolRegistry()
+    registry.register(
+        ToolDefinition(
+            name="hid_action",
+            description="Execute HID.",
+            parameters={"type": "object"},
+            handler=lambda arguments: hid_calls.append(dict(arguments)) or {"success": True},
+        )
+    )
+
+    repair = _force_jd_sync_job_management_visible_entry_recovery(
+        {
+            "tabId": 9,
+            "url": "https://www.zhipin.com/web/chat/index",
+            "entry": {
+                "ref": "nav-jobs",
+                "text": "职位管理",
+                "role": "link",
+                "href": "https://www.zhipin.com/web/chat/job/list",
+            },
+        },
+        scene_tool_registry=registry,
+        engine_events=[],
+    )
+
+    assert repair["status"] == "requires_next_action"
+    assert repair["reason"] == "visible_job_management_entry_missing_executable_click_point"
+    assert repair["next_action"]["tool_name"] == "browser_snapshot"
+    assert hid_calls == []
 
 
 def test_scene_tool_registry_excludes_recruiting_business_tools() -> None:
@@ -1883,7 +1964,8 @@ def test_scene_context_recovers_jd_sync_from_chat_page_visible_job_management_na
         }
     )
 
-    assert result["status"] == "blocked"
+    assert result["status"] == "incomplete"
+    assert result["result_data"]["status"] == "in_progress"
     assert len(hid_calls) == 1
     assert [call.get("url") for call in snapshot_calls] == [None, None]
     assert [call.get("tabId") for call in snapshot_calls] == [9, 9]
@@ -1899,10 +1981,14 @@ def test_scene_context_recovers_jd_sync_from_chat_page_visible_job_management_na
     assert result["result_data"]["completed_job_details"] == []
     assert result["result_data"]["activation_entry_observed"] is True
     assert result["result_data"]["jd_sync_recovery_guard"]["reason"] == "jd_sync_recovered_to_job_management_needs_detail_read"
+    assert result["result_data"]["jd_sync_recovery_guard"]["status"] == "in_progress"
+    assert result["result_data"]["blockers"] == []
+    assert result["result_data"]["terminal_blockers"] == []
+    assert result["result_data"]["recovery"]["next_action"]["tool_name"] == "browser_snapshot"
     assert result["result_data"]["remaining_work"] == ["read_job_list_or_detail_after_job_management_recovery"]
     assert "jd_sync_boundary_guard" not in result["result_data"]
     assert "梁雪凌" not in json.dumps(result["result_data"], ensure_ascii=False)
-    assert [blocker["kind"] for blocker in result["blockers"]] == ["jd_sync_recovered_to_job_management_needs_detail_read"]
+    assert [blocker["kind"] for blocker in result["blockers"]] == []
     with session_factory() as session:
         assert session.query(Candidate).count() == 0
 
@@ -2203,6 +2289,25 @@ def test_jd_sync_snapshot_ignores_boss_main_navigation_job_management_entry() ->
     assert delta.get("action_candidates") in (None, [])
 
 
+def test_jd_sync_snapshot_does_not_treat_candidate_pages_as_job_detail_pages() -> None:
+    delta = _jd_sync_browser_evidence_delta_from_snapshot(
+        {
+            "success": True,
+            "tabId": 9,
+            "url": "https://www.zhipin.com/web/geek/recommend",
+            "title": "推荐牛人",
+            "text": "职位管理 推荐牛人 搜索 沟通 产品实习生_北京 2-4K 候选人 张三 本科 工作经历 打招呼 求简历",
+            "elements": [
+                {"ref": "nav-jobs", "text": "职位管理", "role": "link", "href": "https://www.zhipin.com/web/chat/job/list", "clickPoint": {"x": 88, "y": 220}},
+                {"ref": "candidate-card", "text": "张三 本科 期望产品实习生 工作经历", "role": "link", "kind": "candidate", "clickPoint": {"x": 360, "y": 320}},
+                {"ref": "greet", "text": "打招呼", "role": "button", "clickPoint": {"x": 740, "y": 360}},
+            ],
+        }
+    )
+
+    assert delta == {}
+
+
 def test_jd_sync_snapshot_keeps_real_boss_job_card_and_safe_detail_action() -> None:
     delta = _jd_sync_browser_evidence_delta_from_snapshot(
         {
@@ -2245,6 +2350,82 @@ def test_jd_sync_snapshot_keeps_real_boss_job_card_and_safe_detail_action() -> N
     assert [item["title"] for item in delta["pending_jobs"]] == ["产品实习生"]
     assert any(item["label"] == "查看详情" for item in delta["action_candidates"])
     assert "main-job-management" not in json.dumps(delta["action_candidates"], ensure_ascii=False)
+
+
+def test_jd_sync_snapshot_binds_safe_actions_to_correct_boss_job_rows_and_filters_destructive_actions() -> None:
+    delta = _jd_sync_browser_evidence_delta_from_snapshot(
+        {
+            "success": True,
+            "tabId": 9,
+            "url": "https://www.zhipin.com/web/chat/job/list",
+            "title": "职位管理",
+            "text": "职位管理 全部职位 开放中 产品实习生 销售工程师 编辑 查看详情 关闭 更多",
+            "elements": [
+                {
+                    "ref": "job-row-product",
+                    "text": "产品实习生 北京 2-4K 开放中",
+                    "role": "link",
+                    "kind": "job_row",
+                    "clickPoint": {"x": 360, "y": 300},
+                    "region": {"x": 250, "y": 260, "width": 620, "height": 92},
+                },
+                {
+                    "ref": "job-title-product",
+                    "text": "产品实习生",
+                    "role": "link",
+                    "parentRef": "job-row-product",
+                    "clickPoint": {"x": 330, "y": 294},
+                },
+                {
+                    "ref": "job-edit-product",
+                    "text": "编辑",
+                    "role": "button",
+                    "kind": "job_management_action",
+                    "parentRef": "job-row-product",
+                    "clickPoint": {"x": 760, "y": 306},
+                },
+                {
+                    "ref": "job-close-product",
+                    "text": "关闭",
+                    "role": "button",
+                    "parentRef": "job-row-product",
+                    "clickPoint": {"x": 820, "y": 306},
+                },
+                {
+                    "ref": "job-row-sales",
+                    "text": "销售工程师 上海 8-12K 开放中",
+                    "role": "link",
+                    "kind": "job_row",
+                    "clickPoint": {"x": 360, "y": 430},
+                    "region": {"x": 250, "y": 390, "width": 620, "height": 92},
+                },
+                {
+                    "ref": "job-detail-sales",
+                    "text": "查看详情",
+                    "role": "button",
+                    "kind": "job_management_action",
+                    "parentRef": "job-row-sales",
+                    "clickPoint": {"x": 760, "y": 436},
+                },
+                {
+                    "ref": "job-more-sales",
+                    "text": "更多",
+                    "role": "button",
+                    "parentRef": "job-row-sales",
+                    "clickPoint": {"x": 820, "y": 436},
+                },
+            ],
+        }
+    )
+
+    assert {"产品实习生", "销售工程师"}.issubset({item["title"] for item in delta["observed_jobs"]})
+    actions_by_ref = {item.get("ref"): item for item in delta["action_candidates"]}
+    assert actions_by_ref["job-title-product"]["bound_ref"] == "job-title-product"
+    assert actions_by_ref["job-edit-product"]["bound_ref"] == "job-row-product"
+    assert actions_by_ref["job-detail-sales"]["bound_ref"] == "job-row-sales"
+    action_dump = json.dumps(delta["action_candidates"], ensure_ascii=False)
+    assert "关闭" not in action_dump
+    assert "更多" not in action_dump
 
 
 def test_jd_sync_snapshot_extracts_live_boss_title_link_and_bound_edit_from_clickables() -> None:

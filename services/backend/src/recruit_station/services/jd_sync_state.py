@@ -22,6 +22,10 @@ def initial_jd_sync_state(*, target: dict[str, Any] | None = None) -> dict[str, 
         "recovery_attempts": [],
         "writeback_results": [],
         "evidence_refs": [],
+        "action_candidates": [],
+        "pending_actions_by_job_key": {},
+        "last_safe_action_candidates": [],
+        "last_recovery_next_action": {},
     }
 
 
@@ -58,16 +62,26 @@ def reduce_jd_sync_scene_result(state: dict[str, Any] | None, scene_result: dict
     for field, target in (
         ("policy_violations", "policy_violations"),
         ("evidence_refs", "evidence_refs"),
+        ("action_candidates", "action_candidates"),
     ):
         for item in normalized.get(field) or []:
             _append_unique(next_state[target], item)
     recovery = _as_dict(normalized.get("recovery"))
     if recovery:
         _append_unique(next_state["recovery_attempts"], recovery)
+        next_action = _as_dict(recovery.get("next_action"))
+        if next_action:
+            next_state["last_recovery_next_action"] = deepcopy(next_action)
+            _archive_action_candidate(next_state, next_action)
     for item in normalized.get("writeback_results") or []:
         _append_unique(next_state["writeback_results"], item)
     for item in normalized.get("writeback_candidates") or []:
         _append_unique(next_state["writeback_results"], {"status": "candidate", "candidate": item})
+    action_candidates = [dict(item) for item in normalized.get("action_candidates") or [] if isinstance(item, dict)]
+    if action_candidates:
+        next_state["last_safe_action_candidates"] = deepcopy(action_candidates)
+        for item in action_candidates:
+            _archive_action_candidate(next_state, item)
     _recompute_pending(next_state)
     return next_state
 
@@ -78,7 +92,7 @@ def reduce_jd_sync_tool_results(state: dict[str, Any] | None, tool_results: list
         if not isinstance(item, dict):
             continue
         tool_name = str(item.get("tool_name") or item.get("name") or "").strip()
-        output = item.get("output") if "output" in item else item.get("result")
+        output = _tool_result_output(item)
         if tool_name == "delegate_scene_context" and isinstance(output, dict):
             next_state = reduce_jd_sync_scene_result(next_state, output)
         elif tool_name == "upsert_job_description":
@@ -106,8 +120,22 @@ def _scene_business_result(output: dict[str, Any]) -> dict[str, Any]:
         return result_data
     business_result = _as_dict(output.get("business_result"))
     if business_result:
+        if output.get("evidence_refs") and not business_result.get("evidence_refs"):
+            business_result["evidence_refs"] = output.get("evidence_refs")
         return business_result
+    content = _as_dict(output.get("content"))
+    if content:
+        content_result = _scene_business_result(content)
+        if content_result:
+            return content_result
     return dict(output)
+
+
+def _tool_result_output(item: dict[str, Any]) -> Any:
+    for key in ("output", "result", "content"):
+        if key in item:
+            return item.get(key)
+    return None
 
 
 def _normalize_state_shape(value: dict[str, Any]) -> dict[str, Any]:
@@ -140,6 +168,37 @@ def _upsert_job(state: dict[str, Any], item: Any, *, status: str) -> str:
     existing["sync_state"] = status
     state["jobs_by_key"][key] = existing
     return key
+
+
+def _archive_action_candidate(state: dict[str, Any], item: dict[str, Any]) -> None:
+    key = _action_candidate_job_key(item)
+    if not key and len(state.get("pending_job_keys") or []) == 1:
+        key = str(state["pending_job_keys"][0])
+    if not key:
+        return
+    actions_by_key = state["pending_actions_by_job_key"]
+    existing = list(actions_by_key.get(key) or [])
+    _append_unique(existing, item)
+    actions_by_key[key] = existing
+
+
+def _action_candidate_job_key(item: dict[str, Any]) -> str:
+    for key in (
+        "bound_ref",
+        "job_key",
+        "key",
+        "external_id",
+        "job_ref",
+        "ref",
+        "detail_ref",
+        "title",
+        "job_title",
+        "label",
+    ):
+        text = str(item.get(key) or "").strip().lower()
+        if text:
+            return text
+    return ""
 
 
 def _recompute_pending(state: dict[str, Any]) -> None:

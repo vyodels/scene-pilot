@@ -6,6 +6,7 @@ from recruit_station.agent_runtime.types import LLMMessage
 from recruit_station.capabilities.tools import ToolDefinition, ToolRegistry, build_delegate_scene_context_tool
 from recruit_station.agents.autonomous import (
     _final_output_continuation_resolver,
+    _jd_sync_action_plan_from_state,
     _jd_sync_result_data_needs_tool_continuation,
     _jd_sync_recoverable_scene_retry_needed,
     _jd_sync_scene_result_needs_continuation,
@@ -15,6 +16,11 @@ from recruit_station.agents.autonomous import (
 from recruit_station.product_adapters.agent_runner import run_agent_turn
 from recruit_station.product_adapters.context_builder import build_assistant_turn_context, build_autonomous_turn_context
 from recruit_station.product_adapters.result_semantics import extract_execution_status
+from recruit_station.services.recruit_station import default_agent_definition
+
+
+_LEGACY_JD_SELECTION_PHRASE = "生效 " + "JD 选择"
+_LEGACY_CONFIG_PAGE_PHRASE = "配置页" + "选择"
 
 
 def test_runner_places_adapter_system_prompt_outside_messages_for_both_agent_kinds() -> None:
@@ -65,6 +71,19 @@ def test_runner_places_adapter_system_prompt_outside_messages_for_both_agent_kin
     assert autonomous_request.system_prompt == str(autonomous_context.initial_messages[0].content)
     assert all(message.role != "system" for message in assistant_request.messages)
     assert all(message.role != "system" for message in autonomous_request.messages)
+
+
+def test_default_jd_sync_system_prompt_uses_jd_sync_completion_contract() -> None:
+    prompt = str(
+        ((default_agent_definition().get("product_config") or {}).get("jd_sync") or {})
+        .get("prompt_config", {})
+        .get("system_prompt", "")
+    )
+
+    assert "全量真实详情读取、本地 JD 写回验证且 pending_jobs 为空" in prompt
+    assert _LEGACY_JD_SELECTION_PHRASE not in prompt
+    assert _LEGACY_CONFIG_PAGE_PHRASE not in prompt
+    assert "侧边栏" + "语义" not in prompt
 
 
 def test_extract_execution_status_prefers_execution_status_over_business_status() -> None:
@@ -313,6 +332,51 @@ def test_jd_sync_continuation_rejects_partial_final_output_after_tool_calls() ->
     assert continuation is not None
     assert "即使本轮已经调用过 scene 或业务工具" in continuation
     assert "继续同一个 turn" in continuation
+    assert "真实详情读取、本地 JD 写回验证" in continuation
+    assert "pending_jobs" in continuation
+    assert _LEGACY_JD_SELECTION_PHRASE not in continuation
+    assert _LEGACY_CONFIG_PAGE_PHRASE not in continuation
+
+
+def test_jd_sync_continuation_with_action_candidates_requires_scene_hid_detail_entry() -> None:
+    resolver = _final_output_continuation_resolver(agent_kind="jd_sync")
+    assert resolver is not None
+
+    continuation = resolver(
+        "已完成部分 JD 同步。",
+        [{"tool_name": "delegate_scene_context"}],
+        [
+            {
+                "tool_name": "delegate_scene_context",
+                "output": {
+                    "status": "partial",
+                    "result_data": {
+                        "status": "partial",
+                        "pending_jobs": [{"external_id": "e23", "title": "产品实习生"}],
+                        "action_candidates": [
+                            {
+                                "kind": "open_job_detail_or_safe_edit",
+                                "tool_name": "hid_action",
+                                "ref": "job-title-product",
+                                "label": "产品实习生",
+                            }
+                        ],
+                    },
+                },
+            }
+        ],
+        0,
+        {},
+    )
+
+    assert continuation is not None
+    assert "必须调用 delegate_scene_context" in continuation
+    assert "VirtualHID/HID 页面内操作进入 JD 详情" in continuation
+    assert "structured_action_plan" in continuation
+    assert "真实详情读取、本地 JD 写回验证" in continuation
+    assert "pending_jobs" in continuation
+    assert _LEGACY_JD_SELECTION_PHRASE not in continuation
+    assert _LEGACY_CONFIG_PAGE_PHRASE not in continuation
 
 
 def test_jd_sync_continuation_treats_empty_local_jd_library_as_scene_bootstrap_not_blocker() -> None:
@@ -331,6 +395,10 @@ def test_jd_sync_continuation_treats_empty_local_jd_library_as_scene_bootstrap_n
     assert continuation is not None
     assert "本轮没有调用任何 scene 或业务工具" in continuation
     assert "必须调用 delegate_scene_context" in continuation
+    assert "真实详情读取、本地 JD 写回验证" in continuation
+    assert "pending_jobs" in continuation
+    assert _LEGACY_JD_SELECTION_PHRASE not in continuation
+    assert _LEGACY_CONFIG_PAGE_PHRASE not in continuation
 
 
 def test_jd_sync_continuation_respects_explicit_attempt_limit() -> None:
@@ -462,6 +530,42 @@ def test_jd_sync_continuation_reads_recoverable_scene_tool_result_even_with_blan
 
     assert continuation is not None
     assert "继续同一个 turn" in continuation
+
+
+def test_jd_sync_action_plan_from_state_projects_pending_safe_actions() -> None:
+    plan = _jd_sync_action_plan_from_state(
+        {
+            "jobs_by_key": {"e23": {"title": "产品实习生", "sync_state": "pending"}},
+            "pending_job_keys": ["e23"],
+            "pending_actions_by_job_key": {
+                "e23": [
+                    {
+                        "kind": "open_job_detail_or_safe_edit",
+                        "tool_name": "hid_action",
+                        "bound_ref": "e23",
+                        "label": "产品实习生",
+                    }
+                ]
+            },
+            "last_recovery_next_action": {"tool_name": "hid_action", "bound_ref": "e23"},
+        }
+    )
+
+    assert plan == [
+        {
+            "job_key": "e23",
+            "job": {"title": "产品实习生", "sync_state": "pending"},
+            "safe_action_candidates": [
+                {
+                    "kind": "open_job_detail_or_safe_edit",
+                    "tool_name": "hid_action",
+                    "bound_ref": "e23",
+                    "label": "产品实习生",
+                }
+            ],
+            "recovery_next_action": {"tool_name": "hid_action", "bound_ref": "e23"},
+        }
+    ]
 
 
 def test_jd_sync_continuation_treats_in_progress_scene_result_as_recoverable() -> None:

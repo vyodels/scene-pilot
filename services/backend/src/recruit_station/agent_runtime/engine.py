@@ -947,6 +947,10 @@ def _jd_sync_state_has_progress(state: dict[str, object]) -> bool:
         "completed_job_keys",
         "inactive_job_keys",
         "evidence_refs",
+        "action_candidates",
+        "pending_actions_by_job_key",
+        "last_safe_action_candidates",
+        "last_recovery_next_action",
         "recovery_attempts",
         "writeback_results",
     ):

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from recruit_station.services.jd_sync_contract import jd_sync_scene_output_contract, normalize_jd_sync_scene_result
-from recruit_station.services.jd_sync_state import initial_jd_sync_state, reduce_jd_sync_scene_result
+from recruit_station.models.domain import AgentRun
+from recruit_station.services.jd_sync_state import initial_jd_sync_state, reduce_agent_run_jd_sync_state, reduce_jd_sync_scene_result
 
 
 def test_jd_sync_scene_output_normalizer_fills_partial_contract_fields() -> None:
@@ -156,3 +157,81 @@ def test_jd_sync_normalizer_and_reducer_drop_boss_navigation_entries() -> None:
     state = reduce_jd_sync_scene_result(initial_jd_sync_state(), {"result_data": result})
     assert state["jobs_by_key"] == {}
     assert state["pending_job_keys"] == []
+
+
+def test_jd_sync_normalizer_filters_forbidden_boss_and_candidate_actions_but_keeps_real_jobs() -> None:
+    result = normalize_jd_sync_scene_result(
+        {
+            "status": "in_progress",
+            "observed_jobs": [
+                {
+                    "external_id": "boss-product",
+                    "title": "产品实习生",
+                    "raw_text": "产品实习生 北京 2-4K 开放中 看过我 沟通过 感兴趣",
+                },
+                {"external_id": "candidate-card", "title": "候选人 张三 本科", "raw_text": "候选人 张三 打招呼"},
+            ],
+            "pending_jobs": [{"external_id": "boss-product", "title": "产品实习生"}],
+            "action_candidates": [
+                {"label": "编辑", "ref": "edit-product", "bound_ref": "boss-product"},
+                {"label": "查看详情", "ref": "detail-product", "bound_ref": "boss-product"},
+                {"label": "招聘规范", "ref": "top-rules"},
+                {"label": "+", "kind": "group_action", "ref": "chat-plus"},
+                {"label": "打招呼", "ref": "greet"},
+                {"label": "关闭", "ref": "close-product"},
+                {"label": "更多", "ref": "more-product"},
+            ],
+            "writeback_candidates": [
+                {
+                    "title": "产品实习生",
+                    "description": "负责产品需求分析和跨团队协作。",
+                    "requirements": "要求本科以上，具备产品实习经验。",
+                },
+                {"title": "候选人 张三", "description": "候选人简历内容", "requirements": "打招呼"},
+            ],
+        },
+        {"contract_kind": "jd_sync"},
+    )
+
+    assert [item["title"] for item in result["observed_jobs"]] == ["产品实习生"]
+    assert [item["label"] for item in result["action_candidates"]] == ["编辑", "查看详情"]
+    assert [item["title"] for item in result["writeback_candidates"]] == ["产品实习生"]
+
+
+def test_jd_sync_run_state_reducer_reads_projected_scene_content_business_result() -> None:
+    run = AgentRun(agent_kind="jd_sync", runtime_metadata={})
+
+    state = reduce_agent_run_jd_sync_state(
+        run,
+        tool_results=[
+            {
+                "tool_name": "delegate_scene_context",
+                "content": {
+                    "status": "incomplete",
+                    "business_result": {
+                        "status": "applied",
+                        "observed_jobs": [{"external_id": "e23", "title": "产品实习生"}],
+                        "pending_jobs": [{"external_id": "e23", "title": "产品实习生"}],
+                        "action_candidates": [
+                            {
+                                "kind": "open_job_detail_or_safe_edit",
+                                "tool_name": "hid_action",
+                                "ref": "e23",
+                                "label": "产品实习生",
+                            }
+                        ],
+                        "evidence_refs": ["episode:scene-1"],
+                        "jd_sync_evidence_extraction": {"status": "applied"},
+                    },
+                },
+            }
+        ],
+    )
+
+    assert state["jobs_by_key"]["e23"]["title"] == "产品实习生"
+    assert state["pending_job_keys"] == ["e23"]
+    assert state["evidence_refs"] == ["episode:scene-1"]
+    assert state["action_candidates"][0]["ref"] == "e23"
+    assert state["last_safe_action_candidates"][0]["ref"] == "e23"
+    assert state["pending_actions_by_job_key"]["e23"][0]["label"] == "产品实习生"
+    assert run.runtime_metadata["jd_sync_state"] == state

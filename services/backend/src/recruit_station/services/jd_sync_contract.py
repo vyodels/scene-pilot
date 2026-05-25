@@ -262,6 +262,23 @@ def _is_non_jd_sync_item(value: Any, *, field: str) -> bool:
         return True
     if field == "action_candidates" and labels & nav_labels:
         return True
+    joined = _normalized_text(
+        " ".join(
+            str(item.get(key) or "")
+            for key in (
+                "title",
+                "job_title",
+                "name",
+                "label",
+                "raw_text",
+                "text",
+                "kind",
+                "type",
+            )
+        )
+    )
+    if _contains_forbidden_jd_sync_candidate_text(joined):
+        return True
     for key in ("job_key", "key", "external_id", "external_url", "detail_url", "url", "href"):
         text = str(item.get(key) or "").strip()
         if _is_boss_job_list_menu_url(text):
@@ -278,6 +295,51 @@ def _is_boss_job_list_menu_url(value: str) -> bool:
         return False
     query = parsed.query.lower()
     return not query or "menu-manager-job" in query
+
+
+def _contains_forbidden_jd_sync_candidate_text(value: str) -> bool:
+    text = _normalized_text(value).lower()
+    if not text:
+        return False
+    forbidden_markers = (
+        "招聘规范",
+        "我的客服",
+        "面试",
+        "招聘数据",
+        "账号权益",
+        "升级vip",
+        "新建分组",
+        "candidate",
+        "applicant",
+        "resume",
+        "chat",
+        "conversation",
+        "候选人",
+        "求职者",
+        "牛人",
+        "简历",
+        "聊天",
+        "会话",
+        "打招呼",
+        "求简历",
+        "换电话",
+        "换微信",
+        "约面试",
+        "不合适",
+        "关闭职位",
+        "停止招聘",
+        "下线职位",
+        "删除职位",
+        "发布职位",
+        "刷新职位",
+        "曝光刷新",
+    )
+    if any(marker in text for marker in forbidden_markers):
+        return True
+    if "+" in text and any(marker in text for marker in ("group", "chat", "conversation", "分组", "沟通", "会话")):
+        return True
+    destructive_exact = {"关闭", "删除", "发布", "刷新", "升级", "更多", "+"}
+    return text in destructive_exact
 
 
 def _normalized_text(value: Any) -> str:
