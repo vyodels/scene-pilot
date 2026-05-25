@@ -2591,6 +2591,119 @@ def test_scene_context_recovers_jd_sync_from_chat_page_visible_job_management_na
         assert session.query(Candidate).count() == 0
 
 
+def test_scene_context_recovers_jd_sync_from_communication_contacts_list_nav(tmp_path: Path) -> None:
+    session_factory = _session_factory(tmp_path)
+    final_payload = {
+        "status": "blocked",
+        "summary": "已进入招聘站点的职位管理相关沟通列表页面，当前可见近30天联系人列表，包含产品实习生与交易策略产品经理两类职位相关沟通记录；页面显示没有更多了。",
+        "observed_jobs": [],
+        "pending_jobs": [],
+        "completed_job_details": [],
+        "inactive_or_closed_jobs": [],
+        "blockers": [
+            {
+                "kind": "output_contract_incomplete",
+                "message": "scene cannot be completed without completed_job_details",
+            }
+        ],
+        "limitations": [],
+        "evidence": ["沟通页近30天联系人列表显示产品实习生相关联系人。"],
+    }
+    hid_calls: list[dict[str, object]] = []
+    snapshot_calls: list[dict[str, object]] = []
+    provider = ScriptedProvider(
+        provider_name="scene-scripted",
+        responses=[
+            LLMResponse(tool_calls=[ToolCall(id="snapshot-chat", name="browser_snapshot", arguments={"tabId": 9})], finish_reason="tool_calls"),
+            LLMResponse(content=json.dumps(final_payload, ensure_ascii=False), finish_reason="stop"),
+        ],
+    )
+    tools = ToolRegistry()
+
+    def browser_snapshot(arguments: dict[str, object]) -> dict[str, object]:
+        snapshot_calls.append(dict(arguments))
+        if len(snapshot_calls) == 1:
+            return {
+                "success": True,
+                "tabId": arguments.get("tabId"),
+                "url": "https://www.zhipin.com/web/chat/index",
+                "title": "沟通",
+                "text": "沟通 近30天联系人列表 产品实习生 交易策略产品经理 候选人 张三 没有更多了",
+                "elements": [
+                    *_boss_main_navigation_entries(),
+                    {"ref": "contact-1", "text": "张三 产品实习生 候选人", "role": "link", "kind": "candidate", "clickPoint": {"x": 260, "y": 360}},
+                    {"ref": "greet-1", "text": "打招呼", "role": "button", "clickPoint": {"x": 740, "y": 360}},
+                ],
+            }
+        return {
+            "success": True,
+            "tabId": arguments.get("tabId"),
+            "url": "https://www.zhipin.com/web/chat/job/list",
+            "title": "职位管理",
+            "text": "职位管理 全部职位 开放中 待开放 审核不通过 已关闭",
+            "elements": [
+                {"ref": "all-jobs", "text": "全部职位", "role": "tab", "clickPoint": {"x": 280, "y": 180}},
+                {"ref": "open-jobs", "text": "开放中", "role": "tab", "clickPoint": {"x": 360, "y": 180}},
+            ],
+        }
+
+    tools.register(
+        ToolDefinition(
+            name="browser_snapshot",
+            description="Observe browser page.",
+            parameters={"type": "object", "properties": {"tabId": {"type": "integer"}}, "additionalProperties": True},
+            handler=browser_snapshot,
+            metadata={"capabilities": ["browser", "document"], "external_tool": True, "real_environment": True},
+        )
+    )
+    tools.register(
+        ToolDefinition(
+            name="hid_action",
+            description="Execute HID.",
+            parameters={"type": "object", "properties": {}, "additionalProperties": True},
+            handler=lambda arguments: hid_calls.append(dict(arguments)) or {"success": True, "ok": True},
+            metadata={"capabilities": ["computer"], "external_tool": True, "real_environment": True},
+        )
+    )
+    service = SceneContextService(
+        session_factory=session_factory,
+        provider=provider,
+        tool_registry=tools,
+        plugin_host=PluginHost(),
+    )
+
+    result = service.delegate(
+        {
+            "instruction": "Return JD sync scene result JSON.",
+            "context": {"plan_kind": "jd_sync"},
+            "preferred_capabilities": ["browser", "computer"],
+            "browser_target": {"url": "https://www.zhipin.com/web/chat/index", "tabId": 9},
+            "output_contract": {"contract_kind": "jd_sync", "result_data_required": True},
+        }
+    )
+
+    assert result["status"] == "incomplete"
+    assert [call.get("tabId") for call in snapshot_calls] == [9, 9]
+    assert len(hid_calls) == 1
+    hid_call = hid_calls[0]
+    assert hid_call["primitives"] == [
+        {"type": "click", "at": {"x": 88, "y": 240}, "button": "left", "label": "职位管理", "ref": "nav-jobs"}
+    ]
+    assert result["result_data"]["status"] == "in_progress"
+    assert result["result_data"]["observed_jobs"] == []
+    assert result["result_data"]["completed_job_details"] == []
+    assert result["result_data"]["blockers"] == []
+    assert result["result_data"]["terminal_blockers"] == []
+    assert result["result_data"]["recovery"]["next_action"]["tool_name"] == "browser_snapshot"
+    assert result["result_data"]["jd_sync_recovery_guard"]["reason"] == "jd_sync_recovered_to_job_management_needs_detail_read"
+    assert "output_contract_incomplete" not in json.dumps(result["blockers"], ensure_ascii=False)
+    assert "候选人" not in json.dumps(result["result_data"], ensure_ascii=False)
+    with session_factory() as session:
+        assert session.query(JobDescription).count() == 0
+        assert session.query(Candidate).count() == 0
+        assert session.query(ConversationSession).count() == 0
+
+
 def test_scene_context_forces_jd_sync_snapshot_after_only_job_tab_identification(tmp_path: Path) -> None:
     session_factory = _session_factory(tmp_path)
     final_payload = {

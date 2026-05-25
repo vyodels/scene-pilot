@@ -272,12 +272,21 @@ class SceneContextService:
             timeout_seconds=scene_turn_timeout_seconds,
         )
         blockers = _collect_blockers(last_outcome, engine_events)
-        if not _is_workspace_paused_outcome(last_outcome) and _should_retry_scene_for_missing_hid(
-            outcome=last_outcome,
-            blockers=blockers,
-            events=engine_events,
+        jd_sync_observation_repair = _force_jd_sync_job_management_snapshot_if_needed(
             request=request,
-            available_tools=scene_tool_registry.tools.keys(),
+            scene_tool_registry=scene_tool_registry,
+            engine_events=engine_events,
+        )
+        if (
+            jd_sync_observation_repair is None
+            and not _is_workspace_paused_outcome(last_outcome)
+            and _should_retry_scene_for_missing_hid(
+                outcome=last_outcome,
+                blockers=blockers,
+                events=engine_events,
+                request=request,
+                available_tools=scene_tool_registry.tools.keys(),
+            )
         ):
             last_outcome = _scene_outcome_from_engine_with_timeout(
                 engine=engine,
@@ -341,9 +350,16 @@ class SceneContextService:
             outcome=last_outcome,
             blockers=blockers,
         )
+        if jd_sync_observation_repair is None:
+            jd_sync_observation_repair = _force_jd_sync_job_management_snapshot_if_needed(
+                request=request,
+                scene_tool_registry=scene_tool_registry,
+                engine_events=engine_events,
+            )
         raw_blockers = _collect_blockers(last_outcome, engine_events, ignore_recovered=False)
         if (
             jd_sync_candidate_execution is None
+            and jd_sync_observation_repair is None
             and not _is_workspace_paused_outcome(last_outcome)
             and _should_retry_scene_for_incomplete_progress(
                 outcome=last_outcome,
@@ -359,11 +375,6 @@ class SceneContextService:
                 timeout_seconds=scene_turn_timeout_seconds,
             )
             blockers = _collect_blockers(last_outcome, engine_events)
-        jd_sync_observation_repair = _force_jd_sync_job_management_snapshot_if_needed(
-            request=request,
-            scene_tool_registry=scene_tool_registry,
-            engine_events=engine_events,
-        )
         snapshot_ids.extend(
             _append_environment_snapshots(
                 session=session,
@@ -4936,7 +4947,12 @@ def _apply_jd_sync_visible_entry_recovery_guard(
         return result_data
     if not _is_jd_sync_result_contract(_as_dict(contract)):
         return result_data
-    if not _contains_candidate_or_chat_context(result_data) or _contains_jd_sync_job_detail_evidence(result_data):
+    boundary_guard = _as_dict(result_data.get("jd_sync_boundary_guard"))
+    has_wrong_page_context = (
+        _contains_candidate_or_chat_context(result_data)
+        or str(boundary_guard.get("reason") or "") == "jd_sync_wrong_page_candidate_context"
+    )
+    if not has_wrong_page_context or _contains_jd_sync_job_detail_evidence(result_data):
         return result_data
     required_fields = {
         str(item).strip()
@@ -5204,8 +5220,6 @@ def _jd_sync_observation_content_has_job_list_or_detail(content: Any) -> bool:
             return True
     if isinstance(content, dict):
         page = _browser_page_semantics_from_output(content)
-        if _is_boss_job_list_page_semantics(page):
-            return True
         text = _normalize_ui_text(
             " ".join(
                 str(item)
@@ -5213,9 +5227,13 @@ def _jd_sync_observation_content_has_job_list_or_detail(content: Any) -> bool:
                 if item not in (None, "", [], {})
             )
         ).lower()
+        if _contains_strong_candidate_or_chat_context(text):
+            return False
+        if _is_boss_job_list_page_semantics(page):
+            return True
     else:
         text = _contract_guard_text(content)
-    if any(marker in text for marker in ("candidate", "resume", "候选人", "牛人", "简历", "打招呼", "求简历", "换电话", "换微信", "约面试")):
+    if _contains_strong_candidate_or_chat_context(text):
         return False
     return any(
         marker in text
@@ -5303,8 +5321,6 @@ def _apply_jd_sync_candidate_context_guard(result_data: dict[str, Any], contract
 def _is_jd_sync_wrong_page_candidate_context(result_data: dict[str, Any], contract: dict[str, Any]) -> bool:
     if not _is_jd_sync_result_contract(contract):
         return False
-    if _contains_jd_sync_job_management_context(result_data):
-        return False
     contamination_probe = {
         key: value
         for key, value in result_data.items()
@@ -5312,7 +5328,11 @@ def _is_jd_sync_wrong_page_candidate_context(result_data: dict[str, Any], contra
     }
     if not _contains_candidate_or_chat_context(contamination_probe):
         return False
-    return not _contains_jd_sync_job_detail_evidence(result_data)
+    if _contains_jd_sync_job_detail_evidence(result_data):
+        return False
+    if _contains_strong_candidate_or_chat_context(contamination_probe):
+        return True
+    return not _contains_jd_sync_job_management_context(result_data)
 
 
 def _is_jd_sync_result_contract(contract: dict[str, Any]) -> bool:
@@ -5324,6 +5344,7 @@ def _contains_candidate_or_chat_context(value: Any) -> bool:
     markers = (
         "candidate",
         "applicant",
+        "contact",
         "resume",
         "chat",
         "conversation",
@@ -5334,6 +5355,7 @@ def _contains_candidate_or_chat_context(value: Any) -> bool:
         "候选人",
         "求职者",
         "牛人",
+        "联系人",
         "简历",
         "沟通",
         "聊天",
@@ -5345,6 +5367,39 @@ def _contains_candidate_or_chat_context(value: Any) -> bool:
         "交换电话",
         "工作经历",
         "教育经历",
+    )
+    return any(marker in text for marker in markers)
+
+
+def _contains_strong_candidate_or_chat_context(value: Any) -> bool:
+    text = _contract_guard_text(value)
+    markers = (
+        "resume",
+        "chat_detail",
+        "conversation_session",
+        "candidate_name",
+        "person_name",
+        "候选人",
+        "求职者",
+        "牛人",
+        "联系人",
+        "近30天联系人",
+        "近 30 天联系人",
+        "联系人列表",
+        "简历",
+        "聊天",
+        "会话",
+        "打招呼",
+        "求简历",
+        "换电话",
+        "换微信",
+        "约面试",
+        "新招呼",
+        "沟通中",
+        "已约面",
+        "已获取简历",
+        "已交换电话",
+        "已交换微信",
     )
     return any(marker in text for marker in markers)
 
