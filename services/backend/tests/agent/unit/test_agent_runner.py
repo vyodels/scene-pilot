@@ -361,6 +361,39 @@ def test_jd_sync_continuation_reads_recoverable_scene_tool_result_even_with_blan
     assert "继续同一个 turn" in continuation
 
 
+def test_jd_sync_continuation_retries_after_boss_main_navigation_recovery() -> None:
+    resolver = _final_output_continuation_resolver(agent_kind="jd_sync")
+    assert resolver is not None
+
+    scene_output = {
+        "status": "blocked",
+        "summary": "已通过 BOSS 主导航 职位管理 可见入口恢复并观察到职位管理页面；仍需读取职位列表或职位详情。",
+        "result_data": {
+            "status": "blocked",
+            "observed_jobs": [],
+            "completed_job_details": [],
+            "blockers": [
+                {
+                    "kind": "jd_sync_recovered_to_job_management_needs_detail_read",
+                    "recoverable": True,
+                }
+            ],
+            "remaining_work": ["read_job_list_or_detail_after_job_management_recovery"],
+        },
+    }
+
+    continuation = resolver(
+        "已阻塞。",
+        [{"tool_name": "delegate_scene_context"}],
+        [{"tool_name": "delegate_scene_context", "output": scene_output}],
+        0,
+        {},
+    )
+
+    assert continuation is not None
+    assert "继续同一个 turn" in continuation
+
+
 def test_jd_sync_recoverable_scene_retry_detects_frontmost_blocker_after_repeated_recovery() -> None:
     assert _jd_sync_recoverable_scene_retry_needed(
         final_output=(

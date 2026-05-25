@@ -403,6 +403,15 @@ class SceneContextService:
                 **result_data,
                 "jd_sync_observation_repair": jd_sync_observation_repair,
             }
+            result_data = _apply_jd_sync_visible_entry_recovery_guard(
+                result_data,
+                output_contract,
+                jd_sync_observation_repair,
+            )
+            if _as_dict(result_data.get("jd_sync_recovery_guard")):
+                for blocker in _list_of_dicts(result_data.get("blockers")):
+                    if not _has_blocker_kind(blockers, str(blocker.get("kind") or "")):
+                        blockers.append(blocker)
         jd_sync_snapshot_blocker = _jd_sync_requires_job_list_snapshot_blocker(episode, output_contract)
         if jd_sync_snapshot_blocker is not None:
             blockers.append(jd_sync_snapshot_blocker)
@@ -1596,6 +1605,13 @@ def _force_jd_sync_job_management_snapshot_if_needed(
         return None
     if _events_have_successful_jd_sync_page_observation(engine_events):
         return None
+    visible_entry = _events_identified_visible_boss_job_management_entry(engine_events)
+    if visible_entry is not None:
+        return _force_jd_sync_job_management_visible_entry_recovery(
+            visible_entry,
+            scene_tool_registry=scene_tool_registry,
+            engine_events=engine_events,
+        )
     target = _events_identified_boss_job_management_target(engine_events)
     if target is None:
         return None
@@ -1631,6 +1647,127 @@ def _force_jd_sync_job_management_snapshot_if_needed(
         "tool_name": "browser_snapshot",
         "arguments": dict(result.arguments or next_action["arguments"]),
         "next_action": next_action,
+    }
+
+
+def _force_jd_sync_job_management_visible_entry_recovery(
+    target: dict[str, Any],
+    *,
+    scene_tool_registry: ToolRegistry,
+    engine_events: list[dict[str, Any]],
+) -> dict[str, Any]:
+    click_action = _jd_sync_job_management_visible_entry_click_action(target)
+    if "hid_action" not in scene_tool_registry.tools:
+        return {
+            "status": "requires_next_action",
+            "reason": "hid_action_unavailable_for_visible_job_management_entry",
+            "next_action": click_action,
+        }
+    if "browser_snapshot" not in scene_tool_registry.tools:
+        return {
+            "status": "requires_next_action",
+            "reason": "browser_snapshot_unavailable_after_visible_job_management_entry",
+            "next_action": click_action,
+        }
+
+    click_event_seq = max((_safe_int(event.get("engine_output_seq")) for event in engine_events), default=0) + 1
+    click_result = scene_tool_registry.execute("hid_action", dict(click_action["arguments"]))
+    engine_events.append(
+        {
+            "type": "tool_event",
+            "engine_output_seq": click_event_seq,
+            "payload": {
+                "kind": "tool_result_ready",
+                "tool_name": "hid_action",
+                "tool_use_id": "jd-sync-job-management-recovery",
+                "tool_call_id": "jd-sync-job-management-recovery",
+                "is_error": bool(click_result.is_error),
+                "content": click_result.output,
+            },
+            "recorded_at": utcnow().isoformat(),
+        }
+    )
+    if click_result.is_error or not _tool_result_content_succeeded(click_result.output):
+        return {
+            "status": "blocked",
+            "reason": "forced_hid_click_visible_job_management_entry_failed",
+            "tool_name": "hid_action",
+            "arguments": dict(click_result.arguments or click_action["arguments"]),
+            "next_action": click_action,
+        }
+
+    snapshot_action = _jd_sync_job_management_snapshot_next_action(target)
+    snapshot_event_seq = click_event_seq + 1
+    snapshot_result = scene_tool_registry.execute("browser_snapshot", dict(snapshot_action["arguments"]))
+    engine_events.append(
+        {
+            "type": "tool_event",
+            "engine_output_seq": snapshot_event_seq,
+            "payload": {
+                "kind": "tool_result_ready",
+                "tool_name": "browser_snapshot",
+                "tool_use_id": "jd-sync-job-management-recovery-observe",
+                "tool_call_id": "jd-sync-job-management-recovery-observe",
+                "is_error": bool(snapshot_result.is_error),
+                "content": snapshot_result.output,
+            },
+            "recorded_at": utcnow().isoformat(),
+        }
+    )
+    status = (
+        "completed"
+        if not snapshot_result.is_error
+        and _tool_result_content_succeeded(snapshot_result.output)
+        and _jd_sync_observation_content_has_job_list_or_detail(snapshot_result.output)
+        else "blocked"
+    )
+    return {
+        "status": status,
+        "reason": "forced_same_tab_boss_main_navigation_job_management_recovery",
+        "tool_name": "hid_action",
+        "arguments": dict(click_result.arguments or click_action["arguments"]),
+        "next_action": snapshot_action,
+    }
+
+
+def _jd_sync_job_management_visible_entry_click_action(target: dict[str, Any]) -> dict[str, Any]:
+    entry = _as_dict(target.get("entry"))
+    click_point = _browser_item_click_point(entry)
+    at = {"x": click_point[0], "y": click_point[1]} if click_point is not None else {"x": 88, "y": 240}
+    tab_id = target.get("tabId")
+    if tab_id is None:
+        tab_id = target.get("tab_id")
+    page_url = _optional_string(target.get("url")) or "https://www.zhipin.com/web/chat/index"
+    target_payload: dict[str, Any] = {
+        "host": "www.zhipin.com",
+        "url": page_url,
+    }
+    if tab_id is not None:
+        target_payload["tabId"] = tab_id
+    for source_key, target_key in (("windowId", "windowId"), ("windowTitle", "windowTitle"), ("title", "windowTitle")):
+        value = target.get(source_key)
+        if value not in (None, "", [], {}):
+            target_payload[target_key] = value
+    primitive: dict[str, Any] = {
+        "type": "click",
+        "at": at,
+        "button": "left",
+        "label": "职位管理",
+    }
+    ref = _optional_string(entry.get("ref"))
+    if ref:
+        primitive["ref"] = ref
+    return {
+        "tool_name": "hid_action",
+        "arguments": {
+            "target": target_payload,
+            "context": {
+                "host": "www.zhipin.com",
+                "url": page_url,
+                "recovery": "boss_main_navigation_job_management",
+            },
+            "primitives": [primitive],
+        },
     }
 
 
@@ -2904,6 +3041,7 @@ def _normalize_browser_action_item(value: Any) -> dict[str, Any]:
         "clickPoint": payload.get("clickPoint") or payload.get("click_point") or payload.get("point"),
         "region": payload.get("region") or payload.get("bounds") or payload.get("rect"),
         "container": _optional_string(payload.get("container") or payload.get("section") or payload.get("location") or payload.get("nav"), max_length=128),
+        "inViewport": payload.get("inViewport") if "inViewport" in payload else payload.get("in_viewport"),
     }
     return {key: item for key, item in normalized.items() if item not in (None, "", [], {})}
 
@@ -3633,6 +3771,57 @@ def _apply_jd_sync_requires_job_list_snapshot_guard(
     return guarded
 
 
+def _apply_jd_sync_visible_entry_recovery_guard(
+    result_data: dict[str, Any],
+    contract: dict[str, Any],
+    repair: dict[str, Any],
+) -> dict[str, Any]:
+    if str(repair.get("reason") or "") != "forced_same_tab_boss_main_navigation_job_management_recovery":
+        return result_data
+    if str(repair.get("status") or "").strip().lower() != "completed":
+        return result_data
+    if not _is_jd_sync_wrong_page_candidate_context(result_data, _as_dict(contract)):
+        return result_data
+    required_fields = {
+        str(item).strip()
+        for item in _as_dict(contract).get("required_fields") or []
+        if str(item or "").strip()
+    }
+    blocker = {
+        "kind": "jd_sync_recovered_to_job_management_needs_detail_read",
+        "message": "JD sync used the visible BOSS 主导航 职位管理 entry to recover, observed job management, and still must read job list/detail evidence before writing JD data.",
+        "recoverable": True,
+        "next_action": repair.get("next_action"),
+    }
+    public_repair = {
+        key: repair.get(key)
+        for key in ("status", "reason", "tool_name", "next_action")
+        if repair.get(key) not in (None, "", [], {})
+    }
+    guarded: dict[str, Any] = {
+        "status": "blocked",
+        "observed_jobs": [],
+        "completed_job_details": [],
+        "inactive_or_closed_jobs": [],
+        "activation_entry_observed": True,
+        "blockers": [blocker],
+        "limitations": [],
+        "evidence": ["已通过 BOSS 主导航 职位管理 可见入口恢复并观察到职位管理页面；仍需读取职位列表或职位详情。"],
+        "remaining_work": ["read_job_list_or_detail_after_job_management_recovery"],
+        "jd_sync_observation_repair": public_repair,
+        "jd_sync_recovery_guard": {
+            "status": "blocked",
+            "reason": blocker["kind"],
+        },
+    }
+    reported_status = result_data.get("reported_status") or result_data.get("status")
+    if str(reported_status or "").strip():
+        guarded["reported_status"] = reported_status
+    for field in required_fields:
+        guarded.setdefault(field, [] if field not in {"status", "activation_entry_observed"} else guarded.get(field))
+    return guarded
+
+
 def _jd_sync_requires_job_list_snapshot_blocker(episode: Any, contract: dict[str, Any]) -> dict[str, Any] | None:
     if not _is_jd_sync_result_contract(_as_dict(contract)):
         return None
@@ -3691,6 +3880,43 @@ def _events_identified_boss_job_management_target(events: list[dict[str, Any]]) 
     )
 
 
+def _events_identified_visible_boss_job_management_entry(events: list[dict[str, Any]]) -> dict[str, Any] | None:
+    for payload in reversed(_events_successful_tool_result_payloads(events)):
+        tool_name = str(payload.get("tool_name") or "").strip()
+        if tool_name not in _SCENE_BROWSER_PAGE_OBSERVATION_TOOL_NAMES:
+            continue
+        content = payload.get("content")
+        if not isinstance(content, dict):
+            continue
+        page = _browser_page_semantics_from_output(content)
+        page_url = _optional_string(page.get("url") or _browser_result_url(content))
+        if not _host_matches_target_domain(_host_from_url(page_url), "zhipin.com"):
+            continue
+        for item in list(page.get("items") or []):
+            if not isinstance(item, dict):
+                continue
+            if _boss_main_navigation_entry_label(item) != "职位管理":
+                continue
+            if not _browser_item_is_visible(item):
+                continue
+            target = {
+                "url": page_url,
+                "title": page.get("title") or content.get("title"),
+                "entry": item,
+            }
+            tab_id = _browser_result_tab_id(content)
+            if tab_id is not None:
+                target["tabId"] = tab_id
+            window_id = _optional_int(content.get("windowId") or content.get("window_id") or _as_dict(content.get("target")).get("windowId"))
+            if window_id is not None:
+                target["windowId"] = window_id
+            window_title = _optional_string(content.get("windowTitle") or content.get("window_title") or target.get("title"))
+            if window_title:
+                target["windowTitle"] = window_title
+            return target
+    return None
+
+
 def _successful_payloads_identified_boss_job_management_target(payloads: list[dict[str, Any]]) -> dict[str, Any] | None:
     for payload in payloads:
         tool_name = str(payload.get("tool_name") or "").strip()
@@ -3700,6 +3926,33 @@ def _successful_payloads_identified_boss_job_management_target(payloads: list[di
             if _is_boss_job_management_url(str(target.get("url") or "")):
                 return target
     return None
+
+
+def _browser_result_tab_id(value: dict[str, Any]) -> int | None:
+    for candidate in (
+        value.get("tabId"),
+        value.get("tab_id"),
+        _as_dict(value.get("target")).get("tabId"),
+        _as_dict(value.get("target")).get("tab_id"),
+        _as_dict(value.get("tab")).get("tabId"),
+        _as_dict(value.get("tab")).get("tab_id"),
+    ):
+        tab_id = _optional_int(candidate)
+        if tab_id is not None:
+            return tab_id
+    return None
+
+
+def _browser_item_is_visible(item: dict[str, Any]) -> bool:
+    for key in ("inViewport", "in_viewport", "visible", "isVisible"):
+        if key not in item:
+            continue
+        value = item.get(key)
+        if value is False:
+            return False
+        if isinstance(value, str) and value.strip().lower() in {"false", "0", "no", "off"}:
+            return False
+    return _browser_item_click_point(item) is not None or bool(_as_dict(item.get("region")))
 
 
 def _events_successful_tool_result_payloads(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -3783,7 +4036,17 @@ def _jd_sync_observation_content_has_job_list_or_detail(content: Any) -> bool:
     for url in _browser_result_urls(content):
         if _is_boss_job_management_url(url) or _is_boss_job_detail_url(url):
             return True
-    text = _contract_guard_text(content)
+    if isinstance(content, dict):
+        page = _browser_page_semantics_from_output(content)
+        text = _normalize_ui_text(
+            " ".join(
+                str(item)
+                for item in (page.get("title"), page.get("text"), page.get("url"))
+                if item not in (None, "", [], {})
+            )
+        ).lower()
+    else:
+        text = _contract_guard_text(content)
     return any(
         marker in text
         for marker in (

@@ -7,7 +7,7 @@ import pytest
 
 from recruit_station.core.settings import AppSettings
 from recruit_station.db.session import create_engine_from_settings, create_session_factory, initialize_database
-from recruit_station.models.domain import AgentGlobalState, AgentLearning, EnvironmentSnapshot, ExecutionEpisode, ExecutionPlan, TaskSpec
+from recruit_station.models.domain import AgentGlobalState, AgentLearning, Candidate, EnvironmentSnapshot, ExecutionEpisode, ExecutionPlan, TaskSpec
 from recruit_station.plugins.host import PluginHost
 from agent_runtime.fixtures import LLMResponse, ToolCall
 from agent_runtime.fixtures import ScriptedProvider
@@ -1593,6 +1593,135 @@ def test_scene_context_blocks_jd_sync_candidate_chat_result_without_job_evidence
     assert result["result_data"]["observed_jobs"] == []
     assert result["result_data"]["jd_sync_boundary_guard"]["reason"] == "jd_sync_wrong_page_candidate_context"
     assert result["blockers"][0]["kind"] == "jd_sync_wrong_page_candidate_context"
+
+
+def test_scene_context_recovers_jd_sync_from_chat_page_visible_job_management_nav(tmp_path: Path) -> None:
+    session_factory = _session_factory(tmp_path)
+    final_payload = {
+        "status": "completed",
+        "current_view": {
+            "url": "https://www.zhipin.com/web/chat/index",
+            "page": "沟通",
+            "chat_detail_panel": {
+                "candidate_name": "梁雪凌",
+                "profile": "5 年产品经验，当前正在沟通",
+            },
+        },
+        "business_summary": {
+            "candidate_name": "梁雪凌",
+            "resume_facts": ["本科", "B 端产品"],
+            "conversation": "候选人已发送简历附件。",
+        },
+        "evidence": ["当前页为沟通会话详情，展示候选人梁雪凌和简历信息。"],
+    }
+    hid_calls: list[dict[str, object]] = []
+    snapshot_calls: list[dict[str, object]] = []
+    provider = ScriptedProvider(
+        provider_name="scene-scripted",
+        responses=[
+            LLMResponse(tool_calls=[ToolCall(id="snapshot-chat", name="browser_snapshot", arguments={"tabId": 9})], finish_reason="tool_calls"),
+            LLMResponse(content=json.dumps(final_payload, ensure_ascii=False), finish_reason="stop"),
+        ],
+    )
+    tools = ToolRegistry()
+
+    def browser_snapshot(arguments: dict[str, object]) -> dict[str, object]:
+        snapshot_calls.append(dict(arguments))
+        if len(snapshot_calls) == 1:
+            return {
+                "success": True,
+                "tabId": arguments.get("tabId"),
+                "url": "https://www.zhipin.com/web/chat/index",
+                "title": "沟通",
+                "text": "沟通 全部 新招呼 沟通中 候选人梁雪凌 简历附件",
+                "elements": [
+                    *_boss_main_navigation_entries(),
+                    {"ref": "chat-user", "text": "梁雪凌", "role": "link", "kind": "candidate", "clickPoint": {"x": 230, "y": 360}},
+                    {"ref": "greet", "text": "打招呼", "role": "button", "clickPoint": {"x": 740, "y": 360}},
+                ],
+            }
+        return {
+            "success": True,
+            "tabId": arguments.get("tabId"),
+            "url": "https://www.zhipin.com/web/chat/job/list",
+            "title": "职位管理",
+            "text": "职位管理 全部职位 开放中 待开放 审核不通过 已关闭",
+            "elements": [
+                {"ref": "all-jobs", "text": "全部职位", "role": "tab", "clickPoint": {"x": 280, "y": 180}},
+                {"ref": "open-jobs", "text": "开放中", "role": "tab", "clickPoint": {"x": 360, "y": 180}},
+            ],
+        }
+
+    tools.register(
+        ToolDefinition(
+            name="browser_snapshot",
+            description="Observe browser page.",
+            parameters={"type": "object", "properties": {"tabId": {"type": "integer"}}, "additionalProperties": True},
+            handler=browser_snapshot,
+            metadata={"capabilities": ["browser", "document"], "external_tool": True, "real_environment": True},
+        )
+    )
+    tools.register(
+        ToolDefinition(
+            name="hid_action",
+            description="Execute HID.",
+            parameters={"type": "object", "properties": {}, "additionalProperties": True},
+            handler=lambda arguments: hid_calls.append(dict(arguments)) or {"success": True, "ok": True},
+            metadata={"capabilities": ["computer"], "external_tool": True, "real_environment": True},
+        )
+    )
+    service = SceneContextService(
+        session_factory=session_factory,
+        provider=provider,
+        tool_registry=tools,
+        plugin_host=PluginHost(),
+    )
+
+    result = service.delegate(
+        {
+            "instruction": "Return JD sync scene result JSON.",
+            "context": {"plan_kind": "jd_sync"},
+            "preferred_capabilities": ["browser", "computer"],
+            "browser_target": {"url": "https://www.zhipin.com/web/chat/index", "tabId": 9},
+            "output_contract": {
+                "contract_kind": "jd_sync",
+                "result_data_required": True,
+                "required_fields": [
+                    "status",
+                    "observed_jobs",
+                    "completed_job_details",
+                    "inactive_or_closed_jobs",
+                    "activation_entry_observed",
+                    "blockers",
+                    "limitations",
+                    "evidence",
+                ],
+            },
+        }
+    )
+
+    assert result["status"] == "blocked"
+    assert len(hid_calls) == 1
+    assert [call.get("url") for call in snapshot_calls] == [None, None]
+    assert [call.get("tabId") for call in snapshot_calls] == [9, 9]
+    hid_call = hid_calls[0]
+    assert hid_call["primitives"] == [
+        {"type": "click", "at": {"x": 88, "y": 240}, "button": "left", "label": "职位管理", "ref": "nav-jobs"}
+    ]
+    assert hid_call["target"]["tabId"] == 9
+    assert hid_call["target"]["host"] == "www.zhipin.com"
+    assert "pasteText" not in json.dumps(hid_call, ensure_ascii=False)
+    assert "browser_open_tab" not in json.dumps(result, ensure_ascii=False)
+    assert result["result_data"]["observed_jobs"] == []
+    assert result["result_data"]["completed_job_details"] == []
+    assert result["result_data"]["activation_entry_observed"] is True
+    assert result["result_data"]["jd_sync_recovery_guard"]["reason"] == "jd_sync_recovered_to_job_management_needs_detail_read"
+    assert result["result_data"]["remaining_work"] == ["read_job_list_or_detail_after_job_management_recovery"]
+    assert "jd_sync_boundary_guard" not in result["result_data"]
+    assert "梁雪凌" not in json.dumps(result["result_data"], ensure_ascii=False)
+    assert [blocker["kind"] for blocker in result["blockers"]] == ["jd_sync_recovered_to_job_management_needs_detail_read"]
+    with session_factory() as session:
+        assert session.query(Candidate).count() == 0
 
 
 def test_scene_context_forces_jd_sync_snapshot_after_only_job_tab_identification(tmp_path: Path) -> None:
