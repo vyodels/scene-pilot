@@ -790,9 +790,9 @@ def test_scene_context_prompt_requires_zhipin_same_site_recovery_before_jd_sync_
     assert "当前可见页已经在目标站点内但不是招聘管理、岗位列表或岗位详情页，这不是 JD sync 的终局 blocker" in rendered_prompt
     assert "browser_list_tabs、browser_snapshot/query" in rendered_prompt
     assert "通过 VirtualHID 执行这些同站点入口、返回、滚动或点击" in rendered_prompt
-    assert "不得硬编码站点选择器或岗位管理精确 URL" in rendered_prompt
+    assert "不得硬编码站点选择器" in rendered_prompt
     assert "不得通过浏览器地址栏、直接输入 URL 或 browser 导航工具跳转" in rendered_prompt
-    assert "招聘站点页面恢复/导航点击必须使用 browser 观察到的侧边栏主入口语义：职位管理、推荐牛人、搜索、沟通" in rendered_prompt
+    assert "招聘站点页面恢复/导航点击必须使用 browser 观察到的 BOSS 主导航可见入口：职位管理、推荐牛人、搜索、沟通" in rendered_prompt
     assert "职位管理页包含标题 职位管理、页签 全部职位/开放中/待开放/审核不通过/已关闭" in rendered_prompt
     assert "JD sync 只读职位信息，不点击 发布职位、关闭、升级、曝光刷新" in rendered_prompt
     assert "推荐牛人页包含标题 推荐牛人、推荐/最新、JD 选择器示例如 产品实习生_北京 2-4K" in rendered_prompt
@@ -810,7 +810,7 @@ def test_scene_context_prompt_requires_zhipin_same_site_recovery_before_jd_sync_
         ("沟通", {"x": 88, "y": 420}),
     ],
 )
-def test_scene_context_allows_recruiting_automation_sidebar_navigation_entries(
+def test_scene_context_allows_recruiting_automation_boss_main_navigation_entries(
     tmp_path: Path,
     label: str,
     click_point: dict[str, int],
@@ -821,7 +821,7 @@ def test_scene_context_allows_recruiting_automation_sidebar_navigation_entries(
         instruction="Recruiting automation: recover from the current BOSS page.",
         page_url="https://www.zhipin.com/web/chat/index",
         page_text="沟通页面",
-        elements=_sidebar_entries(),
+        elements=_boss_main_navigation_entries(),
         click_point=click_point,
         final_status="completed",
     )
@@ -841,16 +841,40 @@ def test_scene_context_allows_recruiting_automation_sidebar_navigation_entries(
         assert blocked_results == []
 
 
-def test_scene_context_allows_jd_sync_sidebar_job_management_entry(tmp_path: Path) -> None:
+def test_scene_context_allows_jd_sync_boss_main_navigation_job_management_entry(tmp_path: Path) -> None:
     result, hid_calls, _session_factory_ref = _run_recruiting_site_hid_click_scene(
         tmp_path,
         plan_kind="jd_sync",
         instruction="JD sync: recover from the current BOSS page into job management and sync job descriptions.",
         page_url="https://www.zhipin.com/web/chat/index",
         page_text="沟通页面",
-        elements=_sidebar_entries(),
+        elements=_boss_main_navigation_entries(),
         click_point={"x": 88, "y": 240},
         final_status="completed",
+    )
+
+    assert result["status"] == "completed"
+    assert len(hid_calls) == 1
+
+
+def test_scene_context_allows_realish_jd_sync_job_management_get_element_without_nav_metadata(tmp_path: Path) -> None:
+    job_management_entry = {
+        "ref": "job-management-link",
+        "text": "职位管理",
+        "role": "link",
+        "href": "https://www.zhipin.com/web/chat/job/list",
+        "bounds": {"viewport": {"x": 24, "y": 96, "width": 68, "height": 40}},
+    }
+    result, hid_calls, _session_factory_ref = _run_recruiting_site_hid_click_scene(
+        tmp_path,
+        plan_kind="jd_sync",
+        instruction="JD sync: recover from the current BOSS page into job management and sync job descriptions.",
+        page_url="https://www.zhipin.com/web/chat/index",
+        page_text="沟通页面",
+        elements=[],
+        click_point={"x": 58, "y": 116},
+        final_status="completed",
+        selected_element=job_management_entry,
     )
 
     assert result["status"] == "completed"
@@ -861,13 +885,24 @@ def test_scene_context_allows_jd_sync_sidebar_job_management_entry(tmp_path: Pat
     ("element", "click_point", "reason"),
     [
         ({"ref": "nav-rules", "text": "招聘规范", "role": "link", "kind": "navigation", "container": "top-nav", "clickPoint": {"x": 510, "y": 72}}, {"x": 510, "y": 72}, "non_recruiting_navigation_target"),
-        ({"ref": "top-chat", "text": "沟通", "role": "link", "kind": "navigation", "container": "top-nav", "clickPoint": {"x": 610, "y": 72}}, {"x": 610, "y": 72}, "requires_allowed_sidebar_entry"),
+        ({"ref": "top-chat", "text": "沟通", "role": "link", "kind": "navigation", "container": "top-nav", "clickPoint": {"x": 610, "y": 72}}, {"x": 610, "y": 72}, "requires_allowed_boss_main_navigation_entry"),
+        ({"ref": "top-jobs", "text": "职位管理", "role": "link", "href": "https://www.zhipin.com/web/chat/job/list", "clickPoint": {"x": 610, "y": 72}}, {"x": 610, "y": 72}, "requires_allowed_boss_main_navigation_entry"),
+        ({"ref": "page-jobs", "text": "职位管理", "role": "button", "href": "https://www.zhipin.com/web/chat/job/list", "clickPoint": {"x": 420, "y": 190}}, {"x": 420, "y": 190}, "requires_allowed_boss_main_navigation_entry"),
         ({"ref": "new-group", "text": "新建分组", "role": "button", "kind": "group_action", "clickPoint": {"x": 260, "y": 190}}, {"x": 260, "y": 190}, "non_recruiting_navigation_target"),
         ({"ref": "chat-plus", "text": "+", "role": "button", "kind": "group_action", "clickPoint": {"x": 300, "y": 190}}, {"x": 300, "y": 190}, "non_recruiting_navigation_target"),
         ({"ref": "chat-user", "text": "张三", "role": "link", "kind": "candidate", "clickPoint": {"x": 220, "y": 360}}, {"x": 220, "y": 360}, "non_recruiting_navigation_target"),
+        ({"ref": "interview", "text": "面试", "role": "button", "clickPoint": {"x": 420, "y": 360}}, {"x": 420, "y": 360}, "non_recruiting_navigation_target"),
+        ({"ref": "account-rights", "text": "账号权益", "role": "link", "clickPoint": {"x": 520, "y": 72}}, {"x": 520, "y": 72}, "non_recruiting_navigation_target"),
+        ({"ref": "vip", "text": "升级VIP", "role": "button", "clickPoint": {"x": 620, "y": 72}}, {"x": 620, "y": 72}, "non_recruiting_navigation_target"),
+        ({"ref": "greet", "text": "打招呼", "role": "button", "clickPoint": {"x": 740, "y": 360}}, {"x": 740, "y": 360}, "non_recruiting_navigation_target"),
+        ({"ref": "resume", "text": "求简历", "role": "button", "clickPoint": {"x": 740, "y": 400}}, {"x": 740, "y": 400}, "non_recruiting_navigation_target"),
+        ({"ref": "phone", "text": "换电话", "role": "button", "clickPoint": {"x": 740, "y": 440}}, {"x": 740, "y": 440}, "non_recruiting_navigation_target"),
+        ({"ref": "wechat", "text": "换微信", "role": "button", "clickPoint": {"x": 740, "y": 480}}, {"x": 740, "y": 480}, "non_recruiting_navigation_target"),
+        ({"ref": "schedule", "text": "约面试", "role": "button", "clickPoint": {"x": 740, "y": 520}}, {"x": 740, "y": 520}, "non_recruiting_navigation_target"),
+        ({"ref": "reject", "text": "不合适", "role": "button", "clickPoint": {"x": 740, "y": 560}}, {"x": 740, "y": 560}, "non_recruiting_navigation_target"),
     ],
 )
-def test_scene_context_blocks_non_sidebar_controls_during_recruiting_site_recovery(
+def test_scene_context_blocks_non_main_navigation_controls_during_recruiting_site_recovery(
     tmp_path: Path,
     element: dict[str, object],
     click_point: dict[str, int],
@@ -879,7 +914,7 @@ def test_scene_context_blocks_non_sidebar_controls_during_recruiting_site_recove
         instruction="Recruiting automation: recover from the current BOSS page.",
         page_url="https://www.zhipin.com/web/chat/index",
         page_text="沟通页面",
-        elements=[*_sidebar_entries(), element],
+        elements=[*_boss_main_navigation_entries(), element],
         click_point=click_point,
         final_status="blocked",
     )
@@ -908,7 +943,7 @@ def test_scene_context_blocks_non_sidebar_controls_during_recruiting_site_recove
         ("沟通", {"x": 88, "y": 420}),
     ],
 )
-def test_scene_context_blocks_non_job_sidebar_entries_for_jd_sync_recovery(
+def test_scene_context_blocks_non_job_main_navigation_entries_for_jd_sync_recovery(
     tmp_path: Path,
     label: str,
     click_point: dict[str, int],
@@ -919,7 +954,7 @@ def test_scene_context_blocks_non_job_sidebar_entries_for_jd_sync_recovery(
         instruction="JD sync: recover from the current BOSS page into job management and sync job descriptions.",
         page_url="https://www.zhipin.com/web/chat/index",
         page_text="沟通页面",
-        elements=_sidebar_entries(),
+        elements=_boss_main_navigation_entries(),
         click_point=click_point,
         final_status="blocked",
     )
@@ -972,7 +1007,7 @@ def test_scene_context_matches_recruiting_navigation_with_document_wrapped_bound
                 "text": "搜索",
                 "role": "link",
                 "kind": "navigation",
-                "container": "sidebar",
+                "href": "https://www.zhipin.com/web/geek/search",
                 "bounds": {"document": {"x": 72, "y": 340, "width": 88, "height": 40}},
             }
         ],
@@ -994,12 +1029,29 @@ def _run_recruiting_site_hid_click_scene(
     elements: list[dict[str, object]],
     click_point: dict[str, int],
     final_status: str,
+    selected_element: dict[str, object] | None = None,
 ):
     session_factory = _session_factory(tmp_path)
     provider = ScriptedProvider(
         provider_name="scene-scripted",
         responses=[
             LLMResponse(tool_calls=[ToolCall(id="snapshot", name="browser_snapshot", arguments={"tabId": 9})], finish_reason="tool_calls"),
+            *(
+                [
+                    LLMResponse(
+                        tool_calls=[
+                            ToolCall(
+                                id="element",
+                                name="browser_get_element",
+                                arguments={"tabId": 9, "selector": "a[href*='/web/chat/job/list']"},
+                            )
+                        ],
+                        finish_reason="tool_calls",
+                    )
+                ]
+                if selected_element is not None
+                else []
+            ),
             LLMResponse(
                 tool_calls=[
                     ToolCall(
@@ -1037,6 +1089,22 @@ def _run_recruiting_site_hid_click_scene(
             metadata={"capabilities": ["browser"], "external_tool": True, "real_environment": True},
         )
     )
+    if selected_element is not None:
+        tools.register(
+            ToolDefinition(
+                name="browser_get_element",
+                description="Get page element.",
+                parameters={"type": "object", "properties": {"tabId": {"type": "integer"}, "selector": {"type": "string"}}, "additionalProperties": True},
+                handler=lambda arguments: {
+                    "success": True,
+                    "tabId": arguments.get("tabId"),
+                    "url": page_url,
+                    "title": "BOSS 直聘",
+                    "element": selected_element,
+                },
+                metadata={"capabilities": ["browser"], "external_tool": True, "real_environment": True},
+            )
+        )
     tools.register(
         ToolDefinition(
             name="hid_action",
@@ -1065,12 +1133,12 @@ def _run_recruiting_site_hid_click_scene(
     return result, hid_calls, session_factory
 
 
-def _sidebar_entries() -> list[dict[str, object]]:
+def _boss_main_navigation_entries() -> list[dict[str, object]]:
     return [
-        {"ref": "nav-jobs", "text": "职位管理", "role": "link", "kind": "navigation", "container": "sidebar", "clickPoint": {"x": 88, "y": 240}},
-        {"ref": "nav-recommend", "text": "推荐牛人", "role": "link", "kind": "navigation", "container": "sidebar", "clickPoint": {"x": 88, "y": 300}},
-        {"ref": "nav-search", "text": "搜索", "role": "link", "kind": "navigation", "container": "sidebar", "clickPoint": {"x": 88, "y": 360}},
-        {"ref": "nav-chat", "text": "沟通", "role": "link", "kind": "navigation", "container": "sidebar", "clickPoint": {"x": 88, "y": 420}},
+        {"ref": "nav-jobs", "text": "职位管理", "role": "link", "kind": "navigation", "href": "https://www.zhipin.com/web/chat/job/list", "clickPoint": {"x": 88, "y": 240}},
+        {"ref": "nav-recommend", "text": "推荐牛人", "role": "link", "kind": "navigation", "href": "https://www.zhipin.com/web/geek/recommend", "clickPoint": {"x": 88, "y": 300}},
+        {"ref": "nav-search", "text": "搜索", "role": "link", "kind": "navigation", "href": "https://www.zhipin.com/web/geek/search", "clickPoint": {"x": 88, "y": 360}},
+        {"ref": "nav-chat", "text": "沟通", "role": "link", "kind": "navigation", "href": "https://www.zhipin.com/web/chat/index", "clickPoint": {"x": 88, "y": 420}},
     ]
 
 

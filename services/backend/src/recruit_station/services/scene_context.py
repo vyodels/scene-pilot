@@ -673,9 +673,9 @@ def _build_scene_instruction(request: dict[str, Any]) -> str:
             "只有 browser_list_tabs 也找不到同 origin 页签，或同 origin 页签不可观察/不可切换时，才返回结构化 blocker 或请求 human 处理。"
             "如果当前可见页已经在目标站点内但不是招聘管理、岗位列表或岗位详情页，这不是 JD sync 的终局 blocker；"
             "必须先用 browser_list_tabs、browser_snapshot/query 识别同站点页签和页面内可见导航/链接，再通过 VirtualHID 执行这些同站点入口、返回、滚动或点击，"
-            "逐步恢复到岗位管理/列表/详情工作流。不得硬编码站点选择器或岗位管理精确 URL，也不得通过浏览器地址栏、直接输入 URL 或 browser 导航工具跳转。"
+            "逐步恢复到岗位管理/列表/详情工作流。不得硬编码站点选择器，也不得通过浏览器地址栏、直接输入 URL 或 browser 导航工具跳转。"
             "只有目标站点内没有可见同站点导航/链接、HID 连续恢复失败，或需要人工登录/授权时，JD sync 才能返回结构化 blocker。"
-            "招聘站点页面恢复/导航点击必须使用 browser 观察到的侧边栏主入口语义：职位管理、推荐牛人、搜索、沟通；"
+            "招聘站点页面恢复/导航点击必须使用 browser 观察到的 BOSS 主导航可见入口：职位管理、推荐牛人、搜索、沟通；"
             "JD sync 从非 JD 页面恢复时只能点击职位管理，不得点击推荐牛人、搜索或沟通作为恢复入口。"
             "招聘规范、我的客服、招聘数据、新建分组、+ 分组控件、候选人/聊天控件等不得作为页面恢复/导航入口。"
             "BOSS/zhipin 页面识别锚点：职位管理页包含标题 职位管理、页签 全部职位/开放中/待开放/审核不通过/已关闭、截图示例职位卡如 产品实习生 与 北京/经验不限/本科/2-4K/全职/开放中；"
@@ -2107,20 +2107,20 @@ def _recruiting_site_click_evidence_decision(
     all_items: list[dict[str, Any]],
 ) -> dict[str, Any] | None:
     label = _browser_item_label(evidence)
-    sidebar_entry = _sidebar_main_entry_label(evidence)
-    if sidebar_entry:
-        if scene_kind == "jd_sync" and sidebar_entry != "职位管理":
+    main_nav_entry = _boss_main_navigation_entry_label(evidence)
+    if main_nav_entry:
+        if scene_kind == "jd_sync" and main_nav_entry != "职位管理":
             return _recruiting_site_click_blocker(
                 reason="jd_sync_requires_job_management_entry",
-                message="JD sync recovery may only click the sidebar 职位管理 entry.",
+                message="JD sync recovery may only click the BOSS main navigation 职位管理 entry.",
                 page_context=page_context,
                 evidence=evidence,
             )
         return None
     if _normalize_ui_text(label) in {"职位管理", "推荐牛人", "搜索", "沟通"}:
         return _recruiting_site_click_blocker(
-            reason="requires_allowed_sidebar_entry",
-            message="Recruiting-site recovery may only click observed sidebar entries, not top-nav or page-level controls with similar labels.",
+            reason="requires_allowed_boss_main_navigation_entry",
+            message="Recruiting-site recovery may only click observed BOSS main navigation entries, not topbar or page-level controls with similar labels.",
             page_context=page_context,
             evidence=evidence,
         )
@@ -2135,8 +2135,8 @@ def _recruiting_site_click_evidence_decision(
         )
     if not bool(page_context.get("in_recruiting_work_page")):
         return _recruiting_site_click_blocker(
-            reason="requires_allowed_sidebar_entry",
-            message="Recruiting-site recovery may only click one of the observed sidebar entries: 职位管理, 推荐牛人, 搜索, 沟通.",
+            reason="requires_allowed_boss_main_navigation_entry",
+            message="Recruiting-site recovery may only click one of the observed BOSS main navigation entries: 职位管理, 推荐牛人, 搜索, 沟通.",
             page_context=page_context,
             evidence=evidence,
         )
@@ -2157,10 +2157,45 @@ def _is_blocked_recruiting_site_click_item(item: dict[str, Any]) -> bool:
     href = str(item.get("href") or item.get("url") or "").lower()
     kind = _normalize_ui_text(item.get("kind"))
     role = _normalize_ui_text(item.get("role"))
-    blocked_exact = {"招聘规范", "我的客服", "招聘数据", "新建分组", "+"}
+    blocked_exact = {
+        "招聘规范",
+        "我的客服",
+        "面试",
+        "招聘数据",
+        "账号权益",
+        "升级VIP",
+        "新建分组",
+        "+",
+        "打招呼",
+        "求简历",
+        "换电话",
+        "换微信",
+        "约面试",
+        "不合适",
+    }
     if label in blocked_exact:
         return True
-    if any(marker in label for marker in ("招聘规范", "我的客服", "招聘数据", "新建分组", "候选人", "聊天", "客服")):
+    if any(
+        marker in label
+        for marker in (
+            "招聘规范",
+            "我的客服",
+            "面试",
+            "招聘数据",
+            "账号权益",
+            "升级VIP",
+            "新建分组",
+            "候选人",
+            "聊天",
+            "客服",
+            "打招呼",
+            "求简历",
+            "换电话",
+            "换微信",
+            "约面试",
+            "不合适",
+        )
+    ):
         return True
     if label in {"添加分组", "创建分组"}:
         return True
@@ -2169,18 +2204,44 @@ def _is_blocked_recruiting_site_click_item(item: dict[str, Any]) -> bool:
     return any(marker in f"{kind} {role} {href}" for marker in ("candidate", "chat", "conversation", "customer_service", "group"))
 
 
-def _sidebar_main_entry_label(item: dict[str, Any]) -> str | None:
+def _boss_main_navigation_entry_label(item: dict[str, Any]) -> str | None:
     label = _normalize_ui_text(_browser_item_label(item))
-    if label not in {"职位管理", "推荐牛人", "搜索", "沟通"}:
+    allowed_routes = {
+        "职位管理": ("/web/chat/job/list",),
+        "推荐牛人": ("/web/geek/recommend",),
+        "搜索": ("/web/geek/search",),
+        "沟通": ("/web/chat/index",),
+    }
+    if label not in allowed_routes:
         return None
-    role_kind = _normalize_ui_text(" ".join(str(item.get(key) or "") for key in ("role", "kind", "location", "section", "container", "nav")))
-    if any(marker in role_kind.lower() for marker in ("sidebar", "side-nav", "side_nav", "sider", "left-nav", "left_nav", "left menu", "left-menu", "left_menu")):
+    href = _optional_string(item.get("href") or item.get("url")) or ""
+    path = urlparse(href).path if "://" in href else href.split("?", 1)[0].split("#", 1)[0]
+    if path not in allowed_routes[label]:
+        return None
+    point = _browser_item_click_point(item)
+    if point is not None and _is_boss_main_navigation_point(point):
         return label
-    return None
+    return label if _is_boss_main_navigation_region(item) else None
+
+
+def _is_boss_main_navigation_point(point: tuple[float, float]) -> bool:
+    return 0 <= point[0] <= 180 and 88 <= point[1] <= 760
+
+
+def _is_boss_main_navigation_region(item: dict[str, Any]) -> bool:
+    region = _coordinate_payload(_as_dict(item.get("region") or item.get("bounds") or item.get("rect") or item.get("boundingBox") or item.get("box")))
+    x = _optional_number(region.get("x") if region.get("x") is not None else region.get("left"))
+    y = _optional_number(region.get("y") if region.get("y") is not None else region.get("top"))
+    width = _optional_number(region.get("width"))
+    height = _optional_number(region.get("height"))
+    if x is None or y is None or width is None or height is None:
+        return False
+    center = (x + width / 2, y + height / 2)
+    return _is_boss_main_navigation_point(center)
 
 
 def _is_job_page_click_item(item: dict[str, Any]) -> bool:
-    if _sidebar_main_entry_label(item) == "职位管理":
+    if _boss_main_navigation_entry_label(item) == "职位管理":
         return True
     label = _normalize_ui_text(_browser_item_label(item))
     href = str(item.get("href") or item.get("url") or "").lower()
@@ -2732,6 +2793,10 @@ def _browser_action_items_from_value(value: Any) -> list[dict[str, Any]]:
                     item = _normalize_browser_action_item(raw)
                     if item:
                         items.append(item)
+        for key in ("element", "node"):
+            item = _normalize_browser_action_item(value.get(key))
+            if item:
+                items.append(item)
         snapshot = value.get("snapshot")
         if isinstance(snapshot, dict):
             items.extend(_browser_action_items_from_value(snapshot))
