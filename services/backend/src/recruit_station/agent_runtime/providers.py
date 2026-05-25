@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from http.client import HTTPException
 from dataclasses import dataclass, field
 from ipaddress import ip_address
@@ -294,7 +295,9 @@ def _post_json(
     try:
         with _open_url(request, url=url, timeout_seconds=timeout_seconds) as response:  # type: ignore[arg-type]
             if "text/event-stream" in _response_content_type(response):
-                return list(_iter_sse_events(response, abort_signal=abort_signal))
+                return list(
+                    _iter_sse_events(response, abort_signal=abort_signal, timeout_seconds=timeout_seconds, url=url)
+                )
             return _read_json_response(response)
     except HTTPError as exc:
         error_body = exc.read().decode("utf-8", errors="replace")
@@ -431,13 +434,26 @@ def _read_json_response(response: Any) -> dict[str, Any]:
     return payload
 
 
-def _iter_sse_events(response: Any, *, abort_signal: AbortSignal | None = None) -> Iterable[dict[str, Any]]:
+def _iter_sse_events(
+    response: Any,
+    *,
+    abort_signal: AbortSignal | None = None,
+    timeout_seconds: int | float | None = None,
+    url: str = "provider",
+) -> Iterable[dict[str, Any]]:
     event_name = ""
     data_lines: list[str] = []
+    deadline = None
+    if timeout_seconds is not None:
+        deadline = time.monotonic() + max(float(timeout_seconds), 1.0)
     while True:
         if _signal_aborted(abort_signal):
             break
+        _enforce_stream_deadline(deadline, url)
+        if deadline is not None:
+            _set_response_read_timeout(response, max(deadline - time.monotonic(), 0.001))
         line = response.readline()
+        _enforce_stream_deadline(deadline, url)
         if not line:
             break
         text = line.decode("utf-8", errors="replace") if isinstance(line, bytes) else str(line)
@@ -455,7 +471,38 @@ def _iter_sse_events(response: Any, *, abort_signal: AbortSignal | None = None) 
         elif stripped.startswith("data:"):
             data_lines.append(stripped[5:].lstrip())
     if data_lines:
+        _enforce_stream_deadline(deadline, url)
         yield _decode_sse_event(event_name, "\n".join(data_lines))
+
+
+def _enforce_stream_deadline(deadline: float | None, url: str) -> None:
+    if deadline is not None and time.monotonic() >= deadline:
+        raise ProviderError(
+            f"Provider stream exceeded timeout while calling {url}",
+            error_kind="provider_transport_error",
+            retryable=True,
+        )
+
+
+def _set_response_read_timeout(response: Any, timeout_seconds: float) -> None:
+    seen: set[int] = set()
+    stack = [response]
+    while stack:
+        candidate = stack.pop()
+        if candidate is None or id(candidate) in seen:
+            continue
+        seen.add(id(candidate))
+        settimeout = getattr(candidate, "settimeout", None)
+        if callable(settimeout):
+            try:
+                settimeout(timeout_seconds)
+            except Exception:
+                pass
+        for attr in ("fp", "raw", "_sock", "sock", "_fp"):
+            try:
+                stack.append(getattr(candidate, attr))
+            except Exception:
+                continue
 
 
 def _decode_sse_event(event_name: str, data: str) -> dict[str, Any]:

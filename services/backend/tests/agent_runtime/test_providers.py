@@ -84,6 +84,32 @@ def test_post_json_maps_stream_unexpected_eof_as_retryable_transport_error(monke
     assert raised.value.retryable is True
 
 
+def test_post_json_enforces_overall_sse_stream_timeout(monkeypatch) -> None:
+    class HangingSSEResponse:
+        headers = {"Content-Type": "text/event-stream"}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def readline(self):
+            return b": keepalive\n"
+
+    monotonic_values = iter([100.0, 100.2, 100.4, 101.1])
+
+    monkeypatch.setattr("recruit_station.agent_runtime.providers._open_url", lambda *args, **kwargs: HangingSSEResponse())
+    monkeypatch.setattr("recruit_station.agent_runtime.providers.time.monotonic", lambda: next(monotonic_values))
+
+    with pytest.raises(ProviderError) as raised:
+        _post_json("https://api.test/v1/responses", {}, headers={}, timeout_seconds=1)
+
+    assert "exceeded timeout" in str(raised.value)
+    assert raised.value.error_kind == "provider_transport_error"
+    assert raised.value.retryable is True
+
+
 def test_openai_stream_transient_failure_event_is_retryable() -> None:
     provider = OpenAIProvider(
         ProviderConfig(provider_name="openai", model="gpt", base_url="https://api.openai.com/v1", api_key="key"),
