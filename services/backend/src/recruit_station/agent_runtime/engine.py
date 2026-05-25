@@ -4,7 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from itertools import count
 import time
-from typing import Iterator
+from typing import Generator, Iterator
 from uuid import uuid4
 
 from .history import ConversationHistory
@@ -83,6 +83,7 @@ class PendingPermissionState:
     tool_call: ToolCall
     context: TurnContext
     next_invocation_index: int
+    remaining_tool_calls: list[ToolCall] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -182,6 +183,19 @@ class InteractionEngine:
                     metadata={"permission_denied": True},
                 )
                 yield from self._record_tool_result(result, pending.turn_id)
+                if self._abort_requested():
+                    yield self._interrupted_output(pending.turn_id)
+                    return
+            if pending.remaining_tool_calls:
+                paused = yield from self._run_tool_calls_until_permission(
+                    registry,
+                    pending.remaining_tool_calls,
+                    pending.context,
+                    pending.turn_id,
+                    pending.next_invocation_index,
+                )
+                if paused:
+                    return
                 if self._abort_requested():
                     yield self._interrupted_output(pending.turn_id)
                     return
@@ -287,68 +301,95 @@ class InteractionEngine:
             if not response.tool_uses:
                 yield self._output("turn_completed", turn_id, {"status": "completed"})
                 return
-            for tool_use in response.tool_uses:
-                if self._abort_requested():
-                    yield self._interrupted_output(turn_id)
-                    return
-                tool_call = ToolCall(
-                    id=f"tool_{uuid4().hex}",
-                    turn_id=turn_id,
-                    llm_invocation_id=invocation_id,
-                    tool_use_id=tool_use.id,
-                    name=tool_use.name,
-                    input=dict(tool_use.input or {}),
+            tool_calls = [
+                self._normalize_tool_call_input(
+                    registry,
+                    ToolCall(
+                        id=f"tool_{uuid4().hex}",
+                        turn_id=turn_id,
+                        llm_invocation_id=invocation_id,
+                        tool_use_id=tool_use.id,
+                        name=tool_use.name,
+                        input=dict(tool_use.input or {}),
+                    ),
+                    context,
                 )
-                tool_call = self._normalize_tool_call_input(registry, tool_call, context)
+                for tool_use in response.tool_uses
+            ]
+            paused = yield from self._run_tool_calls_until_permission(
+                registry,
+                tool_calls,
+                context,
+                turn_id,
+                invocation_index + 1,
+            )
+            if paused:
+                return
+        yield self._output("turn_failed", turn_id, {"error": "max_llm_invocations_exhausted"})
+
+    def _run_tool_calls_until_permission(
+        self,
+        registry: ToolRegistry,
+        tool_calls: list[ToolCall],
+        context: TurnContext,
+        turn_id: str,
+        next_invocation_index: int,
+    ) -> Generator[InteractionOutput, None, bool]:
+        for index, tool_call in enumerate(tool_calls):
+            remaining_tool_calls = tool_calls[index + 1 :]
+            if self._abort_requested():
+                yield self._interrupted_output(turn_id)
+                return True
+            yield self._output(
+                "tool_event",
+                turn_id,
+                {
+                    "kind": "tool_call_started",
+                    "tool_name": tool_call.name,
+                    "tool_use_id": tool_call.tool_use_id,
+                    "tool_call_id": tool_call.id,
+                    "input": dict(tool_call.input or {}),
+                },
+            )
+            if self._abort_requested():
+                yield self._interrupted_output(turn_id)
+                return True
+            if self._requires_permission(registry, tool_call, context):
+                self.pending_permission = PendingPermissionState(
+                    turn_id=turn_id,
+                    tool_call=tool_call,
+                    context=context,
+                    next_invocation_index=next_invocation_index,
+                    remaining_tool_calls=list(remaining_tool_calls),
+                )
+                self.transcript.record_pending_permission(
+                    self.config.conversation_id,
+                    _pending_permission_payload(self.pending_permission),
+                )
                 yield self._output(
-                    "tool_event",
+                    "permission_requested",
                     turn_id,
                     {
-                        "kind": "tool_call_started",
                         "tool_name": tool_call.name,
                         "tool_use_id": tool_call.tool_use_id,
                         "tool_call_id": tool_call.id,
                         "input": dict(tool_call.input or {}),
+                        "reason": "pending_confirmation",
                     },
                 )
-                if self._abort_requested():
-                    yield self._interrupted_output(turn_id)
-                    return
-                if self._requires_permission(registry, tool_call, context):
-                    self.pending_permission = PendingPermissionState(
-                        turn_id=turn_id,
-                        tool_call=tool_call,
-                        context=context,
-                        next_invocation_index=invocation_index + 1,
-                    )
-                    self.transcript.record_pending_permission(
-                        self.config.conversation_id,
-                        _pending_permission_payload(self.pending_permission),
-                    )
-                    yield self._output(
-                        "permission_requested",
-                        turn_id,
-                        {
-                            "tool_name": tool_call.name,
-                            "tool_use_id": tool_call.tool_use_id,
-                            "tool_call_id": tool_call.id,
-                            "input": dict(tool_call.input or {}),
-                            "reason": "pending_confirmation",
-                        },
-                    )
-                    return
-                if self._abort_requested():
-                    yield self._interrupted_output(turn_id)
-                    return
-                yield from self._run_tool_call(registry, tool_call, context)
-                if self._abort_requested():
-                    yield self._interrupted_output(turn_id)
-                    return
-                yield from self._inject_pending_user_input_after_next_tool_call(context, tool_call)
-                if self._abort_requested():
-                    yield self._interrupted_output(turn_id)
-                    return
-        yield self._output("turn_failed", turn_id, {"error": "max_llm_invocations_exhausted"})
+                return True
+            if self._abort_requested():
+                yield self._interrupted_output(turn_id)
+                return True
+            yield from self._run_tool_call(registry, tool_call, context)
+            if self._abort_requested():
+                yield self._interrupted_output(turn_id)
+                return True
+            yield from self._inject_pending_user_input_after_next_tool_call(context, tool_call)
+            if self._abort_requested():
+                yield self._interrupted_output(turn_id)
+                return True
+        return False
 
     def _invoke_provider_with_retry(
         self,
@@ -696,20 +737,39 @@ def _pending_permission_payload(pending: PendingPermissionState | None) -> dict[
     return {
         "turn_id": pending.turn_id,
         "next_invocation_index": pending.next_invocation_index,
-        "tool_call": {
-            "id": pending.tool_call.id,
-            "turn_id": pending.tool_call.turn_id,
-            "llm_invocation_id": pending.tool_call.llm_invocation_id,
-            "tool_use_id": pending.tool_call.tool_use_id,
-            "name": pending.tool_call.name,
-            "input": dict(pending.tool_call.input or {}),
-        },
+        "tool_call": _tool_call_payload(pending.tool_call),
+        "remaining_tool_calls": [_tool_call_payload(tool_call) for tool_call in pending.remaining_tool_calls],
         "context": {
             "turn_id": pending.context.turn_id,
             "conversation_id": pending.context.conversation_id,
             "runtime": dict(pending.context.runtime or {}),
         },
     }
+
+
+def _tool_call_payload(tool_call: ToolCall) -> dict[str, object]:
+    return {
+        "id": tool_call.id,
+        "turn_id": tool_call.turn_id,
+        "llm_invocation_id": tool_call.llm_invocation_id,
+        "tool_use_id": tool_call.tool_use_id,
+        "name": tool_call.name,
+        "input": dict(tool_call.input or {}),
+    }
+
+
+def _tool_call_from_payload(payload: dict[str, object], *, fallback_turn_id: str = "") -> ToolCall | None:
+    tool_call = ToolCall(
+        id=str(payload.get("id") or ""),
+        turn_id=str(payload.get("turn_id") or fallback_turn_id or ""),
+        llm_invocation_id=str(payload.get("llm_invocation_id") or ""),
+        tool_use_id=str(payload.get("tool_use_id") or ""),
+        name=str(payload.get("name") or ""),
+        input=dict(payload.get("input") or {}),
+    )
+    if not tool_call.id or not tool_call.turn_id or not tool_call.name:
+        return None
+    return tool_call
 
 
 def _pending_permission_from_payload(
@@ -723,16 +783,15 @@ def _pending_permission_from_payload(
     raw_tool_call = payload.get("tool_call")
     if not isinstance(raw_tool_call, dict):
         return None
-    tool_call = ToolCall(
-        id=str(raw_tool_call.get("id") or ""),
-        turn_id=str(raw_tool_call.get("turn_id") or payload.get("turn_id") or ""),
-        llm_invocation_id=str(raw_tool_call.get("llm_invocation_id") or ""),
-        tool_use_id=str(raw_tool_call.get("tool_use_id") or ""),
-        name=str(raw_tool_call.get("name") or ""),
-        input=dict(raw_tool_call.get("input") or {}),
-    )
-    if not tool_call.id or not tool_call.turn_id or not tool_call.name:
+    tool_call = _tool_call_from_payload(raw_tool_call, fallback_turn_id=str(payload.get("turn_id") or ""))
+    if tool_call is None:
         return None
+    remaining_tool_calls = [
+        parsed
+        for item in list(payload.get("remaining_tool_calls") or [])
+        if isinstance(item, dict)
+        if (parsed := _tool_call_from_payload(item, fallback_turn_id=tool_call.turn_id)) is not None
+    ]
     raw_context = payload.get("context")
     context_payload = dict(raw_context) if isinstance(raw_context, dict) else {}
     context = TurnContext(
@@ -746,6 +805,7 @@ def _pending_permission_from_payload(
         tool_call=tool_call,
         context=context,
         next_invocation_index=_positive_int(payload.get("next_invocation_index"), default=1),
+        remaining_tool_calls=remaining_tool_calls,
     )
 
 

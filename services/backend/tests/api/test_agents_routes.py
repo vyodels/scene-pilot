@@ -1926,6 +1926,69 @@ def test_autonomous_permission_checkpoint_resumes_after_adapter_rebuild(tmp_path
     assert "hello" in str(provider.captured_requests[1].messages[-1].content)
 
 
+def test_autonomous_permission_resume_preserves_same_response_read_tool_output(tmp_path, monkeypatch) -> None:
+    client = _client(tmp_path, monkeypatch, "durable-permission-sibling-tools")
+    provider = _script_autonomous_provider(
+        client,
+        LLMResponse(
+            tool_calls=[
+                ToolCall(id="call-list-jds", name="list_job_descriptions", arguments={"limit": 10}),
+                ToolCall(id="call-read-memory", name="read_memory", arguments={"query": "zhipin recruiting"}),
+            ],
+            finish_reason="tool_calls",
+        ),
+        LLMResponse(
+            content="Read-only context and JD list are available.",
+            result_data={"status": "pass", "execution_status": "completed"},
+        ),
+    )
+    _force_start_workspace(client)
+    created = _start_autonomous_run(
+        client,
+        instruction="Read local JD list and memory before continuing.",
+        constraints={
+            "tool_approval_policy": {
+                "defaultMode": "approval",
+                "overrides": {"read_memory": "auto"},
+            }
+        },
+    )
+
+    processed = client.post("/api/agents/task-queue/process-next")
+
+    assert processed.status_code == 200
+    assert processed.json()["status"] == "processed"
+    with client.app.state.session_factory() as session:
+        run = session.scalars(select(AgentRun).where(AgentRun.run_id == created["runId"])).one()
+        checkpoint = session.scalars(select(AgentRunCheckpoint).where(AgentRunCheckpoint.run_id == run.id)).one()
+        checkpoint_payload = dict(checkpoint.payload or {})
+        runtime_checkpoint = dict(checkpoint_payload["runtime_checkpoint"])
+        pending_permission = runtime_checkpoint["pending_permissions"][0]
+        assert run.status == "waiting_human"
+        assert checkpoint_payload["pending_tool_calls"][0]["tool_name"] == "list_job_descriptions"
+        assert pending_permission["tool_call"]["name"] == "list_job_descriptions"
+        assert pending_permission["remaining_tool_calls"][0]["name"] == "read_memory"
+        assert checkpoint_payload["resume_task"]["payload"]["runtime_checkpoint"]["pending_permissions"][0]["remaining_tool_calls"][0]["name"] == "read_memory"
+
+    client.app.state.container.autonomous_adapter.pending_permission_engines.clear()
+    resumed = client.post(
+        f"/api/agents/autonomous/runs/{created['runId']}/resume",
+        json={"reviewer": "api-test", "reason": "approved"},
+    )
+    assert resumed.status_code == 200
+
+    processed_after_resume = client.post("/api/agents/task-queue/process-next")
+
+    assert processed_after_resume.status_code == 200
+    assert processed_after_resume.json()["status"] == "processed"
+    assert provider.captured_requests[1].turn_id == provider.captured_requests[0].turn_id
+    assert [message.role for message in provider.captured_requests[1].messages[-3:]] == ["assistant", "tool", "tool"]
+    assert [message.tool_use_id for message in provider.captured_requests[1].messages[-2:]] == [
+        "call-list-jds",
+        "call-read-memory",
+    ]
+
+
 def test_legacy_autonomous_goal_routes_are_absent(tmp_path, monkeypatch) -> None:
     client = _client(tmp_path, monkeypatch, "missing-goal-routes")
 

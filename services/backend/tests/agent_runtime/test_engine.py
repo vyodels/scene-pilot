@@ -573,6 +573,133 @@ def test_permission_resolution_can_resume_from_transcript_checkpoint() -> None:
     assert provider.captured_requests[1].messages[-1].role == "tool"
 
 
+def test_permission_resolution_runs_remaining_same_response_tool_calls_before_continuation() -> None:
+    approval_tool_use = ToolUse(id="call-approval", name="list_job_descriptions", input={"limit": 10})
+    read_tool_use = ToolUse(id="call-read", name="read_memory", input={"query": "recruiting"})
+    provider = FixtureLLMProvider(
+        responses=[
+            LLMResponse(
+                id="resp-1",
+                request_id="",
+                invocation_id="",
+                assistant_message=LLMMessage(
+                    role="assistant",
+                    content="",
+                    tool_uses=[approval_tool_use, read_tool_use],
+                ),
+                tool_uses=[approval_tool_use, read_tool_use],
+                stop_reason="tool_calls",
+            ),
+            LLMResponse(
+                id="resp-2",
+                request_id="",
+                invocation_id="",
+                assistant_message=LLMMessage(role="assistant", content="done"),
+            ),
+        ]
+    )
+    tools = [
+        ToolDefinition(
+            name="list_job_descriptions",
+            description="List JDs.",
+            schema=ToolSchema(name="list_job_descriptions", description="List JDs.", input_schema={"type": "object"}),
+            handler=FunctionToolHandler(lambda args: {"jobs": [{"title": "AI PM"}]}),
+            metadata={"requires_confirmation": True},
+        ),
+        ToolDefinition(
+            name="read_memory",
+            description="Read memory.",
+            schema=ToolSchema(name="read_memory", description="Read memory.", input_schema={"type": "object"}),
+            handler=FunctionToolHandler(lambda args: {"memories": ["prior JD note"]}),
+        ),
+    ]
+    engine = InteractionEngine(InteractionEngineConfig(conversation_id="conv-sibling-tools", provider=provider, tools=tools))
+
+    first_outputs = list(engine.submitMessage("inspect workspace"))
+
+    permission = next(item for item in first_outputs if item.type == "permission_requested")
+    assert engine.pending_permission is not None
+    assert [item.name for item in engine.pending_permission.remaining_tool_calls] == ["read_memory"]
+
+    continued_outputs = list(engine.resolvePermission(approved=True))
+
+    assert engine.pending_permission is None
+    result_events = [
+        item.data
+        for item in continued_outputs
+        if item.type == "tool_event" and item.data.get("kind") == "tool_result_ready"
+    ]
+    assert [item["tool_name"] for item in result_events] == ["list_job_descriptions", "read_memory"]
+    second_request = provider.captured_requests[1]
+    assert second_request.turn_id == permission.turn_id
+    assert [message.role for message in second_request.messages[-3:]] == ["assistant", "tool", "tool"]
+    assert [message.tool_use_id for message in second_request.messages[-2:]] == ["call-approval", "call-read"]
+
+
+def test_durable_permission_resolution_preserves_remaining_same_response_tool_calls() -> None:
+    approval_tool_use = ToolUse(id="call-approval", name="list_job_descriptions", input={"limit": 10})
+    read_tool_use = ToolUse(id="call-read", name="read_memory", input={"query": "recruiting"})
+    provider = FixtureLLMProvider(
+        responses=[
+            LLMResponse(
+                id="resp-1",
+                request_id="",
+                invocation_id="",
+                assistant_message=LLMMessage(
+                    role="assistant",
+                    content="",
+                    tool_uses=[approval_tool_use, read_tool_use],
+                ),
+                tool_uses=[approval_tool_use, read_tool_use],
+                stop_reason="tool_calls",
+            ),
+            LLMResponse(
+                id="resp-2",
+                request_id="",
+                invocation_id="",
+                assistant_message=LLMMessage(role="assistant", content="done"),
+            ),
+        ]
+    )
+    tools = [
+        ToolDefinition(
+            name="list_job_descriptions",
+            description="List JDs.",
+            schema=ToolSchema(name="list_job_descriptions", description="List JDs.", input_schema={"type": "object"}),
+            handler=FunctionToolHandler(lambda args: {"jobs": [{"title": "AI PM"}]}),
+            metadata={"requires_confirmation": True},
+        ),
+        ToolDefinition(
+            name="read_memory",
+            description="Read memory.",
+            schema=ToolSchema(name="read_memory", description="Read memory.", input_schema={"type": "object"}),
+            handler=FunctionToolHandler(lambda args: {"memories": ["prior JD note"]}),
+        ),
+    ]
+    engine = InteractionEngine(InteractionEngineConfig(conversation_id="conv-durable-sibling-tools", provider=provider, tools=tools))
+
+    first_outputs = list(engine.submitMessage("inspect workspace"))
+    permission = next(item for item in first_outputs if item.type == "permission_requested")
+    checkpoint = engine.checkpoint_state()
+    pending = checkpoint["pending_permissions"][0]
+    assert pending["remaining_tool_calls"][0]["name"] == "read_memory"
+
+    rebuilt = InteractionEngine(
+        InteractionEngineConfig(
+            conversation_id="conv-durable-sibling-tools",
+            provider=provider,
+            tools=tools,
+            transcript=transcript_from_checkpoint("conv-durable-sibling-tools", checkpoint),
+        )
+    )
+    continued_outputs = list(rebuilt.resolvePermission(approved=True))
+
+    assert rebuilt.pending_permission is None
+    assert any(item.type == "assistant_message_completed" and item.data["message"] == "done" for item in continued_outputs)
+    assert provider.captured_requests[1].turn_id == permission.turn_id
+    assert [message.tool_use_id for message in provider.captured_requests[1].messages[-2:]] == ["call-approval", "call-read"]
+
+
 def test_engine_passes_llm_request_options_to_provider() -> None:
     provider = FixtureLLMProvider(
         responses=[
