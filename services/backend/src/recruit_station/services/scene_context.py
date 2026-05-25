@@ -1531,6 +1531,16 @@ def _scene_tool_registry(
                 if precheck is not None:
                     return precheck
                 result = _original_handler(arguments)
+                recovered_result = _recover_jd_sync_browser_snapshot_from_existing_boss_tab(
+                    tool_name=_tool_name,
+                    arguments=arguments,
+                    result=result,
+                    request=request,
+                    browser_semantics=browser_semantics,
+                    original_handler=_original_handler,
+                )
+                if recovered_result is not None:
+                    result = recovered_result
                 _record_scene_browser_observation(
                     browser_semantics,
                     tool_name=_tool_name,
@@ -2825,6 +2835,82 @@ def _mask_scene_browser_target_mismatch(
         "targetOrigin": target_origin,
         "observedUrl": observed_url,
     }
+
+
+def _recover_jd_sync_browser_snapshot_from_existing_boss_tab(
+    *,
+    tool_name: str,
+    arguments: dict[str, Any],
+    result: Any,
+    request: dict[str, Any],
+    browser_semantics: dict[str, Any],
+    original_handler: Any,
+) -> Any | None:
+    if tool_name != "browser_snapshot":
+        return None
+    if not _is_jd_sync_result_contract(_as_dict(request.get("output_contract"))) or not _is_recruiting_site_target(request):
+        return None
+    if not _scene_observation_result_is_valid(result):
+        return None
+    target_origin = _scene_target_origin(request)
+    if target_origin is None:
+        return None
+    observed_url = _browser_result_url(result)
+    if observed_url is None or _scene_url_matches_target_origin(observed_url, target_origin=target_origin, request=request):
+        return None
+    target = _preferred_existing_boss_recruiting_tab(browser_semantics, request=request)
+    tab_id = _optional_int(target.get("tabId") or target.get("tab_id")) if target is not None else None
+    if tab_id is None:
+        return None
+    recovery_arguments = dict(arguments or {})
+    recovery_arguments["tabId"] = tab_id
+    recovery_arguments.setdefault("expectedHost", "www.zhipin.com")
+    recovery_arguments.setdefault("expectedOrigin", "https://www.zhipin.com")
+    recovery_arguments.setdefault("targetPolicy", "same-origin")
+    recovered = original_handler(recovery_arguments)
+    if not _scene_observation_result_is_valid(recovered):
+        return None
+    recovered_url = _browser_result_url(recovered) if isinstance(recovered, dict) else None
+    if recovered_url is None or not _scene_url_matches_target_origin(recovered_url, target_origin=target_origin, request=request):
+        return None
+    return recovered
+
+
+def _preferred_existing_boss_recruiting_tab(browser_semantics: dict[str, Any], *, request: dict[str, Any]) -> dict[str, Any] | None:
+    target_origin = _scene_target_origin(request)
+    if target_origin is None:
+        return None
+    candidates: list[tuple[int, int, dict[str, Any]]] = []
+    for index, tab in enumerate((browser_semantics.get("tabs") or {}).values()):
+        if not isinstance(tab, dict):
+            continue
+        url = _optional_string(tab.get("url"))
+        if not url or not _scene_url_matches_target_origin(url, target_origin=target_origin, request=request):
+            continue
+        priority = _boss_recruiting_tab_priority(url)
+        if priority is None:
+            continue
+        candidates.append((priority, index, tab))
+    if not candidates:
+        return None
+    return sorted(candidates, key=lambda item: (item[0], item[1]))[0][2]
+
+
+def _boss_recruiting_tab_priority(url: str) -> int | None:
+    parsed = urlparse(str(url or ""))
+    host = (parsed.hostname or "").lower()
+    if not _host_matches_target_domain(host, "zhipin.com"):
+        return None
+    path = parsed.path.rstrip("/") or "/"
+    if path == "/web/chat/job/list":
+        return 0
+    if path == "/web/chat/index":
+        return 1
+    if path == "/web/geek/recommend":
+        return 2
+    if path == "/web/geek/search":
+        return 3
+    return None
 
 
 def _browser_result_url(result: dict[str, Any]) -> str | None:

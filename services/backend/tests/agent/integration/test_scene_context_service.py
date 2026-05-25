@@ -1960,6 +1960,167 @@ def test_scene_context_forces_jd_sync_snapshot_after_only_job_tab_identification
     assert "output_contract_incomplete" not in json.dumps(result["blockers"], ensure_ascii=False)
 
 
+def test_scene_context_recovers_jd_sync_snapshot_from_existing_zhipin_tab_when_active_tab_is_local(
+    tmp_path: Path,
+) -> None:
+    session_factory = _session_factory(tmp_path)
+    snapshot_calls: list[dict[str, object]] = []
+    provider = ScriptedProvider(
+        provider_name="scene-scripted",
+        responses=[
+            LLMResponse(tool_calls=[ToolCall(id="tabs", name="browser_list_tabs", arguments={})], finish_reason="tool_calls"),
+            LLMResponse(tool_calls=[ToolCall(id="snapshot", name="browser_snapshot", arguments={})], finish_reason="tool_calls"),
+            LLMResponse(content="job tab observed", result_data={"status": "completed", "summary": "job tab observed"}),
+        ],
+    )
+    tools = ToolRegistry()
+    tools.register(
+        ToolDefinition(
+            name="browser_list_tabs",
+            description="List browser tabs.",
+            parameters={"type": "object", "properties": {}, "additionalProperties": True},
+            handler=lambda arguments: {
+                "success": True,
+                "tabs": [
+                    {"tabId": 1, "url": "http://127.0.0.1:5174/", "title": "RecruitStation", "active": True},
+                    {"tabId": 9, "url": "https://www.zhipin.com/web/chat/job/list", "title": "职位管理", "active": False},
+                    {"tabId": 10, "url": "https://www.zhipin.com/web/chat/index", "title": "沟通", "active": False},
+                ],
+            },
+            metadata={"capabilities": ["browser", "document"], "external_tool": True, "real_environment": True},
+        )
+    )
+    tools.register(
+        ToolDefinition(
+            name="browser_snapshot",
+            description="Observe browser page.",
+            parameters={"type": "object", "properties": {}, "additionalProperties": True},
+            handler=lambda arguments: snapshot_calls.append(dict(arguments))
+            or (
+                {
+                    "success": True,
+                    "tabId": 9,
+                    "url": "https://www.zhipin.com/web/chat/job/list",
+                    "title": "职位管理",
+                    "text": "职位管理 全部职位 开放中 待开放 审核不通过 已关闭 产品实习生",
+                    "elements": [{"ref": "job-row-1", "text": "产品实习生", "role": "link", "kind": "job_row"}],
+                }
+                if arguments.get("tabId") == 9
+                else {"success": True, "tabId": 1, "url": "http://127.0.0.1:5174/", "title": "RecruitStation"}
+            ),
+            metadata={"capabilities": ["browser", "document"], "external_tool": True, "real_environment": True},
+        )
+    )
+    service = SceneContextService(
+        session_factory=session_factory,
+        provider=provider,
+        tool_registry=tools,
+        plugin_host=PluginHost(),
+    )
+
+    result = service.delegate(
+        {
+            "instruction": "Return JD sync scene result JSON.",
+            "context": {"plan_kind": "jd_sync"},
+            "preferred_capabilities": ["browser"],
+            "browser_target": {"url": "https://www.zhipin.com/"},
+            "output_contract": {"contract_kind": "jd_sync"},
+        }
+    )
+
+    assert result["status"] == "completed"
+    assert snapshot_calls == [
+        {},
+        {
+            "tabId": 9,
+            "expectedHost": "www.zhipin.com",
+            "expectedOrigin": "https://www.zhipin.com",
+            "targetPolicy": "same-origin",
+        },
+    ]
+    assert all("url" not in call for call in snapshot_calls)
+    assert "browser_open_tab" not in json.dumps(result, ensure_ascii=False)
+    with session_factory() as session:
+        episode = session.query(ExecutionEpisode).one()
+        mismatch_results = [
+            item
+            for item in episode.observations
+            if item["type"] == "tool_event"
+            and item["payload"]["kind"] == "tool_result_ready"
+            and item["payload"]["tool_name"] == "browser_snapshot"
+            and item["payload"]["content"].get("error") == "scene_browser_target_mismatch"
+        ]
+        assert mismatch_results == []
+
+
+def test_scene_context_keeps_jd_sync_target_mismatch_blocked_when_no_existing_zhipin_tab(
+    tmp_path: Path,
+) -> None:
+    session_factory = _session_factory(tmp_path)
+    snapshot_calls: list[dict[str, object]] = []
+    provider = ScriptedProvider(
+        provider_name="scene-scripted",
+        responses=[
+            LLMResponse(tool_calls=[ToolCall(id="tabs", name="browser_list_tabs", arguments={})], finish_reason="tool_calls"),
+            LLMResponse(tool_calls=[ToolCall(id="snapshot", name="browser_snapshot", arguments={})], finish_reason="tool_calls"),
+            LLMResponse(content="target mismatch", result_data={"status": "blocked", "summary": "target mismatch"}),
+        ],
+    )
+    tools = ToolRegistry()
+    tools.register(
+        ToolDefinition(
+            name="browser_list_tabs",
+            description="List browser tabs.",
+            parameters={"type": "object", "properties": {}, "additionalProperties": True},
+            handler=lambda arguments: {
+                "success": True,
+                "tabs": [{"tabId": 1, "url": "http://127.0.0.1:5174/", "title": "RecruitStation", "active": True}],
+            },
+            metadata={"capabilities": ["browser", "document"], "external_tool": True, "real_environment": True},
+        )
+    )
+    tools.register(
+        ToolDefinition(
+            name="browser_snapshot",
+            description="Observe browser page.",
+            parameters={"type": "object", "properties": {}, "additionalProperties": True},
+            handler=lambda arguments: snapshot_calls.append(dict(arguments))
+            or {"success": True, "tabId": 1, "url": "http://127.0.0.1:5174/", "title": "RecruitStation"},
+            metadata={"capabilities": ["browser", "document"], "external_tool": True, "real_environment": True},
+        )
+    )
+    service = SceneContextService(
+        session_factory=session_factory,
+        provider=provider,
+        tool_registry=tools,
+        plugin_host=PluginHost(),
+    )
+
+    result = service.delegate(
+        {
+            "instruction": "Return JD sync scene result JSON.",
+            "context": {"plan_kind": "jd_sync"},
+            "preferred_capabilities": ["browser"],
+            "browser_target": {"url": "https://www.zhipin.com/"},
+            "output_contract": {"contract_kind": "jd_sync"},
+        }
+    )
+
+    assert result["status"] == "blocked"
+    assert snapshot_calls == [{}]
+    with session_factory() as session:
+        episode = session.query(ExecutionEpisode).one()
+        blocked_results = [
+            item
+            for item in episode.observations
+            if item["type"] == "tool_event"
+            and item["payload"]["kind"] == "tool_result_ready"
+            and item["payload"]["tool_name"] == "browser_snapshot"
+            and item["payload"]["content"].get("error") == "scene_browser_target_mismatch"
+        ]
+        assert blocked_results
+
+
 def test_scene_context_allows_jd_sync_completed_job_detail_result(tmp_path: Path) -> None:
     session_factory = _session_factory(tmp_path)
     final_payload = {
