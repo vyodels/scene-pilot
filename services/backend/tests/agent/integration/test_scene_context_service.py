@@ -2313,6 +2313,124 @@ def test_jd_sync_snapshot_extracts_live_boss_title_link_and_bound_edit_from_clic
     assert "main-job-management" not in action_dump
 
 
+def test_scene_context_jd_sync_evidence_uses_raw_snapshot_before_clickables_compaction(
+    tmp_path: Path,
+) -> None:
+    session_factory = _session_factory(tmp_path)
+    provider = ScriptedProvider(
+        provider_name="scene-scripted",
+        responses=[
+            LLMResponse(tool_calls=[ToolCall(id="snapshot", name="browser_snapshot", arguments={})], finish_reason="tool_calls"),
+            LLMResponse(content="job list observed", result_data={"status": "completed", "summary": "job list observed"}),
+        ],
+    )
+    topbar_clickables = [
+        {"ref": "@e1", "tag": "a", "role": "link", "text": "招聘规范", "viewport": {"top": 28, "left": 1010, "width": 64, "height": 20}},
+        {"ref": "@e2", "tag": "a", "role": "link", "text": "我的客服", "viewport": {"top": 28, "left": 1090, "width": 64, "height": 20}},
+        {"ref": "@e3", "tag": "a", "role": "link", "text": "面试", "viewport": {"top": 28, "left": 1170, "width": 32, "height": 20}},
+        {"ref": "@e4", "tag": "a", "role": "link", "text": "招聘数据 1", "viewport": {"top": 28, "left": 1230, "width": 80, "height": 20}},
+    ]
+    filler_clickables = [
+        {
+            "ref": f"@filler-{index}",
+            "tag": "span",
+            "role": "text",
+            "text": f"占位 {index}",
+            "viewport": {"top": 80 + index, "left": 220, "width": 40, "height": 18},
+        }
+        for index in range(20)
+    ]
+    raw_clickables = [
+        *topbar_clickables,
+        *filler_clickables,
+        {
+            "ref": "@e23",
+            "tag": "a",
+            "role": "link",
+            "text": "产品实习生",
+            "href": "javascript:;",
+            "viewport": {"top": 187, "left": 287, "width": 88, "height": 22},
+            "inViewport": True,
+        },
+        {
+            "ref": "@e27",
+            "tag": "a",
+            "role": "link",
+            "text": "编辑",
+            "href": "javascript:;",
+            "parentRef": "@e23",
+            "viewport": {"top": 201, "left": 1283, "width": 28, "height": 20},
+            "inViewport": True,
+        },
+        {
+            "ref": "@e28",
+            "tag": "button",
+            "role": "button",
+            "text": "关闭",
+            "parentRef": "@e23",
+            "viewport": {"top": 201, "left": 1320, "width": 28, "height": 20},
+            "inViewport": True,
+        },
+    ]
+    tools = ToolRegistry()
+    tools.register(
+        ToolDefinition(
+            name="browser_snapshot",
+            description="Observe browser page.",
+            parameters={"type": "object", "properties": {}, "additionalProperties": True},
+            handler=lambda arguments: {
+                "success": True,
+                "tabId": 1136767565,
+                "snapshot": {
+                    "url": "https://www.zhipin.com/web/chat/job/list",
+                    "title": "职位管理",
+                    "text": "招聘规范 我的客服 面试 招聘数据 1",
+                    "clickables": raw_clickables,
+                },
+            },
+            metadata={"capabilities": ["browser", "document"], "external_tool": True, "real_environment": True},
+        )
+    )
+    service = SceneContextService(
+        session_factory=session_factory,
+        provider=provider,
+        tool_registry=tools,
+        plugin_host=PluginHost(),
+    )
+
+    result = service.delegate(
+        {
+            "instruction": "Return JD sync scene result JSON.",
+            "context": {"plan_kind": "jd_sync"},
+            "preferred_capabilities": ["browser"],
+            "browser_target": {"url": "https://www.zhipin.com/", "tabId": 1136767565},
+            "output_contract": {"contract_kind": "jd_sync", "result_data_required": True},
+        }
+    )
+
+    assert result["status"] == "incomplete"
+    assert result["result_data"]["observed_jobs"][0]["title"] == "产品实习生"
+    assert result["result_data"]["pending_jobs"][0]["title"] == "产品实习生"
+    assert any(
+        item["label"] == "编辑" and item.get("bound_ref") == "@e23"
+        for item in result["result_data"]["action_candidates"]
+    )
+    assert "关闭" not in json.dumps(result["result_data"]["action_candidates"], ensure_ascii=False)
+    with session_factory() as session:
+        episode = session.query(ExecutionEpisode).one()
+        snapshot_payload = next(
+            item["payload"]
+            for item in episode.observations
+            if item["type"] == "tool_event"
+            and item["payload"]["kind"] == "tool_result_ready"
+            and item["payload"]["tool_name"] == "browser_snapshot"
+        )
+        stored_clickables = snapshot_payload["content"]["snapshot"]["clickables"]
+    assert stored_clickables == [*topbar_clickables, "... 23 more items omitted"]
+    assert "产品实习生" not in json.dumps(snapshot_payload["content"], ensure_ascii=False)
+    assert snapshot_payload["jd_sync_browser_evidence_delta"]["observed_jobs"][0]["title"] == "产品实习生"
+
+
 @pytest.mark.parametrize("url,title", [
     ("https://www.zhipin.com/web/geek/recommend", "推荐牛人"),
     ("https://www.zhipin.com/web/geek/search", "搜索"),

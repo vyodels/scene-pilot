@@ -1493,12 +1493,29 @@ def _is_actionable_browser_item(value: Any) -> bool:
 
 
 def _runtime_output_event(output: InteractionOutput) -> dict[str, Any]:
+    payload = _compact_value(dict(output.data or {}))
+    if isinstance(payload, dict):
+        _attach_jd_sync_browser_evidence_delta(payload, dict(output.data or {}))
     return {
         "type": output.type,
         "engine_output_seq": output.seq,
-        "payload": _compact_value(dict(output.data or {})),
+        "payload": payload,
         "recorded_at": utcnow().isoformat(),
     }
+
+
+def _attach_jd_sync_browser_evidence_delta(payload: dict[str, Any], raw_data: dict[str, Any]) -> None:
+    if str(raw_data.get("kind") or "") != "tool_result_ready":
+        return
+    tool_name = str(raw_data.get("tool_name") or "").strip()
+    if tool_name not in _SCENE_BROWSER_PAGE_OBSERVATION_TOOL_NAMES:
+        return
+    content = raw_data.get("content")
+    if not isinstance(content, dict) or not _tool_result_content_succeeded(content):
+        return
+    delta = _jd_sync_browser_evidence_delta_from_snapshot(content)
+    if delta:
+        payload["jd_sync_browser_evidence_delta"] = delta
 
 
 def _scene_tool_registry(
@@ -4192,10 +4209,12 @@ def _jd_sync_browser_evidence_delta_from_episode(episode: Any) -> dict[str, Any]
         tool_name = str(payload.get("tool_name") or "").strip()
         if tool_name not in _SCENE_BROWSER_PAGE_OBSERVATION_TOOL_NAMES:
             continue
-        content = payload.get("content")
-        if not isinstance(content, dict):
-            continue
-        delta = _jd_sync_browser_evidence_delta_from_snapshot(content)
+        delta = _as_dict(payload.get("jd_sync_browser_evidence_delta"))
+        if not delta:
+            content = payload.get("content")
+            if not isinstance(content, dict):
+                continue
+            delta = _jd_sync_browser_evidence_delta_from_snapshot(content)
         observed_jobs = _merge_unique_dict_list(observed_jobs, delta.get("observed_jobs"))
         pending_jobs = _merge_unique_dict_list(pending_jobs, delta.get("pending_jobs"))
         action_candidates = _merge_unique_dict_list(action_candidates, delta.get("action_candidates"))
