@@ -30,6 +30,7 @@ from recruit_station.product_adapters.target_contracts import derive_browser_tar
 from recruit_station.capabilities.tools import ToolDefinition, ToolRegistry, is_scene_context_tool
 from recruit_station.services.jd_sync_contract import (
     is_jd_sync_contract,
+    jd_sync_scene_output_contract,
     normalize_jd_sync_scene_result,
 )
 
@@ -574,6 +575,21 @@ def _normalize_scene_request(
     approval_policy = _as_dict(arguments.get("approval_policy"))
     context = _as_dict(arguments.get("context"))
     input_payload = _as_dict(arguments.get("input"))
+    if _raw_scene_arguments_indicate_jd_sync(
+        arguments=arguments,
+        context=context,
+        environment_requirements=environment_requirements,
+        output_contract=output_contract,
+    ):
+        output_contract = {
+            **jd_sync_scene_output_contract(
+                sync_mode=str(context.get("sync_mode") or "").strip().lower(),
+                max_job_descriptions=_optional_int(context.get("max_job_descriptions")),
+            ),
+            **output_contract,
+            "contract_kind": "jd_sync",
+            "result_data_required": True,
+        }
     anti_detection_policy = _merge_policy_dicts(
         default_anti_detection_policy,
         context.get("anti_detection_policy"),
@@ -665,6 +681,41 @@ def _normalize_scene_request(
     }
 
 
+def _raw_scene_arguments_indicate_jd_sync(
+    *,
+    arguments: dict[str, Any],
+    context: dict[str, Any],
+    environment_requirements: dict[str, Any],
+    output_contract: dict[str, Any],
+) -> bool:
+    if is_jd_sync_contract(output_contract):
+        return True
+    candidates = (
+        arguments.get("agent_kind"),
+        context.get("agent_kind"),
+        context.get("sync_mode"),
+        context.get("scope_kind"),
+        environment_requirements.get("plan_kind"),
+        environment_requirements.get("agent_kind"),
+        environment_requirements.get("sync_mode"),
+    )
+    for value in candidates:
+        if str(value or "").strip().lower() in {"jd_sync", "job_description_sync", "recruiting_jd_sync", "single_jd_probe"}:
+            return True
+    if str(context.get("plan_kind") or "").strip().lower() in {"jd_sync", "job_description_sync", "recruiting_jd_sync"}:
+        return any(
+            key in context
+            for key in (
+                "jd_sync_state",
+                "jd_sync_action_plan",
+                "action_plan",
+                "max_job_descriptions",
+                "sync_mode",
+            )
+        )
+    return False
+
+
 def _build_scene_instruction(request: dict[str, Any]) -> str:
     parts = [
         request["instruction"],
@@ -743,7 +794,7 @@ def _build_scene_instruction(request: dict[str, Any]) -> str:
             "必须先调用 browser_snapshot 或同等页面观察工具读取岗位列表、岗位详情或明确不可观察原因；"
             "没有岗位列表/详情页面观察证据时，最终结果只能是结构化 not_completed/blocked，reason=jd_sync_requires_job_list_snapshot_or_detail，"
             "observed_jobs/completed_job_details 必须为空且不得写入 JD。"
-            "招聘站点页面恢复/导航点击必须使用 browser 观察到的 BOSS 主导航可见入口：职位管理、推荐牛人、搜索、沟通；"
+            "招聘站点页面恢复/导航点击必须使用 browser 观察到的 BOSS 主导航可见入口；"
             "JD sync 从非 JD 页面恢复时只能点击职位管理，不得点击推荐牛人、搜索或沟通作为恢复入口。"
             "招聘规范、我的客服、招聘数据、新建分组、+ 分组控件、候选人/聊天控件等不得作为页面恢复/导航入口。"
             "BOSS/zhipin 页面识别锚点：职位管理页包含标题 职位管理、页签 全部职位/开放中/待开放/审核不通过/已关闭、截图示例职位卡如 产品实习生 与 北京/经验不限/本科/2-4K/全职/开放中；"

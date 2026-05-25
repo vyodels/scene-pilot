@@ -644,6 +644,124 @@ def test_jd_sync_scene_consumes_outcome_action_candidate_without_browser_sidecar
     assert execution["reason"] == "safe_action_candidate_entered_detail_or_edit"
 
 
+def test_jd_sync_scene_defaults_missing_output_contract_and_consumes_action_candidate(tmp_path: Path) -> None:
+    session_factory = _session_factory(tmp_path)
+    provider = ScriptedProvider(
+        provider_name="scene-scripted",
+        responses=[
+            LLMResponse(
+                tool_calls=[ToolCall(id="snap-1", name="browser_snapshot", arguments={"tabId": 1136767565})],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                content="仍需进入职位详情读取职责和要求。",
+                result_data={
+                    "status": "in_progress",
+                    "observed_jobs": [{"external_id": "e23", "title": "产品实习生"}],
+                    "pending_jobs": [{"external_id": "e23", "title": "产品实习生"}],
+                    "action_candidates": [
+                        {
+                            "kind": "open_job_detail_or_safe_edit",
+                            "tool_name": "hid_action",
+                            "label": "编辑",
+                            "ref": "edit-e23",
+                            "bound_ref": "e23",
+                            "target": {"host": "www.zhipin.com", "tabId": 1136767565},
+                            "primitives": [
+                                {
+                                    "type": "click",
+                                    "at": {"x": 760, "y": 220},
+                                    "button": "left",
+                                    "label": "编辑",
+                                    "ref": "edit-e23",
+                                }
+                            ],
+                        }
+                    ],
+                },
+            ),
+        ],
+    )
+    hid_calls: list[dict[str, object]] = []
+    snapshot_calls: list[dict[str, object]] = []
+
+    def _browser_snapshot(arguments: dict[str, object]) -> dict[str, object]:
+        snapshot_calls.append(dict(arguments))
+        if len(snapshot_calls) == 1:
+            return {
+                "success": True,
+                "tabId": 1136767565,
+                "snapshot": {
+                    "url": "https://www.zhipin.com/web/chat/job/list?ka=menu-manager-job",
+                    "title": "职位管理",
+                    "text": "职位管理 全部职位 开放中 产品实习生 北京 经验不限 本科 2-4K 全职 开放中",
+                    "clickables": [],
+                },
+            }
+        return {
+            "success": True,
+            "tabId": 1136767565,
+            "snapshot": {
+                "url": "https://www.zhipin.com/web/chat/job/edit?encryptId=e23",
+                "title": "编辑职位 - 产品实习生",
+                "text": "编辑职位 产品实习生 职位描述 负责产品需求分析和跨团队协作 任职要求 本科以上，沟通能力好",
+                "clickables": [],
+            },
+        }
+
+    tools = ToolRegistry()
+    tools.register(
+        ToolDefinition(
+            name="browser_snapshot",
+            description="Snapshot.",
+            parameters={"type": "object", "additionalProperties": True},
+            handler=_browser_snapshot,
+            external_target=True,
+            metadata={"capabilities": ["browser"], "external_tool": True, "real_environment": True},
+        )
+    )
+    tools.register(
+        ToolDefinition(
+            name="hid_action",
+            description="HID.",
+            parameters={"type": "object", "additionalProperties": True},
+            handler=lambda arguments: hid_calls.append(dict(arguments)) or {"ok": True},
+            external_target=True,
+            metadata={"capabilities": ["computer"], "external_tool": True, "real_environment": True},
+        )
+    )
+    service = SceneContextService(
+        session_factory=session_factory,
+        provider=provider,
+        tool_registry=tools,
+        plugin_host=PluginHost(),
+    )
+
+    result = service.delegate(
+        {
+            "title": "BOSS JD sync",
+            "instruction": "同步 BOSS 职位详情。",
+            "preferred_capabilities": ["browser", "computer"],
+            "browser_target": {
+                "url": "https://www.zhipin.com/web/chat/index",
+                "host": "www.zhipin.com",
+                "domain": "zhipin.com",
+                "tabId": 1136767565,
+            },
+            "context": {"plan_kind": "jd_sync", "sync_mode": "full"},
+        }
+    )
+
+    assert [call["primitives"][0]["label"] for call in hid_calls] == ["编辑"]
+    assert len(snapshot_calls) == 2
+    assert result["result_data"]["action_candidates"][0]["label"] == "编辑"
+    assert result["result_data"]["jd_sync_candidate_execution"]["reason"] == "safe_action_candidate_entered_detail_or_edit"
+    with session_factory() as session:
+        task_spec = session.query(TaskSpec).one()
+        assert task_spec.output_contract["contract_kind"] == "jd_sync"
+        assert task_spec.output_contract["result_data_required"] is True
+
+
 def test_jd_sync_scene_does_not_execute_forbidden_action_plan_candidate(tmp_path: Path) -> None:
     session_factory = _session_factory(tmp_path)
     provider = ScriptedProvider(
@@ -1365,9 +1483,12 @@ def test_scene_context_prompt_requires_zhipin_same_site_recovery_before_jd_sync_
     assert "公共首页上的求职职位列表、城市职位列表或搜索结果不得作为 employer JD sync 完成证据" in rendered_prompt
     assert "不得硬编码站点选择器" in rendered_prompt
     assert "不得通过浏览器地址栏、直接输入 URL 或 browser 导航工具跳转" in rendered_prompt
-    assert "招聘站点页面恢复/导航点击必须使用 browser 观察到的 BOSS 主导航可见入口：职位管理、推荐牛人、搜索、沟通" in rendered_prompt
+    assert "招聘站点页面恢复/导航点击必须使用 browser 观察到的 BOSS 主导航可见入口；" in rendered_prompt
     assert "职位管理页包含标题 职位管理、页签 全部职位/开放中/待开放/审核不通过/已关闭" in rendered_prompt
     assert "JD sync 只读职位信息，不点击 发布职位、关闭、升级、曝光刷新" in rendered_prompt
+    assert "JD sync 从非 JD 页面恢复时只能点击职位管理" in rendered_prompt
+    assert "职位管理、推荐牛人、搜索、沟通" not in rendered_prompt
+    assert "侧边栏" + "语义" not in rendered_prompt
     assert "推荐牛人页包含标题 推荐牛人、推荐/最新、JD 选择器示例如 产品实习生_北京 2-4K" in rendered_prompt
     assert "实际职位标题、城市、薪资和关键词以本次启用/选中 JD 为准" in rendered_prompt
     assert "不得为了匹配截图示例而跨 JD" in rendered_prompt

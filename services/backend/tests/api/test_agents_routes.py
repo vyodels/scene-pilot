@@ -251,7 +251,8 @@ def test_jd_sync_run_requires_only_saved_entry_url(tmp_path, monkeypatch) -> Non
     assert "如果 browser-mcp/native host 无法观察已有 BOSS 页签或招聘管理页签，不得新建 BOSS/zhipin 页签" in runtime_metadata["instruction"]
     assert "Cmd+L 聚焦地址栏" not in runtime_metadata["instruction"]
     assert "BOSS/zhipin 主导航锚点与禁区：" in runtime_metadata["instruction"]
-    assert "顶层页面入口只允许使用 BOSS 主导航可见入口：职位管理、推荐牛人、搜索、沟通" in runtime_metadata["instruction"]
+    assert "JD sync 只允许通过 BOSS 主导航“职位管理”恢复入口" in runtime_metadata["instruction"]
+    assert "职位管理、推荐牛人、搜索、沟通" not in runtime_metadata["instruction"]
     assert "BOSS/zhipin 恢复不得打开新标签/新窗口，不得使用地址栏输入 URL" in runtime_metadata["instruction"]
     assert "多个 zhipin.com 页签同时存在时，优先恢复到已打开的 BOSS 招聘管理工作台页签" in runtime_metadata["instruction"]
     assert "不要新开另一个 zhipin 页签" in runtime_metadata["instruction"]
@@ -1093,7 +1094,8 @@ def test_workspace_start_creates_run_from_saved_automation_config(tmp_path, monk
     compiled_sop = constraints["execution_sop"]["compiledPrompt"]
     assert "招聘网站目标网页 URL：https://www.zhipin.com/web/geek/job" in compiled_sop
     assert "## BOSS/zhipin 主导航锚点与禁区" in compiled_sop
-    assert "顶层页面入口只允许使用 BOSS 主导航可见入口：职位管理、推荐牛人、搜索、沟通" in compiled_sop
+    assert "JD sync 只允许通过 BOSS 主导航“职位管理”恢复入口" in compiled_sop
+    assert "职位管理、推荐牛人、搜索、沟通" not in compiled_sop
     assert "BOSS/zhipin 恢复不得打开新标签/新窗口，不得使用地址栏输入 URL" in compiled_sop
     assert "多个 zhipin.com 页签同时存在时，优先恢复到已打开的 BOSS 招聘管理工作台页签" in compiled_sop
     assert "不要新开另一个 zhipin 页签" in compiled_sop
