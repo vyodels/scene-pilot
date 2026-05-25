@@ -332,10 +332,22 @@ class SceneContextService:
                 timeout_seconds=scene_turn_timeout_seconds,
             )
             blockers = _collect_blockers(last_outcome, engine_events)
-        raw_blockers = _collect_blockers(last_outcome, engine_events, ignore_recovered=False)
-        if not _is_workspace_paused_outcome(last_outcome) and _should_retry_scene_for_incomplete_progress(
+        jd_sync_candidate_execution = _force_jd_sync_safe_action_candidate_execution_if_needed(
+            request=request,
+            scene_tool_registry=scene_tool_registry,
+            engine_events=engine_events,
+            browser_semantics=browser_semantics,
             outcome=last_outcome,
-            blockers=raw_blockers,
+            blockers=blockers,
+        )
+        raw_blockers = _collect_blockers(last_outcome, engine_events, ignore_recovered=False)
+        if (
+            jd_sync_candidate_execution is None
+            and not _is_workspace_paused_outcome(last_outcome)
+            and _should_retry_scene_for_incomplete_progress(
+                outcome=last_outcome,
+                blockers=raw_blockers,
+            )
         ):
             last_outcome = _scene_outcome_from_engine_with_timeout(
                 engine=engine,
@@ -346,13 +358,6 @@ class SceneContextService:
                 timeout_seconds=scene_turn_timeout_seconds,
             )
             blockers = _collect_blockers(last_outcome, engine_events)
-        jd_sync_candidate_execution = _force_jd_sync_safe_action_candidate_execution_if_needed(
-            request=request,
-            scene_tool_registry=scene_tool_registry,
-            engine_events=engine_events,
-            browser_semantics=browser_semantics,
-            blockers=blockers,
-        )
         jd_sync_observation_repair = _force_jd_sync_job_management_snapshot_if_needed(
             request=request,
             scene_tool_registry=scene_tool_registry,
@@ -1836,6 +1841,7 @@ def _force_jd_sync_safe_action_candidate_execution_if_needed(
     scene_tool_registry: ToolRegistry,
     engine_events: list[dict[str, Any]],
     browser_semantics: dict[str, Any],
+    outcome: AgentTurnOutcome,
     blockers: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any] | None:
     if not _is_jd_sync_result_contract(_as_dict(request.get("output_contract"))):
@@ -1847,7 +1853,10 @@ def _force_jd_sync_safe_action_candidate_execution_if_needed(
     if _has_successful_tool_result(engine_events, "hid_action"):
         return None
 
-    delta = _jd_sync_browser_evidence_delta_from_events(engine_events)
+    delta = _merge_jd_sync_candidate_deltas(
+        _jd_sync_browser_evidence_delta_from_events(engine_events),
+        _jd_sync_outcome_evidence_delta(outcome, output_contract=_as_dict(request.get("output_contract"))),
+    )
     pending_jobs = _list_of_dicts(delta.get("pending_jobs"))
     if not pending_jobs:
         return None
@@ -2004,6 +2013,51 @@ def _jd_sync_browser_evidence_delta_from_events(events: list[dict[str, Any]]) ->
     }
 
 
+def _jd_sync_outcome_evidence_delta(outcome: AgentTurnOutcome, *, output_contract: dict[str, Any]) -> dict[str, Any]:
+    result_data = _scene_result_data(outcome, output_contract=output_contract)
+    if not result_data:
+        return {}
+    normalized = _normalize_scene_result_contract_data(result_data, output_contract)
+    normalized = normalize_jd_sync_scene_result(normalized, output_contract)
+    return {
+        key: value
+        for key, value in {
+            "observed_jobs": _list_of_dicts(normalized.get("observed_jobs")),
+            "pending_jobs": _list_of_dicts(normalized.get("pending_jobs")),
+            "action_candidates": _list_of_dicts(normalized.get("action_candidates")),
+            "evidence_refs": _list_of_dicts(normalized.get("evidence_refs")),
+            "recovery": _as_dict(normalized.get("recovery")),
+        }.items()
+        if value not in (None, [], {})
+    }
+
+
+def _merge_jd_sync_candidate_deltas(*deltas: dict[str, Any]) -> dict[str, Any]:
+    observed_jobs: list[dict[str, Any]] = []
+    pending_jobs: list[dict[str, Any]] = []
+    action_candidates: list[dict[str, Any]] = []
+    evidence_refs: list[dict[str, Any]] = []
+    recovery: dict[str, Any] = {}
+    for delta in deltas:
+        payload = _as_dict(delta)
+        observed_jobs = _merge_unique_dict_list(observed_jobs, payload.get("observed_jobs"))
+        pending_jobs = _merge_unique_dict_list(pending_jobs, payload.get("pending_jobs"))
+        action_candidates = _merge_unique_dict_list(action_candidates, payload.get("action_candidates"))
+        evidence_refs = _merge_unique_dict_list(evidence_refs, payload.get("evidence_refs"))
+        recovery = {**recovery, **_as_dict(payload.get("recovery"))}
+    return {
+        key: value
+        for key, value in {
+            "observed_jobs": observed_jobs,
+            "pending_jobs": pending_jobs,
+            "action_candidates": action_candidates,
+            "evidence_refs": evidence_refs,
+            "recovery": recovery,
+        }.items()
+        if value not in (None, [], {})
+    }
+
+
 def _safe_jd_sync_action_candidates_for_execution(
     *,
     request: dict[str, Any],
@@ -2076,6 +2130,14 @@ def _jd_sync_hid_arguments_from_action_candidate(candidate: dict[str, Any]) -> d
         return {}
     target = _as_dict(candidate.get("target"))
     source_url = _optional_string(candidate.get("source_url") or candidate.get("url") or candidate.get("href"))
+    target_host = _optional_string(target.get("host"))
+    target_url = _optional_string(target.get("url"))
+    if not (
+        _host_matches_target_domain(_hostname_part(target_host), "zhipin.com")
+        or _host_matches_target_domain(_host_from_url(target_url), "zhipin.com")
+        or _host_matches_target_domain(_host_from_url(source_url), "zhipin.com")
+    ):
+        return {}
     if not target:
         target = {}
     target.setdefault("host", "www.zhipin.com")
@@ -2096,7 +2158,7 @@ def _jd_sync_hid_arguments_from_action_candidate(candidate: dict[str, Any]) -> d
             if candidate.get(key) not in (None, "", [], {})
         },
     }
-    for key in ("ref", "label", "href", "url", "kind"):
+    for key in ("ref", "bound_ref", "label", "href", "url", "kind"):
         if candidate.get(key) not in (None, "", [], {}):
             arguments[key] = candidate[key]
     return arguments
@@ -2587,6 +2649,8 @@ def _recruiting_site_click_hint(arguments: dict[str, Any], *, primitive: dict[st
             "targetText",
             "element_text",
             "elementText",
+            "bound_ref",
+            "boundRef",
             "href",
             "url",
             "role",
@@ -2599,7 +2663,24 @@ def _recruiting_site_click_hint(arguments: dict[str, Any], *, primitive: dict[st
 
 
 def _recruiting_site_hint_has_target_identity(hint: dict[str, Any]) -> bool:
-    return any(_optional_string(hint.get(key)) for key in ("ref", "element_ref", "elementRef", "label", "text", "target_label", "targetLabel", "target_text", "targetText", "element_text", "elementText"))
+    return any(
+        _optional_string(hint.get(key))
+        for key in (
+            "ref",
+            "element_ref",
+            "elementRef",
+            "label",
+            "text",
+            "target_label",
+            "targetLabel",
+            "target_text",
+            "targetText",
+            "element_text",
+            "elementText",
+            "bound_ref",
+            "boundRef",
+        )
+    )
 
 
 def _browser_item_matches_hint(item: dict[str, Any], hint: dict[str, Any]) -> bool:
@@ -2766,6 +2847,13 @@ def _recruiting_site_click_evidence_decision(
             evidence=evidence,
         )
     if scene_kind == "jd_sync" and bool(page_context.get("in_job_page")) and _job_page_click_binding(evidence, all_items) is not None:
+        return None
+    if (
+        scene_kind == "jd_sync"
+        and bool(page_context.get("in_job_page"))
+        and _is_job_detail_or_edit_entry(evidence)
+        and _optional_string(evidence.get("bound_ref") or evidence.get("boundRef"))
+    ):
         return None
     if not bool(page_context.get("in_recruiting_work_page")):
         return _recruiting_site_click_blocker(
