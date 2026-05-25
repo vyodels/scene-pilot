@@ -363,6 +363,7 @@ def test_jd_sync_scene_consumes_safe_action_candidate_with_hid_and_reobserves(tm
     assert hid_calls[0]["target"]["host"] == "www.zhipin.com"
     assert hid_calls[0]["target"]["tabId"] == 1136767565
     assert hid_calls[0]["primitives"][0]["type"] == "click"
+    assert hid_calls[0]["primitives"][0]["label"] == "编辑"
     assert result["result_data"]["jd_sync_candidate_execution"]["reason"] == "safe_action_candidate_entered_detail_or_edit"
     with session_factory() as session:
         episode = session.query(ExecutionEpisode).one()
@@ -373,6 +374,159 @@ def test_jd_sync_scene_consumes_safe_action_candidate_with_hid_and_reobserves(tm
         ]
     assert tool_results.count("hid_action") == 1
     assert tool_results.count("browser_snapshot") == 2
+
+
+def test_jd_sync_scene_tries_next_candidate_after_recoverable_candidate_block(tmp_path: Path) -> None:
+    session_factory = _session_factory(tmp_path)
+    provider = ScriptedProvider(
+        provider_name="scene-scripted",
+        responses=[
+            LLMResponse(
+                tool_calls=[ToolCall(id="snap-1", name="browser_snapshot", arguments={"tabId": 1136767565})],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(content="仍需进入职位详情读取职责和要求。"),
+        ],
+    )
+    hid_calls: list[dict[str, object]] = []
+    snapshot_calls: list[dict[str, object]] = []
+
+    def _browser_snapshot(arguments: dict[str, object]) -> dict[str, object]:
+        snapshot_calls.append(dict(arguments))
+        if len(snapshot_calls) == 1:
+            return {
+                "success": True,
+                "tabId": 1136767565,
+                "snapshot": {
+                    "url": "https://www.zhipin.com/web/chat/job/list?ka=menu-manager-job",
+                    "title": "职位管理",
+                    "text": "职位管理 全部职位 开放中 产品实习生 北京 经验不限 本科 2-4K 全职 开放中",
+                    "clickables": [
+                        {
+                            "ref": "e23",
+                            "text": "产品实习生 北京 经验不限 本科 2-4K 全职 开放中",
+                            "kind": "job_row",
+                            "region": {"x": 190, "y": 180, "width": 620, "height": 96},
+                        }
+                    ],
+                },
+            }
+        return {
+            "success": True,
+            "tabId": 1136767565,
+            "snapshot": {
+                "url": "https://www.zhipin.com/web/chat/job/edit?encryptId=e23",
+                "title": "编辑职位 - 产品实习生",
+                "text": "编辑职位 产品实习生 职位描述 负责产品需求分析和跨团队协作 任职要求 本科以上，沟通能力好",
+                "clickables": [],
+            },
+        }
+
+    def _hid_action(arguments: dict[str, object]) -> dict[str, object]:
+        hid_calls.append(dict(arguments))
+        label = str((arguments["primitives"][0] or {}).get("label") or "")
+        if label == "产品实习生":
+            return {
+                "success": False,
+                "error": "scene_recruiting_navigation_target_blocked",
+                "reason": "non_job_page_action",
+                "message": "JD sync clicks beyond top-level recovery must target browser-observed job rows, titles, detail/edit entries, or job management actions.",
+            }
+        return {"ok": True}
+
+    tools = ToolRegistry()
+    tools.register(
+        ToolDefinition(
+            name="browser_snapshot",
+            description="Snapshot.",
+            parameters={"type": "object", "additionalProperties": True},
+            handler=_browser_snapshot,
+            external_target=True,
+            metadata={"capabilities": ["browser"], "external_tool": True, "real_environment": True},
+        )
+    )
+    tools.register(
+        ToolDefinition(
+            name="hid_action",
+            description="HID.",
+            parameters={"type": "object", "additionalProperties": True},
+            handler=_hid_action,
+            external_target=True,
+            metadata={"capabilities": ["computer"], "external_tool": True, "real_environment": True},
+        )
+    )
+    service = SceneContextService(
+        session_factory=session_factory,
+        provider=provider,
+        tool_registry=tools,
+        plugin_host=PluginHost(),
+    )
+
+    result = service.delegate(
+        {
+            "title": "BOSS JD sync",
+            "instruction": "同步 BOSS 职位详情。",
+            "preferred_capabilities": ["browser", "computer"],
+            "browser_target": {
+                "url": "https://www.zhipin.com/web/chat/index",
+                "host": "www.zhipin.com",
+                "domain": "zhipin.com",
+                "tabId": 1136767565,
+            },
+            "context": {
+                "plan_kind": "jd_sync",
+                "action_plan": [
+                    {
+                        "safe_action_candidates": [
+                            {
+                                "kind": "open_job_detail_or_safe_edit",
+                                "tool_name": "hid_action",
+                                "label": "产品实习生",
+                                "ref": "e23-title",
+                                "bound_ref": "e23",
+                                "href": "https://www.zhipin.com/web/chat/job/detail-title?encryptId=e23",
+                                "target": {"host": "www.zhipin.com", "tabId": 1136767565},
+                                "primitives": [
+                                    {
+                                        "type": "click",
+                                        "at": {"x": 260, "y": 220},
+                                        "button": "left",
+                                        "label": "产品实习生",
+                                        "ref": "e23-title",
+                                    }
+                                ],
+                            },
+                            {
+                                "kind": "open_job_detail_or_safe_edit",
+                                "tool_name": "hid_action",
+                                "label": "编辑",
+                                "ref": "edit-e23",
+                                "bound_ref": "e23",
+                                "target": {"host": "www.zhipin.com", "tabId": 1136767565},
+                                "primitives": [
+                                    {
+                                        "type": "click",
+                                        "at": {"x": 760, "y": 220},
+                                        "button": "left",
+                                        "label": "编辑",
+                                        "ref": "edit-e23",
+                                    }
+                                ],
+                            },
+                        ]
+                    }
+                ],
+            },
+            "output_contract": {"contract_kind": "jd_sync", "result_data_required": True},
+        }
+    )
+
+    assert [call["primitives"][0]["label"] for call in hid_calls] == ["产品实习生", "编辑"]
+    assert len(snapshot_calls) == 2
+    execution = result["result_data"]["jd_sync_candidate_execution"]
+    assert execution["reason"] == "safe_action_candidate_entered_detail_or_edit"
+    assert len(execution["attempts"]) == 2
+    assert execution["attempts"][0]["recoverable"] is True
 
 
 def test_jd_sync_scene_does_not_execute_forbidden_action_plan_candidate(tmp_path: Path) -> None:

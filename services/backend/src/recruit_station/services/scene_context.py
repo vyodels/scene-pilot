@@ -350,6 +350,7 @@ class SceneContextService:
             request=request,
             scene_tool_registry=scene_tool_registry,
             engine_events=engine_events,
+            browser_semantics=browser_semantics,
             blockers=blockers,
         )
         jd_sync_observation_repair = _force_jd_sync_job_management_snapshot_if_needed(
@@ -1834,6 +1835,7 @@ def _force_jd_sync_safe_action_candidate_execution_if_needed(
     request: dict[str, Any],
     scene_tool_registry: ToolRegistry,
     engine_events: list[dict[str, Any]],
+    browser_semantics: dict[str, Any],
     blockers: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any] | None:
     if not _is_jd_sync_result_contract(_as_dict(request.get("output_contract"))):
@@ -1858,7 +1860,7 @@ def _force_jd_sync_safe_action_candidate_execution_if_needed(
         return None
 
     attempts: list[dict[str, Any]] = []
-    for index, candidate in enumerate(candidates[:2], start=1):
+    for index, candidate in enumerate(candidates[:3], start=1):
         hid_arguments = _jd_sync_hid_arguments_from_action_candidate(candidate)
         if not hid_arguments:
             continue
@@ -1887,6 +1889,10 @@ def _force_jd_sync_safe_action_candidate_execution_if_needed(
         }
         attempts.append(attempt)
         if click_result.is_error or not _tool_result_content_succeeded(click_result.output):
+            if _is_recoverable_jd_sync_candidate_hid_failure(click_result.output):
+                attempt["recoverable"] = True
+                _clear_scene_hid_pending_observation(browser_semantics, arguments=hid_arguments, request=request)
+                continue
             return {
                 "status": "blocked",
                 "reason": "safe_action_candidate_hid_failed",
@@ -1955,6 +1961,18 @@ def _has_terminal_jd_sync_scene_blocker(blockers: list[dict[str, Any]] | None) -
     return False
 
 
+def _clear_scene_hid_pending_observation(
+    browser_semantics: dict[str, Any],
+    *,
+    arguments: dict[str, Any],
+    request: dict[str, Any],
+) -> None:
+    scope_key = _scene_sequence_scope_key(arguments, request=request)
+    state = _scene_sequence_state(browser_semantics, scope_key)
+    if state.get("pending_browser_observation_after_hid"):
+        state["pending_browser_observation_after_hid"] = None
+
+
 def _jd_sync_browser_evidence_delta_from_events(events: list[dict[str, Any]]) -> dict[str, Any]:
     observed_jobs: list[dict[str, Any]] = []
     pending_jobs: list[dict[str, Any]] = []
@@ -2018,7 +2036,38 @@ def _safe_jd_sync_action_candidates_for_execution(
         if not _jd_sync_hid_arguments_from_action_candidate(candidate):
             continue
         safe.append(candidate)
-    return safe
+    return sorted(safe, key=_jd_sync_action_candidate_priority)
+
+
+def _jd_sync_action_candidate_priority(candidate: dict[str, Any]) -> tuple[int, int, str]:
+    label = _normalize_ui_text(_browser_item_label(candidate))
+    text = _normalize_ui_text(
+        " ".join(str(candidate.get(key) or "") for key in ("ref", "href", "url"))
+    ).lower()
+    combined = f"{label} {text}".lower()
+    if any(marker in combined for marker in ("查看详情", "职位详情", "岗位详情", "安全编辑", "编辑职位", "详情", "编辑", "detail", "edit")):
+        primary = 0
+    else:
+        primary = 1
+    has_bound_ref = 0 if _optional_string(candidate.get("bound_ref")) else 1
+    return (primary, has_bound_ref, label)
+
+
+def _is_recoverable_jd_sync_candidate_hid_failure(output: Any) -> bool:
+    if not isinstance(output, dict):
+        return False
+    error = str(output.get("error") or "").strip().lower()
+    reason = str(output.get("reason") or "").strip().lower()
+    message = str(output.get("message") or "").strip().lower()
+    text = " ".join(item for item in (error, reason, message) if item)
+    return any(
+        marker in text
+        for marker in (
+            "scene_recruiting_navigation_target_blocked",
+            "non_job_page_action",
+            "ambiguous_click_target",
+        )
+    )
 
 
 def _jd_sync_hid_arguments_from_action_candidate(candidate: dict[str, Any]) -> dict[str, Any]:
