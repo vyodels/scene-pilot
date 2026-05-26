@@ -2923,6 +2923,8 @@ def _resolve_recruiting_site_click_evidence(arguments: dict[str, Any], *, primit
     items = [item for item in list(page.get("items") or []) if isinstance(item, dict)]
     hinted = _recruiting_site_click_hint(arguments, primitive=primitive)
     if hinted:
+        if _boss_main_navigation_entry_label(hinted):
+            return hinted
         for item in items:
             if _browser_item_matches_hint(item, hinted):
                 return item
@@ -3012,9 +3014,18 @@ def _browser_item_matches_hint(item: dict[str, Any], hint: dict[str, Any]) -> bo
     hint_ref = _optional_string(hint.get("ref") or hint.get("element_ref") or hint.get("elementRef"))
     if item_ref and hint_ref and item_ref == hint_ref:
         return True
+    if item_ref and hint_ref and item_ref != hint_ref:
+        return False
     item_href = _optional_string(item.get("href") or item.get("url"))
-    hint_href = _optional_string(hint.get("href") or hint.get("url"))
+    hint_href = _optional_string(hint.get("href"))
+    hint_url = _optional_string(hint.get("url"))
     if item_href and hint_href and item_href == hint_href:
+        return True
+    if hint_href and item_href != hint_href:
+        hint_label = _browser_item_label(hint)
+        if _normalize_ui_text(hint_label) in {"职位管理", "推荐牛人", "搜索", "沟通"}:
+            return False
+    if item_href and hint_url and item_href == hint_url:
         return True
     item_label = _browser_item_label(item)
     hint_label = _browser_item_label(hint)

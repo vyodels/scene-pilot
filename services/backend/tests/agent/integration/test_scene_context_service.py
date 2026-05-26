@@ -1575,6 +1575,143 @@ def test_scene_context_allows_realish_jd_sync_job_management_get_element_without
     assert len(hid_calls) == 1
 
 
+def test_scene_context_prefers_precise_browser_evidence_over_same_label_container_for_jd_sync_nav() -> None:
+    hid_calls: list[dict[str, object]] = []
+    tools = ToolRegistry()
+    tools.register(
+        ToolDefinition(
+            name="hid_action",
+            description="Execute HID.",
+            parameters={"type": "object", "properties": {}, "additionalProperties": True},
+            handler=lambda arguments: hid_calls.append(dict(arguments)) or {"success": True, "ok": True},
+            metadata={"capabilities": ["computer"], "external_tool": True, "real_environment": True},
+        )
+    )
+    page = {
+        "url": "https://www.zhipin.com/web/chat/index",
+        "title": "沟通",
+        "text": "职位管理 沟通 近30天联系人列表 王新苗 产品实习生",
+        "items": [
+            {
+                "ref": "@e21",
+                "tag": "dl",
+                "text": "职位管理",
+                "region": {"top": 80, "left": 0, "width": 168, "height": 46},
+                "clickPoint": {"x": 84, "y": 103},
+            }
+        ],
+    }
+    browser_semantics = {
+        "last_page_semantics": page,
+        "tabs": {1136767565: {"tabId": 1136767565, "url": "https://www.zhipin.com/web/chat/index", "last_page_semantics": page}},
+        "sequence_state": {
+            "run=scene|episode=scene|account=unspecified|host=www.zhipin.com": {
+                "last_browser_observation": "browser_get_element",
+                "pending_browser_observation_after_hid": None,
+                "audit": [],
+            }
+        },
+    }
+    scene_registry = _scene_tool_registry(
+        tools,
+        request={
+            "context": {"plan_kind": "jd_sync"},
+            "browser_target": {"url": "https://www.zhipin.com/web/chat/index", "host": "www.zhipin.com", "domain": "zhipin.com"},
+        },
+        browser_semantics=browser_semantics,
+    )
+
+    result = scene_registry.execute(
+        "hid_action",
+        {
+            "target": {"host": "www.zhipin.com", "url": "https://www.zhipin.com/web/chat/index", "tabId": 1136767565},
+            "context": {"host": "www.zhipin.com", "url": "https://www.zhipin.com/web/chat/index", "recovery": "boss_main_navigation_job_management"},
+            "metadata": {
+                "browserEvidence": {
+                    "ref": "@e22",
+                    "tag": "a",
+                    "role": "link",
+                    "text": "职位管理",
+                    "href": "https://www.zhipin.com/web/chat/job/list",
+                    "clickPoint": {"x": 67.526, "y": 94.678},
+                    "region": {"top": 80, "left": 6, "width": 156, "height": 46},
+                    "inViewport": True,
+                    "hitTestState": "top",
+                    "detectedBy": "browser_get_element",
+                },
+                "recovery": "boss_main_navigation_job_management",
+            },
+            "primitives": [
+                {
+                    "type": "click",
+                    "at": {"x": 67.526, "y": 94.678},
+                    "button": "left",
+                    "label": "职位管理",
+                    "ref": "@e22",
+                }
+            ],
+        },
+    )
+
+    assert result.output["success"] is True
+    assert len(hid_calls) == 1
+    assert hid_calls[0]["metadata"]["browserEvidence"]["ref"] == "@e22"
+    assert hid_calls[0]["metadata"]["browserEvidence"]["tag"] == "a"
+    assert hid_calls[0]["metadata"]["browserEvidence"]["href"] == "https://www.zhipin.com/web/chat/job/list"
+
+
+def test_forced_jd_sync_job_management_recovery_treats_success_false_hid_as_blocked() -> None:
+    hid_calls: list[dict[str, object]] = []
+    snapshot_calls: list[dict[str, object]] = []
+    tools = ToolRegistry()
+    tools.register(
+        ToolDefinition(
+            name="hid_action",
+            description="Execute HID.",
+            parameters={"type": "object", "properties": {}, "additionalProperties": True},
+            handler=lambda arguments: hid_calls.append(dict(arguments))
+            or {
+                "success": False,
+                "error": "scene_recruiting_navigation_target_blocked",
+                "reason": "requires_allowed_boss_main_navigation_entry",
+            },
+            metadata={"capabilities": ["computer"], "external_tool": True, "real_environment": True},
+        )
+    )
+    tools.register(
+        ToolDefinition(
+            name="browser_snapshot",
+            description="Observe browser page.",
+            parameters={"type": "object", "properties": {"tabId": {"type": "integer"}}, "additionalProperties": True},
+            handler=lambda arguments: snapshot_calls.append(dict(arguments)) or {"success": True},
+            metadata={"capabilities": ["browser", "document"], "external_tool": True, "real_environment": True},
+        )
+    )
+
+    recovery = _force_jd_sync_job_management_visible_entry_recovery(
+        {
+            "url": "https://www.zhipin.com/web/chat/index",
+            "tabId": 1136767565,
+            "entry": {
+                "ref": "@e22",
+                "tag": "a",
+                "role": "link",
+                "text": "职位管理",
+                "href": "https://www.zhipin.com/web/chat/job/list",
+                "clickPoint": {"x": 67.526, "y": 94.678},
+                "region": {"top": 80, "left": 6, "width": 156, "height": 46},
+            },
+        },
+        scene_tool_registry=tools,
+        engine_events=[],
+    )
+
+    assert recovery["status"] == "blocked"
+    assert recovery["reason"] == "forced_hid_click_visible_job_management_entry_failed"
+    assert len(hid_calls) == 1
+    assert snapshot_calls == []
+
+
 @pytest.mark.parametrize(
     ("element", "click_point", "reason"),
     [
