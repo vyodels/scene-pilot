@@ -1,0 +1,7 @@
+interface:
+  display_name: "Vyodels Design"
+  short_description: "Plan and execution governance"
+  default_prompt: "Use $vyodels-design to design and execute this complex task with clear goal, review, and completion criteria."
+
+policy:
+  allow_implicit_invocation: true
