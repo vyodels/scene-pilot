@@ -1,0 +1,4 @@
+interface:
+  display_name: "Subagent Orchestrator"
+  short_description: "Parallel orchestration with default gpt-5.4 xhigh subagents"
+  default_prompt: "Use $subagent-orchestrator to run this task with dependency-aware parallel subagents. Unless I explicitly ask otherwise, every subagent should use gpt-5.4 with xhigh reasoning effort, with the main agent handling orchestration, review, and scheduling."

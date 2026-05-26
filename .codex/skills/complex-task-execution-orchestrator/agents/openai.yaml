@@ -1,0 +1,4 @@
+interface:
+  display_name: "Complex Task Execution Orchestrator"
+  short_description: "Run complex plans with coordinator, hybrid, or direct execution discipline."
+  default_prompt: "Use complex-task-execution-orchestrator to execute this plan or goal with the selected coordinator, hybrid, or direct role; use phase batching, checkpoints, handoffs when appropriate, role-preserving fallbacks, and verification gates."

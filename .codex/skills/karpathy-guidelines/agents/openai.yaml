@@ -1,0 +1,4 @@
+interface:
+  display_name: "Karpathy Guidelines"
+  short_description: "Explicit assumptions and surgical edits"
+  default_prompt: "Use $karpathy-guidelines to apply the bundled Karpathy guidelines while writing, debugging, reviewing, or refactoring code."

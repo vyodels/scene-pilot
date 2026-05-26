@@ -1,0 +1,4 @@
+interface:
+  display_name: "招聘 Skill 创作"
+  short_description: "按招聘业务语义创建并收敛可执行 skill 资产"
+  default_prompt: "Use $recruiting-skill-authoring to create or update a recruiting skill, keeping it business-semantic and preferring Python inline assets when the action is deterministic."

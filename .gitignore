@@ -11,7 +11,6 @@ __pycache__
 .venv
 .env
 .npm-cache
-.codex
 recruit-station.db
 services/backend/recruit-station.db
 services/backend/agent.db
