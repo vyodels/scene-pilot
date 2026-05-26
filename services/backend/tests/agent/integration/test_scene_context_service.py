@@ -3789,7 +3789,6 @@ def test_scene_context_recovers_jd_sync_snapshot_from_existing_zhipin_tab_when_a
     assert result["result_data"]["pending_jobs"][0]["title"] == "产品实习生"
     assert result["result_data"]["completed_job_details"] == []
     assert snapshot_calls == [
-        {},
         {
             "tabId": 9,
             "expectedHost": "www.zhipin.com",
@@ -3800,6 +3799,216 @@ def test_scene_context_recovers_jd_sync_snapshot_from_existing_zhipin_tab_when_a
     assert all("url" not in call for call in snapshot_calls)
     assert "browser_open_tab" not in json.dumps(result, ensure_ascii=False)
     with session_factory() as session:
+        episode = session.query(ExecutionEpisode).one()
+        mismatch_results = [
+            item
+            for item in episode.observations
+            if item["type"] == "tool_event"
+            and item["payload"]["kind"] == "tool_result_ready"
+            and item["payload"]["tool_name"] == "browser_snapshot"
+            and item["payload"]["content"].get("error") == "scene_browser_target_mismatch"
+        ]
+        assert mismatch_results == []
+
+
+def test_scene_context_retargets_jd_sync_snapshot_after_transient_hid_timeout(
+    tmp_path: Path,
+) -> None:
+    session_factory = _session_factory(tmp_path)
+    snapshot_calls: list[dict[str, object]] = []
+    hid_calls: list[dict[str, object]] = []
+    final_payload = {
+        "status": "in_progress",
+        "summary": "Reobserved BOSS job list after transient HID timeout.",
+        "observed_jobs": [{"title": "产品实习生", "status": "招聘中"}],
+        "pending_jobs": [{"title": "产品实习生", "status": "招聘中"}],
+        "completed_job_details": [],
+        "inactive_or_closed_jobs": [],
+        "blockers": [],
+    }
+    provider = ScriptedProvider(
+        provider_name="scene-scripted",
+        responses=[
+            LLMResponse(
+                tool_calls=[
+                    ToolCall(id="tabs", name="browser_list_tabs", arguments={}),
+                    ToolCall(id="active", name="browser_get_active_tab", arguments={}),
+                    ToolCall(id="snapshot", name="browser_snapshot", arguments={}),
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                tool_calls=[
+                    ToolCall(
+                        id="hid-timeout",
+                        name="hid_action",
+                        arguments={
+                            "target": {
+                                "host": "www.zhipin.com",
+                                "url": "https://www.zhipin.com/web/chat/job/list",
+                                "tabId": 1136767565,
+                                "windowId": 1136767488,
+                            },
+                            "context": {"host": "www.zhipin.com", "url": "https://www.zhipin.com/web/chat/job/list"},
+                            "metadata": {
+                                "browserEvidence": {
+                                    "ref": "job-row-1",
+                                    "text": "产品实习生",
+                                    "kind": "job_row",
+                                    "clickPoint": {"x": 360, "y": 300},
+                                    "region": {"x": 250, "y": 260, "width": 620, "height": 120},
+                                }
+                            },
+                            "primitives": [
+                                {
+                                    "type": "click",
+                                    "at": {"x": 360, "y": 300},
+                                    "button": "left",
+                                    "label": "产品实习生",
+                                    "ref": "job-row-1",
+                                }
+                            ],
+                        },
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                content="VirtualHID timeout; retry observation required.",
+                result_data={
+                    "status": "blocked",
+                    "summary": "VirtualHID timeout",
+                    "blockers": [{"kind": "tool_error", "tool_name": "hid_action", "message": "VirtualHID daemon timeout"}],
+                },
+            ),
+            LLMResponse(tool_calls=[ToolCall(id="retry-snapshot", name="browser_snapshot", arguments={})], finish_reason="tool_calls"),
+            LLMResponse(content=json.dumps(final_payload, ensure_ascii=False), finish_reason="stop"),
+        ],
+    )
+    tools = ToolRegistry()
+    tools.register(
+        ToolDefinition(
+            name="browser_list_tabs",
+            description="List browser tabs.",
+            parameters={"type": "object", "properties": {}, "additionalProperties": True},
+            handler=lambda arguments: {
+                "success": True,
+                "tabs": [
+                    {
+                        "tabId": 1136767565,
+                        "windowId": 1136767488,
+                        "url": "https://www.zhipin.com/web/chat/job/list",
+                        "title": "职位管理",
+                        "active": False,
+                    },
+                    {
+                        "tabId": 1136767567,
+                        "windowId": 1136767499,
+                        "url": "http://127.0.0.1:5174/",
+                        "title": "RecruitStation",
+                        "active": True,
+                    },
+                ],
+            },
+            metadata={"capabilities": ["browser", "document"], "external_tool": True, "real_environment": True},
+        )
+    )
+    tools.register(
+        ToolDefinition(
+            name="browser_get_active_tab",
+            description="Get active browser tab.",
+            parameters={"type": "object", "properties": {}, "additionalProperties": True},
+            handler=lambda arguments: {
+                "success": True,
+                "tab": {
+                    "tabId": 1136767567,
+                    "windowId": 1136767499,
+                    "url": "http://127.0.0.1:5174/",
+                    "title": "RecruitStation",
+                    "active": True,
+                },
+            },
+            metadata={"capabilities": ["browser", "document"], "external_tool": True, "real_environment": True},
+        )
+    )
+
+    def browser_snapshot(arguments: dict[str, object]) -> dict[str, object]:
+        snapshot_calls.append(dict(arguments))
+        return {
+            "success": True,
+            "tabId": arguments.get("tabId"),
+            "windowId": 1136767488,
+            "url": "https://www.zhipin.com/web/chat/job/list",
+            "title": "职位管理",
+            "text": "职位管理 全部职位 开放中 产品实习生 北京 2-4K",
+            "elements": [
+                {
+                    "ref": "job-row-1",
+                    "text": "产品实习生 北京 2-4K",
+                    "role": "link",
+                    "kind": "job_row",
+                    "clickPoint": {"x": 360, "y": 300},
+                    "region": {"x": 250, "y": 260, "width": 620, "height": 120},
+                }
+            ],
+        }
+
+    tools.register(
+        ToolDefinition(
+            name="browser_snapshot",
+            description="Observe browser page.",
+            parameters={"type": "object", "properties": {}, "additionalProperties": True},
+            handler=browser_snapshot,
+            metadata={"capabilities": ["browser", "document"], "external_tool": True, "real_environment": True},
+        )
+    )
+
+    def hid_action(arguments: dict[str, object]) -> dict[str, object]:
+        hid_calls.append(dict(arguments))
+        if len(hid_calls) > 1:
+            return {"success": True, "ok": True}
+        raise RuntimeError(
+            "E_DAEMON_UNREACHABLE: timeout waiting for daemon response from "
+            "/Users/vyodels/Library/Application Support/VirtualHID/virtualhid.sock after 15000ms"
+        )
+
+    tools.register(
+        ToolDefinition(
+            name="hid_action",
+            description="Execute HID.",
+            parameters={"type": "object", "properties": {}, "additionalProperties": True},
+            handler=hid_action,
+            metadata={"capabilities": ["computer"], "external_tool": True, "real_environment": True},
+        )
+    )
+    service = SceneContextService(
+        session_factory=session_factory,
+        provider=provider,
+        tool_registry=tools,
+        plugin_host=PluginHost(),
+    )
+
+    result = service.delegate(
+        {
+            "instruction": "Return JD sync scene result JSON.",
+            "context": {"plan_kind": "jd_sync"},
+            "preferred_capabilities": ["browser", "computer"],
+            "browser_target": {"url": "https://www.zhipin.com/"},
+            "output_contract": {"contract_kind": "jd_sync", "result_data_required": True},
+        }
+    )
+
+    assert result["status"] == "incomplete"
+    assert [call.get("tabId") for call in snapshot_calls] == [1136767565, 1136767565, 1136767565]
+    assert all(call.get("tabId") != 1136767567 for call in snapshot_calls)
+    assert len(hid_calls) == 2
+    assert {call["target"]["tabId"] for call in hid_calls} == {1136767565}
+    assert result["result_data"]["observed_jobs"][0]["title"] == "产品实习生"
+    assert result["result_data"]["completed_job_details"] == []
+    with session_factory() as session:
+        assert session.query(JobDescription).count() == 0
+        assert session.query(Candidate).count() == 0
+        assert session.query(ConversationSession).count() == 0
         episode = session.query(ExecutionEpisode).one()
         mismatch_results = [
             item

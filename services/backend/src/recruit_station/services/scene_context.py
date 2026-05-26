@@ -356,6 +356,8 @@ class SceneContextService:
                 scene_tool_registry=scene_tool_registry,
                 engine_events=engine_events,
             )
+        if jd_sync_candidate_execution is not None or jd_sync_observation_repair is not None:
+            blockers = _collect_blockers(last_outcome, engine_events)
         raw_blockers = _collect_blockers(last_outcome, engine_events, ignore_recovered=False)
         if (
             jd_sync_candidate_execution is None
@@ -1325,8 +1327,6 @@ def _should_retry_scene_for_transient_hid_error(
     blockers: list[dict[str, Any]],
     events: list[dict[str, Any]],
 ) -> bool:
-    if _has_terminal_scene_result_data(outcome):
-        return False
     if _is_scene_context_timeout(outcome, blockers):
         return False
     if _public_status(outcome, blockers) != "blocked":
@@ -1393,8 +1393,6 @@ def _has_transient_hid_blocker(blockers: list[dict[str, Any]]) -> bool:
         "daemon unreachable",
         "native host unavailable",
         "native-host",
-        "hid",
-        "virtualhid",
     )
     for blocker in blockers:
         tool_name = str(blocker.get("tool_name") or "").lower()
@@ -1626,6 +1624,15 @@ def _scene_tool_registry(
                 _tool_name=cloned.name,
                 _original_handler=original_handler,
             ) -> Any:
+                retargeted = _retarget_jd_sync_browser_observation_arguments(
+                    tool_name=_tool_name,
+                    arguments=arguments,
+                    request=request,
+                    browser_semantics=browser_semantics,
+                )
+                if retargeted is not None:
+                    arguments.clear()
+                    arguments.update(retargeted)
                 precheck = _validate_scene_browser_tool_target(
                     tool_name=_tool_name,
                     arguments=arguments,
@@ -3646,6 +3653,50 @@ def _validate_scene_browser_tool_target(
         "targetOrigin": target_origin,
         "tab": {"tabId": tab_id, "url": tab_url, "host": tab_host},
     }
+
+
+def _retarget_jd_sync_browser_observation_arguments(
+    *,
+    tool_name: str,
+    arguments: dict[str, Any],
+    request: dict[str, Any],
+    browser_semantics: dict[str, Any],
+) -> dict[str, Any] | None:
+    if tool_name not in _SCENE_BROWSER_PAGE_OBSERVATION_TOOL_NAMES:
+        return None
+    if not _is_jd_sync_result_contract(_as_dict(request.get("output_contract"))) or not _is_recruiting_site_target(request):
+        return None
+    target = _preferred_existing_boss_recruiting_tab(browser_semantics, request=request)
+    if target is None:
+        return None
+    target_tab_id = _optional_int(target.get("tabId") or target.get("tab_id"))
+    if target_tab_id is None:
+        return None
+    target_origin = _scene_target_origin(request)
+    current_tab_id = _browser_tab_id_from_arguments(arguments)
+    if current_tab_id is not None and current_tab_id != target_tab_id:
+        tab_info = dict((browser_semantics.get("tabs") or {}).get(current_tab_id) or {})
+        tab_url = _optional_string(tab_info.get("url"))
+        tab_host = _optional_string(tab_info.get("host"), max_length=255)
+        if target_origin is not None and (
+            (tab_url and _scene_url_matches_target_origin(tab_url, target_origin=target_origin, request=request))
+            or (not tab_url and tab_host and _scene_url_matches_target_origin(tab_host, target_origin=target_origin, request=request))
+        ):
+            return None
+    elif current_tab_id == target_tab_id:
+        retargeted = dict(arguments or {})
+        return _with_jd_sync_browser_target_guards(retargeted)
+
+    retargeted = dict(arguments or {})
+    retargeted["tabId"] = target_tab_id
+    return _with_jd_sync_browser_target_guards(retargeted)
+
+
+def _with_jd_sync_browser_target_guards(arguments: dict[str, Any]) -> dict[str, Any]:
+    arguments.setdefault("expectedHost", "www.zhipin.com")
+    arguments.setdefault("expectedOrigin", "https://www.zhipin.com")
+    arguments.setdefault("targetPolicy", "same-origin")
+    return arguments
 
 
 def _validate_scene_browser_tool_host(arguments: dict[str, Any], *, request: dict[str, Any]) -> dict[str, Any] | None:
