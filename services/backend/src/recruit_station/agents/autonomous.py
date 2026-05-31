@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from datetime import timedelta
+from datetime import datetime, timedelta
 import json
 import re
 from threading import RLock
@@ -598,9 +598,13 @@ class AutonomousAdapter:
                 session.commit()
             return last_outcome
 
-    def recover_stale(self) -> int:
+    def recover_stale(self, *, updated_before: datetime | None = None) -> int:
         with self.session_factory() as session:
-            stmt = select(AgentRun).where(AgentRun.status == "running").order_by(AgentRun.updated_at.desc(), AgentRun.id.desc())
+            stale_filters = [AgentRun.status == "running"]
+            if updated_before is not None:
+                stale_cutoff = updated_before - timedelta(minutes=2)
+                stale_filters.extend((AgentRun.updated_at < stale_cutoff, AgentRun.created_at < stale_cutoff))
+            stmt = select(AgentRun).where(*stale_filters).order_by(AgentRun.updated_at.desc(), AgentRun.id.desc())
             recovered = 0
             for run in session.scalars(stmt).all():
                 reason = "Recovered stale autonomous run during startup."
@@ -623,6 +627,14 @@ class AutonomousAdapter:
                 .where(
                     AgentRun.agent_kind.in_(RUNTIME_AGENT_KINDS),
                     AgentRun.status.in_(AUTONOMOUS_OPEN_RUN_STATUSES),
+                    *(
+                        (
+                            AgentRun.updated_at < (updated_before - timedelta(minutes=2)),
+                            AgentRun.created_at < (updated_before - timedelta(minutes=2)),
+                        )
+                        if updated_before is not None
+                        else ()
+                    ),
                 )
                 .order_by(
                     AgentRun.session_id.asc(),
@@ -1370,6 +1382,8 @@ def _final_output_continuation_resolver(
     agent_kind: str,
     run_constraints: dict[str, Any] | None = None,
 ) -> Callable[[str, list[dict[str, Any]], list[dict[str, Any]], int], str | None] | None:
+    if _is_multi_jd_recruiting_run(agent_kind=agent_kind, run_constraints=run_constraints):
+        return _multi_jd_recruiting_final_output_continuation_resolver()
     if _requires_candidate_discovery_completion_contract(agent_kind=agent_kind, run_constraints=run_constraints):
         return _candidate_discovery_final_output_continuation_resolver()
     if str(agent_kind or "").strip().lower() != "jd_sync":
@@ -1413,6 +1427,137 @@ def _final_output_continuation_resolver(
         )
 
     return _resolver
+
+
+def _multi_jd_recruiting_final_output_continuation_resolver() -> Callable[
+    [str, list[dict[str, Any]], list[dict[str, Any]], int, dict[str, Any] | None],
+    str | None,
+]:
+    def _resolver(
+        final_output: str,
+        tool_calls: list[dict[str, Any]],
+        tool_results: list[dict[str, Any]],
+        attempt: int,
+        result_data: dict[str, Any] | None = None,
+    ) -> str | None:
+        if attempt >= 8:
+            return None
+        if not _multi_jd_recruiting_needs_continuation(
+            final_output=final_output,
+            tool_results=tool_results,
+            result_data=result_data,
+        ):
+            return None
+        if _has_recruiting_business_progress_tool_interaction(tool_calls, tool_results):
+            return None
+        return (
+            "上一条回复不能作为多 JD 自动化招聘终局：当前只完成入口或页面核验，尚未写入候选人、"
+            "投递、沟通、简历、评分或人工筛选事实，也没有登录、验证码、权限、设备绑定、风控、"
+            "missing_hid、unreachable 或 no_candidate_after_allowed_paths 等硬阻塞。"
+            "请继续同一个 turn，不要输出总结或请求用户确认；必须基于最近 scene 结果继续进入 BOSS 左侧/主导航中"
+            "明确可见且被允许的沟通、推荐牛人或搜索入口，读取候选人卡片、沟通消息或在线简历证据。"
+            "BOSS 可点击导航入口严格限于职位管理、推荐牛人、搜索、沟通；不得点击互动、看过我、对我感兴趣、沟通过等衍生入口或子入口。"
+            "自动化招聘阶段的 JD 事实源是 RecruitStation 已同步并选中的本地 JD，不要把打开或核对 BOSS JD 详情页作为前置条件。"
+            "如果取得可写回事实，请调用对应业务工具写入；如果允许路径都没有候选人，请返回结构化硬 blocker "
+            "no_candidate_after_allowed_paths，并包含 evidence/actions_attempted。"
+        )
+
+    return _resolver
+
+
+def _is_multi_jd_recruiting_run(*, agent_kind: str, run_constraints: dict[str, Any] | None) -> bool:
+    constraints = dict(run_constraints or {})
+    context_hints = constraints.get("context_hints")
+    if not isinstance(context_hints, dict):
+        context_hints = {}
+    launch_plan = context_hints.get("launch_plan")
+    if not isinstance(launch_plan, dict):
+        launch_plan = {}
+    values = {
+        str(value or "").strip().lower()
+        for value in (
+            agent_kind,
+            constraints.get("run_kind"),
+            constraints.get("plan_kind"),
+            constraints.get("kind"),
+            constraints.get("task_type"),
+            context_hints.get("run_kind"),
+            context_hints.get("plan_kind"),
+            context_hints.get("kind"),
+            context_hints.get("task_type"),
+            launch_plan.get("plan_kind"),
+            launch_plan.get("kind"),
+        )
+        if str(value or "").strip()
+    }
+    return "multi_jd_recruiting" in values
+
+
+def _multi_jd_recruiting_needs_continuation(
+    *,
+    final_output: str,
+    tool_results: list[dict[str, Any]],
+    result_data: dict[str, Any] | None,
+) -> bool:
+    if _candidate_discovery_has_hard_blocker(result_data):
+        return False
+    if isinstance(result_data, dict):
+        status = str(result_data.get("status") or result_data.get("execution_status") or "").strip().lower()
+        if status in {"blocked", "blocked_environment", "escalate", "wait_human", "waiting_human", "approval_required"}:
+            return False
+    for item in tool_results:
+        output = item.get("output") if isinstance(item, dict) else None
+        if _candidate_discovery_has_hard_blocker(output):
+            return False
+    text = str(final_output or "").strip().lower()
+    if not text:
+        return False
+    return any(
+        marker in text
+        for marker in (
+            "入口核验",
+            "业务入口检查",
+            "页面证据不足",
+            "暂未写入候选人",
+            "暂未写入",
+            "尚未写入",
+            "本轮仅完成",
+            "没有拿到可",
+            "还没有拿到",
+            "未看到可直接判定",
+            "尚不 能确认",
+            "尚不能确认",
+            "暂不能确认",
+            "不能继续做候选人",
+            "下一步",
+            "建议下一步",
+            "可以继续按",
+            "我可以继续",
+        )
+    )
+
+
+def _has_recruiting_business_progress_tool_interaction(
+    tool_calls: list[dict[str, Any]],
+    tool_results: list[dict[str, Any]],
+) -> bool:
+    progress_tools = {
+        "upsert_candidate",
+        "create_candidate_sync_record",
+        "score_candidate",
+        "create_candidate_scorecard",
+        "create_candidate_review_decision",
+        "record_outbound_message",
+        "attach_resume_artifact",
+        "transition_application",
+    }
+    for item in [*tool_calls, *tool_results]:
+        if not isinstance(item, dict):
+            continue
+        tool_name = str(item.get("tool_name") or item.get("name") or "").strip()
+        if tool_name in progress_tools:
+            return True
+    return False
 
 
 def _candidate_discovery_final_output_continuation_resolver() -> Callable[

@@ -745,8 +745,9 @@ def _build_scene_instruction(request: dict[str, Any]) -> str:
             "不要把同 hostname 但不同端口、不同 origin 或旧测试 tab 当成当前任务目标；"
             "browser 侧只允许只读 snapshot/query/wait/target-identification；不得把 browser 工具当作点击、导航、下载、Cookie 或外壳维护执行器。"
             "如果 browser_get_active_tab 返回的活动页不是目标 origin，这只是当前活动页不匹配，不是终局阻塞；"
-            "必须继续用 browser_list_tabs 查找同 origin 页签，找到后基于该 tabId 观察目标页，或通过 VirtualHID 切换到同 origin 页签。"
-            "只有 browser_list_tabs 也找不到同 origin 页签，或同 origin 页签不可观察/不可切换时，才返回结构化 blocker 或请求 human 处理。"
+            "必须继续用 browser_list_tabs 在所有可枚举 Chrome 窗口中查找同 origin 页签，不要限制为当前窗口；"
+            "找到后基于该 tabId 观察目标页，或通过 VirtualHID 切换到同 origin 页签。"
+            "只有全窗口 browser_list_tabs 也找不到同 origin 页签，或同 origin 页签不可观察/不可切换时，才返回结构化 blocker 或请求 human 处理。"
         )
     if request["anti_detection_policy"] or request["behavior_budget"]:
         parts.append(
@@ -1810,6 +1811,11 @@ def _scene_tool_registry(
                 _tool_name=cloned.name,
                 _original_handler=original_handler,
             ) -> Any:
+                _normalize_scene_browser_tool_arguments(
+                    tool_name=_tool_name,
+                    arguments=arguments,
+                    request=request,
+                )
                 precheck = _validate_scene_browser_tool_target(
                     tool_name=_tool_name,
                     arguments=arguments,
@@ -1874,6 +1880,20 @@ def _scene_tool_registry(
             cloned.handler = _handler
         registry.register(cloned)
     return registry
+
+
+def _normalize_scene_browser_tool_arguments(
+    *,
+    tool_name: str,
+    arguments: dict[str, Any],
+    request: dict[str, Any],
+) -> None:
+    if tool_name != "browser_list_tabs":
+        return
+    if not request.get("browser_target"):
+        return
+    if arguments.get("currentWindowOnly") is True:
+        arguments["currentWindowOnly"] = False
 
 
 def _is_allowed_scene_tool(tool: ToolDefinition) -> bool:

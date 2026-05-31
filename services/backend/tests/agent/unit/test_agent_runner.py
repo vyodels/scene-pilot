@@ -489,6 +489,83 @@ def test_candidate_discovery_continuation_rejects_no_candidate_next_step_output(
     assert "candidate_records 为空" in continuation
 
 
+def test_multi_jd_recruiting_continues_after_entry_check_without_business_facts() -> None:
+    resolver = _final_output_continuation_resolver(
+        agent_kind="autonomous",
+        run_constraints={"context_hints": {"launch_plan": {"plan_kind": "multi_jd_recruiting"}}},
+    )
+    assert resolver is not None
+
+    continuation = resolver(
+        "已完成入口核验。页面证据不足，暂未写入候选人、评分或消息记录。建议下一步继续进入沟通或推荐牛人。",
+        [{"tool_name": "delegate_scene_context"}],
+        [{"tool_name": "delegate_scene_context", "output": {"status": "completed", "result_data": {}}}],
+        0,
+        {},
+    )
+
+    assert continuation is not None
+    assert "不能作为多 JD 自动化招聘终局" in continuation
+    assert "不要把打开或核对 BOSS JD 详情页作为前置条件" in continuation
+
+
+def test_multi_jd_recruiting_jd_writeback_is_not_candidate_progress() -> None:
+    resolver = _final_output_continuation_resolver(
+        agent_kind="autonomous",
+        run_constraints={"context_hints": {"launch_plan": {"plan_kind": "multi_jd_recruiting"}}},
+    )
+    assert resolver is not None
+
+    continuation = resolver(
+        "已完成入口核验。暂未写入候选人、沟通、简历、评分或人工筛选事实。建议下一步继续进入推荐牛人。",
+        [{"tool_name": "upsert_job_description"}],
+        [{"tool_name": "upsert_job_description", "output": {"job_description_id": "jd-1"}}],
+        0,
+        {},
+    )
+
+    assert continuation is not None
+    assert "职位管理、推荐牛人、搜索、沟通" in continuation
+    assert "不得点击互动、看过我、对我感兴趣、沟通过" in continuation
+
+
+def test_multi_jd_recruiting_continues_after_site_visibility_only_summary() -> None:
+    resolver = _final_output_continuation_resolver(
+        agent_kind="autonomous",
+        run_constraints={"plan_kind": "multi_jd_recruiting"},
+    )
+    assert resolver is not None
+
+    continuation = resolver(
+        "已启动并完成站点可见性核对。本轮仅完成了站点定位与入口确认，尚未写入候选人、消息或评分记录。下一步继续围绕 JD 推进。",
+        [{"tool_name": "delegate_scene_context"}],
+        [{"tool_name": "delegate_scene_context", "output": {"status": "completed"}}],
+        0,
+        {},
+    )
+
+    assert continuation is not None
+    assert "不能作为多 JD 自动化招聘终局" in continuation
+
+
+def test_multi_jd_recruiting_continuation_allows_business_tool_progress() -> None:
+    resolver = _final_output_continuation_resolver(
+        agent_kind="autonomous",
+        run_constraints={"plan_kind": "multi_jd_recruiting"},
+    )
+    assert resolver is not None
+
+    continuation = resolver(
+        "候选人发现完成。",
+        [{"tool_name": "upsert_candidate"}],
+        [{"tool_name": "upsert_candidate", "output": {"candidate_person_id": "cand-1"}}],
+        0,
+        {"status": "completed"},
+    )
+
+    assert continuation is None
+
+
 def test_candidate_discovery_structured_status_blocks_empty_completed_result() -> None:
     resolver = _structured_status_resolver(
         agent_kind="autonomous",

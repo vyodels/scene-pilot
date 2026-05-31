@@ -573,6 +573,132 @@ def test_permission_resolution_can_resume_from_transcript_checkpoint() -> None:
     assert provider.captured_requests[1].messages[-1].role == "tool"
 
 
+def test_permission_resolution_completes_outputs_for_parallel_tool_calls() -> None:
+    approval_tool_use = ToolUse(id="call-approval", name="send_message", input={"text": "hello"})
+    record_tool_use = ToolUse(id="call-record", name="record_message", input={"text": "observed"})
+    provider = FixtureLLMProvider(
+        responses=[
+            LLMResponse(
+                id="resp-1",
+                request_id="",
+                invocation_id="",
+                assistant_message=LLMMessage(role="assistant", content="", tool_uses=[approval_tool_use, record_tool_use]),
+                tool_uses=[approval_tool_use, record_tool_use],
+                stop_reason="tool_calls",
+            ),
+            LLMResponse(
+                id="resp-2",
+                request_id="",
+                invocation_id="",
+                assistant_message=LLMMessage(role="assistant", content="continued"),
+            ),
+        ]
+    )
+    send_tool = ToolDefinition(
+        name="send_message",
+        description="Send a message.",
+        schema=ToolSchema(name="send_message", description="Send a message.", input_schema={"type": "object"}),
+        handler=FunctionToolHandler(lambda args: {"sent": args["text"]}),
+        metadata={"requires_confirmation": True},
+    )
+    record_tool = ToolDefinition(
+        name="record_message",
+        description="Record a message.",
+        schema=ToolSchema(name="record_message", description="Record a message.", input_schema={"type": "object"}),
+        handler=FunctionToolHandler(lambda args: {"recorded": args["text"]}),
+    )
+    engine = InteractionEngine(
+        InteractionEngineConfig(
+            conversation_id="conv-parallel-permission",
+            provider=provider,
+            tools=[send_tool, record_tool],
+        )
+    )
+
+    first_outputs = list(engine.submitMessage("send and record"))
+    permission = next(item for item in first_outputs if item.type == "permission_requested")
+    continued_outputs = list(engine.resolvePermission(approved=True))
+
+    assert any(item.type == "assistant_message_completed" and item.data["message"] == "continued" for item in continued_outputs)
+    assert any(
+        item.type == "tool_event"
+        and item.data["kind"] == "tool_result_ready"
+        and item.data["tool_use_id"] == "call-record"
+        and item.data["is_error"] is True
+        for item in continued_outputs
+    )
+    second_request_messages = provider.captured_requests[1].messages
+    tool_outputs = [message for message in second_request_messages if message.role == "tool"]
+    assert [message.tool_use_id for message in tool_outputs[-2:]] == ["call-approval", "call-record"]
+    assert second_request_messages[-3].role == "assistant"
+    assert {tool_use.id for tool_use in second_request_messages[-3].tool_uses} == {"call-approval", "call-record"}
+    assert any(item.type == "turn_completed" and item.turn_id == permission.turn_id for item in continued_outputs)
+
+
+def test_permission_resolution_from_checkpoint_completes_outputs_for_parallel_tool_calls() -> None:
+    approval_tool_use = ToolUse(id="call-approval", name="send_message", input={"text": "hello"})
+    record_tool_use = ToolUse(id="call-record", name="record_message", input={"text": "observed"})
+    provider = FixtureLLMProvider(
+        responses=[
+            LLMResponse(
+                id="resp-1",
+                request_id="",
+                invocation_id="",
+                assistant_message=LLMMessage(role="assistant", content="", tool_uses=[approval_tool_use, record_tool_use]),
+                tool_uses=[approval_tool_use, record_tool_use],
+                stop_reason="tool_calls",
+            ),
+            LLMResponse(
+                id="resp-2",
+                request_id="",
+                invocation_id="",
+                assistant_message=LLMMessage(role="assistant", content="continued"),
+            ),
+        ]
+    )
+    send_tool = ToolDefinition(
+        name="send_message",
+        description="Send a message.",
+        schema=ToolSchema(name="send_message", description="Send a message.", input_schema={"type": "object"}),
+        handler=FunctionToolHandler(lambda args: {"sent": args["text"]}),
+        metadata={"requires_confirmation": True},
+    )
+    record_tool = ToolDefinition(
+        name="record_message",
+        description="Record a message.",
+        schema=ToolSchema(name="record_message", description="Record a message.", input_schema={"type": "object"}),
+        handler=FunctionToolHandler(lambda args: {"recorded": args["text"]}),
+    )
+    engine = InteractionEngine(
+        InteractionEngineConfig(
+            conversation_id="conv-parallel-permission-checkpoint",
+            provider=provider,
+            tools=[send_tool, record_tool],
+        )
+    )
+
+    first_outputs = list(engine.submitMessage("send and record"))
+    permission = next(item for item in first_outputs if item.type == "permission_requested")
+    checkpoint = engine.checkpoint_state()
+    rebuilt = InteractionEngine(
+        InteractionEngineConfig(
+            conversation_id="conv-parallel-permission-checkpoint",
+            provider=provider,
+            tools=[send_tool, record_tool],
+            transcript=transcript_from_checkpoint("conv-parallel-permission-checkpoint", checkpoint),
+        )
+    )
+    continued_outputs = list(rebuilt.resolvePermission(approved=True))
+
+    assert any(item.type == "assistant_message_completed" and item.data["message"] == "continued" for item in continued_outputs)
+    second_request_messages = provider.captured_requests[1].messages
+    assert [message.tool_use_id for message in second_request_messages if message.role == "tool"][-2:] == [
+        "call-approval",
+        "call-record",
+    ]
+    assert any(item.type == "turn_completed" and item.turn_id == permission.turn_id for item in continued_outputs)
+
+
 def test_engine_passes_llm_request_options_to_provider() -> None:
     provider = FixtureLLMProvider(
         responses=[

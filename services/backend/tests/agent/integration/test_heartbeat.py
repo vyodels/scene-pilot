@@ -212,6 +212,54 @@ def test_autonomous_recover_stale_interrupts_run_and_clears_running_queue_task(t
         session.close()
 
 
+def test_autonomous_recover_stale_with_startup_cutoff_preserves_recent_run(tmp_path: Path) -> None:
+    session = _make_session(tmp_path)
+    try:
+        definition = AgentDefinition(definition_key="primary", name="Primary", is_primary=True)
+        session.add(definition)
+        session.flush()
+        agent_session = AgentSession(agent_definition_id=definition.id)
+        session.add(agent_session)
+        session.flush()
+        run = AgentRun(
+            session_id=agent_session.id,
+            run_id="run-recent",
+            agent_kind="autonomous",
+            status="running",
+            queue_task_id="task-recent",
+            created_at=utcnow(),
+            updated_at=utcnow(),
+        )
+        session.add(run)
+        session.commit()
+        TaskQueueRepository(session).enqueue(
+            task_id="task-recent",
+            task_type="autonomous_turn",
+            payload={"run_pk": run.id, "run_id": run.run_id},
+            status="running",
+        )
+        session.commit()
+
+        agent = AutonomousAdapter(
+            session_factory=create_session_factory(session.get_bind()),
+            provider=ScriptedProvider(provider_name="scripted", responses=[]),
+            tool_registry=ToolRegistry(),
+            plugin_host=PluginHost(),
+        )
+
+        assert agent.recover_stale(updated_before=utcnow()) == 0
+
+        session.expire_all()
+        refreshed_run = session.get(AgentRun, run.id)
+        refreshed_task = TaskQueueRepository(session).get("task-recent")
+        assert refreshed_run is not None
+        assert refreshed_task is not None
+        assert refreshed_run.status == "running"
+        assert refreshed_task.status == "running"
+    finally:
+        session.close()
+
+
 def test_heartbeat_records_browser_hid_readiness_and_still_runs_agent(tmp_path: Path) -> None:
     session = _make_session(tmp_path)
     try:

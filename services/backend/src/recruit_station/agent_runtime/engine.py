@@ -165,6 +165,7 @@ class InteractionEngine:
                     yield self._interrupted_output(pending.turn_id)
                     return
                 yield from self._run_tool_call(registry, pending.tool_call, pending.context)
+                yield from self._record_deferred_parallel_tool_outputs(pending, pending.turn_id)
                 if self._abort_requested():
                     yield self._interrupted_output(pending.turn_id)
                     return
@@ -182,6 +183,7 @@ class InteractionEngine:
                     metadata={"permission_denied": True},
                 )
                 yield from self._record_tool_result(result, pending.turn_id)
+                yield from self._record_deferred_parallel_tool_outputs(pending, pending.turn_id)
                 if self._abort_requested():
                     yield self._interrupted_output(pending.turn_id)
                     return
@@ -535,6 +537,38 @@ class InteractionEngine:
             },
         )
 
+    def _record_deferred_parallel_tool_outputs(
+        self,
+        pending: PendingPermissionState,
+        turn_id: str,
+    ) -> Iterator[InteractionOutput]:
+        assistant_index = _find_assistant_tool_use_index(self.history.messages, pending.tool_call.tool_use_id)
+        if assistant_index is None:
+            return
+        assistant_message = self.history.messages[assistant_index]
+        if len(assistant_message.tool_uses) <= 1:
+            return
+        existing_outputs = _tool_output_ids_after(self.history.messages, assistant_index)
+        for tool_use in assistant_message.tool_uses:
+            if not tool_use.id or tool_use.id in existing_outputs:
+                continue
+            result = ToolResult(
+                tool_call_id="",
+                tool_use_id=tool_use.id,
+                name=tool_use.name,
+                content=(
+                    "Tool execution deferred because another tool call from the same model response "
+                    "required operator permission before the turn could continue."
+                ),
+                is_error=True,
+                metadata={
+                    "permission_deferred": True,
+                    "deferred_by_tool_use_id": pending.tool_call.tool_use_id,
+                },
+            )
+            yield from self._record_tool_result(result, turn_id)
+            existing_outputs.add(tool_use.id)
+
     def _inject_pending_user_input_after_next_tool_call(
         self,
         context: TurnContext,
@@ -651,6 +685,28 @@ def _tool_result_content(result: ToolResult) -> str:
     import json
 
     return json.dumps(result.content, ensure_ascii=False, sort_keys=True, default=str)
+
+
+def _find_assistant_tool_use_index(messages: list[LLMMessage], tool_use_id: str) -> int | None:
+    if not tool_use_id:
+        return None
+    for index in range(len(messages) - 1, -1, -1):
+        message = messages[index]
+        if message.role != "assistant":
+            continue
+        if any(tool_use.id == tool_use_id for tool_use in message.tool_uses):
+            return index
+    return None
+
+
+def _tool_output_ids_after(messages: list[LLMMessage], assistant_index: int) -> set[str]:
+    outputs: set[str] = set()
+    for message in messages[assistant_index + 1 :]:
+        if message.role == "assistant":
+            break
+        if message.role == "tool" and message.tool_use_id:
+            outputs.add(message.tool_use_id)
+    return outputs
 
 
 def transcript_state_to_payload(state: TranscriptState) -> dict[str, object]:

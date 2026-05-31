@@ -167,6 +167,37 @@ def test_autonomous_context_treats_browser_target_url_as_entrypoint_hint() -> No
     assert "alternate same-origin affordance" in system_prompt
 
 
+def test_autonomous_context_uses_local_jd_source_for_multi_jd_recruiting() -> None:
+    context = build_autonomous_turn_context(
+        title="Multi JD recruiting",
+        instruction="Run automation recruiting.",
+        scope_kind="global",
+        scope_ref="workspace:shared",
+        constraints={
+            "context_hints": {
+                "launch_plan": {
+                    "plan_kind": "multi_jd_recruiting",
+                    "selected_job_description_ids": ["jd-1"],
+                }
+            },
+            "browser_target": {"url": "https://www.zhipin.com/", "host": "www.zhipin.com"},
+        },
+        world_snapshot={},
+        recent_events=[],
+        memory_entries=[],
+        available_tools=["delegate_scene_context"],
+        skill_contexts=[],
+        available_mcps=["browser"],
+    )
+
+    system_prompt = str(context.initial_messages[0].content)
+    assert "RecruitStation synced and selected JD records are the JD source of truth" in system_prompt
+    assert "Do not open, edit, publish, unpublish, or verify BOSS job detail pages" in system_prompt
+    assert "strictly limited to Job Management, Recommended Talent, Search, and Communication" in system_prompt
+    assert "do not click derived interaction/interest buckets" in system_prompt
+    assert "move only to Communication, Recommended Talent, or Search" in system_prompt
+
+
 def test_shared_context_builder_uses_canonical_instruction_payload() -> None:
     context = build_agent_turn_context(
         agent_kind="autonomous",

@@ -308,6 +308,9 @@ def _agent_system_prompt(
     browser_target_policy = _browser_target_policy(context_payload)
     if browser_target_policy:
         lines.append(browser_target_policy)
+    multi_jd_policy = _multi_jd_recruiting_policy(context_payload)
+    if multi_jd_policy:
+        lines.append(multi_jd_policy)
     if context_payload:
         lines.append(f"Context: {json.dumps(context_payload, ensure_ascii=False, default=str)}")
     return "\n".join(lines)
@@ -338,6 +341,31 @@ def _has_browser_target(value: Any) -> bool:
         return any(_has_browser_target(item) for item in value.values())
     if isinstance(value, list):
         return any(_has_browser_target(item) for item in value)
+    return False
+
+
+def _multi_jd_recruiting_policy(context_payload: dict[str, Any]) -> str | None:
+    if not _is_multi_jd_recruiting_payload(context_payload):
+        return None
+    return (
+        "Multi-JD recruiting policy: RecruitStation synced and selected JD records are the JD source of truth for this run. "
+        "Do not open, edit, publish, unpublish, or verify BOSS job detail pages as a prerequisite for automation recruiting. "
+        "Use BOSS only for candidate discovery, communication, online resume evidence, resume request/receipt evidence, and allowed human-paced actions. "
+        "Allowed BOSS navigation entries are strictly limited to Job Management, Recommended Talent, Search, and Communication; "
+        "do not click derived interaction/interest buckets such as interaction, viewed me, interested in me, communicated, or similar sub-entry surfaces. "
+        "If the current BOSS page is job management, treat it only as a navigational starting point and move only to Communication, Recommended Talent, or Search through those allowed visible same-origin navigation entries. "
+        "A missing BOSS JD detail page is not a blocker when RecruitStation has selected JD records in the run context."
+    )
+
+
+def _is_multi_jd_recruiting_payload(value: Any) -> bool:
+    if isinstance(value, dict):
+        plan_kind = str(value.get("plan_kind") or value.get("planKind") or value.get("run_kind") or value.get("runKind") or "").strip().lower()
+        if plan_kind == "multi_jd_recruiting":
+            return True
+        return any(_is_multi_jd_recruiting_payload(item) for item in value.values())
+    if isinstance(value, list):
+        return any(_is_multi_jd_recruiting_payload(item) for item in value)
     return False
 
 

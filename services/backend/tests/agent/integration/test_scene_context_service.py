@@ -1086,6 +1086,64 @@ def test_scene_context_rejects_browser_tab_from_different_target_origin(tmp_path
         assert mismatch_results
 
 
+def test_scene_context_lists_all_windows_for_target_discovery(tmp_path: Path) -> None:
+    session_factory = _session_factory(tmp_path)
+    list_tab_calls: list[dict[str, object]] = []
+    provider = ScriptedProvider(
+        provider_name="scene-scripted",
+        responses=[
+            LLMResponse(
+                tool_calls=[
+                    ToolCall(id="tabs", name="browser_list_tabs", arguments={"currentWindowOnly": True}),
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(content='{"status":"completed","summary":"found target tab"}'),
+        ],
+    )
+    tools = ToolRegistry()
+    tools.register(
+        ToolDefinition(
+            name="browser_list_tabs",
+            description="List tabs.",
+            parameters={"type": "object", "properties": {}, "additionalProperties": True},
+            handler=lambda arguments: list_tab_calls.append(dict(arguments))
+            or {
+                "success": True,
+                "scope": "all_windows",
+                "tabs": [
+                    {
+                        "id": 7,
+                        "url": "https://www.zhipin.com/web/chat/search",
+                        "title": "BOSS直聘",
+                        "active": True,
+                    }
+                ],
+            },
+            metadata={"capabilities": ["browser"], "external_tool": True, "real_environment": True},
+        )
+    )
+
+    service = SceneContextService(
+        session_factory=session_factory,
+        provider=provider,
+        tool_registry=tools,
+        plugin_host=PluginHost(),
+    )
+
+    result = service.delegate(
+        {
+            "title": "继续 BOSS 招聘流程",
+            "instruction": "复用已打开的 zhipin 页签继续。",
+            "browser_target": {"url": "https://www.zhipin.com/", "host": "www.zhipin.com"},
+            "preferred_capabilities": ["browser"],
+        }
+    )
+
+    assert list_tab_calls == [{"currentWindowOnly": False}]
+    assert result["status"] == "completed"
+
+
 def test_scene_context_derives_browser_target_from_instruction_url(tmp_path: Path) -> None:
     session_factory = _session_factory(tmp_path)
     open_calls: list[dict[str, object]] = []
